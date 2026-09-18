@@ -9,7 +9,7 @@ kind: "package-reference"
 
 ## 概述
 
-`dsh-experimental-agent-team` 把一个编码会话变成一个小型工作团队：会话中的 agent 成为 Lead，创建具名 teammate 处理委派的工作，与它们交换持久消息，并在公共任务板上跟踪共享任务。消息与任务状态能挺过崩溃、reload 与中断，因此离线的 teammate 会在恢复后收到排队的消息。它本身不提供任何工具——请挂载兄弟包 `dsh-experimental-tool-agent-team`，让模型能够创建 teammate、给它们发消息并使用任务板。它以实验性名称公开发布、不承诺稳定性，并且需要持久会话存储才能激活。
+`dsh-experimental-agent-team` 把一个编码会话变成一个小型工作团队：会话中的 agent 成为 Lead，创建具名 teammate 处理委派的工作，与它们交换持久消息，并在公共任务板上跟踪共享任务。消息与任务状态能挺过崩溃、reload 与中断，因此离线的 teammate 会在恢复后收到排队的消息。开启 `roomEnabled` 后，同一个 roster 还会作为审慎的 room 运行：所有发言汇入一份带署名 transcript，集体决策只由记录在案的 quorum 结清，任何成员都无法独自决定。它本身不提供任何工具——请挂载兄弟包 `dsh-experimental-tool-agent-team`。它以实验性名称公开发布、不承诺稳定性。
 
 ## 目录
 
@@ -74,7 +74,7 @@ roster 显示每个成员的职责（`lead` 或 `teammate`）与当前状态：`
 
 任何成员都可以添加任务，包含标题、详情、对其他任务的可选依赖，以及可选的文件触及提示。只有其全部依赖完成后，任务才可 claim。
 
-任务有 owner：成员 claim 任务开始工作，完成后标记完成、释放回板或重新打开；Lead 可以把任务分配给任意成员。每次变更都是 compare-and-set：基于过期副本的更新会被拒绝，因此两个成员不会悄悄覆盖彼此的成果。
+任务有 owner：成员 claim 任务开始工作、把完成的成果提交验证、释放回板或重新打开；Lead 可以把任务分配给任意成员。没有任何成员能结清自己的工作：`submit` 把当前 revision 交给同行，视图随后报告 `verifying`，只有另一位成员的 `verify` 裁决及其理由才会把任务推进到 `completed`，或连同反对意见退回。每次变更都是 compare-and-set：基于过期副本的更新会被拒绝，因此两个成员不会悄悄覆盖彼此的成果。
 
 当两个 in-progress 任务计划触及重叠路径时，文件提示会产生警告——它们绝不阻止任何操作。已删除任务保留在历史中，但从活动列表中消失。
 
@@ -145,6 +145,16 @@ Lead 可以停止 teammate 的当前轮次，而不会删除其排队的消息�
 
 Team 事件追加到精确的 live Lead 会话，并在操作报告成功或唤醒等待者之前 flush。`team/member`、`team/task`、`team/message/queued` 与 `team/message/delivered` 仅存在于日志：它们从不进入会话表面，因此派生模型历史不受协作记录影响。顺序与时间由会话事件的 `seq` 与 `time` 负责，快照不重复保存。`./invariant` 伴生插件把每条候选 Team 事件对照已提交前缀回放，并在 append 前拒绝非法转换。
 
+### 共享 room
+
+`TeamRoom` 读写的正是 roster 与 mailbox 使用的那个 Lead Session。它为每个参与者发言追加一条 `room/message` —— 取自该参与者自己已提交的 `assistant/message` —— 因此 transcript 自带署名、有序且可回放，无需第二个存储。`room/proposal` 与 `room/review` 保存集体决策。这三者都是 log-only event，绝不会进入派生的模型历史。
+
+参与者就是尚未失败的 roster 成员，包括仍处于 provisioning 的成员；这与 roster 解析在线成员 Team 身份所用的规则一致。`roomPrompt` 通过发送目标自己上次发言之后记录的 transcript 条目把发言权交给某个参与者，条目数量受 `roomTranscriptWindow` 限制。参与者不会因他人的发言而被唤醒，因此 room 只会在有人交出发言权时推进。
+
+接受与否只由 `room-quorum.ts` 根据记录在案的 review 计算。每个有资格的 reviewer 都是 proposer 之外的参与者；只有当全部 reviewer 都已投票、其中至少 `roomApprovalRatio` 比例批准，且没有任何反对成立时，决策才会被接受。反对一旦达到 quorum，决策立即结清。proposer 不能 review 自己的决策，已结清的决策是最终的，被拒绝的决策只能通过携带修订后 statement 的新 revision 解决，其上限为 `roomMaxProposalRevisions`。没有任何操作可以强行给出结论；`roomEscalate` 会把未决决策交给人类。每条已记录的立场都带有理由，而每个参与者都能读到整块决策板，因此 proposer 能回应反对意见，而不是只知道有人反对。
+
+读取方通过 `roomStream` 这个 Remote stream 跟随一个 room：先收到完整的 room，随后在每次已提交变化后收到新的 view，并为参与者流式输出的每个 text chunk 收到一帧，因此 panel 无需轮询即可展示正在进行的审议。判定 reviewer 沉默的依据是该参与者自身被观察到的工作 —— 它自己 turn 的持久 Session event 与实时 `agent/assistant-stream` 帧 —— 而绝不是 room 自身的记录：Lead Session 保存着每个角色的记录。请求一次 standing 会启动该 reviewer 的 `roomReviewGraceMs` 窗口，至多 `roomReviewReminders` 次提醒各自会重启被提醒者的窗口；只有当所有仍欠 standing 的 reviewer 都用尽窗口后，决策才会升级，因此慢模型不会被误判为卡住。升级后的决策会把沉默的 reviewer 记入 `room/review-timeout`，绝不代替它们编造 standing。
+
 ### Dispose
 
 dispose 会关闭准入、中止并等待已获准的创建与 mailbox dispatch 事务，再让 continuation owner 释放 roster 中确切的 live direct child 及其后代；Lead 的非 Team continuable child 不受影响。cleanup 失败会让 dispose 明确失败，并以 `disposalTimeoutMs` 为上限。
@@ -187,6 +197,20 @@ dispose 会关闭准入、中止并等待已获准的创建与 mailbox dispatch 
 
 Peer 消息追加在 target 可复用历史前缀之后。冷恢复会先复用持久对话，再追加尚未投递的消息。
 
+### Room prompt 与结论
+
+#### 模型看到什么
+
+room prompt 是一条 user-role 消息。当 room 记录了目标尚未见过的发言时，一个前置 text block 会渲染为 `Room conversation so far:`，后接 `<name>: <text>` 行；调用方的 instruction 原样跟随。review 请求会给出决策 id、revision 与确切的 statement，并要求给出一个 verdict。结论通知会给出决策、其 phase，以及按名称列出的参与者。transcript 条目本身是 log-only 的：参与者只有在获得发言权时才会通过 prompt 读到它们。
+
+#### Token 影响
+
+一次 prompt 的代价是未读 transcript 窗口加上 instruction，受 `roomTranscriptWindow` 限制。开启一个决策会向每个有资格的 reviewer 发送一次 review 请求，因此 N 个参与者的 room 每个 revision 需要 N-1 次请求。结论通知是发给 proposer 的一条短消息；提醒会把同样的 review 请求重发给未产生任何工作的 reviewer，每个 revision 至多 `roomReviewReminders` 次，而升级通知是一条点名始终未作答者的短消息。
+
+#### KV Cache 影响
+
+transcript 条目与决策绝不触及参与者复用的前缀。每次 prompt 都追加在该参与者自身历史之后，因此未变的前缀在多次唤醒之间保持缓存。
+
 ## 已知限制与延期工作
 
 <a id="known-limitations-and-deferred-work"></a>
@@ -200,6 +224,10 @@ Peer 消息追加在 target 可复用历史前缀之后。冷恢复会先复用�
 - **扁平且不可变的 roster**——只有 Lead 可以创建直接 teammate；不支持嵌套 Team、重命名、删除或名字复用。
 - **不会自动释放 owner**——idle、interrupt、进程退出与工作失败都不会释放任务 owner。
 - **mailbox 不保证跨进程 exactly-once**——不支持多个 harness 进程并发操作同一 Team。
+
+- **尚无 room 工具** — room 引擎只能由直接驱动 `ctx.agentTeams` 的宿主使用；没有 model-facing 工具负责提交 verdict、交出发言权或读取 transcript。
+- **沉默只会升级，不会结清** — reviewer 用尽 `roomReviewGraceMs` 与 `roomReviewReminders` 后，决策会连同沉默者一并升级；没有任何操作会代替它们记录 standing，因此该决策仍在等待人类。
+- **room 复用 Team roster** — 一个 room 只有一个 Lead Session、一份共享 checkout，没有独立成员资格，因此成员不可能只属于 room 而不属于 roster。
 
 <a id="dev-note"></a>
 ### 开发备注

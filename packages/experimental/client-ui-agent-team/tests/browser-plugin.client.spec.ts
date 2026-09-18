@@ -23,7 +23,7 @@ async function bench(options: {
   addressed?: boolean
   conflict?: boolean
   registrationFailure?: boolean
-  remoteFailure?: 'view' | 'update'
+  remoteFailure?: 'view' | 'update' | 'room'
   refreshGate?: Promise<void>
 } = {}) {
   const ctx = new Context()
@@ -60,6 +60,12 @@ async function bench(options: {
     }], tasks: [task],
   }
   ctx.provide('remote.agentTeams', {
+    room: (...args: unknown[]) => {
+      calls.push({ method: 'agentTeams/room', args })
+      return Promise.resolve(options.remoteFailure === 'room'
+        ? failure
+        : { ok: true as const, value: { enabled: true, participants: [], chair: 'lead', messages: [], proposals: [] } })
+    },
     view: (...args: unknown[]) => {
       calls.push({ method: 'agentTeams/view', args })
       return Promise.resolve(options.remoteFailure === 'view'
@@ -161,17 +167,18 @@ describe('ui-team browser plugin', () => {
     expect(b.remote.mount).toHaveBeenCalledWith(REMOTE)
     const actions = (b.entry()!.inject as unknown as () => TeamActionInjected)()
     expect((await actions.load(SESSION)).ok).toBe(true)
+    expect((await actions.loadRoom(SESSION)).ok).toBe(true)
     expect((await actions.createTask(SESSION, {
       subject: 'Task', description: 'Description', blockedBy: [], writeScopes: [],
     })).ok).toBe(true)
     expect((await actions.updateTask(SESSION, {
-      taskId: TASK_ID, expectedRevision: 1, action: 'complete',
+      taskId: TASK_ID, expectedRevision: 1, action: 'submit',
     })).ok).toBe(true)
     expect((await actions.updateTask(SESSION, {
       taskId: TASK_ID, expectedRevision: 2, action: 'reassign', owner: 'worker',
     })).ok).toBe(true)
     expect(b.calls.map(call => call.method)).toEqual([
-      'agentTeams/view', 'agentTeams/createTask', 'agentTeams/updateTask', 'agentTeams/updateTask',
+      'agentTeams/view', 'agentTeams/room', 'agentTeams/createTask', 'agentTeams/updateTask', 'agentTeams/updateTask',
     ])
     expect(b.calls.at(-1)?.args[1]).toMatchObject({ owner: 'worker' })
 

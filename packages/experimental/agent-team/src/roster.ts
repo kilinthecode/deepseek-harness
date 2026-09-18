@@ -3,8 +3,10 @@
 import { randomUUID } from 'node:crypto'
 import type { Context } from '@deepseek-ai/cordis'
 import { brandString } from '@deepseek-ai/dsh-brand'
-import type { Agent } from '@deepseek-ai/dsh-agent'
-import type { MessageId } from '@deepseek-ai/dsh-llm'
+import type { Agent, AgentOptions } from '@deepseek-ai/dsh-agent'
+// Type-only: pulls the LLM plugin's Context merge so the injected route lookup typechecks.
+import type { ContentBlock, MessageId } from '@deepseek-ai/dsh-llm'
+import type {} from '@deepseek-ai/dsh-llm'
 import type { SessionId } from '@deepseek-ai/dsh-session'
 import { foldSubagentDescriptor } from '@deepseek-ai/dsh-subagent'
 import type { ContinuableStart } from '@deepseek-ai/dsh-subagent'
@@ -16,7 +18,6 @@ import type { TeamState } from './projection.ts'
 import { messageAccepted } from './session-message.ts'
 import { TeamId } from './types.ts'
 import type {
-  SpawnTeammateRequest,
   SpawnTeammateResult,
   TeamMemberSnapshot,
   TeamMemberView,
@@ -31,6 +32,24 @@ export interface TeamMembership {
   readonly id: TeamId
   readonly role: 'lead' | 'teammate'
   readonly name: string
+}
+
+/** Input for creating one durable teammate. */
+export interface SpawnTeammateRequest {
+  readonly name: string
+  readonly description: string
+  readonly prompt: ContentBlock[]
+  readonly context: 'fresh' | 'fork'
+  /** Continuable-subagent provider establishing the child, not the child's model route. */
+  readonly provider: string
+  /**
+   * Host-Agent provider, model, reasoning-effort, and output-token overrides for
+   * the teammate's own route. In-process providers merge them over the parent's
+   * options, so a room can seat participants running different models. The
+   * resulting route is durable in the child's own Session header.
+   */
+  readonly agentOptions?: AgentOptions
+  readonly signal: AbortSignal
 }
 
 /**
@@ -256,6 +275,7 @@ export class TeamRoster {
     const root = membership.root
     const name = this.memberName(request.name)
     const description = requiredText(request.description, 'description', 200)
+    await this.assertRouteReasoning(signal, root, request)
     const childId = brandString<SessionId>(randomUUID())
     const member: TeamMemberSnapshot = {
       id: childId,
@@ -286,6 +306,7 @@ export class TeamRoster {
         request: {
           prompt: request.prompt,
           parent: root,
+          ...request.agentOptions === undefined ? {} : { agentOptions: request.agentOptions },
         },
         signal,
       })
@@ -334,6 +355,39 @@ export class TeamRoster {
       throw conflict
     }
     return { member: this.memberView(active) }
+  }
+
+  /**
+   * Refuse a requested reasoning effort the teammate's route does not declare,
+   * before a child is created. The loop would otherwise fail the child's first
+   * request, which surfaces as a durability failure and permanently consumes
+   * the teammate's name.
+   */
+  private async assertRouteReasoning(
+    signal: AbortSignal,
+    root: Agent,
+    request: SpawnTeammateRequest,
+  ): Promise<void> {
+    // The child's route is the caller's overrides merged over its own, which is
+    // what the provider does; validating only an explicit route would miss an
+    // effort requested against the inherited one.
+    const options: AgentOptions = { ...root.options, ...request.agentOptions }
+    const effort = options.reasoningEffort
+    if (effort === undefined) return
+    const provider = options.provider
+    const model = options.model
+    /* v8 ignore next -- a parent with no route fails the child for the missing route, which is the loop's own diagnosis. */
+    if (provider === undefined || model === undefined) return
+    const info = await this.ctx.llm.resolveModelInfo(provider, model, signal)
+    const efforts = info.reasoning?.efforts ?? []
+    if (efforts.some(candidate => candidate.id === effort)) return
+    throw new TeamError(
+      `route ${provider}/${model} does not declare reasoning effort "${effort}"`
+      + (efforts.length === 0
+        ? ''
+        : `; it declares ${efforts.map(candidate => `"${candidate.id}"`).join(', ')}`),
+      'TEAM_UNSUPPORTED_REASONING_EFFORT',
+    )
   }
 
   /** Flush the accepted initial inbox item before the Lead can commit `active`. */

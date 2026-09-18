@@ -43,6 +43,8 @@ export interface Config {
   provider: string
   /** Provider-owned model id. */
   model: string
+  /** Adapter-owned reasoning effort, or provider/default behavior when absent. */
+  reasoningEffort?: string
 }
 
 /** Project stored settings onto the Agent-facing selection type. */
@@ -65,13 +67,18 @@ export class AgentDefaultModelConfig extends Service {
   static Config: z<Config> = z.object({
     provider: z.string().required(),
     model: z.string().required(),
+    reasoningEffort: z.string(),
   })
 
   private source: () => AgentDefaultModelSettings
 
   constructor(ctx: Context, config: Config) {
     super(ctx, 'agentDefaultModel')
-    const entry: AgentDefaultModelSettings = { provider: config.provider, model: config.model }
+    const entry: AgentDefaultModelSettings = {
+      provider: config.provider,
+      model: config.model,
+      ...config.reasoningEffort === undefined ? {} : { reasoningEffort: config.reasoningEffort },
+    }
     this.source = () => entry
     ctx.inject(['settings'], (settingsCtx) => {
       settingsCtx.settings.installSection(ctx, AGENT_DEFAULT_MODEL_SETTINGS_NAMESPACE, AGENT_DEFAULT_MODEL_SETTINGS_SCHEMA, entry, {

@@ -48,6 +48,7 @@ describe('release families', () => {
     expect(members
       .filter(member => member.directory.startsWith('packages/experimental/'))
       .map(member => member.name)).toEqual([
+      '@deepseek-ai/dsh-experimental-agent-room-profile',
       '@deepseek-ai/dsh-experimental-agent-team-profile',
       '@deepseek-ai/dsh-experimental-agent-team-web-profile',
       '@deepseek-ai/dsh-experimental-agent-team',
@@ -61,6 +62,7 @@ describe('release families', () => {
       '@deepseek-ai/dsh-experimental-computer-use-cua-driver-native',
       '@deepseek-ai/dsh-experimental-inspector',
       '@deepseek-ai/dsh-experimental-ptc-runtime-python',
+      '@deepseek-ai/dsh-experimental-tool-agent-room',
       '@deepseek-ai/dsh-experimental-tool-agent-team',
       '@deepseek-ai/dsh-experimental-webworker-packer',
       '@deepseek-ai/dsh-experimental-webworker-runtime',

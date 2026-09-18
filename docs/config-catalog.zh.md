@@ -46,6 +46,8 @@ export interface Config {
   provider: string
   /** Provider-owned model id. */
   model: string
+  /** Adapter-owned reasoning effort, or provider/default behavior when absent. */
+  reasoningEffort?: string
 }
 ```
 
@@ -577,7 +579,7 @@ export interface Config {
 
 ## `@deepseek-ai/dsh-experimental-agent-team`
 
-需要：`agents` · `sessions` · `sessionPersistence` · `sessionProjections` · `subagents`
+需要：`agents` · `sessions` · `sessionPersistence` · `sessionProjections` · `subagents` · `llm`
 
 ```ts config-catalog
 /** Team-service deployment limits. */
@@ -592,10 +594,35 @@ export interface Config {
   readonly maxMessageBytes?: number
   /** Maximum milliseconds allowed for Team-owned runtime disposal. */
   readonly disposalTimeoutMs?: number
+  /**
+   * Whether participant utterances enter a shared transcript and collective
+   * decisions are authorized by quorum. When false the Team records no room
+   * events and the room operations refuse.
+   */
+  readonly roomEnabled?: boolean
+  /** Maximum transcript entries replayed with one room prompt. */
+  readonly roomTranscriptWindow?: number
+  /** Approvals required for acceptance, as a fraction of eligible reviewers in (0, 1]. */
+  readonly roomApprovalRatio?: number
+  /** Maximum revisions one collective decision may reach before it escalates. */
+  readonly roomMaxProposalRevisions?: number
+  /**
+   * Milliseconds of a reviewer's own work that a standing request waits for.
+   * Activity is a durable event from that participant's own turn or a live
+   * stream frame, so a model still streaming an answer is never counted silent;
+   * room and mailbox records, which the Lead Session holds for every actor, are
+   * not activity.
+   */
+  readonly roomReviewGraceMs?: number
+  /**
+   * Reminders per revision before the decision escalates. A reminder restarts
+   * the window of the reviewer it reaches.
+   */
+  readonly roomReviewReminders?: number
 }
 ```
 
-来源：[`packages/experimental/agent-team/src/types.ts:130`](../packages/experimental/agent-team/src/types.ts)
+来源：[`packages/experimental/agent-team/src/types.ts:325`](../packages/experimental/agent-team/src/types.ts)
 
 <a id="deepseek-aidsh-experimental-browser-use-chrome-devtools-mcp"></a>
 
@@ -827,6 +854,22 @@ export interface Config {
 
 来源：[`packages/experimental/ptc-runtime-python/src/index.ts:42`](../packages/experimental/ptc-runtime-python/src/index.ts)
 
+<a id="deepseek-aidsh-experimental-tool-agent-room"></a>
+
+## `@deepseek-ai/dsh-experimental-tool-agent-room`
+
+Requires: `agents` · `agentTeams` · `tools` · `systemPrompt`
+
+```ts config-catalog
+/** Room tool deployment choices. */
+export interface Config {
+  /** Maximum transcript entries one `room_view` result returns. */
+  readonly maxTranscriptEntries?: number
+}
+```
+
+来源：[`packages/experimental/tool-agent-room/src/index.ts:17`](../packages/experimental/tool-agent-room/src/index.ts)
+
 <a id="deepseek-aidsh-experimental-tool-agent-team"></a>
 
 ## `@deepseek-ai/dsh-experimental-tool-agent-team`
@@ -843,7 +886,7 @@ export interface Config {
 }
 ```
 
-来源：[`packages/experimental/tool-agent-team/src/index.ts:17`](../packages/experimental/tool-agent-team/src/index.ts)
+来源：[`packages/experimental/tool-agent-team/src/index.ts:18`](../packages/experimental/tool-agent-team/src/index.ts)
 
 <a id="deepseek-aidsh-file-reference-local"></a>
 
@@ -3766,7 +3809,7 @@ export interface Config {
 }
 ```
 
-来源： [`packages/deliverables/workspace-changes/src/index.ts:36`](../packages/deliverables/workspace-changes/src/index.ts)
+来源： [`packages/deliverables/workspace-changes/src/index.ts:33`](../packages/deliverables/workspace-changes/src/index.ts)
 
 ## 无配置的可加载插件
 
@@ -3905,6 +3948,7 @@ export interface Config {
 - `@deepseek-ai/dsh-client-web`（[`packages/client/web/src/index.ts`](../packages/client/web/src/index.ts)）
 - `@deepseek-ai/dsh-cmdline`（[`packages/boot/cmdline/src/index.ts`](../packages/boot/cmdline/src/index.ts)）
 - `@deepseek-ai/dsh-deque`（[`packages/util/deque/src/index.ts`](../packages/util/deque/src/index.ts)）
+- `@deepseek-ai/dsh-experimental-agent-room-profile` ([`packages/experimental/agent-room-profile/src/index.ts`](../packages/experimental/agent-room-profile/src/index.ts))
 - `@deepseek-ai/dsh-experimental-agent-team-profile`（[`packages/experimental/agent-team-profile/src/index.ts`](../packages/experimental/agent-team-profile/src/index.ts)）
 - `@deepseek-ai/dsh-experimental-agent-team-web-profile`（[`packages/experimental/agent-team-web-profile/src/index.ts`](../packages/experimental/agent-team-web-profile/src/index.ts)）
 - `@deepseek-ai/dsh-experimental-browser-use-runtime` ([`packages/experimental/browser-use-runtime/src/index.ts`](../packages/experimental/browser-use-runtime/src/index.ts))

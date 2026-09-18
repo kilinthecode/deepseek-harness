@@ -31,9 +31,13 @@ kind: "package-reference"
 
 打开 panel 会调用 `agentTeams/view`。Roster row 展示持久 name、运行时 status、model 与 diagnostics。选择健康 teammate 时，系统刷新既有直接 child catalog，并打开普通的 `{ parentSessionId, childSessionId, mode: 'continuable' }` address。History 与后续人类提示词继续使用稳定 addressed-subagent 会话路径；本包不会添加 Team 专用 address 字段。
 
+### 读取 room
+
+当组合拥有 room 时，面板还会显示共享 transcript 与每个集体决策：其 phase、proposer、确切的 statement，以及投票两侧记录在案的参与者。transcript 指出谁说了什么；决策板指出谁批准、谁反对、谁弃权，以及在决策仍未结清时谁尚未记录立场。已结清的决策不显示等待中的参与者，因为没有人能改变 quorum 已经达成的结果；每条已记录的立场都会连同该 reviewer 给出的理由一并显示。面板打开期间会跟随 room：某个参与者正在流式输出的文本会随到达而显示，而每次已提交的 transcript 条目或决策变化都会用持久记录替换那段实时文本。
+
 ### 管理任务板
 
-任务板展示 task identity、owner、blocker、readiness、提示性 write scope 与重叠 warning。用户可以通过 `agentTeams/createTask` 与 `agentTeams/updateTask` 创建、编辑、分配或取消分配、完成、重开和删除任务。每次 update 都发送当前显示的 revision，create 或 update rejection 都保留为显式 business result。
+任务板展示 task identity、owner、blocker、readiness、提示性 write scope 与重叠 warning。用户可以通过 `agentTeams/createTask` 与 `agentTeams/updateTask` 创建、编辑、分配或取消分配、提交、重开和删除任务，并连同理由验证已提交的任务：当工作等待同行裁决时，任务卡会提供“验证”，而没有理由的裁决在离开浏览器之前就会被拒绝。每次 update 都发送当前显示的 revision，create 或 update rejection 都保留为显式 business result。
 
 -----
 
@@ -71,7 +75,7 @@ Client export 挂载来自 [`@deepseek-ai/dsh-experimental-agent-team/remote`](.
 <a id="model-experience"></a>
 ## 模型体验
 
-无直接影响，因为该浏览器 projection 与任务控制界面不注册面向模型的输入。
+无直接影响，因为该浏览器 projection、room 读取器与任务控制界面不注册面向模型的输入。room 面板渲染由 model-facing room 工具产生的持久 `room/*` 记录；它既不写入这些记录，也不授予任何参与者权威。
 
 #### KV Cache 影响
 
@@ -81,7 +85,10 @@ Client export 挂载来自 [`@deepseek-ai/dsh-experimental-agent-team/remote`](.
 
 <a id="known-limitations-and-deferred-work"></a>
 
-- **Snapshot refresh**——panel 会在打开、显式 refresh 与 mutation 后刷新；它没有实时事件订阅或 mailbox timeline。
+- **实时跟随需要 panel 处于打开状态**——panel 只在打开期间订阅 room，并在已提交变化取代实时文本时丢弃它；关闭的 panel 会在下次打开时从持久日志刷新。
+- **没有 room 的组合不显示 room 区块**——面板会省略它，而不是渲染一个空的区块，因为「没有 room」与「空闲的 room」是不同状态。
+- **room 面板是只读的**——它读取决策与 transcript，但不能 propose、review、escalate 或交出发言权；人类改为通过 room 工具行动。
+- **room 读取器只有一个组装浏览器用例**——`apps/web/tests/agent-room-panel.e2e.ts` 固定渲染出的 transcript 与决策板，然后在 panel 挂载之后再开启一个决策，要求它无需刷新就通过实时跟随出现；roster 与任务板路径保留各自的用例。
 - **普通 child continuation**——导航后发送的人类消息使用稳定 addressed-subagent 提示词路径，而不是 Team peer mailbox。
 - **没有 lifecycle 或 workspace control**——panel 不能 spawn、rename、delete 或 interrupt teammate，write scope 仍只是提示性 metadata。
 

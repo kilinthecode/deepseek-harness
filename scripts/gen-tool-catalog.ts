@@ -63,6 +63,7 @@ import BrowserUseRegistry from '@deepseek-ai/dsh-browser-use'
 import * as StagehandBrowserTools from '@deepseek-ai/dsh-experimental-browser-use-stagehand-native'
 import type TeamService from '@deepseek-ai/dsh-experimental-agent-team'
 import * as ToolTeam from '@deepseek-ai/dsh-experimental-tool-agent-team'
+import * as ToolRoom from '@deepseek-ai/dsh-experimental-tool-agent-room'
 import * as ToolTodo from '@deepseek-ai/dsh-tool-todo'
 import type PluginManager from '@deepseek-ai/dsh-plugin-manager'
 import * as PluginManagerTools from '@deepseek-ai/dsh-plugin-manager/tools'
@@ -611,6 +612,45 @@ const TOOL_PACKAGES: ToolPackage[] = [
     scope: ctx => catalogChildScopes.get(ctx) as Agent,
     note:
       'All nine tools are scoped to implicit Team Leads and durable teammates. The shipped dsh-base bundle keeps the package disabled; the documented Agent Teams profile patch enables it while disabling the legacy continuable-child control names.',
+  },
+  {
+    pkg: '@deepseek-ai/dsh-experimental-tool-agent-room',
+    dir: 'tool-agent-room',
+    source: 'packages/experimental/tool-agent-room/src/index.ts',
+    requires: ['ctx.tools', 'ctx.systemPrompt', 'ctx.agentTeams', 'an exact live room participant Agent'],
+    writes: ['tool/call', 'room/message', 'room/proposal', 'room/review', 'team/message/queued', 'team/message/delivered', 'tool/result'],
+    async mount(ctx) {
+      await ctx.plugin(AgentRegistry)
+      await ctx.plugin(SessionStore)
+      const session = ctx.sessions.create(SessionId('tool-catalog-room-lead'))
+      let agent!: Agent
+      const membership = {
+        get root() { return agent },
+        id: session.id,
+        role: 'lead' as const,
+        name: 'lead',
+      }
+      ctx.provide('agentTeams', {
+        tryMembership: (candidate: Agent) => candidate === agent ? membership : undefined,
+        membership: () => membership,
+        roomView: () => ({ participants: [], chair: 'lead', messages: [], proposals: [] }),
+      } as unknown as TeamService)
+      await ctx.plugin(Object.assign(async (inner: Context) => {
+        agent = {
+          id: session.id,
+          session,
+          options: {},
+          status: 'idle',
+        } as unknown as Agent
+        Object.assign(agent, { ctx: createScope(inner, agent).ctx })
+        await inner.agents.register(agent)
+      }, { inject: ['tools', 'systemPrompt', 'agents', 'agentTeams'] }))
+      await ctx.plugin(ToolRoom)
+      catalogChildScopes.set(ctx, agent)
+    },
+    scope: ctx => catalogChildScopes.get(ctx) as Agent,
+    note:
+      'Five tools are scoped to room participants. The shipped composition keeps them unmounted; a deployment enables them beside `@deepseek-ai/dsh-experimental-agent-team` with `roomEnabled: true`, and every outcome is decided by the service quorum rather than by the tool.',
   },
   {
     pkg: '@deepseek-ai/dsh-tool-todo',

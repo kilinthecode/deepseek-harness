@@ -1,10 +1,10 @@
 // @vitest-environment jsdom
 
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import type { SessionId } from '@deepseek-ai/dsh-session/types'
 import type {
-  TeamTaskId, TeamTaskView as TeamTask, TeamView,
+  RoomFollowFrame, RoomRemoteView, TeamTaskId, TeamTaskView as TeamTask, TeamView,
 } from '@deepseek-ai/dsh-experimental-agent-team/client'
 import { makeTranslate, RemoteError } from '@deepseek-ai/dsh-client-test-runtime'
 import { zh as commonZh } from '@deepseek-ai/dsh-client-locale/src/locales/zh.ts'
@@ -76,20 +76,171 @@ function props(actions: TeamActionInjected, sessionId: SessionId = SESSION): Tea
   } as unknown as TeamActionProps
 }
 
+const room: RoomRemoteView = {
+  enabled: true,
+  participants: view.members.map(member => ({ id: member.id, name: member.name, status: member.status })),
+  chair: 'lead',
+  messages: [{ author: 'worker', text: 'the cache serves stale reads' }],
+  proposals: [{
+    id: 'proposal-1' as RoomRemoteView['proposals'][number]['id'],
+    revision: 1,
+    proposerName: 'lead',
+    statement: 'Adopt a global mutable cache with no invalidation.',
+    phase: 'rejected',
+    requiredApprovals: 1,
+    approvals: [],
+    rejections: ['worker'],
+    abstentions: [],
+    awaiting: [],
+    stalled: [],
+    standings: [],
+  }],
+}
+
 function actions(overrides: Partial<TeamActionInjected> = {}): TeamActionInjected {
   return {
     load: () => Promise.resolve({ ok: true, value: view }),
+    loadRoom: () => Promise.resolve({ ok: true, value: room }),
     createTask: () => Promise.resolve(taskSuccess({ ...task, id: TASK_2, subject: 'New task' })),
     updateTask: () => Promise.resolve({
       ok: true,
       value: { ok: true, value: { ...task, revision: 2 } },
     }),
     openTeammate: () => Promise.resolve(),
+    followRoom: () => new Promise<void>(() => {}),
     ...overrides,
   }
 }
 
 describe('TeamAction', () => {
+
+  it('omits the room section entirely when the composition has no room', async () => {
+    const disabled: RoomRemoteView = { enabled: false, participants: [], chair: 'lead', messages: [], proposals: [] }
+    render(<TeamAction {...props(actions({ loadRoom: () => Promise.resolve({ ok: true, value: disabled }) }))} />)
+    fireEvent.click(screen.getByRole('button', { name: /Agent Team/u }))
+
+    expect(await screen.findByText('Implement runtime')).toBeTruthy()
+    // A deployment without a room shows the roster and tasks, not an empty room.
+    expect(screen.queryByText(zh.transcript)).toBeNull()
+    expect(screen.queryByText(zh.noTranscript)).toBeNull()
+  })
+
+  it('labels every decision phase the room can report', async () => {
+    const phases: RoomRemoteView['proposals'] = (['open', 'accepted', 'escalated'] as const).map(phase => ({
+      ...room.proposals[0]!,
+      id: `proposal-${phase}` as RoomRemoteView['proposals'][number]['id'],
+      phase,
+    }))
+    render(<TeamAction {...props(actions({
+      loadRoom: () => Promise.resolve({ ok: true, value: { ...room, proposals: phases } }),
+    }))} />)
+    fireEvent.click(screen.getByRole('button', { name: /Agent Team/u }))
+
+    expect(await screen.findByText(zh['phase.open'])).toBeTruthy()
+    expect(screen.getByText(zh['phase.accepted'])).toBeTruthy()
+    expect(screen.getByText(zh['phase.escalated'])).toBeTruthy()
+  })
+
+  it('renders the room transcript and each decision with its recorded votes', async () => {
+    render(<TeamAction {...props(actions())} />)
+    fireEvent.click(screen.getByRole('button', { name: /Agent Team/u }))
+
+    expect(await screen.findByText('the cache serves stale reads')).toBeTruthy()
+    expect(screen.getByText('Adopt a global mutable cache with no invalidation.')).toBeTruthy()
+    expect(screen.getByText('proposal-1')).toBeTruthy()
+    expect(screen.getByText(zh.revision)).toBeTruthy()
+    expect(screen.getByText(zh['phase.rejected'])).toBeTruthy()
+    expect(screen.getByText(`${zh['votes.rejections']}: worker`)).toBeTruthy()
+    expect(screen.getByText(`${zh['votes.approvals']}: ${zh.none}`)).toBeTruthy()
+    // A settled decision awaits nobody, so the panel says so instead of naming
+    // reviewers who can no longer change the outcome.
+    expect(screen.getByText(`${zh['votes.awaiting']}: ${zh.none}`)).toBeTruthy()
+    expect(screen.getByText(`${zh.room} · ${zh.chair}: lead`)).toBeTruthy()
+  })
+
+  it('shows why each reviewer stood where it did', async () => {
+    const debated: RoomRemoteView = {
+      ...room,
+      proposals: [{
+        ...room.proposals[0]!,
+        phase: 'rejected',
+        standings: [{ reviewer: 'worker', verdict: 'reject', reason: 'the cache never invalidates' }],
+      }],
+    }
+    render(<TeamAction {...props(actions({
+      loadRoom: () => Promise.resolve({ ok: true, value: debated }),
+    }))} />)
+    fireEvent.click(screen.getByRole('button', { name: /Agent Team/u }))
+
+    expect(await screen.findByText(`worker · ${zh['verdict.reject']}`)).toBeTruthy()
+    expect(screen.getByText('the cache never invalidates')).toBeTruthy()
+  })
+
+  it('shows a participant streaming live, then its committed utterance', async () => {
+    let emit: ((frame: RoomFollowFrame) => void) | undefined
+    const followRoom = (_sessionId: SessionId, _signal: AbortSignal, frame: (next: RoomFollowFrame) => void) => {
+      emit = frame
+      return new Promise<void>(() => {})
+    }
+    render(<TeamAction {...props(actions({ followRoom }))} />)
+    fireEvent.click(screen.getByRole('button', { name: /Agent Team/u }))
+    await screen.findByText('the cache serves stale reads')
+    await waitFor(() => { expect(emit).toBeDefined() })
+
+    act(() => { emit?.({ type: 'stream', participant: 'worker', delta: 'stale reads are' }) })
+    expect(await screen.findByText('stale reads are')).toBeTruthy()
+
+    // A committed change republishes the whole view, so the live text yields to
+    // the durable transcript entry.
+    act(() => {
+      emit?.({
+        type: 'view',
+        view: { ...room, messages: [...room.messages, { author: 'worker', text: 'stale reads are a bug' }] },
+      })
+    })
+    expect(await screen.findByText('stale reads are a bug')).toBeTruthy()
+    expect(screen.queryByText('stale reads are')).toBeNull()
+  })
+
+  it('names the reviewers that went silent on an escalated decision', async () => {
+    const escalated: RoomRemoteView = {
+      ...room,
+      proposals: [{ ...room.proposals[0]!, phase: 'escalated', stalled: ['worker'] }],
+    }
+    render(<TeamAction {...props(actions({
+      loadRoom: () => Promise.resolve({ ok: true, value: escalated }),
+    }))} />)
+    fireEvent.click(screen.getByRole('button', { name: /Agent Team/u }))
+
+    expect(await screen.findByText(`${zh['votes.stalled']}: worker`)).toBeTruthy()
+  })
+
+  it('claims no silent reviewer while a decision is still being answered', async () => {
+    render(<TeamAction {...props(actions())} />)
+    fireEvent.click(screen.getByRole('button', { name: /Agent Team/u }))
+
+    await screen.findByText('proposal-1')
+    expect(screen.queryByText(new RegExp(zh['votes.stalled'], 'u'))).toBeNull()
+  })
+
+  it('reports an empty room without inventing transcript or decisions', async () => {
+    const empty: RoomRemoteView = { enabled: true, participants: [], chair: 'lead', messages: [], proposals: [] }
+    render(<TeamAction {...props(actions({ loadRoom: () => Promise.resolve({ ok: true, value: empty }) }))} />)
+    fireEvent.click(screen.getByRole('button', { name: /Agent Team/u }))
+
+    expect(await screen.findByText(zh.noTranscript)).toBeTruthy()
+    expect(screen.getByText(zh.noDecisions)).toBeTruthy()
+  })
+
+  it('surfaces a room load failure beside the roster', async () => {
+    render(<TeamAction {...props(actions({
+      loadRoom: () => Promise.resolve(remoteFailure('room unavailable')),
+    }))} />)
+    fireEvent.click(screen.getByRole('button', { name: /Agent Team/u }))
+
+    expect(await screen.findByText(/room unavailable/u)).toBeTruthy()
+    expect(screen.getByText('Implement runtime')).toBeTruthy()
+  })
   it('ignores a stale Team load after the conversation switches sessions', async () => {
     const nextSession = 'next-lead' as SessionId
     const firstLoad = Promise.withResolvers<{ ok: true; value: TeamView }>()
@@ -170,13 +321,13 @@ describe('TeamAction', () => {
     await screen.findByText('Implement runtime')
 
     fireEvent.click(screen.getByRole('button', { name: zh.refresh }))
-    fireEvent.click(screen.getByRole('button', { name: /完成/u }))
+    fireEvent.click(screen.getByRole('button', { name: /提交验证/u }))
     expect(await screen.findByRole('button', { name: /重开/u })).toBeTruthy()
 
     stale.resolve({ ok: true, value: view })
     await Promise.resolve()
     expect(screen.getByRole('button', { name: /重开/u })).toBeTruthy()
-    expect(screen.queryByRole('button', { name: /完成/u })).toBeNull()
+    expect(screen.queryByRole('button', { name: /提交验证/u })).toBeNull()
   })
 
   it('keeps a created task newer than an in-flight refresh', async () => {
@@ -217,7 +368,7 @@ describe('TeamAction', () => {
     fireEvent.click(screen.getByRole('button', { name: /Agent Team/u }))
     await screen.findByText('Implement runtime')
     fireEvent.click(screen.getByRole('button', { name: zh.refresh }))
-    fireEvent.click(screen.getByRole('button', { name: /完成/u }))
+    fireEvent.click(screen.getByRole('button', { name: /提交验证/u }))
     expect(await screen.findByText('task rejected (team-rejected)')).toBeTruthy()
     staleTask.resolve({ ok: true, value: view })
     await Promise.resolve()
@@ -264,7 +415,7 @@ describe('TeamAction', () => {
     fireEvent.click(save)
     await waitFor(() => { expect(save.disabled).toBe(true) })
 
-    const complete = screen.getByRole<HTMLButtonElement>('button', { name: /完成/u })
+    const complete = screen.getByRole<HTMLButtonElement>('button', { name: /提交验证/u })
     expect(complete.disabled).toBe(false)
     fireEvent.click(complete)
     expect(await screen.findByRole('button', { name: /重开/u })).toBeTruthy()
@@ -298,7 +449,7 @@ describe('TeamAction', () => {
     }))} />)
     fireEvent.click(screen.getByRole('button', { name: /Agent Team/u }))
     await screen.findByText('old warning')
-    fireEvent.click(screen.getAllByRole('button', { name: /完成/u })[0]!)
+    fireEvent.click(screen.getAllByRole('button', { name: /提交验证/u })[0]!)
 
     expect(await screen.findByText('derived warning refreshed')).toBeTruthy()
     expect(screen.queryByText('old warning')).toBeNull()
@@ -354,8 +505,15 @@ describe('TeamAction', () => {
         case 'set_dependencies':
           current = { ...current, revision, blockedBy: input.blockedBy ?? [] }
           break
-        case 'complete':
-          current = { ...current, revision, status: 'completed' }
+        case 'submit':
+          // The panel hands work to a peer; this fake board applies the verdict
+          // in the same revision so the lifecycle keeps advancing.
+          current = {
+            ...current,
+            revision,
+            status: 'completed',
+            verification: { submittedRevision: revision, verifierName: 'worker', verdict: 'approved' },
+          }
           break
         case 'reopen': {
           const { ownerName: _ownerName, ...unowned } = current
@@ -398,7 +556,7 @@ describe('TeamAction', () => {
       writeScopes: ['src/runtime'],
     })
 
-    fireEvent.click(screen.getByRole('button', { name: /完成/u }))
+    fireEvent.click(screen.getByRole('button', { name: /提交验证/u }))
     fireEvent.click(await screen.findByRole('button', { name: /重开/u }))
     await waitFor(() => {
       expect(screen.queryByRole('button', { name: /重开/u })).toBeNull()
@@ -412,10 +570,60 @@ describe('TeamAction', () => {
         ['reassign', 1],
         ['edit', 2],
         ['set_dependencies', 3],
-        ['complete', 4],
+        ['submit', 4],
         ['reopen', 5],
         ['delete', 6],
       ])
+  })
+
+  it('shows a submitted task awaiting its peer verdict', async () => {
+    const verifying = {
+      ...view,
+      tasks: [{
+        ...task,
+        revision: 2,
+        status: 'verifying' as const,
+        verification: { submittedRevision: 2, verifierName: 'worker', verdict: 'rejected' as const, reason: 'the cache never invalidates' },
+      }],
+    }
+    render(<TeamAction {...props(actions({ load: () => Promise.resolve({ ok: true, value: verifying }) }))} />)
+    fireEvent.click(screen.getByRole('button', { name: /Agent Team/u }))
+
+    expect(await screen.findByText(`${zh.verification}: worker · ${zh['verdict.reject']} — the cache never invalidates`)).toBeTruthy()
+    expect(screen.getByText(zh['status.verifying'])).toBeTruthy()
+    expect(screen.getByText(zh['status.verifying'])).toBeTruthy()
+    expect(screen.queryByRole('button', { name: /提交验证/u })).toBeNull()
+  })
+
+  it('verifies a submitted task with the reason the verifier writes', async () => {
+    const verifying = {
+      ...view,
+      tasks: [{ ...task, revision: 2, status: 'verifying' as const, verification: { submittedRevision: 2 } }],
+    }
+    const updateTask = vi.fn(() => Promise.resolve(taskSuccess({ ...task, revision: 3, status: 'completed' })))
+    render(<TeamAction {...props(actions({
+      load: () => Promise.resolve({ ok: true, value: verifying }),
+      updateTask,
+    }))} />)
+    fireEvent.click(screen.getByRole('button', { name: /Agent Team/u }))
+    await screen.findByText(zh['status.verifying'])
+
+    fireEvent.click(screen.getByRole('button', { name: new RegExp(zh.verify, 'u') }))
+    // A verdict without its objection never reaches the Host.
+    fireEvent.click(screen.getByRole('button', { name: new RegExp(zh['verdict.approve'], 'u') }))
+    expect(await screen.findByText(zh['verification.reasonRequired'])).toBeTruthy()
+    expect(updateTask).not.toHaveBeenCalled()
+
+    fireEvent.change(screen.getByPlaceholderText(zh['verification.reason']), {
+      target: { value: 'the cache bounds are enforced' },
+    })
+    fireEvent.click(screen.getByRole('button', { name: new RegExp(zh['verdict.approve'], 'u') }))
+    await waitFor(() => { expect(updateTask).toHaveBeenCalledTimes(1) })
+    expect(vi.mocked(updateTask).mock.calls[0]?.[1]).toMatchObject({
+      action: 'verify',
+      verdict: 'approved',
+      reason: 'the cache bounds are enforced',
+    })
   })
 
   it('reloads and warns instead of retrying a stale task mutation', async () => {
@@ -426,7 +634,7 @@ describe('TeamAction', () => {
     render(<TeamAction {...props(actions({ load, updateTask }))} />)
     fireEvent.click(screen.getByRole('button', { name: /Agent Team/u }))
     await screen.findByText('Implement runtime')
-    fireEvent.click(screen.getByRole('button', { name: /完成/u }))
+    fireEvent.click(screen.getByRole('button', { name: /提交验证/u }))
     expect(await screen.findByText(zh.conflict)).toBeTruthy()
     expect(load).toHaveBeenCalledTimes(2)
     expect(updateTask).toHaveBeenCalledTimes(1)
@@ -442,7 +650,7 @@ describe('TeamAction', () => {
     }))} />)
     fireEvent.click(screen.getByRole('button', { name: /Agent Team/u }))
     await screen.findByText('Implement runtime')
-    fireEvent.click(screen.getByRole('button', { name: /完成/u }))
+    fireEvent.click(screen.getByRole('button', { name: /提交验证/u }))
     expect(await screen.findByText('task reload failed (gateway/internal)')).toBeTruthy()
     expect(screen.queryByText(zh.conflict)).toBeNull()
     first.unmount()
@@ -554,7 +762,7 @@ describe('TeamAction', () => {
     const rendered = render(<TeamAction {...props(actions({ updateTask: () => pending.promise }))} />)
     fireEvent.click(screen.getByRole('button', { name: /Agent Team/u }))
     await screen.findByText('Implement runtime')
-    fireEvent.click(screen.getByRole('button', { name: /完成/u }))
+    fireEvent.click(screen.getByRole('button', { name: /提交验证/u }))
     rendered.rerender(<TeamAction {...props(actions(), 'next-session' as SessionId)} />)
     pending.resolve(taskSuccess({ ...task, revision: 2, status: 'completed' }))
     await Promise.resolve()
@@ -566,7 +774,7 @@ describe('TeamAction', () => {
     }))} />)
     fireEvent.click(screen.getByRole('button', { name: /Agent Team/u }))
     await screen.findByText('Implement runtime')
-    fireEvent.click(screen.getByRole('button', { name: /完成/u }))
+    fireEvent.click(screen.getByRole('button', { name: /提交验证/u }))
     expect(await screen.findByText('update failed (team-rejected)')).toBeTruthy()
   })
 
@@ -581,7 +789,7 @@ describe('TeamAction', () => {
     }))} />)
     fireEvent.click(screen.getByRole('button', { name: /Agent Team/u }))
     await screen.findByText('Implement runtime')
-    fireEvent.click(screen.getByRole('button', { name: /完成/u }))
+    fireEvent.click(screen.getByRole('button', { name: /提交验证/u }))
     await waitFor(() => { expect(load).toHaveBeenCalledTimes(2) })
 
     rendered.rerender(<TeamAction {...props(actions(), 'next-session' as SessionId)} />)
@@ -602,7 +810,7 @@ describe('TeamAction', () => {
     }))} />)
     fireEvent.click(screen.getByRole('button', { name: /Agent Team/u }))
     await screen.findByText('Implement runtime')
-    fireEvent.click(screen.getByRole('button', { name: /完成/u }))
+    fireEvent.click(screen.getByRole('button', { name: /提交验证/u }))
     await waitFor(() => { expect(load).toHaveBeenCalledTimes(2) })
 
     rendered.rerender(<TeamAction {...props(actions(), 'next-session' as SessionId)} />)

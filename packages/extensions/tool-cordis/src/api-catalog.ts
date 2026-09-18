@@ -417,10 +417,52 @@ export const SERVICE_API: readonly ServiceApiEntry[] = [
         returns: 'Team membership, or undefined for non-Team subagents and stale identities.',
       },
       {
+        signature: 'async roomPrompt(caller: Agent, request: RoomPromptRequest): Promise<RoomPromptResult>',
+        description: 'Give one room participant the floor, carrying the conversation it has not seen.',
+        parameters: [{ name: 'caller', description: 'exact live Team member granting the floor.' }, { name: 'request', description: 'target name, instruction, and cancellation.' }],
+        returns: 'durable message identity and immediate-delivery observation.',
+      },
+      {
+        signature: 'async roomPropose(caller: Agent, request: ProposeRoomDecisionRequest): Promise<RoomProposalView>',
+        description: 'Put one collective decision to the room and ask every eligible reviewer to settle it.',
+        parameters: [{ name: 'caller', description: 'exact live Team member proposing the decision.' }, { name: 'request', description: 'statement, optional superseded decision, and cancellation.' }],
+        returns: 'the new revision with its quorum arithmetic.',
+      },
+      {
+        signature: 'async roomReview(caller: Agent, request: ReviewRoomDecisionRequest): Promise<RoomProposalView>',
+        description: 'Record one participant\'s standing on one decision revision.',
+        parameters: [{ name: 'caller', description: 'exact live Team member reviewing the decision.' }, { name: 'request', description: 'decision identity, revision, verdict, reason, and cancellation.' }],
+        returns: 'the decision with its recomputed quorum arithmetic.',
+      },
+      {
+        signature: 'async roomEscalate(caller: Agent, request: EscalateRoomDecisionRequest): Promise<RoomProposalView>',
+        description: 'Hand one unresolved decision to the human.',
+        parameters: [{ name: 'caller', description: 'exact live Team member escalating the decision.' }, { name: 'request', description: 'decision identity, reason, and cancellation.' }],
+        returns: 'the escalated decision.',
+      },
+      {
+        signature: 'roomView(caller: Agent): RoomView',
+        description: 'Read the room roster, transcript, and decision board.',
+        parameters: [{ name: 'caller', description: 'exact live Team member reading the room.' }],
+        returns: 'detached current room views.',
+      },
+      {
         signature: '@Remote(\'view\') remoteView(agent: Agent): TeamView',
         description: 'Read the current roster and non-deleted task board through the generated Remote API.',
         parameters: [{ name: 'agent', description: 'exact live Team member used as the authority credential.' }],
         returns: 'detached current roster and task views.',
+      },
+      {
+        signature: '@Remote(\'room\') remoteRoom(agent: Agent): RoomRemoteView',
+        description: 'Read the current room through the generated Remote API.',
+        parameters: [{ name: 'agent', description: 'exact live Team member used as the authority credential.' }],
+        returns: 'the room roster, rendered transcript, and decision board.',
+      },
+      {
+        signature: '@Remote({ mode: \'stream\' }) async *roomStream(agent: Agent, signal: AbortSignal): AsyncIterable<RoomFollowFrame>',
+        description: 'Follow one room through the generated Remote API.',
+        parameters: [{ name: 'agent', description: 'exact live Team member used as the authority credential.' }, { name: 'signal', description: 'cancellation owned by the Remote stream carrier.' }],
+        returns: 'a complete view first, then a view after every committed room change and a frame for every text chunk a participant streams.',
       },
       {
         signature: '@Remote(\'createTask\') remoteCreateTask(agent: Agent, request: CreateTeamTaskRequest): Promise<TeamTaskMutationResult>',
@@ -3761,6 +3803,22 @@ export const EVENT_API: readonly EventApiEntry[] = [
     parameters: [{ name: 'progress', description: 'the installation\'s request id and phase.' }],
   },
   {
+    name: 'room/stream',
+    mode: 'emit',
+    signature: '\'room/stream\'(payload: RoomStreamFrame): void',
+    summary: 'One room participant produced a live assistant stream frame.',
+    description: 'One room participant produced a live assistant stream frame. This is a process-local observation of an in-flight turn; the durable record is the participant\'s own `assistant/message` and the room transcript.',
+    parameters: [{ name: 'payload', description: '.frame - The participant\'s live stream frame.' }],
+  },
+  {
+    name: 'room/updated',
+    mode: 'emit',
+    signature: '\'room/updated\'(payload: { readonly teamId: TeamId }): void',
+    summary: 'One room committed a change to its own log: a transcript entry, a decision, a revision, a review, or a deadline record.',
+    description: 'One room committed a change to its own log: a transcript entry, a decision, a revision, a review, or a deadline record. A live reader re-reads the room after it, and the durable record is the appended event.',
+    parameters: [{ name: 'payload', description: '.teamId - Team identity of the room that changed.' }],
+  },
+  {
     name: 'session-telemetry/record',
     mode: 'waterfall',
     signature: '\'session-telemetry/record\'(record: SessionTelemetryRecord, next: () => SessionTelemetryRecord): SessionTelemetryRecord',
@@ -4665,6 +4723,10 @@ export const TYPE_API: readonly TypeApiEntry[] = [
     declaration: 'export interface EpochHeader {\n    config: LlmCallConfig;\n    adapterDefaults?: LlmCallConfigAdapterDefaults;\n    tools?: ToolSchema[];\n}',
   },
   {
+    name: 'EscalateRoomDecisionRequest',
+    declaration: 'export interface EscalateRoomDecisionRequest {\n    readonly proposalId: RoomProposalId;\n    readonly reason: string;\n    readonly signal: AbortSignal;\n}',
+  },
+  {
     name: 'FeedbackCategory',
     declaration: 'export type FeedbackCategory = \'task-result\' | \'instruction-following\' | \'product-interaction\' | \'service-stability\' | \'resource-cost\' | \'security-privacy-permission\' | \'other\';',
   },
@@ -5417,6 +5479,10 @@ export const TYPE_API: readonly TypeApiEntry[] = [
     declaration: 'export type PromptSectionOrderName = keyof typeof SECTION_ORDERS;',
   },
   {
+    name: 'ProposeRoomDecisionRequest',
+    declaration: 'export interface ProposeRoomDecisionRequest {\n    readonly statement: string;\n    readonly supersedes?: RoomProposalId;\n    readonly signal: AbortSignal;\n}',
+  },
+  {
     name: 'ProviderRequestId',
     declaration: 'export type ProviderRequestId = Branded<\'ProviderRequestId\'>;',
   },
@@ -5575,6 +5641,70 @@ export const TYPE_API: readonly TypeApiEntry[] = [
   {
     name: 'ResumeAgentOptions',
     declaration: 'export interface ResumeAgentOptions {\n    readonly resumeSessionId: SessionId;\n    readonly parentAgent?: Agent;\n    readonly agentOptions?: AgentOptions;\n    readonly signal?: AbortSignal;\n    readonly setup?: AgentSetup;\n}',
+  },
+  {
+    name: 'ReviewRoomDecisionRequest',
+    declaration: 'export interface ReviewRoomDecisionRequest {\n    readonly proposalId: RoomProposalId;\n    readonly proposalRevision: number;\n    readonly verdict: RoomReviewVerdict;\n    readonly reason: string;\n    readonly signal: AbortSignal;\n}',
+  },
+  {
+    name: 'RoomFollowFrame',
+    declaration: 'export type RoomFollowFrame = {\n    readonly type: \'view\';\n    readonly view: RoomRemoteView;\n} | {\n    readonly type: \'stream\';\n    readonly participant: string;\n    readonly delta: string;\n};',
+  },
+  {
+    name: 'RoomMessageId',
+    declaration: 'export type RoomMessageId = Branded<\'RoomMessageId\'>;',
+  },
+  {
+    name: 'RoomMessageView',
+    declaration: 'export interface RoomMessageView {\n    readonly id: RoomMessageId;\n    readonly authorName: string;\n    readonly content: ContentBlock[];\n}',
+  },
+  {
+    name: 'RoomParticipantView',
+    declaration: 'export interface RoomParticipantView {\n    readonly id: SessionId;\n    readonly name: string;\n    readonly status: TeamMemberView[\'status\'];\n    readonly model?: string;\n}',
+  },
+  {
+    name: 'RoomPromptRequest',
+    declaration: 'export interface RoomPromptRequest {\n    readonly target: string;\n    readonly instruction: ContentBlock[];\n    readonly signal: AbortSignal;\n}',
+  },
+  {
+    name: 'RoomPromptResult',
+    declaration: 'export interface RoomPromptResult {\n    readonly messageId: TeamMessageId;\n    readonly status: \'accepted\' | \'queued\';\n}',
+  },
+  {
+    name: 'RoomProposalId',
+    declaration: 'export type RoomProposalId = Branded<\'RoomProposalId\'>;',
+  },
+  {
+    name: 'RoomProposalPhase',
+    declaration: 'export type RoomProposalPhase = \'open\' | \'accepted\' | \'rejected\' | \'escalated\';',
+  },
+  {
+    name: 'RoomProposalView',
+    declaration: 'export interface RoomProposalView {\n    readonly id: RoomProposalId;\n    readonly revision: number;\n    readonly proposerName: string;\n    readonly statement: string;\n    readonly phase: RoomProposalPhase;\n    readonly requiredApprovals: number;\n    readonly approvals: string[];\n    readonly rejections: string[];\n    readonly abstentions: string[];\n    readonly awaiting: string[];\n    readonly stalled: string[];\n    readonly standings: RoomStandingView[];\n}',
+  },
+  {
+    name: 'RoomRemoteView',
+    declaration: 'export interface RoomRemoteView {\n    readonly enabled: boolean;\n    readonly participants: RoomParticipantView[];\n    readonly chair: string;\n    readonly messages: RoomTranscriptEntry[];\n    readonly proposals: RoomProposalView[];\n}',
+  },
+  {
+    name: 'RoomReviewVerdict',
+    declaration: 'export type RoomReviewVerdict = \'approve\' | \'reject\' | \'abstain\';',
+  },
+  {
+    name: 'RoomStandingView',
+    declaration: 'export interface RoomStandingView {\n    readonly reviewer: string;\n    readonly verdict: RoomReviewVerdict;\n    readonly reason: string;\n}',
+  },
+  {
+    name: 'RoomStreamFrame',
+    declaration: 'export interface RoomStreamFrame {\n    readonly teamId: TeamId;\n    readonly participantId: SessionId;\n    readonly participantName: string;\n    readonly frame: AssistantStreamFrame;\n}',
+  },
+  {
+    name: 'RoomTranscriptEntry',
+    declaration: 'export interface RoomTranscriptEntry {\n    readonly author: string;\n    readonly text: string;\n}',
+  },
+  {
+    name: 'RoomView',
+    declaration: 'export interface RoomView {\n    readonly enabled: boolean;\n    readonly participants: RoomParticipantView[];\n    readonly chair: string;\n    readonly messages: RoomMessageView[];\n    readonly proposals: RoomProposalView[];\n}',
   },
   {
     name: 'RpcId',
@@ -6306,7 +6436,7 @@ export const TYPE_API: readonly TypeApiEntry[] = [
   },
   {
     name: 'SpawnTeammateRequest',
-    declaration: 'export interface SpawnTeammateRequest {\n    readonly name: string;\n    readonly description: string;\n    readonly prompt: ContentBlock[];\n    readonly context: \'fresh\' | \'fork\';\n    readonly provider: string;\n    readonly signal: AbortSignal;\n}',
+    declaration: 'export interface SpawnTeammateRequest {\n    readonly name: string;\n    readonly description: string;\n    readonly prompt: ContentBlock[];\n    readonly context: \'fresh\' | \'fork\';\n    readonly provider: string;\n    readonly agentOptions?: AgentOptions;\n    readonly signal: AbortSignal;\n}',
   },
   {
     name: 'SpawnTeammateResult',
@@ -6550,7 +6680,7 @@ export const TYPE_API: readonly TypeApiEntry[] = [
   },
   {
     name: 'TeamTaskAction',
-    declaration: 'export type TeamTaskAction = \'claim\' | \'release\' | \'edit\' | \'set_dependencies\' | \'complete\' | \'reopen\' | \'reassign\' | \'delete\';',
+    declaration: 'export type TeamTaskAction = \'claim\' | \'release\' | \'edit\' | \'set_dependencies\' | \'submit\' | \'verify\' | \'reopen\' | \'reassign\' | \'delete\';',
   },
   {
     name: 'TeamTaskId',
@@ -6565,8 +6695,16 @@ export const TYPE_API: readonly TypeApiEntry[] = [
     declaration: 'export type TeamTaskStatus = \'pending\' | \'in_progress\' | \'completed\' | \'deleted\';',
   },
   {
+    name: 'TeamTaskVerificationView',
+    declaration: 'export interface TeamTaskVerificationView {\n    readonly submittedRevision: number;\n    readonly verifierName?: string;\n    readonly verdict?: \'approved\' | \'rejected\';\n    readonly reason?: string;\n}',
+  },
+  {
     name: 'TeamTaskView',
-    declaration: 'export interface TeamTaskView {\n    readonly id: TeamTaskId;\n    readonly revision: number;\n    readonly subject: string;\n    readonly description: string;\n    readonly status: TeamTaskStatus;\n    readonly blockedBy: TeamTaskId[];\n    readonly writeScopes: string[];\n    readonly ownerName?: string;\n    readonly ready: boolean;\n    readonly writeScopeWarnings: string[];\n}',
+    declaration: 'export interface TeamTaskView {\n    readonly id: TeamTaskId;\n    readonly revision: number;\n    readonly subject: string;\n    readonly description: string;\n    readonly status: TeamTaskViewStatus;\n    readonly blockedBy: TeamTaskId[];\n    readonly writeScopes: string[];\n    readonly ownerName?: string;\n    readonly ready: boolean;\n    readonly writeScopeWarnings: string[];\n    readonly verification?: TeamTaskVerificationView;\n}',
+  },
+  {
+    name: 'TeamTaskViewStatus',
+    declaration: 'export type TeamTaskViewStatus = TeamTaskStatus | \'verifying\';',
   },
   {
     name: 'TeamView',
@@ -6922,7 +7060,7 @@ export const TYPE_API: readonly TypeApiEntry[] = [
   },
   {
     name: 'UpdateTeamTaskRequest',
-    declaration: 'export interface UpdateTeamTaskRequest {\n    readonly taskId: TeamTaskId;\n    readonly expectedRevision: number;\n    readonly action: TeamTaskAction;\n    readonly subject?: string;\n    readonly description?: string;\n    readonly blockedBy?: readonly TeamTaskId[];\n    readonly writeScopes?: readonly string[];\n    readonly owner?: string;\n}',
+    declaration: 'export interface UpdateTeamTaskRequest {\n    readonly taskId: TeamTaskId;\n    readonly expectedRevision: number;\n    readonly action: TeamTaskAction;\n    readonly subject?: string;\n    readonly description?: string;\n    readonly blockedBy?: readonly TeamTaskId[];\n    readonly writeScopes?: readonly string[];\n    readonly owner?: string;\n    readonly verdict?: \'approved\' | \'rejected\';\n    readonly reason?: string;\n}',
   },
   {
     name: 'UserMessage',

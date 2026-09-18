@@ -1,5 +1,6 @@
 /** Sign final native runtime files before the enclosing Desktop application is signed. */
 
+import { execFileSync } from 'node:child_process'
 import { createHash } from 'node:crypto'
 import { closeSync, openSync, readSync } from 'node:fs'
 import { join } from 'node:path'
@@ -26,6 +27,8 @@ function isMachO(path: string): boolean {
  */
 export async function signMacOSRuntime(root: string, appId: string, expected: MacOSSigningEnvironment): Promise<number> {
   const files = inventoryDesktopRuntime(root).map(file => file.path).filter(path => isMachO(join(root, path)))
+  // Local ad-hoc builds (DSH_ADHOC_SIGN=1) skip Developer ID signing for machines without certificates.
+  const adhoc = process.env.DSH_ADHOC_SIGN === '1'
   let next = 0
   const workers = Array.from({ length: Math.min(4, files.length) }, async () => {
     for (;;) {
@@ -34,6 +37,15 @@ export async function signMacOSRuntime(root: string, appId: string, expected: Ma
       const identifier = `${appId}.runtime.${createHash('sha256').update(path).digest('hex')}`
       const entitlements = path === 'dependencies/node/bin/node'
         ? join(import.meta.dirname, 'node-entitlements.plist') : undefined
+      if (adhoc) {
+        execFileSync('/usr/bin/codesign', [
+          '--force', '--sign', '-', '--identifier', identifier,
+          ...(entitlements === undefined ? [] : ['--entitlements', entitlements]),
+          join(root, path),
+        ], { stdio: 'pipe' })
+        execFileSync('/usr/bin/codesign', ['--verify', '--strict', join(root, path)], { stdio: 'pipe' })
+        continue
+      }
       await signMacOSRuntimeCode(join(root, path), identifier, expected, entitlements)
       verifyMacOSRuntimeCode(join(root, path), expected)
     }

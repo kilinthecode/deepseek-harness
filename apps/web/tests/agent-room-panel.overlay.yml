@@ -1,0 +1,40 @@
+# Equivalent to the room Host layer plus the Agent Teams Web layer over the
+# scaffold's stable base and Web bundles.
+# Experimental room profile layer. Apply after dsh-base so a Team roster can also
+# deliberate: the room transcript records attributed utterances, and collective
+# decisions settle only by recorded quorum.
+#
+# This layer keeps the ordinary Team delegation tools mounted, because a room
+# needs participants and the roster is what creates them.
+
+- insert:
+    - id: agent-team
+      name: '@deepseek-ai/dsh-experimental-agent-team'
+      config:
+        maxMembers: 8
+        maxTasks: 256
+        maxPendingMessagesPerMember: 64
+        maxMessageBytes: 65536
+        disposalTimeoutMs: 5000
+        roomEnabled: true
+        roomTranscriptWindow: 20
+        roomApprovalRatio: 0.5
+        roomMaxProposalRevisions: 4
+
+    - id: tool-agent-team
+      name: '@deepseek-ai/dsh-experimental-tool-agent-team'
+      config:
+        freshProvider: spawn
+        forkProvider: fork
+
+    - id: tool-agent-room
+      name: '@deepseek-ai/dsh-experimental-tool-agent-room'
+      config:
+        maxTranscriptEntries: 20
+
+# Experimental Agent Teams Web layer. Apply after dsh-web-app and the host-side
+# dsh-agent-team-profile so the browser mounts only when the Team service is present.
+
+- insert:
+    - id: ui-agent-team
+      name: '@deepseek-ai/dsh-experimental-client-ui-agent-team'

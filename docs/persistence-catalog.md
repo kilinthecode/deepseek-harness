@@ -48,6 +48,10 @@ The [format references](persistence-changes/historical-formats/README.md) cover 
 | `event:plan/mode` | event | `a7cf43ce7c2a4c038feed1885cd7a00d5c6ee2d90a7e0d56b46f78a3e1ca327f` | [`event:plan/mode`](#persistence-type-eventplanmode) |
 | `event:request/context` | event | `37cbc9cf06d494cfe5c67f078af1605eacb8e4c2c853e9e26455b73de0ee7ccf` | [`event:request/context`](#persistence-type-eventrequestcontext) |
 | `event:request/header` | event | `8ea13bcd983eab596dbfd41c5c2b62a0b318b71cd2a987a6fd752c6ced7e4489` | [`event:request/header`](#persistence-type-eventrequestheader) |
+| `event:room/message` | event | `507825910ef63ae620604d12af532191151e72d15c3b48ae45965f04d40c980b` | [`event:room/message`](#persistence-type-eventroommessage) |
+| `event:room/proposal` | event | `a0b9d7c5d336b2bfd4adf52ffc4ccae8a62ad0a6f09052510264afbef83cd1df` | [`event:room/proposal`](#persistence-type-eventroomproposal) |
+| `event:room/review` | event | `9555e80bbf3df9fdc0973071c50d0cf0d80b8378ccde5a53f22d29591c92559a` | [`event:room/review`](#persistence-type-eventroomreview) |
+| `event:room/review-timeout` | event | `dd3402428512758f330762d8ac118b4ea29aab3e5e299e1e40877664ea2e1a87` | [`event:room/review-timeout`](#persistence-type-eventroomreview-timeout) |
 | `event:sandbox/mode` | event | `516da4cdd6d2f1e5ce488e648578ca51f40e458f707b803e5b24de870e799415` | [`event:sandbox/mode`](#persistence-type-eventsandboxmode) |
 | `event:schedule/change` | event | `2a7f86849ae54b3398ee49661a757c4fcb59a6192b7036ee2ff514617e13fb42` | [`event:schedule/change`](#persistence-type-eventschedulechange) |
 | `event:session-log-deepseek/delivery-accepted` | event | `d63b8b8ffad9c02fd80c43a17df4f240c1fe8118ecca9de34f9d5871838ab5b9` | [`event:session-log-deepseek/delivery-accepted`](#persistence-type-eventsession-log-deepseekdelivery-accepted) |
@@ -63,7 +67,7 @@ The [format references](persistence-changes/historical-formats/README.md) cover 
 | `event:team/member` | event | `4fb59762612c3e3ac3a3bd4f84c9c148d3c3893bd422ba2b201cc039fabd49bc` | [`event:team/member`](#persistence-type-eventteammember) |
 | `event:team/message/delivered` | event | `48f9c19417a1abbedfa59f4667bba36b93ac2db407adf5e84cb3ba0de30942cb` | [`event:team/message/delivered`](#persistence-type-eventteammessagedelivered) |
 | `event:team/message/queued` | event | `443371ec07a03a82a0e93d93abca3e70b03bca55ba5b01d507030fcb66e8fbb4` | [`event:team/message/queued`](#persistence-type-eventteammessagequeued) |
-| `event:team/task` | event | `d595ec73b32b016a6055333c67a5d646032b22e672da1d4a09c5b1ae398a093a` | [`event:team/task`](#persistence-type-eventteamtask) |
+| `event:team/task` | event | `2ecebd9ca881ece7744b2ef2a6ad12b2f08c132eb2dadd8004a4357ce6a61b76` | [`event:team/task`](#persistence-type-eventteamtask) |
 | `event:todo/write` | event | `b978cff734e62143eb56c9125423ec275405eda969802d42aaf73ecb987d3b26` | [`event:todo/write`](#persistence-type-eventtodowrite) |
 | `event:tool-workflow/agent-end` | event | `babf9ee4d1af62bf6c3a8103737f7a5e4e78ce179be835ce05a38803e15884b7` | [`event:tool-workflow/agent-end`](#persistence-type-eventtool-workflowagent-end) |
 | `event:tool-workflow/agent-start` | event | `5f26a6c20b37632f8f57729d171c671def4683d994ac6257a8dffcd855101627` | [`event:tool-workflow/agent-start`](#persistence-type-eventtool-workflowagent-start) |
@@ -715,6 +719,60 @@ Source: [`packages/core/session/src/types.ts:382`](../packages/core/session/src/
 
 Source: [`packages/core/session/src/types.ts:370`](../packages/core/session/src/types.ts)
 
+### `room/*`
+
+<a id="roommessage--log-only"></a>
+
+#### `room/message` — log-only
+
+```ts persistence-catalog
+/** One attributed utterance appended to the shared room transcript. */
+'room/message': { version: 1; teamId: TeamId; message: RoomMessageSnapshot }
+```
+
+Types: [TeamId](subsystems/agent-team.md)
+
+Source: [`packages/experimental/agent-team/src/types.ts:496`](../packages/experimental/agent-team/src/types.ts)
+
+<a id="roomproposal--log-only"></a>
+
+#### `room/proposal` — log-only
+
+```ts persistence-catalog
+/** Whole collective-decision value, superseding any earlier revision. */
+'room/proposal': { version: 1; teamId: TeamId; proposal: RoomProposalSnapshot }
+```
+
+Types: [TeamId](subsystems/agent-team.md)
+
+Source: [`packages/experimental/agent-team/src/types.ts:498`](../packages/experimental/agent-team/src/types.ts)
+
+<a id="roomreview--log-only"></a>
+
+#### `room/review` — log-only
+
+```ts persistence-catalog
+/** One participant's appended standing on one proposal revision. */
+'room/review': { version: 1; teamId: TeamId; review: RoomReviewSnapshot }
+```
+
+Types: [TeamId](subsystems/agent-team.md)
+
+Source: [`packages/experimental/agent-team/src/types.ts:500`](../packages/experimental/agent-team/src/types.ts)
+
+<a id="roomreview-timeout--log-only"></a>
+
+#### `room/review-timeout` — log-only
+
+```ts persistence-catalog
+/** Durable record that one decision revision left reviewers unresponsive. */
+'room/review-timeout': { version: 1; teamId: TeamId; timeout: RoomReviewTimeoutSnapshot }
+```
+
+Types: [TeamId](subsystems/agent-team.md)
+
+Source: [`packages/experimental/agent-team/src/types.ts:502`](../packages/experimental/agent-team/src/types.ts)
+
 ### `sandbox/*`
 
 <a id="sandboxmode--log-only"></a>
@@ -952,7 +1010,7 @@ Source: [`packages/core/session/src/types.ts:310`](../packages/core/session/src/
 
 Types: [TeamId](subsystems/agent-team.md) · [TeamMemberSnapshot](subsystems/agent-team.md)
 
-Source: [`packages/experimental/agent-team/src/types.ts:221`](../packages/experimental/agent-team/src/types.ts)
+Source: [`packages/experimental/agent-team/src/types.ts:483`](../packages/experimental/agent-team/src/types.ts)
 
 <a id="teammessagedelivered--log-only"></a>
 
@@ -970,7 +1028,7 @@ Source: [`packages/experimental/agent-team/src/types.ts:221`](../packages/experi
 
 Types: [TeamId](subsystems/agent-team.md) · [TeamMessageId](subsystems/agent-team.md)
 
-Source: [`packages/experimental/agent-team/src/types.ts:227`](../packages/experimental/agent-team/src/types.ts)
+Source: [`packages/experimental/agent-team/src/types.ts:489`](../packages/experimental/agent-team/src/types.ts)
 
 <a id="teammessagequeued--log-only"></a>
 
@@ -983,7 +1041,7 @@ Source: [`packages/experimental/agent-team/src/types.ts:227`](../packages/experi
 
 Types: [TeamId](subsystems/agent-team.md) · [TeamMessageSnapshot](subsystems/agent-team.md)
 
-Source: [`packages/experimental/agent-team/src/types.ts:225`](../packages/experimental/agent-team/src/types.ts)
+Source: [`packages/experimental/agent-team/src/types.ts:487`](../packages/experimental/agent-team/src/types.ts)
 
 <a id="teamtask--log-only"></a>
 
@@ -996,7 +1054,7 @@ Source: [`packages/experimental/agent-team/src/types.ts:225`](../packages/experi
 
 Types: [TeamId](subsystems/agent-team.md) · [TeamTaskSnapshot](subsystems/agent-team.md)
 
-Source: [`packages/experimental/agent-team/src/types.ts:223`](../packages/experimental/agent-team/src/types.ts)
+Source: [`packages/experimental/agent-team/src/types.ts:485`](../packages/experimental/agent-team/src/types.ts)
 
 ### `todo/*`
 
@@ -1302,6 +1360,22 @@ SHA-256: `1e0b0b66b6f0c53fc72e52289d06b4708d776f1ca9df4c86a22bff621d403cf0`
 
 `"aborted"`
 
+<a id="persistence-type-abstain"></a>
+
+### `"abstain"`
+
+SHA-256: `5a87bc9aa679e925056607a5ff81d9c1769056511cc548db8503ea13556b42c9`
+
+`"abstain"`
+
+<a id="persistence-type-accepted"></a>
+
+### `"accepted"`
+
+SHA-256: `e479de5bf00c4f95dbe18327f509d054e41906f3f208c460d7687d2472c52e11`
+
+`"accepted"`
+
 <a id="persistence-type-active"></a>
 
 ### `"active"`
@@ -1397,6 +1471,22 @@ SHA-256: `378f90f9f6022a0991928a1eaf7991094ea1920fe89a9248358a1da106e1a970`
 SHA-256: `36d6a9a871d949ea4f3edd919d81d66aa69218bebef38899d2a1282c39420a1f`
 
 `"approval/policy"`
+
+<a id="persistence-type-approve"></a>
+
+### `"approve"`
+
+SHA-256: `7d5c693f1e920d28d61be94b771de8935b62893acf81644e2aa4567899736de0`
+
+`"approve"`
+
+<a id="persistence-type-approved"></a>
+
+### `"approved"`
+
+SHA-256: `a030aec1be14d3f9a13f6d51383bb6b6c5728a7a9b38c50c672183b89b751a93`
+
+`"approved"`
 
 <a id="persistence-type-ask"></a>
 
@@ -1693,6 +1783,14 @@ SHA-256: `ad22a5ca5bbaab2e1440779cd3648e85ddfc6f73b5207394eda699555cf31430`
 SHA-256: `a2be0f0cb59f0d4a06557d45847d1938aced238baa77a6da416e590b8b958553`
 
 `"error"`
+
+<a id="persistence-type-escalated"></a>
+
+### `"escalated"`
+
+SHA-256: `42d10eb6abdb2b771b3be4ab203eb564fe0ffc03b5f5d69ae3a746ed70cb0fad`
+
+`"escalated"`
 
 <a id="persistence-type-eventagent-presetselected"></a>
 
@@ -2116,7 +2214,7 @@ Sources: [`packages/llm/llm/src/assistant-stream.ts:21`](../packages/llm/llm/src
 
 | Property | Presence | Type |
 |---|---|---|
-| `dt` | required | [`SessionEventEnvelope[39].sourceEventSeqs`](#persistence-type-sessioneventenvelope39sourceeventseqs) |
+| `dt` | required | [`SessionEventEnvelope[43].sourceEventSeqs`](#persistence-type-sessioneventenvelope43sourceeventseqs) |
 | `index` | required | `number` |
 | `texts` | required | [`event:assistant/attempt.data.stream[0][0].texts`](#persistence-type-eventassistantattemptdatastream00texts) |
 | `time0` | required | `number` |
@@ -2140,7 +2238,7 @@ Sources: [`packages/llm/llm/src/assistant-stream.ts:28`](../packages/llm/llm/src
 
 | Property | Presence | Type |
 |---|---|---|
-| `dt` | required | [`SessionEventEnvelope[39].sourceEventSeqs`](#persistence-type-sessioneventenvelope39sourceeventseqs) |
+| `dt` | required | [`SessionEventEnvelope[43].sourceEventSeqs`](#persistence-type-sessioneventenvelope43sourceeventseqs) |
 | `index` | required | `number` |
 | `texts` | required | [`event:assistant/attempt.data.stream[0][0].texts`](#persistence-type-eventassistantattemptdatastream00texts) |
 | `time0` | required | `number` |
@@ -2157,7 +2255,7 @@ Sources: [`packages/llm/llm/src/assistant-stream.ts:35`](../packages/llm/llm/src
 | Property | Presence | Type |
 |---|---|---|
 | `args` | required | [`event:assistant/attempt.data.stream[0][0].texts`](#persistence-type-eventassistantattemptdatastream00texts) |
-| `dt` | required | [`SessionEventEnvelope[39].sourceEventSeqs`](#persistence-type-sessioneventenvelope39sourceeventseqs) |
+| `dt` | required | [`SessionEventEnvelope[43].sourceEventSeqs`](#persistence-type-sessioneventenvelope43sourceeventseqs) |
 | `id` | required | `string` |
 | `index` | required | `number` |
 | `name` | optional | `string` |
@@ -2515,7 +2613,7 @@ Sources: [`packages/compaction/compaction/src/types.ts:82`](../packages/compacti
 | Property | Presence | Type |
 |---|---|---|
 | `shadowedRange` | required | [`event:compaction/prune.data.shadowedRange`](#persistence-type-eventcompactionprunedatashadowedrange) |
-| `shadowedSeqs` | required | [`SessionEventEnvelope[39].sourceEventSeqs`](#persistence-type-sessioneventenvelope39sourceeventseqs) |
+| `shadowedSeqs` | required | [`SessionEventEnvelope[43].sourceEventSeqs`](#persistence-type-sessioneventenvelope43sourceeventseqs) |
 | `shadowedTokenCount` | required | `number` |
 
 <a id="persistence-type-eventcompactionprunedatashadowedrange"></a>
@@ -2599,7 +2697,7 @@ SHA-256: `9ff2ad8dddb836f75e8f6197fff2371323dfc396c3c6fb667e6e0b42fda79a5c`
 | `provider` | required | `string` |
 | `rawOutput` | required | [`event:agent/inbox/spliced.data.inserted[0].content`](#persistence-type-eventagentinboxspliceddatainserted0content) |
 | `shadowedRange` | required | [`event:compaction/prune.data.shadowedRange`](#persistence-type-eventcompactionprunedatashadowedrange) |
-| `shadowedSeqs` | required | [`SessionEventEnvelope[39].sourceEventSeqs`](#persistence-type-sessioneventenvelope39sourceeventseqs) |
+| `shadowedSeqs` | required | [`SessionEventEnvelope[43].sourceEventSeqs`](#persistence-type-sessioneventenvelope43sourceeventseqs) |
 | `shadowedTokenCount` | required | `number` |
 | `sourceCommandId` | optional | `string` |
 | `summary` | required | [`event:agent/inbox/spliced.data.inserted[0].content`](#persistence-type-eventagentinboxspliceddatainserted0content) |
@@ -2619,7 +2717,7 @@ SHA-256: `3aa261c8516b5c955ed12080e6257a56cbe513f6c9f0ac9274c12e96c196ebca`
 | `provider` | required | `string` |
 | `rawOutput` | optional | [`event:agent/inbox/spliced.data.inserted[0].content`](#persistence-type-eventagentinboxspliceddatainserted0content) |
 | `shadowedRange` | required | [`event:compaction/prune.data.shadowedRange`](#persistence-type-eventcompactionprunedatashadowedrange) |
-| `shadowedSeqs` | required | [`SessionEventEnvelope[39].sourceEventSeqs`](#persistence-type-sessioneventenvelope39sourceeventseqs) |
+| `shadowedSeqs` | required | [`SessionEventEnvelope[43].sourceEventSeqs`](#persistence-type-sessioneventenvelope43sourceeventseqs) |
 | `shadowedTokenCount` | required | `number` |
 | `sourceCommandId` | optional | `string` |
 | `summary` | required | [`event:agent/inbox/spliced.data.inserted[0].content`](#persistence-type-eventagentinboxspliceddatainserted0content) |
@@ -3039,6 +3137,118 @@ SHA-256: `0aa62ab51b36c0e64b134bd03ba8725d758744180a1a447da49beaad194f219f`
 |---|---|---|
 | [`string`] | index signature | `unknown` (opaque) |
 
+<a id="persistence-type-eventroommessage"></a>
+
+### `event:room/message`
+
+SHA-256: `507825910ef63ae620604d12af532191151e72d15c3b48ae45965f04d40c980b`
+
+| Property | Presence | Type |
+|---|---|---|
+| `data` | required | [`event:room/message.data`](#persistence-type-eventroommessagedata) |
+| `ignorable` | optional | `true` |
+| `seq` | required | `number` |
+| `time` | required | `number` |
+| `type` | required | `"room/message"` |
+
+<a id="persistence-type-eventroommessagedata"></a>
+
+### `event:room/message.data`
+
+SHA-256: `806604f33a547fe45fe17e80622dabc20a1ebf57c43ada794746758f90b04e66`
+
+Sources: [`packages/experimental/agent-team/src/types.ts:496`](../packages/experimental/agent-team/src/types.ts)
+
+| Property | Presence | Type |
+|---|---|---|
+| `message` | required | [`packages/experimental/agent-team/src/types.ts#RoomMessageSnapshot`](#persistence-type-packagesexperimentalagent-teamsrctypestsroommessagesnapshot) |
+| `teamId` | required | `string` |
+| `version` | required | `1` |
+
+<a id="persistence-type-eventroomproposal"></a>
+
+### `event:room/proposal`
+
+SHA-256: `a0b9d7c5d336b2bfd4adf52ffc4ccae8a62ad0a6f09052510264afbef83cd1df`
+
+| Property | Presence | Type |
+|---|---|---|
+| `data` | required | [`event:room/proposal.data`](#persistence-type-eventroomproposaldata) |
+| `ignorable` | optional | `true` |
+| `seq` | required | `number` |
+| `time` | required | `number` |
+| `type` | required | `"room/proposal"` |
+
+<a id="persistence-type-eventroomproposaldata"></a>
+
+### `event:room/proposal.data`
+
+SHA-256: `bb6ebb275973875ca63e5b0ed34fb255fc66ddedf4ad48b7d5c660ac61f6990c`
+
+Sources: [`packages/experimental/agent-team/src/types.ts:498`](../packages/experimental/agent-team/src/types.ts)
+
+| Property | Presence | Type |
+|---|---|---|
+| `proposal` | required | [`packages/experimental/agent-team/src/types.ts#RoomProposalSnapshot`](#persistence-type-packagesexperimentalagent-teamsrctypestsroomproposalsnapshot) |
+| `teamId` | required | `string` |
+| `version` | required | `1` |
+
+<a id="persistence-type-eventroomreview"></a>
+
+### `event:room/review`
+
+SHA-256: `9555e80bbf3df9fdc0973071c50d0cf0d80b8378ccde5a53f22d29591c92559a`
+
+| Property | Presence | Type |
+|---|---|---|
+| `data` | required | [`event:room/review.data`](#persistence-type-eventroomreviewdata) |
+| `ignorable` | optional | `true` |
+| `seq` | required | `number` |
+| `time` | required | `number` |
+| `type` | required | `"room/review"` |
+
+<a id="persistence-type-eventroomreview-timeout"></a>
+
+### `event:room/review-timeout`
+
+SHA-256: `dd3402428512758f330762d8ac118b4ea29aab3e5e299e1e40877664ea2e1a87`
+
+| Property | Presence | Type |
+|---|---|---|
+| `data` | required | [`event:room/review-timeout.data`](#persistence-type-eventroomreview-timeoutdata) |
+| `ignorable` | optional | `true` |
+| `seq` | required | `number` |
+| `time` | required | `number` |
+| `type` | required | `"room/review-timeout"` |
+
+<a id="persistence-type-eventroomreview-timeoutdata"></a>
+
+### `event:room/review-timeout.data`
+
+SHA-256: `a7cb04a9435451ebb0502dbe56f60a6b8c4e429f5889eb33de50eb07874e9ba4`
+
+Sources: [`packages/experimental/agent-team/src/types.ts:502`](../packages/experimental/agent-team/src/types.ts)
+
+| Property | Presence | Type |
+|---|---|---|
+| `teamId` | required | `string` |
+| `timeout` | required | [`packages/experimental/agent-team/src/types.ts#RoomReviewTimeoutSnapshot`](#persistence-type-packagesexperimentalagent-teamsrctypestsroomreviewtimeoutsnapshot) |
+| `version` | required | `1` |
+
+<a id="persistence-type-eventroomreviewdata"></a>
+
+### `event:room/review.data`
+
+SHA-256: `cc5d455c46ce83bd37aab4d0b04defbf7f72f93f56f614ffb330e0008dc98f98`
+
+Sources: [`packages/experimental/agent-team/src/types.ts:500`](../packages/experimental/agent-team/src/types.ts)
+
+| Property | Presence | Type |
+|---|---|---|
+| `review` | required | [`packages/experimental/agent-team/src/types.ts#RoomReviewSnapshot`](#persistence-type-packagesexperimentalagent-teamsrctypestsroomreviewsnapshot) |
+| `teamId` | required | `string` |
+| `version` | required | `1` |
+
 <a id="persistence-type-eventsandboxmode"></a>
 
 ### `event:sandbox/mode`
@@ -3350,7 +3560,7 @@ SHA-256: `69becfb6b2d3fd5da91518089454cae8ef33f1835637ec44dde35dd077fd4bae`
 | `data` | required | [`event:system/message.data`](#persistence-type-eventsystemmessagedata) |
 | `ignorable` | optional | `true` |
 | `seq` | required | `number` |
-| `sourceEventSeqs` | optional | [`SessionEventEnvelope[39].sourceEventSeqs`](#persistence-type-sessioneventenvelope39sourceeventseqs) |
+| `sourceEventSeqs` | optional | [`SessionEventEnvelope[43].sourceEventSeqs`](#persistence-type-sessioneventenvelope43sourceeventseqs) |
 | `surfaceOp` | required | [`packages/core/session/src/types.ts#SurfaceOp`](#persistence-type-packagescoresessionsrctypestssurfaceop) |
 | `time` | required | `number` |
 | `type` | required | `"system/message"` |
@@ -3405,7 +3615,7 @@ SHA-256: `4fb59762612c3e3ac3a3bd4f84c9c148d3c3893bd422ba2b201cc039fabd49bc`
 
 SHA-256: `b1ebd5cda47d90d980bb05bffc3f970c51537b9aff15b3bc3d639811727741b1`
 
-Sources: [`packages/experimental/agent-team/src/types.ts:221`](../packages/experimental/agent-team/src/types.ts)
+Sources: [`packages/experimental/agent-team/src/types.ts:483`](../packages/experimental/agent-team/src/types.ts)
 
 | Property | Presence | Type |
 |---|---|---|
@@ -3444,7 +3654,7 @@ SHA-256: `48f9c19417a1abbedfa59f4667bba36b93ac2db407adf5e84cb3ba0de30942cb`
 
 SHA-256: `0bcfaf5566d271028429ac7b562cb59053c9d78b8ae14708c35fac835108d1b1`
 
-Sources: [`packages/experimental/agent-team/src/types.ts:227`](../packages/experimental/agent-team/src/types.ts)
+Sources: [`packages/experimental/agent-team/src/types.ts:489`](../packages/experimental/agent-team/src/types.ts)
 
 | Property | Presence | Type |
 |---|---|---|
@@ -3473,7 +3683,7 @@ SHA-256: `443371ec07a03a82a0e93d93abca3e70b03bca55ba5b01d507030fcb66e8fbb4`
 
 SHA-256: `0c3f4d2248d9bc9700e2d7253fa71aa9935f5c39af6f11de5727f08cccaf8383`
 
-Sources: [`packages/experimental/agent-team/src/types.ts:225`](../packages/experimental/agent-team/src/types.ts)
+Sources: [`packages/experimental/agent-team/src/types.ts:487`](../packages/experimental/agent-team/src/types.ts)
 
 | Property | Presence | Type |
 |---|---|---|
@@ -3485,7 +3695,7 @@ Sources: [`packages/experimental/agent-team/src/types.ts:225`](../packages/exper
 
 ### `event:team/task`
 
-SHA-256: `d595ec73b32b016a6055333c67a5d646032b22e672da1d4a09c5b1ae398a093a`
+SHA-256: `2ecebd9ca881ece7744b2ef2a6ad12b2f08c132eb2dadd8004a4357ce6a61b76`
 
 | Property | Presence | Type |
 |---|---|---|
@@ -3499,15 +3709,26 @@ SHA-256: `d595ec73b32b016a6055333c67a5d646032b22e672da1d4a09c5b1ae398a093a`
 
 ### `event:team/task.data`
 
-SHA-256: `a40d12070f6f4a124f32fb3cc86e7857554702e32f0eda3080a25c4b9ac9b18c`
+SHA-256: `3ad42a09b23327a08b08ccd7f2b835488a2852ffce94d9f8e865468b5ba7890b`
 
-Sources: [`packages/experimental/agent-team/src/types.ts:223`](../packages/experimental/agent-team/src/types.ts)
+Sources: [`packages/experimental/agent-team/src/types.ts:485`](../packages/experimental/agent-team/src/types.ts)
 
 | Property | Presence | Type |
 |---|---|---|
 | `task` | required | [`packages/experimental/agent-team/src/types.ts#TeamTaskSnapshot`](#persistence-type-packagesexperimentalagent-teamsrctypeststeamtasksnapshot) |
 | `teamId` | required | `string` |
 | `version` | required | `2` |
+
+<a id="persistence-type-eventteamtaskdatataskverificationverdict"></a>
+
+### `event:team/task.data.task.verification.verdict`
+
+SHA-256: `a14e8974738b2270bf2fc6ffe720514f7a74e4bf2af72bda44f4849cf479c73a`
+
+One of:
+
+- `"approved"`
+- `"rejected"`
 
 <a id="persistence-type-eventtodowrite"></a>
 
@@ -3694,7 +3915,7 @@ SHA-256: `29af48b840d0cd9e48b6f50bf3b354f8f6340607c5b99220a48e74f60beac9e2`
 | `data` | required | [`event:tool/result.data`](#persistence-type-eventtoolresultdata) |
 | `ignorable` | optional | `true` |
 | `seq` | required | `number` |
-| `sourceEventSeqs` | optional | [`SessionEventEnvelope[39].sourceEventSeqs`](#persistence-type-sessioneventenvelope39sourceeventseqs) |
+| `sourceEventSeqs` | optional | [`SessionEventEnvelope[43].sourceEventSeqs`](#persistence-type-sessioneventenvelope43sourceeventseqs) |
 | `surfaceOp` | required | [`packages/core/session/src/types.ts#SurfaceOp`](#persistence-type-packagescoresessionsrctypestssurfaceop) |
 | `time` | required | `number` |
 | `type` | required | `"tool/result"` |
@@ -3937,7 +4158,7 @@ SHA-256: `314765bdff29c7862fb6ce820f1773563ba3094a680d163ea21180a2591b8578`
 | `data` | required | [`packages/llm/llm/src/message.ts#UserMessage`](#persistence-type-packagesllmllmsrcmessagetsusermessage) |
 | `ignorable` | optional | `true` |
 | `seq` | required | `number` |
-| `sourceEventSeqs` | optional | [`SessionEventEnvelope[39].sourceEventSeqs`](#persistence-type-sessioneventenvelope39sourceeventseqs) |
+| `sourceEventSeqs` | optional | [`SessionEventEnvelope[43].sourceEventSeqs`](#persistence-type-sessioneventenvelope43sourceeventseqs) |
 | `surfaceOp` | required | [`packages/core/session/src/types.ts#SurfaceOp`](#persistence-type-packagescoresessionsrctypestssurfaceop) |
 | `time` | required | `number` |
 | `type` | required | `"user/message"` |
@@ -4403,6 +4624,14 @@ SHA-256: `d28765f87d6b6ab408e0b2f3e7e297791b004b806d8e302c49903ebae815feb2`
 
 `"one-shot"`
 
+<a id="persistence-type-open"></a>
+
+### `"open"`
+
+SHA-256: `1c0d42712045a0364157b76f694c7d5de146b7ce3cf707bce9740d44cbb5de65`
+
+`"open"`
+
 <a id="persistence-type-other"></a>
 
 ### `"other"`
@@ -4482,7 +4711,7 @@ Sources: [`packages/compaction/compaction-image-offload/src/projection.ts:9`](..
 
 | Property | Presence | Type |
 |---|---|---|
-| `imageIndexes` | required | [`SessionEventEnvelope[39].sourceEventSeqs`](#persistence-type-sessioneventenvelope39sourceeventseqs) |
+| `imageIndexes` | required | [`SessionEventEnvelope[43].sourceEventSeqs`](#persistence-type-sessioneventenvelope43sourceeventseqs) |
 | `seq` | required | `number` |
 
 <a id="persistence-type-packagescontextagent-instructionssrcrendertsagentinstructionchange"></a>
@@ -4715,6 +4944,109 @@ Sources: [`packages/deliverables/tool-present/src/types.ts:5`](../packages/deliv
 | `description` | optional | `string` |
 | `path` | required | `string` |
 
+<a id="persistence-type-packagesexperimentalagent-teamsrctypestsroommessagesnapshot"></a>
+
+### `packages/experimental/agent-team/src/types.ts#RoomMessageSnapshot`
+
+SHA-256: `b39c59c9e6d438b3f282b9d9f696838ee208e5e7711b958902100d42756625d0`
+
+Sources: [`packages/experimental/agent-team/src/types.ts:191`](../packages/experimental/agent-team/src/types.ts)
+
+| Property | Presence | Type |
+|---|---|---|
+| `authorId` | required | `string` |
+| `content` | required | [`event:agent/inbox/spliced.data.inserted[0].content`](#persistence-type-eventagentinboxspliceddatainserted0content) |
+| `id` | required | `string` |
+
+<a id="persistence-type-packagesexperimentalagent-teamsrctypestsroomproposalphase"></a>
+
+### `packages/experimental/agent-team/src/types.ts#RoomProposalPhase`
+
+SHA-256: `ad55dec6cb271a58545ecc7276a678e644c8d477d34b10e7c110d7bec7be10d4`
+
+Sources: [`packages/experimental/agent-team/src/types.ts:185`](../packages/experimental/agent-team/src/types.ts)
+
+One of:
+
+- `"accepted"`
+- `"escalated"`
+- `"open"`
+- `"rejected"`
+
+<a id="persistence-type-packagesexperimentalagent-teamsrctypestsroomproposalsnapshot"></a>
+
+### `packages/experimental/agent-team/src/types.ts#RoomProposalSnapshot`
+
+SHA-256: `865310c12876e6d4b1d1e18654af876c6322ec78b6d956d5b79b9c0775d8a814`
+
+Sources: [`packages/experimental/agent-team/src/types.ts:201`](../packages/experimental/agent-team/src/types.ts)
+
+| Property | Presence | Type |
+|---|---|---|
+| `id` | required | `string` |
+| `phase` | required | [`packages/experimental/agent-team/src/types.ts#RoomProposalPhase`](#persistence-type-packagesexperimentalagent-teamsrctypestsroomproposalphase) |
+| `proposerId` | required | `string` |
+| `revision` | required | `number` |
+| `statement` | required | `string` |
+
+<a id="persistence-type-packagesexperimentalagent-teamsrctypestsroomreviewsnapshot"></a>
+
+### `packages/experimental/agent-team/src/types.ts#RoomReviewSnapshot`
+
+SHA-256: `3532520fc3e81de2130e774db321a4ce7f29450f9afdde0af34f65852d5abc9b`
+
+Sources: [`packages/experimental/agent-team/src/types.ts:215`](../packages/experimental/agent-team/src/types.ts)
+
+| Property | Presence | Type |
+|---|---|---|
+| `proposalId` | required | `string` |
+| `proposalRevision` | required | `number` |
+| `reason` | required | `string` |
+| `reviewerId` | required | `string` |
+| `verdict` | required | [`packages/experimental/agent-team/src/types.ts#RoomReviewVerdict`](#persistence-type-packagesexperimentalagent-teamsrctypestsroomreviewverdict) |
+
+<a id="persistence-type-packagesexperimentalagent-teamsrctypestsroomreviewtimeoutkind"></a>
+
+### `packages/experimental/agent-team/src/types.ts#RoomReviewTimeoutKind`
+
+SHA-256: `31c9881330a05908cd0ce415fa5e1cea55ccc1ab56d15246da94d6f842ccef20`
+
+Sources: [`packages/experimental/agent-team/src/types.ts:301`](../packages/experimental/agent-team/src/types.ts)
+
+One of:
+
+- `"escalated"`
+- `"reminder"`
+
+<a id="persistence-type-packagesexperimentalagent-teamsrctypestsroomreviewtimeoutsnapshot"></a>
+
+### `packages/experimental/agent-team/src/types.ts#RoomReviewTimeoutSnapshot`
+
+SHA-256: `e6032d5096510086a3b1f0926e238edb4cff6eed7f3b2b23afaa35b7d64c5bf6`
+
+Sources: [`packages/experimental/agent-team/src/types.ts:309`](../packages/experimental/agent-team/src/types.ts)
+
+| Property | Presence | Type |
+|---|---|---|
+| `kind` | required | [`packages/experimental/agent-team/src/types.ts#RoomReviewTimeoutKind`](#persistence-type-packagesexperimentalagent-teamsrctypestsroomreviewtimeoutkind) |
+| `proposalId` | required | `string` |
+| `proposalRevision` | required | `number` |
+| `stalled` | required | [`event:assistant/attempt.data.stream[0][0].texts`](#persistence-type-eventassistantattemptdatastream00texts) |
+
+<a id="persistence-type-packagesexperimentalagent-teamsrctypestsroomreviewverdict"></a>
+
+### `packages/experimental/agent-team/src/types.ts#RoomReviewVerdict`
+
+SHA-256: `ebbe45588a7e427520730786bc8ca81e431296de013fc20264e90a048641b4a6`
+
+Sources: [`packages/experimental/agent-team/src/types.ts:188`](../packages/experimental/agent-team/src/types.ts)
+
+One of:
+
+- `"abstain"`
+- `"approve"`
+- `"reject"`
+
 <a id="persistence-type-packagesexperimentalagent-teamsrctypeststeammemberphase"></a>
 
 ### `packages/experimental/agent-team/src/types.ts#TeamMemberPhase`
@@ -4753,7 +5085,7 @@ Sources: [`packages/experimental/agent-team/src/types.ts:47`](../packages/experi
 
 SHA-256: `5b694f394d5e11609887a3ccfa82844935d49806c37e336b30be2186d649ab94`
 
-Sources: [`packages/experimental/agent-team/src/types.ts:106`](../packages/experimental/agent-team/src/types.ts)
+Sources: [`packages/experimental/agent-team/src/types.ts:137`](../packages/experimental/agent-team/src/types.ts)
 
 | Property | Presence | Type |
 |---|---|---|
@@ -4769,7 +5101,7 @@ Sources: [`packages/experimental/agent-team/src/types.ts:106`](../packages/exper
 
 SHA-256: `2152caf1a71e588e4df2358a806dea24936c1c47131134f01a12939d12cdc0c0`
 
-Sources: [`packages/experimental/agent-team/src/types.ts:115`](../packages/experimental/agent-team/src/types.ts)
+Sources: [`packages/experimental/agent-team/src/types.ts:146`](../packages/experimental/agent-team/src/types.ts)
 
 | Property | Presence | Type |
 |---|---|---|
@@ -4783,9 +5115,9 @@ Sources: [`packages/experimental/agent-team/src/types.ts:115`](../packages/exper
 
 ### `packages/experimental/agent-team/src/types.ts#TeamTaskSnapshot`
 
-SHA-256: `51edec100659da3a9bd9c3f6ba1180f5e64ec9a1585e5057080df45c180bd357`
+SHA-256: `74ba15aa5b9e627d0c54bcaf3b7e25699babba511019ec43ad2982141365627f`
 
-Sources: [`packages/experimental/agent-team/src/types.ts:74`](../packages/experimental/agent-team/src/types.ts)
+Sources: [`packages/experimental/agent-team/src/types.ts:101`](../packages/experimental/agent-team/src/types.ts)
 
 | Property | Presence | Type |
 |---|---|---|
@@ -4796,6 +5128,7 @@ Sources: [`packages/experimental/agent-team/src/types.ts:74`](../packages/experi
 | `revision` | required | `number` |
 | `status` | required | [`packages/experimental/agent-team/src/types.ts#TeamTaskStatus`](#persistence-type-packagesexperimentalagent-teamsrctypeststeamtaskstatus) |
 | `subject` | required | `string` |
+| `verification` | optional | [`packages/experimental/agent-team/src/types.ts#TeamTaskVerification`](#persistence-type-packagesexperimentalagent-teamsrctypeststeamtaskverification) |
 | `writeScopes` | required | [`event:assistant/attempt.data.stream[0][0].texts`](#persistence-type-eventassistantattemptdatastream00texts) |
 
 <a id="persistence-type-packagesexperimentalagent-teamsrctypeststeamtaskstatus"></a>
@@ -4812,6 +5145,21 @@ One of:
 - `"deleted"`
 - `"in_progress"`
 - `"pending"`
+
+<a id="persistence-type-packagesexperimentalagent-teamsrctypeststeamtaskverification"></a>
+
+### `packages/experimental/agent-team/src/types.ts#TeamTaskVerification`
+
+SHA-256: `2434ef323d8a403db8faef23c251d00e30ff3b10d748e7d4f975e5fa86cd5775`
+
+Sources: [`packages/experimental/agent-team/src/types.ts:81`](../packages/experimental/agent-team/src/types.ts)
+
+| Property | Presence | Type |
+|---|---|---|
+| `reason` | optional | `string` |
+| `submittedRevision` | required | `number` |
+| `verdict` | optional | [`event:team/task.data.task.verification.verdict`](#persistence-type-eventteamtaskdatataskverificationverdict) |
+| `verifierId` | optional | `string` |
 
 <a id="persistence-type-packagesfeedbackcommand-feedbacksrctypestsfeedbackrecord"></a>
 
@@ -5642,7 +5990,7 @@ Sources: [`packages/session/session-title-llm/src/index.ts:27`](../packages/sess
 | Property | Presence | Type |
 |---|---|---|
 | `maxTokens` | required | `number` |
-| `messageSeqs` | required | [`SessionEventEnvelope[39].sourceEventSeqs`](#persistence-type-sessioneventenvelope39sourceeventseqs) |
+| `messageSeqs` | required | [`SessionEventEnvelope[43].sourceEventSeqs`](#persistence-type-sessioneventenvelope43sourceeventseqs) |
 | `messages` | required | [`event:session/title-llm-request.data.messages`](#persistence-type-eventsessiontitle-llm-requestdatamessages) |
 | `route` | required | [`packages/session/session-title/src/types.ts#SessionTitleModelIdentity`](#persistence-type-packagessessionsession-titlesrctypestssessiontitlemodelidentity) |
 | `system` | required | `string` |
@@ -5658,7 +6006,7 @@ Sources: [`packages/session/session-title/src/types.ts:41`](../packages/session/
 
 | Property | Presence | Type |
 |---|---|---|
-| `messageSeqs` | required | [`SessionEventEnvelope[39].sourceEventSeqs`](#persistence-type-sessioneventenvelope39sourceeventseqs) |
+| `messageSeqs` | required | [`SessionEventEnvelope[43].sourceEventSeqs`](#persistence-type-sessioneventenvelope43sourceeventseqs) |
 | `source` | required | [`packages/session/session-title/src/types.ts#SessionTitleSource`](#persistence-type-packagessessionsession-titlesrctypestssessiontitlesource) |
 | `title` | required | `string` |
 
@@ -6047,6 +6395,14 @@ SHA-256: `383cf73ae4748e5beb281ae74857ba1ffb92ae01075b9fbf51af78b666007a8f`
 
 `"recall"`
 
+<a id="persistence-type-reject"></a>
+
+### `"reject"`
+
+SHA-256: `4540ad0a33fa1fcaa4eb9217791e5bf59b8e512dc7e04fd937ac7b70c19fae27`
+
+`"reject"`
+
 <a id="persistence-type-rejected"></a>
 
 ### `"rejected"`
@@ -6062,6 +6418,14 @@ SHA-256: `fab35c4520883c0d69e42d079c9f543fc5ac7a2d15b537b5572fcd99059c7018`
 SHA-256: `16d0507cb94b4cfc84a87446b1ba7652d6ec1d65ee1684789e747e30d542800e`
 
 `"relay"`
+
+<a id="persistence-type-reminder"></a>
+
+### `"reminder"`
+
+SHA-256: `ee84b49b756d1da5173a4a9433aa0e871cb9143d8f80e87cc1bf5fad5834a8ac`
+
+`"reminder"`
 
 <a id="persistence-type-remove"></a>
 
@@ -6110,6 +6474,38 @@ SHA-256: `5bd310104cfe448e530beb11422d2f791e2e32e8e95fdc528a15f9ca693dae75`
 SHA-256: `34d1ab5c5df378186d6054b1a1beea9a41e41965d6f336f0bc0025c441a82e66`
 
 `"resume"`
+
+<a id="persistence-type-roommessage"></a>
+
+### `"room/message"`
+
+SHA-256: `339f1fcf1c6251bb0650b47e068bad6ae8b23f46fab9568e3e7bc1c06d3ad849`
+
+`"room/message"`
+
+<a id="persistence-type-roomproposal"></a>
+
+### `"room/proposal"`
+
+SHA-256: `8d345bd2f6e82d468a0ffcdcff011b12aeabafd851b85c1794cdf33cf494fb5a`
+
+`"room/proposal"`
+
+<a id="persistence-type-roomreview"></a>
+
+### `"room/review"`
+
+SHA-256: `0c75e39f63091d4a2fa90f666bc54e8566e27596809a56efdd95474dbf3defa3`
+
+`"room/review"`
+
+<a id="persistence-type-roomreview-timeout"></a>
+
+### `"room/review-timeout"`
+
+SHA-256: `a3a21b043bfd1c0b7ea414177b4a86cd0592ea23ec2669c1e0d280db4de08622`
+
+`"room/review-timeout"`
 
 <a id="persistence-type-sandboxmode"></a>
 
@@ -6191,7 +6587,7 @@ SHA-256: `5776e5553ff2dfe3f5bc202dbb1e7c9f93e35a531aebb7764c23b2b6153b2ccc`
 
 One of:
 
-- [`SessionEventEnvelope[39]`](#persistence-type-sessioneventenvelope39)
+- [`SessionEventEnvelope[43]`](#persistence-type-sessioneventenvelope43)
 - [`SessionEventEnvelope[6]`](#persistence-type-sessioneventenvelope6)
 - [`SessionEventEnvelope[0]`](#persistence-type-sessioneventenvelope0)
 
@@ -6208,9 +6604,9 @@ SHA-256: `e3e77b26f0148755a505f5b8ea843a3be117827d4703bb5754d9dc8ddbef521f`
 | `time` | required | `number` |
 | `type` | required | `string` |
 
-<a id="persistence-type-sessioneventenvelope39"></a>
+<a id="persistence-type-sessioneventenvelope43"></a>
 
-### `SessionEventEnvelope[39]`
+### `SessionEventEnvelope[43]`
 
 SHA-256: `998f22585a5d73ec005365e203f07fc3b3a029e82323fdda3fd7f13b0a9639d0`
 
@@ -6218,14 +6614,14 @@ SHA-256: `998f22585a5d73ec005365e203f07fc3b3a029e82323fdda3fd7f13b0a9639d0`
 |---|---|---|
 | `ignorable` | optional | `true` |
 | `seq` | required | `number` |
-| `sourceEventSeqs` | optional | [`SessionEventEnvelope[39].sourceEventSeqs`](#persistence-type-sessioneventenvelope39sourceeventseqs) |
+| `sourceEventSeqs` | optional | [`SessionEventEnvelope[43].sourceEventSeqs`](#persistence-type-sessioneventenvelope43sourceeventseqs) |
 | `surfaceOp` | required | [`packages/core/session/src/types.ts#SurfaceOp`](#persistence-type-packagescoresessionsrctypestssurfaceop) |
 | `time` | required | `number` |
 | `type` | required | `string` |
 
-<a id="persistence-type-sessioneventenvelope39sourceeventseqs"></a>
+<a id="persistence-type-sessioneventenvelope43sourceeventseqs"></a>
 
-### `SessionEventEnvelope[39].sourceEventSeqs`
+### `SessionEventEnvelope[43].sourceEventSeqs`
 
 SHA-256: `5d03ba38734809bcbd2a55221bd938b3b3fc34b49bb686c6113e9e4931e3aa78`
 
@@ -6337,7 +6733,7 @@ SHA-256: `57f3f606ff8b6c84d9c443faace9d1dd10cca0354f37a4f515ef075f7c351b90`
 
 SHA-256: `4cd48f3e5108bd6ebedf7301c3638839b8b2b9db8dbd493974177fbdeb91a01b`
 
-Sources: [`packages/api/session-controller/src/types.ts:376`](../packages/api/session-controller/src/types.ts) · [`packages/attachment/attachment/src/brand.ts:6`](../packages/attachment/attachment/src/brand.ts) · [`packages/compaction/compaction/src/brand.ts:4`](../packages/compaction/compaction/src/brand.ts) · [`packages/core/session/src/types.ts:19`](../packages/core/session/src/types.ts) · [`packages/experimental/agent-team/src/types.ts:20`](../packages/experimental/agent-team/src/types.ts) · [`packages/experimental/agent-team/src/types.ts:32`](../packages/experimental/agent-team/src/types.ts) · [`packages/experimental/agent-team/src/types.ts:8`](../packages/experimental/agent-team/src/types.ts) · [`packages/feedback/message-feedback/src/types.ts:14`](../packages/feedback/message-feedback/src/types.ts) · [`packages/goal/goal/src/types.ts:17`](../packages/goal/goal/src/types.ts) · [`packages/interaction/commands/src/brand.ts:31`](../packages/interaction/commands/src/brand.ts) · [`packages/interaction/user-approval/src/types.ts:17`](../packages/interaction/user-approval/src/types.ts) · [`packages/llm/llm-retry/src/brand.ts:4`](../packages/llm/llm-retry/src/brand.ts) · [`packages/llm/llm/src/brand.ts:16`](../packages/llm/llm/src/brand.ts) · [`packages/llm/llm/src/brand.ts:31`](../packages/llm/llm/src/brand.ts) · [`packages/llm/llm/src/brand.ts:43`](../packages/llm/llm/src/brand.ts) · [`packages/llm/llm/src/brand.ts:67`](../packages/llm/llm/src/brand.ts) · [`packages/schedule/schedule/src/types.ts:10`](../packages/schedule/schedule/src/types.ts) · [`packages/session/session-title/src/index.ts:42`](../packages/session/session-title/src/index.ts) · [`packages/session/session-title/src/types.ts:17`](../packages/session/session-title/src/types.ts) · [`packages/webhook/webhook/src/brand.ts:12`](../packages/webhook/webhook/src/brand.ts) · [`packages/webhook/webhook/src/brand.ts:6`](../packages/webhook/webhook/src/brand.ts) · [`packages/webhook/webhook/src/brand.ts:9`](../packages/webhook/webhook/src/brand.ts) · [`packages/workflow/workflow/src/types.ts:13`](../packages/workflow/workflow/src/types.ts)
+Sources: [`packages/api/session-controller/src/types.ts:376`](../packages/api/session-controller/src/types.ts) · [`packages/attachment/attachment/src/brand.ts:6`](../packages/attachment/attachment/src/brand.ts) · [`packages/compaction/compaction/src/brand.ts:4`](../packages/compaction/compaction/src/brand.ts) · [`packages/core/session/src/types.ts:19`](../packages/core/session/src/types.ts) · [`packages/experimental/agent-team/src/types.ts:161`](../packages/experimental/agent-team/src/types.ts) · [`packages/experimental/agent-team/src/types.ts:173`](../packages/experimental/agent-team/src/types.ts) · [`packages/experimental/agent-team/src/types.ts:20`](../packages/experimental/agent-team/src/types.ts) · [`packages/experimental/agent-team/src/types.ts:32`](../packages/experimental/agent-team/src/types.ts) · [`packages/experimental/agent-team/src/types.ts:8`](../packages/experimental/agent-team/src/types.ts) · [`packages/feedback/message-feedback/src/types.ts:14`](../packages/feedback/message-feedback/src/types.ts) · [`packages/goal/goal/src/types.ts:17`](../packages/goal/goal/src/types.ts) · [`packages/interaction/commands/src/brand.ts:31`](../packages/interaction/commands/src/brand.ts) · [`packages/interaction/user-approval/src/types.ts:17`](../packages/interaction/user-approval/src/types.ts) · [`packages/llm/llm-retry/src/brand.ts:4`](../packages/llm/llm-retry/src/brand.ts) · [`packages/llm/llm/src/brand.ts:16`](../packages/llm/llm/src/brand.ts) · [`packages/llm/llm/src/brand.ts:31`](../packages/llm/llm/src/brand.ts) · [`packages/llm/llm/src/brand.ts:43`](../packages/llm/llm/src/brand.ts) · [`packages/llm/llm/src/brand.ts:67`](../packages/llm/llm/src/brand.ts) · [`packages/schedule/schedule/src/types.ts:10`](../packages/schedule/schedule/src/types.ts) · [`packages/session/session-title/src/index.ts:42`](../packages/session/session-title/src/index.ts) · [`packages/session/session-title/src/types.ts:17`](../packages/session/session-title/src/types.ts) · [`packages/webhook/webhook/src/brand.ts:12`](../packages/webhook/webhook/src/brand.ts) · [`packages/webhook/webhook/src/brand.ts:6`](../packages/webhook/webhook/src/brand.ts) · [`packages/webhook/webhook/src/brand.ts:9`](../packages/webhook/webhook/src/brand.ts) · [`packages/workflow/workflow/src/types.ts:13`](../packages/workflow/workflow/src/types.ts)
 
 `string`
 

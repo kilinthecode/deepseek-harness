@@ -31,9 +31,13 @@ Install the package through [`@deepseek-ai/dsh-experimental-agent-team-web-profi
 
 Opening the panel calls `agentTeams/view`. Roster rows show durable names, runtime status, model, and diagnostics. Selecting a healthy teammate refreshes the existing direct-child catalog and opens the ordinary `{ parentSessionId, childSessionId, mode: 'continuable' }` address. History and later human prompts continue through the stable addressed-subagent conversation path; this package adds no Team-specific address field.
 
+### Read the room
+
+When the composition has a room, the panel also shows the shared transcript and every collective decision: its phase, proposer, the exact statement, and the participants recorded on each side of the vote. The transcript names who said what; the decision board names who approved, rejected, abstained, and — while the decision is still open — who has yet to record a standing. A settled decision shows no awaiting participants, because nobody can change an outcome quorum already reached, and each recorded standing appears with the reason its reviewer gave. While the panel is open it follows the room: text a participant is streaming appears as it arrives, and every committed transcript entry or decision change replaces that live text with the durable record.
+
 ### Manage the task board
 
-The task board shows task identity, owner, blockers, readiness, advisory write scopes, and overlap warnings. A user can create, edit, assign or unassign, complete, reopen, and delete tasks through `agentTeams/createTask` and `agentTeams/updateTask`. Every update sends the displayed revision, and create or update rejections remain explicit business results.
+The task board shows task identity, owner, blockers, readiness, advisory write scopes, and overlap warnings. A user can create, edit, assign or unassign, submit, reopen, and delete tasks through `agentTeams/createTask` and `agentTeams/updateTask`, and verify a submitted task with a reason: the task card offers Verify while work awaits its peer verdict, and a verdict without a reason is refused before it leaves the browser. Every update sends the displayed revision, and create or update rejections remain explicit business results.
 
 -----
 
@@ -71,7 +75,7 @@ Starting a create or update invalidates older refreshes. Success reloads the com
 <a id="model-experience"></a>
 ## Model Experience
 
-None, as this browser projection and task control surface registers no model-facing input.
+None, as this browser projection, room reader, and task control surface registers no model-facing input. The room panel renders the durable `room/*` records the model-facing room tools produced; it neither writes those records nor grants any participant authority.
 
 #### KV Cache effect
 
@@ -81,7 +85,10 @@ No direct effect; the Team tools and ordinary conversation submission own any la
 
 <a id="known-limitations-and-deferred-work"></a>
 
-- **Snapshot refresh** — the panel refreshes on open, explicit refresh, and mutations; it has no live event subscription or mailbox timeline.
+- **Live follow needs an open panel** — the panel subscribes to the room only while it is open and drops streaming text when a committed change replaces it; a closed panel refreshes from the durable log on the next open.
+- **A composition without a room shows no room section** — the panel omits it rather than rendering an empty one, because an absent room and an idle room are different states.
+- **The room panel is read-only** — it reads decisions and the transcript but cannot propose, review, escalate, or grant the floor; a human acts through the room tools instead.
+- **The room reader has one assembled-browser case** — `apps/web/tests/agent-room-panel.e2e.ts` pins the rendered transcript and decision board and then opens a decision after the panel mounted, requiring it to appear through the live follow without a refresh; the roster and task-board paths keep their own cases.
 - **Ordinary child continuation** — a human message sent after navigation uses the stable addressed-subagent prompt path, not the Team peer mailbox.
 - **No lifecycle or workspace controls** — the panel cannot spawn, rename, delete, or interrupt teammates, and write scopes remain advisory metadata.
 

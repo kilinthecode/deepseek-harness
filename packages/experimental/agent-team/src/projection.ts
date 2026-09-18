@@ -6,6 +6,10 @@ import type { ContentBlock } from '@deepseek-ai/dsh-llm'
 import type { SessionEvent, SessionEventMap, SessionId } from '@deepseek-ai/dsh-session'
 import type { ProjectionDefinition } from '@deepseek-ai/dsh-session-projection'
 import type {
+  RoomMessageSnapshot,
+  RoomProposalSnapshot,
+  RoomReviewSnapshot,
+  RoomReviewTimeoutSnapshot,
   TeamId,
   TeamMemberSnapshot,
   TeamMessageId,
@@ -13,6 +17,8 @@ import type {
   TeamTaskSnapshot,
 } from './types.ts'
 import {
+  RoomMessageId as toRoomMessageId,
+  RoomProposalId as toRoomProposalId,
   TeamId as toTeamId,
   TeamMessageId as toTeamMessageId,
   TeamTaskId as toTeamTaskId,
@@ -29,6 +35,12 @@ const teamTaskIdSchema = z.string().min(1).refine((value) => {
   return match === null || Number.isSafeInteger(Number(match[1]))
 }, { message: 'numeric task id suffix must be a safe integer' }).transform(value => toTeamTaskId(value))
 const teamMessageIdSchema = z.string().min(1).transform(value => toTeamMessageId(value))
+const roomMessageIdSchema = z.string().min(1).transform(value => toRoomMessageId(value))
+const numericProposalIdPattern = /^proposal-(\d+)$/u
+const roomProposalIdSchema = z.string().min(1).refine((value) => {
+  const match = numericProposalIdPattern.exec(value)
+  return match === null || Number.isSafeInteger(Number(match[1]))
+}, { message: 'numeric proposal id suffix must be a safe integer' }).transform(value => toRoomProposalId(value))
 
 const coreContentBlockTypes = new Set(['text', 'reasoning', 'image', 'tool-call', 'tool-result'])
 const imageAttachmentSchema = z.object({
@@ -83,6 +95,12 @@ const teamTaskSnapshotSchema = z.object({
   ownerId: sessionIdSchema.optional(),
   blockedBy: z.array(teamTaskIdSchema),
   writeScopes: z.array(z.string()),
+  verification: z.object({
+    submittedRevision: positiveSafeInteger,
+    verifierId: sessionIdSchema.optional(),
+    verdict: z.enum(['approved', 'rejected']).optional(),
+    reason: z.string().optional(),
+  }).strict().optional(),
 }).strict() as z.ZodType<TeamTaskSnapshot>
 
 const teamMessageSnapshotSchema = z.object({
@@ -92,6 +110,35 @@ const teamMessageSnapshotSchema = z.object({
   targetId: sessionIdSchema,
   content: z.array(contentBlockSchema),
 }).strict() as z.ZodType<TeamMessageSnapshot>
+
+const roomMessageSnapshotSchema = z.object({
+  id: roomMessageIdSchema,
+  authorId: sessionIdSchema,
+  content: z.array(contentBlockSchema),
+}).strict() as z.ZodType<RoomMessageSnapshot>
+
+const roomProposalSnapshotSchema = z.object({
+  id: roomProposalIdSchema,
+  revision: positiveSafeInteger,
+  proposerId: sessionIdSchema,
+  statement: z.string(),
+  phase: z.enum(['open', 'accepted', 'rejected', 'escalated']),
+}).strict() as z.ZodType<RoomProposalSnapshot>
+
+const roomReviewTimeoutSnapshotSchema = z.object({
+  proposalId: roomProposalIdSchema,
+  proposalRevision: positiveSafeInteger,
+  kind: z.enum(['reminder', 'escalated']),
+  stalled: z.array(sessionIdSchema),
+}).strict() as z.ZodType<RoomReviewTimeoutSnapshot>
+
+const roomReviewSnapshotSchema = z.object({
+  proposalId: roomProposalIdSchema,
+  proposalRevision: positiveSafeInteger,
+  reviewerId: sessionIdSchema,
+  verdict: z.enum(['approve', 'reject', 'abstain']),
+  reason: z.string(),
+}).strict() as z.ZodType<RoomReviewSnapshot>
 
 const teamEventSelectorSchema = z.object({
   version: nonNegativeSafeInteger,
@@ -123,6 +170,30 @@ const teamMessageDeliveredEventSchema = z.object({
   targetId: sessionIdSchema,
 }).strict() as z.ZodType<SessionEventMap['team/message/delivered']>
 
+const roomMessageEventSchema = z.object({
+  version: z.literal(1),
+  teamId: teamIdSchema,
+  message: roomMessageSnapshotSchema,
+}).strict() as z.ZodType<SessionEventMap['room/message']>
+
+const roomProposalEventSchema = z.object({
+  version: z.literal(1),
+  teamId: teamIdSchema,
+  proposal: roomProposalSnapshotSchema,
+}).strict() as z.ZodType<SessionEventMap['room/proposal']>
+
+const roomReviewEventSchema = z.object({
+  version: z.literal(1),
+  teamId: teamIdSchema,
+  review: roomReviewSnapshotSchema,
+}).strict() as z.ZodType<SessionEventMap['room/review']>
+
+const roomReviewTimeoutEventSchema = z.object({
+  version: z.literal(1),
+  teamId: teamIdSchema,
+  timeout: roomReviewTimeoutSnapshotSchema,
+}).strict() as z.ZodType<SessionEventMap['room/review-timeout']>
+
 /** Current Team state selected by durable Team identity. */
 export interface TeamState {
   readonly id: TeamId
@@ -131,6 +202,15 @@ export interface TeamState {
   readonly messages: TeamMessageSnapshot[]
   readonly delivered: TeamMessageId[]
   nextTaskNumber: number
+  /** Shared room transcript in durable append order. */
+  readonly roomMessages: RoomMessageSnapshot[]
+  /** Every collective decision, holding only its latest revision. */
+  readonly roomProposals: RoomProposalSnapshot[]
+  /** Every recorded review, newest last; later entries supersede earlier ones per reviewer. */
+  readonly roomReviews: RoomReviewSnapshot[]
+  /** Every abandonment record, in durable order; the newest per revision explains it. */
+  readonly roomTimeouts: RoomReviewTimeoutSnapshot[]
+  nextProposalNumber: number
 }
 
 /**
@@ -146,6 +226,11 @@ export function emptyTeamState(rootId: SessionId): TeamProjectionState {
     messages: [],
     delivered: [],
     nextTaskNumber: 1,
+    roomMessages: [],
+    roomProposals: [],
+    roomReviews: [],
+    roomTimeouts: [],
+    nextProposalNumber: 1,
   }
 }
 
@@ -167,6 +252,11 @@ const teamProjectionEntrySchema = z.object({
   messages: z.array(teamMessageSnapshotSchema),
   delivered: z.array(teamMessageIdSchema),
   nextTaskNumber: positiveSafeInteger,
+  roomMessages: z.array(roomMessageSnapshotSchema),
+  roomProposals: z.array(roomProposalSnapshotSchema),
+  roomReviews: z.array(roomReviewSnapshotSchema),
+  roomTimeouts: z.array(roomReviewTimeoutSnapshotSchema),
+  nextProposalNumber: positiveSafeInteger,
   failure: z.string().optional(),
 }).strict() as z.ZodType<TeamProjectionState>
 
@@ -176,6 +266,10 @@ export type TeamEventType =
   | 'team/task'
   | 'team/message/queued'
   | 'team/message/delivered'
+  | 'room/message'
+  | 'room/proposal'
+  | 'room/review'
+  | 'room/review-timeout'
 
 /** One event owned by the Team domain. */
 type TeamSessionEvent = SessionEvent<TeamEventType>
@@ -190,6 +284,22 @@ export function isTeamEvent(event: SessionEvent): event is TeamSessionEvent {
     || event.type === 'team/task'
     || event.type === 'team/message/queued'
     || event.type === 'team/message/delivered'
+    || event.type === 'room/message'
+    || event.type === 'room/proposal'
+    || event.type === 'room/review'
+    || event.type === 'room/review-timeout'
+}
+
+/** Current logical payload version of every Team-owned event type. */
+const CURRENT_TEAM_EVENT_VERSIONS: Record<TeamEventType, number> = {
+  'team/member': 2,
+  'team/task': 2,
+  'team/message/queued': 2,
+  'team/message/delivered': 2,
+  'room/message': 1,
+  'room/proposal': 1,
+  'room/review': 1,
+  'room/review-timeout': 1,
 }
 
 /** Decode one persisted Team value and retain the schema failure as its cause. */
@@ -212,9 +322,51 @@ function parseCurrentTeamEvent(event: TeamSessionEvent): TeamSessionEvent {
       return { ...event, data: parsePersisted(event.type, teamMessageQueuedEventSchema, event.data) }
     case 'team/message/delivered':
       return { ...event, data: parsePersisted(event.type, teamMessageDeliveredEventSchema, event.data) }
+    case 'room/message':
+      return { ...event, data: parsePersisted(event.type, roomMessageEventSchema, event.data) }
+    case 'room/proposal':
+      return { ...event, data: parsePersisted(event.type, roomProposalEventSchema, event.data) }
+    case 'room/review':
+      return { ...event, data: parsePersisted(event.type, roomReviewEventSchema, event.data) }
+    case 'room/review-timeout':
+      return { ...event, data: parsePersisted(event.type, roomReviewTimeoutEventSchema, event.data) }
     /* v8 ignore next 2 -- TeamEventType is closed and every member is handled above. */
     default:
       return event
+  }
+}
+
+/**
+ * Refuse a task record whose verification cannot mean what it claims: completed
+ * work carries a peer's approval, a verdict names the member that recorded it,
+ * and no member verifies its own work.
+ * @param task - candidate task revision from one committed Team event.
+ */
+function assertTaskVerification(task: TeamTaskSnapshot): void {
+  const verification = task.verification
+  if (verification === undefined) {
+    if (task.status === 'completed') {
+      throw new Error(`team task "${task.id}" completed without a peer verification`)
+    }
+    return
+  }
+  if (verification.verdict !== undefined && verification.verifierId === undefined) {
+    throw new Error(`team task "${task.id}" recorded a verdict without its verifier`)
+  }
+  if (verification.verifierId !== undefined && verification.verifierId === task.ownerId) {
+    throw new Error(`team task "${task.id}" was verified by its own owner`)
+  }
+  if (task.status === 'completed' && verification.verdict !== 'approved') {
+    throw new Error(`team task "${task.id}" completed without an approving verdict`)
+  }
+  if (verification.verdict === undefined) {
+    // Awaiting work is exactly the revision on the board; a verdict appends its
+    // own revision, so afterwards the judged revision is the earlier one.
+    if (verification.submittedRevision !== task.revision) {
+      throw new Error(`team task "${task.id}" awaits a verdict on a revision it no longer carries`)
+    }
+  } else if (verification.submittedRevision > task.revision) {
+    throw new Error(`team task "${task.id}" names a submission revision ahead of its own`)
   }
 }
 
@@ -224,8 +376,9 @@ function applyProjectionEvent(state: TeamProjectionState, event: SessionEvent): 
   try {
     const selector = parsePersisted(event.type, teamEventSelectorSchema, event.data)
     if (selector.teamId !== state.id) return
-    if (selector.version !== 2) {
-      throw new Error(`unsupported Agent Teams event version ${String(selector.version)}`)
+    const expected = CURRENT_TEAM_EVENT_VERSIONS[event.type]
+    if (selector.version !== expected) {
+      throw new Error(`unsupported Agent Teams ${event.type} event version ${String(selector.version)}`)
     }
     applyCurrentTeamEvent(state, parseCurrentTeamEvent(event))
   } catch (error: unknown) {
@@ -269,6 +422,7 @@ function applyCurrentTeamEvent(state: TeamState, event: TeamSessionEvent): void 
         throw new Error(`team task "${task.id}" revision is not contiguous`)
       }
       assertTaskGraphCandidate(state.tasks, task)
+      assertTaskVerification(task)
       const match = numericTaskIdPattern.exec(task.id)
       if (match !== null) {
         const number = Number(match[1])
@@ -297,6 +451,80 @@ function applyCurrentTeamEvent(state: TeamState, event: TeamSessionEvent): void 
       state.delivered.push(event.data.messageId)
       break
     }
+    case 'room/message': {
+      const message = event.data.message
+      if (state.roomMessages.some(candidate => candidate.id === message.id)) {
+        throw new Error(`room message "${message.id}" was appended twice`)
+      }
+      state.roomMessages.push(message)
+      break
+    }
+    case 'room/proposal': {
+      const proposal = event.data.proposal
+      const index = state.roomProposals.findIndex(candidate => candidate.id === proposal.id)
+      const prior = state.roomProposals[index]
+      if (prior === undefined) {
+        if (proposal.revision !== 1) throw new Error(`room proposal "${proposal.id}" must begin at revision 1`)
+        if (proposal.phase !== 'open') throw new Error(`room proposal "${proposal.id}" must begin open`)
+      } else {
+        const final = prior.phase === 'accepted' || prior.phase === 'escalated'
+        if (final) throw new Error(`final room proposal "${proposal.id}" cannot change`)
+        if (proposal.proposerId !== prior.proposerId) throw new Error(`room proposal "${proposal.id}" proposer changed`)
+        if (proposal.revision === prior.revision) {
+          if (prior.phase !== 'open') {
+            throw new Error(`rejected room proposal "${proposal.id}" must be revised, not amended`)
+          }
+          if (proposal.statement !== prior.statement) {
+            throw new Error(`room proposal "${proposal.id}" statement changed without a revision`)
+          }
+          if (proposal.phase === 'open') {
+            throw new Error(`room proposal "${proposal.id}" reasserted an unchanged open revision`)
+          }
+        } else {
+          if (proposal.revision > prior.revision + 1) {
+            throw new Error(`room proposal "${proposal.id}" revision is not contiguous`)
+          }
+          if (proposal.phase !== 'open') {
+            throw new Error(`room proposal "${proposal.id}" revision must reopen the decision`)
+          }
+        }
+      }
+      const match = numericProposalIdPattern.exec(proposal.id)
+      if (match !== null) {
+        const number = Number(match[1])
+        state.nextProposalNumber = Math.max(
+          state.nextProposalNumber,
+          number === Number.MAX_SAFE_INTEGER ? number : number + 1,
+        )
+      }
+      if (index < 0) state.roomProposals.push(proposal)
+      else state.roomProposals[index] = proposal
+      break
+    }
+    case 'room/review': {
+      const review = event.data.review
+      const proposal = state.roomProposals.find(candidate => candidate.id === review.proposalId)
+      if (proposal === undefined) throw new Error(`room review names unknown proposal "${review.proposalId}"`)
+      if (review.proposalRevision > proposal.revision) {
+        throw new Error(`room review names unreached revision ${review.proposalRevision} of "${review.proposalId}"`)
+      }
+      state.roomReviews.push(review)
+      break
+    }
+    case 'room/review-timeout': {
+      const timeout = event.data.timeout
+      const proposal = state.roomProposals.find(candidate => candidate.id === timeout.proposalId)
+      if (proposal === undefined) {
+        throw new Error(`room timeout names unknown proposal "${timeout.proposalId}"`)
+      }
+      if (timeout.proposalRevision > proposal.revision) {
+        throw new Error(
+          `room timeout names unreached revision ${timeout.proposalRevision} of "${timeout.proposalId}"`,
+        )
+      }
+      state.roomTimeouts.push(timeout)
+      break
+    }
     /* v8 ignore next 2 -- TeamEventType is closed and every member is handled above. */
     default:
       return
@@ -306,7 +534,7 @@ function applyCurrentTeamEvent(state: TeamState, event: TeamSessionEvent): void 
 /** Host-only Team projection selected by the projected Session identity. */
 export const teamProjectionDefinition = {
   key: 'agentTeam',
-  stateVersion: 3,
+  stateVersion: 4,
   stateSchema: teamProjectionEntrySchema,
   init: header => emptyTeamState(header.id),
   apply: (state, event) => {

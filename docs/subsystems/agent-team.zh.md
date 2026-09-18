@@ -73,6 +73,59 @@ interface TeamTaskSnapshot {
 
 `pending` 表示尚未开始或已经释放，`in_progress` 携带 owner，`completed` 满足 blocker，`deleted` 是保留的 tombstone。view 会添加 owner name、readiness 和 write-scope 重叠警告，但不会改变持久快照。
 
+<a id="shared-room"></a>
+## 共享 room
+
+room 让同一个 Team 成为一场审慎的对话。Lead Session 保存所有参与者发言的带署名 transcript，每个集体决策只由记录在案的 quorum 结清，任何单个成员都无法独自决定。
+
+room 行为是可选的：`roomEnabled` 默认为 `false`。关闭时服务不记录任何 room event，所有 room 操作都以 `TEAM_ROOM_DISABLED` 拒绝，Agent Teams 行为保持不变。
+
+```ts type-equiv
+/** One attributed utterance in the shared room transcript. */
+interface RoomMessageSnapshot {
+  readonly id: RoomMessageId
+  readonly authorId: SessionId
+  readonly content: ContentBlock[]
+}
+```
+
+```ts type-equiv
+/**
+ * One collective decision. Every revision is a complete snapshot, so the fold
+ * never reconstructs a proposal by replaying edits.
+ */
+interface RoomProposalSnapshot {
+  readonly id: RoomProposalId
+  /** Revision number, starting at one and incrementing per superseding statement. */
+  readonly revision: number
+  readonly proposerId: SessionId
+  /** The exact statement every reviewer is asked to accept or reject. */
+  readonly statement: string
+  readonly phase: RoomProposalPhase
+}
+```
+
+```ts type-equiv
+/**
+ * One participant's verdict on one proposal revision. A reviewer changing its
+ * standing appends a new record; the fold keeps the latest per reviewer.
+ */
+interface RoomReviewSnapshot {
+  readonly proposalId: RoomProposalId
+  readonly proposalRevision: number
+  readonly reviewerId: SessionId
+  readonly verdict: RoomReviewVerdict
+  /** Why the reviewer chose this verdict; shown to the proposer on settlement. */
+  readonly reason: string
+}
+```
+
+`RoomMessageId` 标识一条 transcript entry；`RoomProposalId` 属于 room 本地，按 `proposal-<n>` 分配。reviewer 改变立场会追加一条记录，因此 fold 对每个 reviewer 和 revision 保留最新 verdict。
+
+参与者就是 Team roster 本身：Lead 加上每个尚未失败的成员。成员从 provisioning 记录它的那一刻起就是参与者，与 roster 解析在线成员 Team 身份所用规则一致。读取 room 是全函数：没有 room 的组合会报告 `enabled: false` 与空集合，而不是失败；而每个会写入的 room 操作仍然以 `TEAM_ROOM_DISABLED` 拒绝。`RoomView` 暴露该标志、roster、transcript、决策与轮转 chair；`RoomPromptRequest` 与 `RoomPromptResult` 描述把发言权交给某个参与者，`ProposeRoomDecisionRequest`、`ReviewRoomDecisionRequest`、`EscalateRoomDecisionRequest` 描述决策操作，`RoomStreamFrame` 在 `room/stream` event 上承载一个参与者的实时 frame。
+
+接受需要每个有资格的 reviewer 都已投票、其中至少 `roomApprovalRatio` 比例批准，且没有任何反对成立。proposer 不能 review 自己的决策，已结清的决策是最终的，被拒绝的决策只能通过把修订后的 statement 重新提交给 room 来解决。chair 随 transcript 轮转，不携带任何决策权。
+
 ## 回放
 
 `foldTeam()` 把一个 Root Session 回放成每个 Team 操作所读取的 roster、任务板与 queued-minus-delivered mailbox。它按 `TeamId` 选取记录，因此普通 fork 继承的 event 保留 ancestor id，绝不会进入新 Root 的状态。Session event 的 `seq` 与 `time` 继续负责顺序和时间记录，Team snapshot 不再重复保存它们。roster 与 task 读取以 view 形式到达调用方，而 pending 邮件仅供投递与恢复内部使用。包 [README](../../packages/experimental/agent-team/README.zh.md)负责 operation、authorization、recovery 和限制行为。
@@ -178,11 +231,66 @@ interrupt(caller: Agent, targetName: string): { previousStatus: 'running' | 'idl
 tryMembership(agent: Agent): TeamMembership | undefined
 
 /**
+ * Give one room participant the floor, carrying the conversation it has not seen.
+ * @param caller - exact live Team member granting the floor.
+ * @param request - target name, instruction, and cancellation.
+ * @returns durable message identity and immediate-delivery observation.
+ */
+async roomPrompt(caller: Agent, request: RoomPromptRequest): Promise<RoomPromptResult>
+
+/**
+ * Put one collective decision to the room and ask every eligible reviewer to settle it.
+ * @param caller - exact live Team member proposing the decision.
+ * @param request - statement, optional superseded decision, and cancellation.
+ * @returns the new revision with its quorum arithmetic.
+ */
+async roomPropose(caller: Agent, request: ProposeRoomDecisionRequest): Promise<RoomProposalView>
+
+/**
+ * Record one participant's standing on one decision revision.
+ * @param caller - exact live Team member reviewing the decision.
+ * @param request - decision identity, revision, verdict, reason, and cancellation.
+ * @returns the decision with its recomputed quorum arithmetic.
+ */
+async roomReview(caller: Agent, request: ReviewRoomDecisionRequest): Promise<RoomProposalView>
+
+/**
+ * Hand one unresolved decision to the human.
+ * @param caller - exact live Team member escalating the decision.
+ * @param request - decision identity, reason, and cancellation.
+ * @returns the escalated decision.
+ */
+async roomEscalate(caller: Agent, request: EscalateRoomDecisionRequest): Promise<RoomProposalView>
+
+/**
+ * Read the room roster, transcript, and decision board.
+ * @param caller - exact live Team member reading the room.
+ * @returns detached current room views.
+ */
+roomView(caller: Agent): RoomView
+
+/**
  * Read the current roster and non-deleted task board through the generated Remote API.
  * @param agent - exact live Team member used as the authority credential.
  * @returns detached current roster and task views.
  */
 @Remote('view') remoteView(agent: Agent): TeamView
+
+/**
+ * Read the current room through the generated Remote API.
+ * @param agent - exact live Team member used as the authority credential.
+ * @returns the room roster, rendered transcript, and decision board.
+ */
+@Remote('room') remoteRoom(agent: Agent): RoomRemoteView
+
+/**
+ * Follow one room through the generated Remote API.
+ * @param agent - exact live Team member used as the authority credential.
+ * @param signal - cancellation owned by the Remote stream carrier.
+ * @returns a complete view first, then a view after every committed room
+ *   change and a frame for every text chunk a participant streams.
+ */
+@Remote({ mode: 'stream' }) async *roomStream(agent: Agent, signal: AbortSignal): AsyncIterable<RoomFollowFrame>
 
 /**
  * Create one shared task through the generated Remote API.
@@ -204,4 +312,49 @@ tryMembership(agent: Agent): TeamMembership | undefined
 Types: [Agent](core.zh.md)
 
 Source: [`packages/experimental/agent-team/src/index.ts`](../../packages/experimental/agent-team/src/index.ts)
+
+<a id="room-events"></a>
+
+### `room/*` events
+
+<a id="roomstream--emit"></a>
+
+#### `room/stream` — emit
+
+One room participant produced a live assistant stream frame. This is a process-local observation of an in-flight turn; the durable record is the participant's own `assistant/message` and the room transcript.
+
+```ts cordis-catalog
+/**
+ * One room participant produced a live assistant stream frame. This is a
+ * process-local observation of an in-flight turn; the durable record is the
+ * participant's own `assistant/message` and the room transcript.
+ * @param payload.teamId - Team identity of the room the participant belongs to.
+ * @param payload.participantId - Session identity of the speaking participant.
+ * @param payload.participantName - Model-facing participant name.
+ * @param payload.frame - The participant's live stream frame.
+ * @mode emit
+ */
+'room/stream'(payload: RoomStreamFrame): void
+```
+
+Source: [`packages/experimental/agent-team/src/room.ts`](../../packages/experimental/agent-team/src/room.ts)
+
+<a id="roomupdated--emit"></a>
+
+#### `room/updated` — emit
+
+One room committed a change to its own log: a transcript entry, a decision, a revision, a review, or a deadline record. A live reader re-reads the room after it, and the durable record is the appended event.
+
+```ts cordis-catalog
+/**
+ * One room committed a change to its own log: a transcript entry, a
+ * decision, a revision, a review, or a deadline record. A live reader
+ * re-reads the room after it, and the durable record is the appended event.
+ * @param payload.teamId - Team identity of the room that changed.
+ * @mode emit
+ */
+'room/updated'(payload: { readonly teamId: TeamId }): void
+```
+
+Source: [`packages/experimental/agent-team/src/room.ts`](../../packages/experimental/agent-team/src/room.ts)
 <!-- END GENERATED cordis-surface -->

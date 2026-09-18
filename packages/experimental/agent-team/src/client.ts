@@ -2,6 +2,11 @@
 
 export type {
   CreateTeamTaskRequest,
+  RoomFollowFrame,
+  RoomParticipantView,
+  RoomProposalView,
+  RoomRemoteView,
+  RoomTranscriptEntry,
   TeamMemberView,
   TeamTaskAction,
   TeamTaskId,

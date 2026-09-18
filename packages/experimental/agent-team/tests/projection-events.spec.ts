@@ -70,6 +70,86 @@ function task(overrides: Partial<TeamTaskSnapshot> = {}): TeamTaskSnapshot {
   }
 }
 
+describe('task verification in the durable stream', () => {
+  it('refuses every verification record that cannot be true', () => {
+    const owned = { ownerId: CHILD }
+    const cases: { readonly label: string; readonly tasks: [TeamTaskSnapshot, TeamTaskSnapshot] }[] = [
+      {
+        label: 'completed without a peer verification',
+        tasks: [task(owned), task({ ...owned, revision: 2, status: 'completed' })],
+      },
+      {
+        label: 'a verdict without its verifier',
+        tasks: [
+          task({ ...owned, verification: { submittedRevision: 1 } }),
+          task({ ...owned, revision: 2, verification: { submittedRevision: 1, verdict: 'approved' } }),
+        ],
+      },
+      {
+        label: 'a member verifying its own work',
+        tasks: [
+          task({ ...owned, verification: { submittedRevision: 1 } }),
+          task({
+            ...owned,
+            revision: 2,
+            verification: { submittedRevision: 1, verifierId: CHILD, verdict: 'approved' },
+          }),
+        ],
+      },
+      {
+        label: 'completion without an approving verdict',
+        tasks: [
+          task({ ...owned, verification: { submittedRevision: 1 } }),
+          task({
+            ...owned,
+            revision: 2,
+            status: 'completed',
+            verification: { submittedRevision: 1, verifierId: ROOT, verdict: 'rejected', reason: 'no' },
+          }),
+        ],
+      },
+      {
+        label: 'awaiting a verdict on a revision it no longer carries',
+        tasks: [task(owned), task({ ...owned, revision: 2, verification: { submittedRevision: 1 } })],
+      },
+      {
+        label: 'a submission revision ahead of its own',
+        tasks: [
+          task(owned),
+          task({ ...owned, revision: 2, verification: { submittedRevision: 3, verifierId: ROOT, verdict: 'approved' } }),
+        ],
+      },
+    ]
+    for (const { label, tasks } of cases) {
+      const projected = project(ROOT, [
+        event('team/task', { version: 2, teamId: TEAM, task: tasks[0] }, SessionSeq(0)),
+        event('team/task', { version: 2, teamId: TEAM, task: tasks[1] }, SessionSeq(1)),
+      ])
+      expect(projected.failure, label).toBeDefined()
+    }
+  })
+
+  it('accepts a peer approval that names the revision it judged', () => {
+    const projected = project(ROOT, [
+      event('team/task', {
+        version: 2,
+        teamId: TEAM,
+        task: task({ ownerId: CHILD, verification: { submittedRevision: 1 } }),
+      }, SessionSeq(0)),
+      event('team/task', {
+        version: 2,
+        teamId: TEAM,
+        task: task({
+          ownerId: CHILD,
+          revision: 2,
+          verification: { submittedRevision: 1, verifierId: ROOT, verdict: 'approved', reason: 'checked' },
+        }),
+      }, SessionSeq(1)),
+    ])
+    expect(projected.failure).toBeUndefined()
+  })
+})
+
 function message(overrides: Partial<TeamMessageSnapshot> = {}): TeamMessageSnapshot {
   return {
     id: TeamMessageId('message-1'),
@@ -313,7 +393,7 @@ describe('Agent Teams projection events', () => {
       task: task(),
     }, SessionSeq(1))
     const state = project(ROOT, [invalid, later])
-    expect(state.failure).toMatch(/unsupported Agent Teams event version 1/)
+    expect(state.failure).toMatch(/unsupported Agent Teams team\/task event version 1/)
     expect(isEmptyState(state)).toBe(true)
   })
 

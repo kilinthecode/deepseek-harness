@@ -1,6 +1,7 @@
 /** Source-safe Agent Teams browser registration and Remote mount lifecycle. */
 
 import type {
+  RoomRemoteView,
   TeamMemberView as TeamRosterMember,
   TeamView,
 } from '@deepseek-ai/dsh-experimental-agent-team/client'
@@ -40,6 +41,12 @@ function registerUi(ctx: ClientContext): void {
   const actions: TeamActionInjected = {
     async load(sessionId): Promise<TeamActionResult<TeamView>> {
       return await ctx.remote.agentTeams.view(leadSessionId(sessionId))
+    },
+    async loadRoom(sessionId): Promise<TeamActionResult<RoomRemoteView>> {
+      return await ctx.remote.agentTeams.room(leadSessionId(sessionId))
+    },
+    async followRoom(sessionId, signal, frame) {
+      for await (const next of ctx.remote.agentTeams.roomStream(leadSessionId(sessionId), signal)) frame(next)
     },
     async createTask(sessionId, input): Promise<TeamTaskActionResult> {
       return await ctx.remote.agentTeams.createTask(leadSessionId(sessionId), input)

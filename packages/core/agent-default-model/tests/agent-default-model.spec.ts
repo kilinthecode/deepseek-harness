@@ -41,6 +41,21 @@ async function boot(): Promise<{
 }
 
 describe('AgentDefaultModelConfig', () => {
+  it('carries a composition-pinned reasoning effort', async () => {
+    const ctx = new Context()
+    await ctx.plugin(AgentDefaultModelConfig, {
+      provider: 'deepseek-official',
+      model: 'deepseek-v4-flash',
+      reasoningEffort: 'off',
+    })
+    // A deployment pins the effort in its composition, so every Agent that takes
+    // the default selection sends an explicit effort instead of an adapter default.
+    expect(ctx.agentDefaultModel.currentSelection()).toEqual({
+      provider: 'deepseek-official', model: 'deepseek-v4-flash', reasoningEffort: 'off',
+    })
+    await ctx.fiber.dispose()
+  })
+
   it('resolves the user layer over the composition entry', async () => {
     const bench = await boot()
     expect(bench.defaultModel.currentSelection()).toEqual({

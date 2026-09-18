@@ -112,7 +112,7 @@ describe('Windows token signing', () => {
     }, {
       certificateFile: CERTIFICATE_FILE,
       signTool: 'C:\\tools\\signtool.exe',
-      path: 'C:\\release\\DeepSeek Harness.exe',
+      path: 'C:\\release\\Portal.exe',
       isNest: false,
       tokenPin: 'token-secret!',
       keyContainer: 'te-container',
@@ -122,7 +122,7 @@ describe('Windows token signing', () => {
       DSH_DESKTOP_WINDOWS_CER_FILE: CERTIFICATE_FILE,
       DSH_DESKTOP_WINDOWS_TOKEN_PIN: 'token-secret!',
       DSH_DESKTOP_WINDOWS_KEY_CONTAINER: 'te-container',
-      DSH_DESKTOP_WINDOWS_SIGN_TARGET: 'C:\\release\\DeepSeek Harness.exe',
+      DSH_DESKTOP_WINDOWS_SIGN_TARGET: 'C:\\release\\Portal.exe',
       DSH_DESKTOP_WINDOWS_SIGN_APPEND: '',
     })
   })

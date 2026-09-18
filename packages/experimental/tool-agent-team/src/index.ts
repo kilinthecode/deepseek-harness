@@ -2,7 +2,8 @@
 
 import type { Context } from '@deepseek-ai/cordis'
 import z from '@deepseek-ai/schemastery'
-import type { Agent } from '@deepseek-ai/dsh-agent'
+import type { Agent, AgentOptions } from '@deepseek-ai/dsh-agent'
+import { ReasoningEffortId } from '@deepseek-ai/dsh-llm'
 import { TeamTaskId } from '@deepseek-ai/dsh-experimental-agent-team'
 import type { TeamMemberView } from '@deepseek-ai/dsh-experimental-agent-team'
 import { defineTool } from '@deepseek-ai/dsh-tools'
@@ -30,11 +31,11 @@ export const Config: z<Config> = z.object({
 /** Model-facing collaboration guidance shared by Lead and teammates. */
 const POLICY = `Agent Teams is available in this session, but create teammates only when the user explicitly asks to use Agent Teams or teammates.
 
-The Team Lead and all teammates share the same working directory and filesystem. Edits are immediately visible to every member. Split write work into disjoint scopes, record expected write scopes on shared tasks, and use task dependencies when work must be ordered. Write-scope overlap is advisory, not a lock.
+Give each teammate the provider, model, and reasoning effort that fits its responsibility: participants on different models disagree more usefully than copies of one model. The Team Lead and all teammates share the same working directory and filesystem. Edits are immediately visible to every member. Split write work into disjoint scopes, record expected write scopes on shared tasks, and use task dependencies when work must be ordered. Write-scope overlap is advisory, not a lock.
 
 Prefer read/edit/write for file changes. If a file operation returns FS_STALE_VERSION, read the current file, rebase your intended change onto the new content, and retry. Bash, formatters, code generators, and scripts are not fully protected by the filesystem version guard; coordinate them explicitly and have the Lead review the final diff and run tests.
 
-send_message steers a running target at its nearest step boundary, starts an idle target, and cold-resumes an inactive teammate. A delivered peer item starts with its stable message id and sender name. A successful send is already durable even when its result says queued; do not resend it. Shared-task workflow is list, get, claim with the current revision, perform the work, then complete. Task readiness never starts an owner. Before wait_agent, use list_agents and make sure another required member is running or provisioning; use send_message first when the required member is inactive. wait_agent observes only changes after that call starts, never wakes a member, and returns noProgress immediately when no other member can produce a change. Re-list after wakeup or timeout. The Lead must wait for required teammates before giving the final answer.`
+send_message steers a running target at its nearest step boundary, starts an idle target, and cold-resumes an inactive teammate. A delivered peer item starts with its stable message id and sender name. A successful send is already durable even when its result says queued; do not resend it. Shared-task workflow is list, get, claim with the current revision, perform the work, then submit it for peer verification: submit hands the current revision to the room, and only another member's verify verdict with a reason completes it or returns it with the objection. Never expect to complete your own work, and verify a peer's submission against the work itself rather than its report. Task readiness never starts an owner. Before wait_agent, use list_agents and make sure another required member is running or provisioning; use send_message first when the required member is inactive. wait_agent observes only changes after that call starts, never wakes a member, and returns noProgress immediately when no other member can produce a change. Re-list after wakeup or timeout. The Lead must wait for required teammates before giving the final answer.`
 
 const ACTIVE_WAIT_STATUSES: ReadonlySet<TeamMemberView['status']> = new Set(['running', 'provisioning'])
 const NO_ACTIVE_PEER_MESSAGE = 'No other Team member is running or provisioning. wait_agent cannot make progress or wake inactive teammates. Re-list with list_agents and team_task_list, then use send_message to wake each required inactive teammate before waiting again.'
@@ -69,12 +70,22 @@ const TASK_VIEW_SCHEMA = {
     revision: { type: 'integer', required: true },
     subject: { type: 'string', required: true },
     description: { type: 'string', required: true },
-    status: { type: 'string', required: true, enum: ['pending', 'in_progress', 'completed', 'deleted'] },
+    status: { type: 'string', required: true, enum: ['pending', 'in_progress', 'verifying', 'completed', 'deleted'] },
     ownerName: { type: 'string' },
     blockedBy: { type: 'array', required: true, items: { type: 'string' } },
     writeScopes: { type: 'array', required: true, items: { type: 'string' } },
     ready: { type: 'boolean', required: true },
     writeScopeWarnings: { type: 'array', required: true, items: { type: 'string' } },
+    verification: {
+      type: 'object',
+      additionalProperties: false,
+      properties: {
+        submittedRevision: { type: 'integer', required: true },
+        verifierName: { type: 'string' },
+        verdict: { type: 'string', enum: ['approved', 'rejected'] },
+        reason: { type: 'string' },
+      },
+    },
   },
 } as const
 
@@ -179,11 +190,29 @@ function install(agent: Agent, ctx: Context, config: Required<Config>): () => vo
           enum: ['fresh', 'fork'],
           description: 'fresh starts without Lead history; fork inherits completed Lead turns. Defaults to fresh.',
         },
+        provider: {
+          type: 'string',
+          description: 'Model provider route for this teammate, for example deepseek-official. Defaults to your own route.',
+        },
+        model: {
+          type: 'string',
+          description: 'Model id for this teammate. Set it to seat participants on different models in one Team or room.',
+        },
+        reasoning_effort: {
+          type: 'string',
+          enum: ['off', 'low', 'medium', 'high'],
+          description: 'Reasoning effort for this teammate. Defaults to your own setting.',
+        },
       },
       output: jsonOutput(SPAWN_VALUE_SCHEMA),
       async execute(args, exec) {
         const agent = callingAgent(exec.agent, 'spawn_teammate')
         const context = args.context ?? 'fresh'
+        const agentOptions: AgentOptions = {
+          ...args.provider === undefined ? {} : { provider: args.provider },
+          ...args.model === undefined ? {} : { model: args.model },
+          ...args.reasoning_effort === undefined ? {} : { reasoningEffort: ReasoningEffortId(args.reasoning_effort) },
+        }
         return await ctx.agentTeams.spawnTeammate(agent, {
           name: args.name,
           description: args.description,
@@ -193,6 +222,7 @@ function install(agent: Agent, ctx: Context, config: Required<Config>): () => vo
           ],
           context,
           provider: context === 'fork' ? config.forkProvider : config.freshProvider,
+          ...Object.keys(agentOptions).length === 0 ? {} : { agentOptions },
           signal: exec.signal,
         })
       },
@@ -355,14 +385,16 @@ function install(agent: Agent, ctx: Context, config: Required<Config>): () => vo
         action: {
           type: 'string',
           required: true,
-          enum: ['claim', 'release', 'edit', 'set_dependencies', 'complete', 'reopen', 'reassign', 'delete'],
-          description: 'Task transition to apply.',
+          enum: ['claim', 'release', 'edit', 'set_dependencies', 'submit', 'verify', 'reopen', 'reassign', 'delete'],
+          description: 'Task transition to apply. submit hands your own finished work to a peer; verify records a peer verdict on submitted work.',
         },
         subject: { type: 'string', description: 'Replacement title for edit.' },
         description: { type: 'string', description: 'Replacement details for edit.' },
         blocked_by: { type: 'array', items: { type: 'string' }, description: 'Complete blocker list for set_dependencies.' },
         write_scopes: { type: 'array', items: { type: 'string' }, description: 'Replacement advisory write scopes for edit.' },
         owner: { type: 'string', description: 'Member name for Lead-only reassign; omit to unassign.' },
+        verdict: { type: 'string', enum: ['approved', 'rejected'], description: 'Peer verdict required by verify.' },
+        reason: { type: 'string', description: 'Why the peer approved or rejected; required by verify and read by the owner.' },
       },
       output: jsonOutput(TASK_VIEW_SCHEMA),
       async execute(args, exec) {
@@ -375,6 +407,8 @@ function install(agent: Agent, ctx: Context, config: Required<Config>): () => vo
           ...args.blocked_by === undefined ? {} : { blockedBy: args.blocked_by.map(TeamTaskId) },
           ...args.write_scopes === undefined ? {} : { writeScopes: args.write_scopes },
           ...args.owner === undefined ? {} : { owner: args.owner },
+          ...args.verdict === undefined ? {} : { verdict: args.verdict },
+          ...args.reason === undefined ? {} : { reason: args.reason },
         })
       },
     })))

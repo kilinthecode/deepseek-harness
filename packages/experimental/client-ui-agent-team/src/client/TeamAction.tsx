@@ -5,6 +5,9 @@ import type {
   TeamTaskAction,
   TeamTaskId,
   TeamTaskMutationResult,
+  RoomProposalView,
+  RoomFollowFrame,
+  RoomRemoteView,
   TeamTaskView as TeamTask,
   TeamView,
 } from '@deepseek-ai/dsh-experimental-agent-team/client'
@@ -27,6 +30,7 @@ export type TeamTaskActionResult = RemoteResult<TeamTaskMutationResult>
 /** Business actions injected by the browser plugin. */
 export interface TeamActionInjected {
   load: (sessionId: SessionId) => Promise<TeamActionResult<TeamView>>
+  loadRoom: (sessionId: SessionId) => Promise<TeamActionResult<RoomRemoteView>>
   createTask: (sessionId: SessionId, input: {
     subject: string
     description: string
@@ -44,6 +48,18 @@ export interface TeamActionInjected {
     owner?: string
   }) => Promise<TeamTaskActionResult>
   openTeammate: (sessionId: SessionId, member: TeamRosterMember) => Promise<void>
+  /**
+   * Follow one room while the panel is open.
+   * @param sessionId - Lead Session whose room is followed.
+   * @param signal - cancellation owned by the panel.
+   * @param frame - receives every frame the Host delivers.
+   * @returns fulfillment when the stream ends.
+   */
+  followRoom: (
+    sessionId: SessionId,
+    signal: AbortSignal,
+    frame: (next: RoomFollowFrame) => void,
+  ) => Promise<void>
 }
 
 /** Full props of the Team conversation-header action. */
@@ -75,14 +91,46 @@ function failureText(error: { readonly code: string; readonly message: string })
   return `${error.message} (${error.code})`
 }
 
+/** One peer verdict on submitted work, using the room's own verdict wording. */
+function taskVerdictKey(verdict: 'approved' | 'rejected'): TeamKey {
+  switch (verdict) {
+    case 'approved': return 'verdict.approve'
+    case 'rejected': return 'verdict.reject'
+  }
+}
+
 function statusKey(status: TeamTask['status']): TeamKey {
   switch (status) {
     case 'pending': return 'status.pending'
     case 'in_progress': return 'status.in_progress'
+    case 'verifying': return 'status.verifying'
     case 'completed': return 'status.completed'
     /* v8 ignore next -- Team views omit deleted task tombstones. */
     case 'deleted': return 'status.completed'
   }
+}
+
+/** Localized label for one collective-decision phase. */
+function phaseKey(phase: RoomProposalView['phase']): TeamKey {
+  switch (phase) {
+    case 'open': return 'phase.open'
+    case 'accepted': return 'phase.accepted'
+    case 'rejected': return 'phase.rejected'
+    case 'escalated': return 'phase.escalated'
+  }
+}
+
+function verdictKey(verdict: RoomProposalView['standings'][number]['verdict']): TeamKey {
+  switch (verdict) {
+    case 'approve': return 'verdict.approve'
+    case 'reject': return 'verdict.reject'
+    case 'abstain': return 'verdict.abstain'
+  }
+}
+
+/** One vote line, naming the participants on each side or nobody at all. */
+function voteLine(t: PropsLocale<typeof NS>['t'], label: string, names: readonly string[]): string {
+  return `${label}: ${names.length === 0 ? t('none') : names.join(', ')}`
 }
 
 function memberStatusKey(status: TeamRosterMember['status']): TeamKey {
@@ -97,11 +145,17 @@ function memberStatusKey(status: TeamRosterMember['status']): TeamKey {
 
 /** Render the live Team roster and compare-and-set task board. */
 export function TeamAction({
-  sessionId, load, createTask, updateTask, openTeammate, t,
+  sessionId, load, loadRoom, createTask, updateTask, openTeammate, followRoom, t,
 }: TeamActionProps) {
   const [open, setOpen] = useState(false)
   const [loading, setLoading] = useState(false)
   const [view, setView] = useState<TeamView | null>(null)
+  const [room, setRoom] = useState<RoomRemoteView | null>(null)
+  /** Text each participant is streaming right now, keyed by participant name. */
+  const [streaming, setStreaming] = useState<Readonly<Record<string, string>>>({})
+  /** Task whose verification form is open, and the reason being written. */
+  const [verifyingTask, setVerifyingTask] = useState<string | null>(null)
+  const [verifyReason, setVerifyReason] = useState('')
   const [error, setError] = useState<string | null>(null)
   const [creating, setCreating] = useState(false)
   const [createDraft, setCreateDraft] = useState<Draft>(EMPTY_DRAFT)
@@ -117,6 +171,10 @@ export function TeamAction({
     setOpen(false)
     setLoading(false)
     setView(null)
+    setRoom(null)
+    setStreaming({})
+    setVerifyingTask(null)
+    setVerifyReason('')
     setError(null)
     setCreating(false)
     setCreateDraft(EMPTY_DRAFT)
@@ -125,22 +183,50 @@ export function TeamAction({
     setPendingTasks(new Set())
   }, [sessionId])
 
+  const liveEntries = Object.entries(streaming).filter(([, text]) => text.length > 0)
+  const roomOpen = open && room !== null && room.enabled
+  useEffect(() => {
+    if (!roomOpen) return
+    const controller = new AbortController()
+    // A committed change republishes the whole view, so streaming text is
+    // dropped once its utterance is durable.
+    void followRoom(sessionId, controller.signal, (frame) => {
+      if (frame.type === 'view') {
+        setRoom(frame.view)
+        setStreaming({})
+        return
+      }
+      setStreaming(previous => ({
+        ...previous,
+        [frame.participant]: `${previous[frame.participant] ?? ''}${frame.delta}`,
+      }))
+    }).catch(() => {
+      // A closed stream leaves the last complete view in place.
+    })
+    return () => { controller.abort() }
+  }, [roomOpen, sessionId, followRoom])
+
   const refresh = useCallback(async (): Promise<boolean> => {
     const requestedSession = sessionId
     const generation = ++refreshGeneration.current
     setLoading(true)
-    const result = await load(requestedSession)
+    // The room and the roster are read together: a decision without its roster,
+    // or a roster without the decisions it is accountable for, is not a view of
+    // the same room.
+    const [result, roomResult] = await Promise.all([load(requestedSession), loadRoom(requestedSession)])
     if (sessionRef.current !== requestedSession || refreshGeneration.current !== generation) return false
     setLoading(false)
     if (result.ok) {
       setView(result.value)
       setError(null)
-      return true
     } else {
       setError(failureText(result.error))
       return false
     }
-  }, [load, sessionId])
+    if (roomResult.ok) setRoom(roomResult.value)
+    else setError(failureText(roomResult.error))
+    return true
+  }, [load, loadRoom, sessionId])
 
   const invalidateRefresh = useCallback((): void => {
     refreshGeneration.current += 1
@@ -186,6 +272,27 @@ export function TeamAction({
       }
     }
   }, [invalidateRefresh, refresh, sessionId, t])
+
+  const submitVerification = async (task: TeamTask, verdict: 'approved' | 'rejected'): Promise<void> => {
+    const reason = verifyReason.trim()
+    // A verdict without its objection is exactly what peer verification exists to
+    // prevent, so the panel refuses it before the Host has to.
+    if (reason.length === 0) {
+      setError(t('verification.reasonRequired'))
+      return
+    }
+    const settled = await settleTask(task.id, () => updateTask(sessionId, {
+      taskId: task.id,
+      expectedRevision: task.revision,
+      action: 'verify',
+      verdict,
+      reason,
+    }))
+    if (settled !== undefined) {
+      setVerifyingTask(null)
+      setVerifyReason('')
+    }
+  }
 
   const submitCreate = async (): Promise<void> => {
     const subject = createDraft.subject.trim()
@@ -299,6 +406,72 @@ export function TeamAction({
                   ))}
                 </div>
               </section>
+              {room !== null && room.enabled && (
+                <section>
+                  <h3>{t('transcript')}</h3>
+                  {room.messages.length === 0 && liveEntries.length === 0
+                    && <div className={css.notice}>{t('noTranscript')}</div>}
+                  <div className={css.transcript}>
+                    {room.messages.map((message, index) => (
+                      <div key={`${message.author}-${String(index)}`} className={css.turn}>
+                        <span className={css.author}>{message.author}</span>
+                        <span className={css.turnText}>{message.text}</span>
+                      </div>
+                    ))}
+                    {liveEntries.map(([author, text]) => (
+                      <div key={`live-${author}`} className={css.turn}>
+                        <span className={css.author}>{author}</span>
+                        <span className={css.liveText}>{text}</span>
+                      </div>
+                    ))}
+                  </div>
+                  <div className={css.sectionTitle}>
+                    <h3>{t('decisions')}</h3>
+                    <span className={css.chair}>{t('room')} · {t('chair')}: {room.chair}</span>
+                  </div>
+                  {room.proposals.length === 0 && <div className={css.notice}>{t('noDecisions')}</div>}
+                  <div className={css.decisions}>
+                    {room.proposals.map(proposal => (
+                      <div key={proposal.id} className={css.decision}>
+                        <div className={css.decisionHead}>
+                          <span className={css.phase} data-phase={proposal.phase}>{t(phaseKey(proposal.phase))}</span>
+                          <span className={css.decisionId}>
+                            <span>{proposal.id}</span>
+                            <span>{t('revision')}</span>
+                            <span>{proposal.revision}</span>
+                          </span>
+                          <span className={css.spacer} />
+                          <span>{t('proposer')}: {proposal.proposerName}</span>
+                        </div>
+                        <p className={css.statement}>{proposal.statement}</p>
+                        <div className={css.votes}>
+                          <span>{voteLine(t, t('votes.approvals'), proposal.approvals)}</span>
+                          <span>{voteLine(t, t('votes.rejections'), proposal.rejections)}</span>
+                          <span>{voteLine(t, t('votes.abstentions'), proposal.abstentions)}</span>
+                          <span>{voteLine(t, t('votes.awaiting'), proposal.awaiting)}</span>
+                          {proposal.stalled.length > 0 && (
+                            <span className={css.warning}>
+                              {voteLine(t, t('votes.stalled'), proposal.stalled)}
+                            </span>
+                          )}
+                        </div>
+                        {proposal.standings.length > 0 && (
+                          <ul className={css.standings}>
+                            {proposal.standings.map(standing => (
+                              <li key={standing.reviewer} className={css.standing}>
+                                <span className={css.standingHead}>
+                                  {standing.reviewer} · {t(verdictKey(standing.verdict))}
+                                </span>
+                                <span className={css.standingReason}>{standing.reason}</span>
+                              </li>
+                            ))}
+                          </ul>
+                        )}
+                      </div>
+                    ))}
+                  </div>
+                </section>
+              )}
               <section>
                 <div className={css.sectionTitle}>
                   <h3>{t('tasks')}</h3>
@@ -337,6 +510,15 @@ export function TeamAction({
                           <span>{t(statusKey(task.status))}</span>
                         </div>
                         <p>{task.description}</p>
+                        {task.verification !== undefined && (
+                          <p className={css.verification}>
+                            {`${t('verification')}: ${task.verification.verifierName ?? t('none')}`
+                              + (task.verification.verdict === undefined
+                                ? ''
+                                : ` · ${t(taskVerdictKey(task.verification.verdict))}`)
+                              + (task.verification.reason === undefined ? '' : ` — ${task.verification.reason}`)}
+                          </p>
+                        )}
                         <div className={css.meta}>
                           <span>{task.id}</span>
                           {task.status === 'pending' && <span>{task.ready ? t('ready') : t('blocked')}</span>}
@@ -370,10 +552,45 @@ export function TeamAction({
                           {task.status === 'in_progress' && (
                             <button type="button" disabled={pendingTasks.has(task.id)} onClick={() => {
                               void settleTask(task.id, () => updateTask(sessionId, {
-                                taskId: task.id, expectedRevision: task.revision, action: 'complete',
+                                taskId: task.id, expectedRevision: task.revision, action: 'submit',
                               }))
-                            }}><IconCheckOutline14 /> {t('complete')}</button>
+                            }}><IconCheckOutline14 /> {t('submit')}</button>
                           )}
+                          {task.status === 'verifying' && (verifyingTask === task.id
+                            ? (
+                              <div className={css.form}>
+                                <textarea
+                                  value={verifyReason}
+                                  placeholder={t('verification.reason')}
+                                  onChange={(event: ChangeEvent<HTMLTextAreaElement>) => {
+                                    setVerifyReason(event.target.value)
+                                  }}
+                                />
+                                <div className={css.formActions}>
+                                  <button
+                                    type="button"
+                                    disabled={pendingTasks.has(task.id)}
+                                    onClick={() => { void submitVerification(task, 'approved') }}
+                                  >{t('verdict.approve')}</button>
+                                  <button
+                                    type="button"
+                                    disabled={pendingTasks.has(task.id)}
+                                    onClick={() => { void submitVerification(task, 'rejected') }}
+                                  >{t('verdict.reject')}</button>
+                                  <button
+                                    type="button"
+                                    onClick={() => { setVerifyingTask(null); setVerifyReason('') }}
+                                  >{t('cancel')}</button>
+                                </div>
+                              </div>
+                            )
+                            : (
+                              <button
+                                type="button"
+                                disabled={pendingTasks.has(task.id)}
+                                onClick={() => { setVerifyingTask(task.id); setVerifyReason('') }}
+                              ><IconCheckOutline14 /> {t('verify')}</button>
+                            ))}
                           {task.status === 'completed' && (
                             <button type="button" disabled={pendingTasks.has(task.id)} onClick={() => {
                               void settleTask(task.id, () => updateTask(sessionId, {

@@ -638,15 +638,37 @@ describe('Team shared task DAG', () => {
     await expect(ctx.agentTeams.updateTask(alpha, {
       taskId: first.id,
       expectedRevision: first.revision,
-      action: 'complete',
+      action: 'submit',
     })).rejects.toMatchObject({ code: 'TEAM_TASK_STALE_REVISION' })
 
-    const completed = await ctx.agentTeams.updateTask(alpha, {
+    // Work completes only through a peer verdict: the owner submits, beta verifies.
+    const submitted = await ctx.agentTeams.updateTask(alpha, {
       taskId: first.id,
       expectedRevision: claimed.revision,
-      action: 'complete',
+      action: 'submit',
+    })
+    expect(submitted.status).toBe('verifying')
+    await expect(ctx.agentTeams.updateTask(alpha, {
+      taskId: first.id,
+      expectedRevision: submitted.revision,
+      action: 'verify',
+      verdict: 'approved',
+      reason: 'self-review',
+    })).rejects.toMatchObject({ code: 'TEAM_TASK_SELF_VERIFICATION' })
+    const completed = await ctx.agentTeams.updateTask(beta, {
+      taskId: first.id,
+      expectedRevision: submitted.revision,
+      action: 'verify',
+      verdict: 'approved',
+      reason: 'the cache bounds are enforced',
     })
     expect(completed.status).toBe('completed')
+    expect(completed.verification).toEqual({
+      submittedRevision: submitted.revision,
+      verifierName: 'beta',
+      verdict: 'approved',
+      reason: 'the cache bounds are enforced',
+    })
     expect(ctx.agentTeams.getTask(beta, second.id).ready).toBe(true)
     const secondClaim = await ctx.agentTeams.updateTask(beta, {
       taskId: second.id,
@@ -714,7 +736,7 @@ describe('Team shared task DAG', () => {
     })
     expect(() => ctx.agentTeams.getTask(lead, TeamTaskId('missing')))
       .toThrow(expect.objectContaining({ code: 'TEAM_TASK_NOT_FOUND' }))
-    for (const action of ['release', 'complete', 'reopen'] as const) {
+    for (const action of ['release', 'submit', 'verify', 'reopen'] as const) {
       await expect(ctx.agentTeams.updateTask(lead, {
         taskId: blocker.id,
         expectedRevision: blocker.revision,
@@ -738,6 +760,62 @@ describe('Team shared task DAG', () => {
     })).rejects.toMatchObject({ code: 'TEAM_TASK_HAS_DEPENDENTS' })
   })
 
+  it('refuses verification of unsubmitted work and submissions that block on peers', async () => {
+    const { ctx, lead } = await setup(['hang', 'hang'])
+    const ownerStarted = await spawn(ctx, lead, 'owner')
+    const owner = await waitRunning(ctx, ownerStarted.member.id)
+    const verifierStarted = await spawn(ctx, lead, 'verifier')
+    const verifier = await waitRunning(ctx, verifierStarted.member.id)
+
+    // Work that acquires a blocker after it was claimed cannot be handed over.
+    const blocker = await ctx.agentTeams.createTask(owner, { subject: 'blocker', description: 'blocker' })
+    const blocked = await ctx.agentTeams.createTask(owner, { subject: 'blocked', description: 'blocked' })
+    const blockedClaim = await ctx.agentTeams.updateTask(owner, {
+      taskId: blocked.id, expectedRevision: blocked.revision, action: 'claim',
+    })
+    const rewired = await ctx.agentTeams.updateTask(owner, {
+      taskId: blocked.id, expectedRevision: blockedClaim.revision, action: 'set_dependencies',
+      blockedBy: [blocker.id],
+    })
+    await expect(ctx.agentTeams.updateTask(owner, {
+      taskId: blocked.id, expectedRevision: rewired.revision, action: 'submit',
+    })).rejects.toMatchObject({ code: 'TEAM_TASK_BLOCKED' })
+
+    const openTask = await ctx.agentTeams.createTask(owner, { subject: 'open', description: 'open' })
+    const openClaim = await ctx.agentTeams.updateTask(owner, {
+      taskId: openTask.id, expectedRevision: openTask.revision, action: 'claim',
+    })
+    // Verifying a task nobody submitted is refused before any verdict is read.
+    await expect(ctx.agentTeams.updateTask(verifier, {
+      taskId: openTask.id, expectedRevision: openClaim.revision, action: 'verify',
+      verdict: 'approved', reason: 'nothing to verify',
+    })).rejects.toMatchObject({ code: 'TEAM_TASK_INVALID_TRANSITION' })
+
+    const submitted = await ctx.agentTeams.updateTask(owner, {
+      taskId: openTask.id, expectedRevision: openClaim.revision, action: 'submit',
+    })
+    await expect(ctx.agentTeams.updateTask(verifier, {
+      taskId: openTask.id, expectedRevision: submitted.revision, action: 'verify',
+    })).rejects.toMatchObject({ code: 'TEAM_INVALID_ARGUMENT' })
+    await expect(ctx.agentTeams.updateTask(owner, {
+      taskId: openTask.id, expectedRevision: submitted.revision, action: 'set_dependencies', blockedBy: [],
+    })).rejects.toMatchObject({ code: 'TEAM_TASK_INVALID_TRANSITION' })
+
+    // A rejection returns the work with the objection recorded.
+    const rejected = await ctx.agentTeams.updateTask(verifier, {
+      taskId: openTask.id, expectedRevision: submitted.revision, action: 'verify',
+      verdict: 'rejected', reason: 'the cache bounds are not enforced',
+    })
+    expect(rejected).toMatchObject({
+      status: 'in_progress',
+      verification: {
+        verifierName: 'verifier',
+        verdict: 'rejected',
+        reason: 'the cache bounds are not enforced',
+      },
+    })
+  })
+
   it('supports Lead reassignment, completion, reopen, and deletion permissions', async () => {
     const { ctx, lead } = await setup(['hang'])
     const started = await spawn(ctx, lead, 'owner')
@@ -755,11 +833,26 @@ describe('Team shared task DAG', () => {
       action: 'reassign',
       owner: 'lead',
     })).rejects.toMatchObject({ code: 'TEAM_LEAD_REQUIRED' })
-    const complete = await ctx.agentTeams.updateTask(owner, {
+    const submitted = await ctx.agentTeams.updateTask(owner, {
       taskId: task.id,
       expectedRevision: assigned.revision,
-      action: 'complete',
+      action: 'submit',
     })
+    // An owner cannot edit or re-scope what it already handed to a peer.
+    await expect(ctx.agentTeams.updateTask(owner, {
+      taskId: task.id,
+      expectedRevision: submitted.revision,
+      action: 'edit',
+      subject: 'changed after submission',
+    })).rejects.toMatchObject({ code: 'TEAM_TASK_INVALID_TRANSITION' })
+    const complete = await ctx.agentTeams.updateTask(lead, {
+      taskId: task.id,
+      expectedRevision: submitted.revision,
+      action: 'verify',
+      verdict: 'approved',
+      reason: 'the lifecycle works',
+    })
+    expect(complete.status).toBe('completed')
     await expect(ctx.agentTeams.updateTask(lead, {
       taskId: task.id,
       expectedRevision: complete.revision,
@@ -771,6 +864,7 @@ describe('Team shared task DAG', () => {
       expectedRevision: complete.revision,
       action: 'reopen',
     })
+    expect(reopened.verification).toBeUndefined()
     const claimed = await ctx.agentTeams.updateTask(owner, {
       taskId: task.id,
       expectedRevision: reopened.revision,
@@ -814,8 +908,15 @@ describe('Team shared task DAG', () => {
       taskId: blocker.id, expectedRevision: blocker.revision, action: 'claim',
     })
     expect(leadClaim.ownerName).toBe('lead')
-    const completedBlocker = await ctx.agentTeams.updateTask(lead, {
-      taskId: blocker.id, expectedRevision: leadClaim.revision, action: 'complete',
+    const submittedBlocker = await ctx.agentTeams.updateTask(lead, {
+      taskId: blocker.id, expectedRevision: leadClaim.revision, action: 'submit',
+    })
+    const completedBlocker = await ctx.agentTeams.updateTask(editor, {
+      taskId: blocker.id,
+      expectedRevision: submittedBlocker.revision,
+      action: 'verify',
+      verdict: 'approved',
+      reason: 'the blocker is done',
     })
     expect(completedBlocker.status).toBe('completed')
     const assigned = await ctx.agentTeams.updateTask(lead, {

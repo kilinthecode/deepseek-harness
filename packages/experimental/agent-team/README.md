@@ -9,7 +9,7 @@ English | [中文](README.zh.md)
 
 ## Summary
 
-`dsh-experimental-agent-team` turns one coding session into a small working team: the session's agent becomes the Lead, creates named teammates for delegated work, exchanges durable messages with them, and tracks shared tasks on a common board. Messages and task state survive crashes, reloads, and interruptions, so a teammate that was offline receives its queued messages when it resumes. It provides no tools of its own — mount the sibling `dsh-experimental-tool-agent-team` so the model can create teammates, message them, and use the task board. It is published under its experimental name, carries no stability promise, and needs durable session storage to activate.
+`dsh-experimental-agent-team` turns one coding session into a small working team: the session's agent becomes the Lead, creates named teammates for delegated work, exchanges durable messages with them, and tracks shared tasks on a common board. Messages and task state survive crashes, reloads, and interruptions, so an offline teammate receives its queued messages when it resumes. With `roomEnabled` the same roster also runs as a deliberative room: utterances join one attributed transcript, and collective decisions settle only by recorded quorum. It ships no tools — mount `@deepseek-ai/dsh-experimental-tool-agent-team`. It is published under its experimental name and carries no stability promise.
 
 ## Table of Contents
 
@@ -74,7 +74,7 @@ Every message uses Steer: a running target receives it at the nearest step bound
 
 Any member can add a task with a title, details, optional dependencies on other tasks, and optional hints about which files it will touch. A task is claimable only when everything it depends on is complete.
 
-Tasks have an owner: a member claims a task to start work, completes it when done, releases it back, or reopens it; the Lead can assign a task to any member. Every change is compare-and-set: an update based on an outdated copy is rejected, so two members cannot silently overwrite each other's work.
+Tasks have an owner: a member claims a task to start work, submits the finished work for verification, releases it back, or reopens it; the Lead can assign a task to any member. No member completes its own work: `submit` hands the current revision to a peer, the view then reports `verifying`, and only another member's `verify` verdict with its reason moves the task to `completed` or returns it with the objection recorded. Every change is compare-and-set: an update based on an outdated copy is rejected, so two members cannot silently overwrite each other's work.
 
 File hints produce warnings when two in-progress tasks plan to touch overlapping paths — they never block anything. Deleted tasks remain in history but disappear from the active list.
 
@@ -145,6 +145,16 @@ Tasks are complete versioned snapshots; every mutation carries `expectedRevision
 
 Team events are appended to the exact live Lead Session and flushed before the operation reports success or wakes waiters. `team/member`, `team/task`, `team/message/queued`, and `team/message/delivered` are log-only: they never enter the conversation surface, so derived model history is untouched by coordination records. Session event `seq` and `time` own ordering and timing; snapshots do not duplicate them. The `./invariant` companion replays each candidate Team event against its committed prefix and rejects invalid transitions before append.
 
+### Shared room
+
+`TeamRoom` reads and writes the same Lead Session the roster and mailbox use. It appends one `room/message` per participant utterance — taken from that participant's own committed `assistant/message` — so the transcript is attributed, ordered, and replayable without a second store. `room/proposal` and `room/review` hold collective decisions. All three are log-only events, so they never enter derived model history.
+
+A participant is a roster member that has not failed, including one still provisioning, which is the same rule the roster uses to resolve a live member's Team identity. `roomPrompt` gives one participant the floor by sending it the transcript entries recorded after its own last utterance, bounded by `roomTranscriptWindow`. `participants` are never woken by another participant's utterance, so a room advances only when someone grants the floor.
+
+Acceptance is computed by `room-quorum.ts` from recorded reviews alone. Every eligible reviewer is a participant other than the proposer, and a decision is accepted only when all of them have voted, at least `roomApprovalRatio` of them approved, and no rejection stands. Rejections settle a decision as soon as they reach quorum. A proposer cannot review its own decision, a settled decision is final, and a rejected one is resolved only by a fresh revision carrying a revised statement, bounded by `roomMaxProposalRevisions`. There is no operation that forces an outcome; `roomEscalate` hands an unresolved decision to the human instead. Every recorded standing carries its reason, and each participant reads the whole board, so a proposer answers the objection instead of only learning that one exists.
+
+A reader follows one room through the `roomStream` Remote stream: the complete room arrives first, then a fresh view after every committed change and a frame for every text chunk a participant streams, so a panel can show deliberation while it happens without polling. Reviewer silence is measured from that participant's own observed work — durable Session events of its own turns and live `agent/assistant-stream` frames — never from the room's records, which the Lead Session holds for every actor. Asking for a standing starts that reviewer's `roomReviewGraceMs` window, each of at most `roomReviewReminders` reminders restarts the window of the reviewer it reaches, and a decision escalates only once every reviewer still owing a standing has exhausted its window, so a slow model is never mistaken for a stuck one. An escalated decision records the silent reviewers in `room/review-timeout` and never invents the standing it did not receive.
+
 ### Disposal
 
 Disposal closes admission, aborts and awaits admitted creation and mailbox-dispatch transactions, then asks the continuation owner to release the roster's exact live direct children and their descendants; non-Team continuable children of the Lead remain untouched. Cleanup failures make disposal fail visibly, bounded by `disposalTimeoutMs`.
@@ -187,6 +197,20 @@ Each peer delivery adds the sender prefix plus message content to the target his
 
 Peer messages append after the target's reusable history prefix. Cold resume reuses the persisted conversation before appending a previously undelivered item.
 
+### Room prompts and outcomes
+
+#### What the model sees
+
+A room prompt is a user-role message. When the room has recorded utterances the target has not seen, a single leading text block renders them as `Room conversation so far:` followed by `<name>: <text>` lines; the caller's instruction follows unchanged. A review request names the decision id, its revision, and the exact statement, and asks for one verdict. An outcome notice names the decision, its phase, and the participating reviewers by name. Transcript entries themselves are log-only: a participant reads them only through a prompt that grants it the floor.
+
+#### Token effect
+
+A prompt costs the unseen transcript window plus the instruction, bounded by `roomTranscriptWindow`. Opening a decision sends one review request to every eligible reviewer, so a room of N participants costs N-1 requests per revision. The outcome notice is one short message to the proposer. A reminder repeats that same review request to reviewers that produced no work, bounded by `roomReviewReminders` per revision, and the escalation notice is one short message naming the reviewers that never answered.
+
+#### KV Cache effect
+
+Transcript entries and decisions never touch the prefix a participant reuses. Each prompt appends after that participant's own history, so an unchanged prefix stays cached across wakes.
+
 ## Known Limitations and Deferred Work
 
 <a id="known-limitations-and-deferred-work"></a>
@@ -200,6 +224,9 @@ These limits describe what a team cannot do yet or what needs special operationa
 - **Flat immutable roster** — only the Lead creates direct teammates; there is no nested Team, rename, deletion, or name reuse.
 - **No automatic ownership release** — idle, interruption, process exit, and failed work do not release a task owner.
 - **Mailbox is not cross-process exactly-once** — concurrent harness processes over one Team are unsupported.
+- **No room tools yet** — the room engine is reachable only from a host that drives `ctx.agentTeams` directly; no model-facing tool publishes a verdict, grants the floor, or reads the transcript.
+- **Silence escalates instead of settling** — a decision whose reviewers run out of `roomReviewGraceMs` and `roomReviewReminders` is escalated with the reviewers that went quiet; no operation records a standing on their behalf, so it still waits for a human.
+- **Rooms reuse the Team roster** — a room has one Lead Session, one shared checkout, and no separate membership, so a member cannot be in the room without also being on the roster.
 
 <a id="dev-note"></a>
 ### Dev Note

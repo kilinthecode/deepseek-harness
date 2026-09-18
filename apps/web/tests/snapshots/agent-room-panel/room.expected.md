@@ -1,0 +1,25 @@
+- button "Agent Team 1" [expanded]:
+  - img
+  - text: Agent Team 1
+- dialog "Agent Team":
+  - strong: Agent Team
+  - button "Refresh Team":
+    - img
+  - button "Close":
+    - img
+  - heading "Members" [level=3]
+  - 'button "lead Idle · Model: deepseek-v4-flash" [disabled]'
+  - 'button "worker Inactive · Model: deepseek-v4-flash"'
+  - heading "Transcript" [level=3]
+  - text: worker an uninvalidated cache serves stale reads lead Room ready.
+  - heading "Decisions" [level=3]
+  - text: "Room · Chair: lead Rejected proposal-1 Revision 1 Proposer: lead"
+  - paragraph: Adopt a global mutable cache with no invalidation.
+  - text: "Approvals: None Rejections: worker Abstentions: None Awaiting: None"
+  - list:
+    - listitem: worker · Rejected stale reads are a correctness bug
+  - heading "Shared tasks" [level=3]
+  - button "New task":
+    - img
+    - text: New task
+  - text: No shared tasks yet

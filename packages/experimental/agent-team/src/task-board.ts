@@ -146,6 +146,12 @@ export class TeamTaskBoard {
           break
         case 'edit':
           authorizeOwner()
+          if (this.awaitingVerification(current)) {
+            throw new TeamError(
+              `team task "${current.id}" is awaiting verification; wait for its verdict`,
+              'TEAM_TASK_INVALID_TRANSITION',
+            )
+          }
           if (request.subject === undefined && request.description === undefined && request.writeScopes === undefined) {
             throw new TeamError('task edit requires subject, description, or write_scopes', 'TEAM_INVALID_ARGUMENT')
           }
@@ -160,18 +166,60 @@ export class TeamTaskBoard {
           break
         case 'set_dependencies':
           authorizeOwner()
+          if (this.awaitingVerification(current)) {
+            throw new TeamError(
+              `team task "${current.id}" is awaiting verification; wait for its verdict`,
+              'TEAM_TASK_INVALID_TRANSITION',
+            )
+          }
           if (request.blockedBy === undefined) throw new TeamError('set_dependencies requires blocked_by', 'TEAM_INVALID_ARGUMENT')
           next = { ...current, blockedBy: this.dependencies(request.blockedBy, state, current.id) }
           break
-        case 'complete':
+        case 'submit':
           authorizeOwner()
-          if (current.status !== 'in_progress') throw new TeamError('only an in-progress task can complete', 'TEAM_TASK_INVALID_TRANSITION')
-          next = { ...current, status: 'completed' }
+          if (current.status !== 'in_progress') {
+            throw new TeamError('only an in-progress task can be submitted for verification', 'TEAM_TASK_INVALID_TRANSITION')
+          }
+          if (!this.taskReady(state, current)) {
+            throw new TeamError(`team task "${current.id}" still waits on its blockers`, 'TEAM_TASK_BLOCKED')
+          }
+          // The submission awaits the next revision, so a verdict names exactly
+          // the work the owner handed over.
+          next = {
+            ...current,
+            verification: { submittedRevision: current.revision + 1 },
+          }
           break
+        case 'verify': {
+          if (!this.awaitingVerification(current) || current.verification === undefined) {
+            throw new TeamError('only a submitted task can be verified', 'TEAM_TASK_INVALID_TRANSITION')
+          }
+          if (owner) {
+            throw new TeamError(
+              'a task owner cannot verify its own work; ask another member to verify it',
+              'TEAM_TASK_SELF_VERIFICATION',
+            )
+          }
+          if (request.verdict === undefined || request.reason === undefined) {
+            throw new TeamError('verify requires verdict and reason', 'TEAM_INVALID_ARGUMENT')
+          }
+          const reason = requiredText(request.reason, 'reason', 2_000)
+          next = {
+            ...current,
+            status: request.verdict === 'approved' ? 'completed' : 'in_progress',
+            verification: {
+              submittedRevision: current.verification.submittedRevision,
+              verifierId: caller.id,
+              verdict: request.verdict,
+              reason,
+            },
+          }
+          break
+        }
         case 'reopen':
           authorizeOwner()
           if (current.status !== 'completed') throw new TeamError('only a completed task can reopen', 'TEAM_TASK_INVALID_TRANSITION')
-          next = this.withoutOwner({ ...current, status: 'pending' })
+          next = this.withoutVerification(this.withoutOwner({ ...current, status: 'pending' }))
           break
         case 'reassign': {
           if (!lead) throw new TeamError('only the Team Lead can reassign tasks', 'TEAM_LEAD_REQUIRED')
@@ -262,6 +310,17 @@ export class TeamTaskBoard {
     return without
   }
 
+  /** Whether one task is submitted and still waiting for a verdict. */
+  private awaitingVerification(task: TeamTaskSnapshot): boolean {
+    return task.verification !== undefined && task.verification.verdict === undefined
+  }
+
+  /** Drop a consumed verification so a reopened task starts unverified. */
+  private withoutVerification(task: TeamTaskSnapshot): TeamTaskSnapshot {
+    const { verification: _consumed, ...rest } = task
+    return rest
+  }
+
   /**
    * Build one task view with owner name, readiness, and advisory write overlaps.
    * A committing caller may pass its pre-append state because `task` supplies the
@@ -281,17 +340,30 @@ export class TeamTaskBoard {
         warnings.add(`write scopes overlap with ${other.id}`)
       }
     }
+    const verification = task.verification
+    const verifierName = verification?.verifierId === undefined
+      ? undefined
+      : verification.verifierId === root.id
+        ? 'lead'
+        : state.members.find(member => member.id === verification.verifierId)?.name
+    const verificationView = verification === undefined ? undefined : {
+      submittedRevision: verification.submittedRevision,
+      ...verifierName === undefined ? {} : { verifierName },
+      ...verification.verdict === undefined ? {} : { verdict: verification.verdict },
+      ...verification.reason === undefined ? {} : { reason: verification.reason },
+    }
     return {
       id: task.id,
       revision: task.revision,
       subject: task.subject,
       description: task.description,
-      status: task.status,
+      status: this.awaitingVerification(task) ? 'verifying' : task.status,
       blockedBy: structuredClone(task.blockedBy),
       writeScopes: structuredClone(task.writeScopes),
       ...ownerName === undefined ? {} : { ownerName },
       ready: task.status === 'pending' && this.taskReady(state, task),
       writeScopeWarnings: [...warnings],
+      ...verificationView === undefined ? {} : { verification: verificationView },
     }
   }
 }
