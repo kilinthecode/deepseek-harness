@@ -1,0 +1,12 @@
+{
+  "version": 1,
+  "record": {
+    "name": "prefers-pnpm",
+    "type": "user",
+    "scope": "global",
+    "description": "Uses pnpm, never npm",
+    "content": "Run pnpm for every install and script; npm is banned in this user's projects.",
+    "createdAt": "2026-09-18T00:00:00.000Z",
+    "updatedAt": "2026-09-18T00:00:00.000Z"
+  }
+}

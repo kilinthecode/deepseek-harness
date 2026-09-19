@@ -1,0 +1,273 @@
+import { afterEach, describe, expect, it, vi } from 'vitest'
+import { Context } from '@deepseek-ai/cordis'
+import AgentRegistry, { agentEvents } from '@deepseek-ai/dsh-agent'
+import type { Agent, PreStepDecision } from '@deepseek-ai/dsh-agent'
+import { createUserMessage } from '@deepseek-ai/dsh-llm'
+import type { MemoryRecord, MemoryVisible } from '@deepseek-ai/dsh-memory'
+import { SESSION_FORMAT_VERSION, Session, SessionId, SessionSeq } from '@deepseek-ai/dsh-session'
+import type { SessionHeader } from '@deepseek-ai/dsh-session'
+import SessionProjectionRegistry from '@deepseek-ai/dsh-session-projection'
+import SystemPrompt from '@deepseek-ai/dsh-system-prompt'
+import ToolRuntime from '@deepseek-ai/dsh-tools'
+import * as tool from '@deepseek-ai/dsh-tool-memory'
+import { renderCatalog } from '@deepseek-ai/dsh-tool-memory'
+import type { MemoryCatalogState } from '@deepseek-ai/dsh-tool-memory'
+import { unsupportedInbox } from '@deepseek-ai/dsh-agent-loop-testkit'
+import { cleanupRoots, freshRoot, mountStore, project } from './helpers.ts'
+
+const SIGNAL = new AbortController().signal
+const contexts: Context[] = []
+
+afterEach(async () => {
+  vi.restoreAllMocks()
+  await Promise.all(contexts.splice(0).map(ctx => ctx.fiber.dispose()))
+  await cleanupRoots()
+})
+
+function record(name: string, type: MemoryRecord['type'], scope: MemoryRecord['scope'], description: string): MemoryRecord {
+  return {
+    name: name as MemoryRecord['name'],
+    type,
+    scope,
+    description,
+    content: 'body',
+    ...scope === 'project' ? { projectRoot: '/repo' } : {},
+    createdAt: '2026-09-19T00:00:00.000Z',
+    updatedAt: '2026-09-19T00:00:00.000Z',
+  }
+}
+
+describe('renderCatalog', () => {
+  it('returns nothing for an empty store', () => {
+    expect(renderCatalog({ global: [] }, 2048)).toBeUndefined()
+    expect(renderCatalog({ global: [], project: { root: '/repo', records: [] } }, 2048)).toBeUndefined()
+  })
+
+  it('lists global before project entries, each section by type rank then name', () => {
+    const visible: MemoryVisible = {
+      global: [
+        record('zeta-ref', 'reference', 'global', 'A dashboard'),
+        record('review-style', 'feedback', 'global', 'Terse reviews'),
+        record('name', 'user', 'global', 'Prefers they/them'),
+        record('alpha-ref', 'reference', 'global', 'A ticket'),
+      ],
+      project: { root: '/repo', records: [record('build', 'project', 'project', 'pnpm run build')] },
+    }
+    expect(renderCatalog(visible, 2048)).toBe([
+      'Saved memories (catalog; call memory_recall to read one):',
+      'Global:',
+      '- [user] name — Prefers they/them',
+      '- [feedback] review-style — Terse reviews',
+      '- [reference] alpha-ref — A ticket',
+      '- [reference] zeta-ref — A dashboard',
+      'Project:',
+      '- [project] build — pnpm run build',
+    ].join('\n'))
+  })
+
+  it('cuts from the end within the byte budget and says how many entries were omitted', () => {
+    const visible: MemoryVisible = {
+      global: [record('a', 'user', 'global', 'one'), record('b', 'user', 'global', 'two')],
+      project: { root: '/repo', records: [record('c', 'project', 'project', 'three'), record('d', 'project', 'project', 'four')] },
+    }
+    const full = renderCatalog(visible, 4096)!
+    // One byte short of the full catalog: three entries plus the omission line
+    // would be longer than the full text, so two entries are kept.
+    const cut = renderCatalog(visible, Buffer.byteLength(full, 'utf8') - 1)!
+    expect(cut).toBe([
+      'Saved memories (catalog; call memory_recall to read one):',
+      'Global:',
+      '- [user] a — one',
+      '- [user] b — two',
+      '… 2 more; use memory_recall',
+    ].join('\n'))
+    expect(Buffer.byteLength(cut, 'utf8')).toBeLessThan(Buffer.byteLength(full, 'utf8'))
+    const oneEntry = [
+      'Saved memories (catalog; call memory_recall to read one):',
+      'Global:',
+      '- [user] a — one',
+      '… 3 more; use memory_recall',
+    ].join('\n')
+    expect(renderCatalog(visible, Buffer.byteLength(oneEntry, 'utf8'))).toBe(oneEntry)
+    expect(renderCatalog(visible, Buffer.byteLength(oneEntry, 'utf8') - 1)).toBe(
+      'Saved memories (catalog; call memory_recall to read one):\n… 4 more; use memory_recall',
+    )
+  })
+
+  it('still names the omitted count when even one entry cannot fit', () => {
+    const visible: MemoryVisible = { global: [record('a', 'user', 'global', 'x'.repeat(200))] }
+    expect(renderCatalog(visible, 10)).toBe(
+      'Saved memories (catalog; call memory_recall to read one):\n… 1 more; use memory_recall',
+    )
+  })
+})
+
+async function mount(config: tool.Config = { injectMaxBytes: 2048, maxRecallResults: 4 }) {
+  const root = await freshRoot()
+  const ctx = new Context()
+  contexts.push(ctx)
+  await ctx.plugin(SessionProjectionRegistry)
+  await ctx.plugin(AgentRegistry)
+  await ctx.plugin(SystemPrompt)
+  await ctx.plugin(ToolRuntime)
+  await mountStore(ctx, root)
+  await ctx.plugin(tool, config)
+  return { ctx, root }
+}
+
+function sessionAt(cwd: string | undefined, id = 'session'): Session {
+  const sessionId = SessionId(id)
+  const header: SessionHeader = {
+    version: SESSION_FORMAT_VERSION,
+    id: sessionId,
+    createdAt: 0,
+    isSeeded: false,
+    ...cwd === undefined ? {} : { cwd },
+  }
+  return Session.create(sessionId, undefined, header)
+}
+
+function sessionAgent(session: Session): Agent {
+  return {
+    id: session.id,
+    options: {},
+    session,
+    inbox: unsupportedInbox(),
+    status: 'running',
+    ctx: new Context(),
+    send: () => {},
+    followup: () => {},
+    steer: () => {},
+    inject: () => { throw new Error('the catalog must append directly to the open step') },
+    cancel() {},
+    runMaintenance: task => task(new AbortController().signal),
+    whenIdle: () => Promise.resolve(),
+  }
+}
+
+function catalogs(session: Session): string[] {
+  const texts: string[] = []
+  for (const event of session.snapshotEvents()) {
+    if (event.type === 'user/message'
+      && event.data.source.kind === 'plugin'
+      && event.data.source.plugin === 'tool-memory') {
+      texts.push(event.data.content.map(block => block.type === 'text' ? block.text : '').join(''))
+    }
+  }
+  return texts
+}
+
+async function fire(
+  ctx: Context,
+  agent: Agent,
+  turn: number,
+  step: number,
+  signal: AbortSignal = SIGNAL,
+  decide: () => Promise<PreStepDecision> = () => Promise.resolve({ kind: 'enter', messages: [] }),
+): Promise<PreStepDecision> {
+  const decision = await agentEvents(ctx, agent).waterfall('agent/pre-step', { messages: [], turn, step, signal }, decide)
+  if (decision.kind === 'enter') {
+    for (const message of decision.messages) {
+      agent.session.append('user/message', message, { surfaceOp: 'append' })
+    }
+  }
+  return decision
+}
+
+function appendCompactionSummary(session: Session): void {
+  session.append('compaction/summary', {
+    compactionId: 'compaction-1',
+    summary: [{ type: 'text', text: 'summary' }],
+    shadowedRange: { start: SessionSeq(0), end: SessionSeq(1) },
+    shadowedSeqs: [SessionSeq(0), SessionSeq(1)],
+    shadowedTokenCount: 10,
+    provider: 'mock',
+    model: 'mock',
+  } as never)
+}
+
+const WRITE = { type: 'user', scope: 'global', description: 'Uses pnpm', content: 'Always pnpm.' } as const
+
+describe('catalog injection', () => {
+  it('injects once per session, refreshes at a turn start only when the store changed, and re-injects after compaction', async () => {
+    const { ctx, root } = await mount()
+    const repo = await project(root, 'repo')
+    await ctx.memory.write({ ...WRITE, name: 'prefers-pnpm' })
+    await ctx.memory.write({ ...WRITE, name: 'build', type: 'project', scope: 'project', cwd: repo.cwd, description: 'pnpm run build' })
+    const session = sessionAt(repo.cwd)
+    const agent = sessionAgent(session)
+
+    await fire(ctx, agent, 1, 1)
+    expect(catalogs(session)).toEqual([renderCatalog(await ctx.memory.visible(repo.cwd), 2048)])
+    expect(catalogs(session)[0]).toContain('- [project] build — pnpm run build')
+
+    await fire(ctx, agent, 1, 2)
+    await fire(ctx, agent, 2, 1)
+    expect(catalogs(session)).toHaveLength(1)
+
+    await ctx.memory.write({ ...WRITE, name: 'editor', description: 'Uses Cursor' })
+    await fire(ctx, agent, 2, 2)
+    expect(catalogs(session)).toHaveLength(1)
+    await fire(ctx, agent, 3, 1)
+    expect(catalogs(session)).toHaveLength(2)
+    expect(catalogs(session)[1]).toContain('- [user] editor — Uses Cursor')
+
+    appendCompactionSummary(session)
+    await fire(ctx, agent, 3, 4)
+    expect(catalogs(session)).toHaveLength(3)
+    expect(catalogs(session)[2]).toBe(catalogs(session)[1])
+    expect((ctx.sessionProjections.stateOf(session, 'memoryCatalog') as MemoryCatalogState).lastCatalog).toBe(catalogs(session)[2])
+  })
+
+  it('keeps checking every step while nothing has been injected, and shows global entries only without a project root', async () => {
+    const { ctx } = await mount()
+    const session = sessionAt(undefined)
+    const agent = sessionAgent(session)
+    await fire(ctx, agent, 1, 1)
+    expect(catalogs(session)).toEqual([])
+    await ctx.memory.write({ ...WRITE, name: 'prefers-pnpm' })
+    await fire(ctx, agent, 1, 2)
+    expect(catalogs(session)).toEqual([
+      'Saved memories (catalog; call memory_recall to read one):\nGlobal:\n- [user] prefers-pnpm — Uses pnpm',
+    ])
+  })
+
+  it('passes a rejected step and an aborted signal through untouched', async () => {
+    const { ctx } = await mount()
+    await ctx.memory.write({ ...WRITE, name: 'prefers-pnpm' })
+    const session = sessionAt(undefined)
+    const agent = sessionAgent(session)
+    const rejected = await fire(ctx, agent, 1, 1, SIGNAL, () => Promise.resolve({ kind: 'reject', reason: 'busy' } as unknown as PreStepDecision))
+    expect(rejected.kind).toBe('reject')
+    const aborted = new AbortController()
+    aborted.abort()
+    await fire(ctx, agent, 1, 1, aborted.signal)
+    expect(catalogs(session)).toEqual([])
+  })
+
+  it('registers the projection but never injects when the budget is zero', async () => {
+    const { ctx } = await mount({ injectMaxBytes: 0, maxRecallResults: 4 })
+    await ctx.memory.write({ ...WRITE, name: 'prefers-pnpm' })
+    const session = sessionAt(undefined)
+    await fire(ctx, sessionAgent(session), 1, 1)
+    expect(catalogs(session)).toEqual([])
+    expect(ctx.sessionProjections.stateOf(session, 'memoryCatalog')).toEqual({ lastCatalog: null })
+  })
+
+  it('folds only its own catalog messages and leaves an already-clear state untouched by compaction', async () => {
+    const { ctx } = await mount()
+    const session = sessionAt(undefined)
+    const before = ctx.sessionProjections.stateOf(session, 'memoryCatalog')
+    appendCompactionSummary(session)
+    expect(ctx.sessionProjections.stateOf(session, 'memoryCatalog')).toBe(before)
+    session.append('user/message', createUserMessage({
+      content: [{ type: 'text', text: 'foreign snapshot' }],
+      source: { kind: 'plugin', plugin: 'someone-else', form: 'snapshot', sections: [{ name: 'x', text: 'foreign snapshot' }] },
+    }), { surfaceOp: 'append' })
+    session.append('user/message', createUserMessage({
+      content: [{ type: 'text', text: 'not a catalog' }],
+      source: { kind: 'plugin', plugin: 'tool-memory', form: 'notice', summary: 'x' },
+    }), { surfaceOp: 'append' })
+    expect(ctx.sessionProjections.stateOf(session, 'memoryCatalog')).toEqual({ lastCatalog: null })
+  })
+})

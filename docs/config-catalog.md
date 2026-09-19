@@ -1725,6 +1725,33 @@ export interface ReconnectConfig {
 
 Source: [`packages/mcp/mcp-client/src/index.ts:104`](../packages/mcp/mcp-client/src/index.ts)
 
+<a id="deepseek-aidsh-memory"></a>
+
+## `@deepseek-ai/dsh-memory`
+
+Requires: `storageDomain`
+
+```ts config-catalog
+/** Store configuration. Invalid values fail plugin load. */
+export interface Config {
+  /**
+   * Cap on records in the global scope and, separately, in each project. A
+   * write that would exceed it fails so the agent curates with `forget`.
+   */
+  maxRecords: number
+  /** UTF-8 byte cap on one record's `content`. */
+  maxRecordBytes: number
+  /**
+   * Directory entries that identify a project root while walking upward from
+   * the session working directory. Mirrors the `agent-instructions` default so
+   * both plugins agree on what the project is.
+   */
+  projectRootMarkers?: string[]
+}
+```
+
+Source: [`packages/memory/memory/src/index.ts:39`](../packages/memory/memory/src/index.ts)
+
 <a id="deepseek-aidsh-message-feedback"></a>
 
 ## `@deepseek-ai/dsh-message-feedback`
@@ -2913,7 +2940,7 @@ export interface Config {
 }
 ```
 
-Source: [`packages/core/system-prompt/src/index.ts:248`](../packages/core/system-prompt/src/index.ts)
+Source: [`packages/core/system-prompt/src/index.ts:249`](../packages/core/system-prompt/src/index.ts)
 
 <a id="deepseek-aidsh-terminal-bash"></a>
 
@@ -3176,6 +3203,28 @@ export interface Config {
 ```
 
 Source: [`packages/lsp/tool-lsp/src/index.ts:57`](../packages/lsp/tool-lsp/src/index.ts)
+
+<a id="deepseek-aidsh-tool-memory"></a>
+
+## `@deepseek-ai/dsh-tool-memory`
+
+Requires: `memory` · `tools` · `sessionProjections` · `systemPrompt`
+
+```ts config-catalog
+/** Model-facing memory configuration. Invalid values fail plugin load. */
+export interface Config {
+  /**
+   * UTF-8 byte budget of the injected catalog. `0` disables injection while
+   * the tools stay available; a positive budget that cuts entries adds a line
+   * saying how many were omitted.
+   */
+  injectMaxBytes: number
+  /** Most records one `memory_recall` call returns. */
+  maxRecallResults: number
+}
+```
+
+Source: [`packages/memory/tool-memory/src/index.ts:30`](../packages/memory/tool-memory/src/index.ts)
 
 <a id="deepseek-aidsh-tool-present"></a>
 

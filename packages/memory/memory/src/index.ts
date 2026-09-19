@@ -1,0 +1,352 @@
+/**
+ * Durable agent memory (`ctx.memory`): cross-session `user`, `feedback`,
+ * `project`, and `reference` records kept as one JSON document each under
+ * the `memory` storage domain. The store owns validation, the per-scope
+ * record caps, and project-root resolution; model-facing tools and the
+ * catalog injection live in `@deepseek-ai/dsh-tool-memory`.
+ * @module @deepseek-ai/dsh-memory
+ */
+
+import { Context, Service } from '@deepseek-ai/cordis'
+import z from '@deepseek-ai/schemastery'
+import type { Domain, KvTable } from '@deepseek-ai/dsh-storage-domain'
+import {
+  MEMORY_DESCRIPTION_MAX_CHARS,
+  MEMORY_NAME_RE,
+  memoryDomainSpec,
+} from './domain.ts'
+import type { MemoryDomainSpec, MemoryName, MemoryRecord, MemoryScope, MemoryType, ProjectMemoryKey } from './domain.ts'
+import { findProjectRoot, projectMemoryKey } from './project.ts'
+
+export {
+  MEMORY_DESCRIPTION_MAX_CHARS,
+  MEMORY_NAME_RE,
+  MEMORY_SCOPES,
+  MEMORY_TYPES,
+  memoryDomainSpec,
+  memoryRecord,
+} from './domain.ts'
+export type { MemoryDomainSpec, MemoryName, MemoryRecord, MemoryScope, MemoryType, ProjectMemoryKey } from './domain.ts'
+export { findProjectRoot, projectMemoryKey, projectSlug } from './project.ts'
+
+declare module '@deepseek-ai/cordis' {
+  interface Context {
+    memory: MemoryStore
+  }
+}
+
+/** Store configuration. Invalid values fail plugin load. */
+export interface Config {
+  /**
+   * Cap on records in the global scope and, separately, in each project. A
+   * write that would exceed it fails so the agent curates with `forget`.
+   */
+  maxRecords: number
+  /** UTF-8 byte cap on one record's `content`. */
+  maxRecordBytes: number
+  /**
+   * Directory entries that identify a project root while walking upward from
+   * the session working directory. Mirrors the `agent-instructions` default so
+   * both plugins agree on what the project is.
+   */
+  projectRootMarkers?: string[]
+}
+
+/** Schemastery validation for {@link Config}. */
+export const Config: z<Config> = z.object({
+  maxRecords: z.number().step(1).min(1).required(),
+  maxRecordBytes: z.number().step(1).min(1).required(),
+  projectRootMarkers: z.array(z.string()).default(['.git']),
+})
+
+/** Why a store operation was rejected. */
+export type MemoryErrorCode =
+  | 'invalid-name'
+  | 'invalid-description'
+  | 'invalid-content'
+  | 'over-cap'
+  | 'project-root-unavailable'
+  | 'not-found'
+
+/** A rejected store operation; `message` is stable, model-readable text. */
+export class MemoryError extends Error {
+  /**
+   * @param code - machine-readable rejection reason.
+   * @param message - human- and model-readable explanation.
+   */
+  constructor(readonly code: MemoryErrorCode, message: string) {
+    super(message)
+    this.name = 'MemoryError'
+  }
+}
+
+/** One write request; `cwd` locates the project for `scope: 'project'`. */
+export interface MemoryWriteRequest {
+  /** Memory name matching {@link MEMORY_NAME_RE}; an existing name in the same scope is replaced. */
+  readonly name: string
+  readonly type: MemoryType
+  readonly scope: MemoryScope
+  /** One-line summary shown in the catalog; trimmed, at most {@link MEMORY_DESCRIPTION_MAX_CHARS}. */
+  readonly description: string
+  /** The memory body; trimmed, at most `maxRecordBytes` UTF-8 bytes. */
+  readonly content: string
+  /** Session working directory, when the session has one. */
+  readonly cwd?: string | undefined
+}
+
+/** Outcome of one write. */
+export interface MemoryWriteResult {
+  /** Whether the name was new in its scope or replaced an existing record. */
+  readonly outcome: 'created' | 'updated'
+  /** The record as stored. */
+  readonly record: MemoryRecord
+}
+
+/** One recall request over the records visible from `cwd`. */
+export interface MemoryRecallRequest {
+  /** Case-insensitive substring matched against name, description, and content; blank matches everything. */
+  readonly query?: string | undefined
+  /** Maximum records returned. */
+  readonly limit: number
+  /** Session working directory, when the session has one. */
+  readonly cwd?: string | undefined
+}
+
+/** One forget request. */
+export interface MemoryForgetRequest {
+  readonly name: string
+  readonly scope: MemoryScope
+  /** Session working directory, when the session has one. */
+  readonly cwd?: string | undefined
+}
+
+/** The records visible from one working directory, in stored order. */
+export interface MemoryVisible {
+  /** Every global record. */
+  readonly global: readonly MemoryRecord[]
+  /** The current project's records, absent when no project root resolves. */
+  readonly project?: {
+    readonly root: string
+    readonly records: readonly MemoryRecord[]
+  }
+}
+
+/** Sort key for recall results: newest first, then name. */
+function newestFirst(left: MemoryRecord, right: MemoryRecord): number {
+  return right.updatedAt.localeCompare(left.updatedAt) || left.name.localeCompare(right.name)
+}
+
+/**
+ * The memory store. Opening the domain happens during service init, so every
+ * consumer that injects `memory` sees an open store; the domain closes with
+ * this service's fiber.
+ */
+export class MemoryStore extends Service {
+  static inject = ['storageDomain']
+  static Config = Config
+
+  private domain?: Domain<MemoryDomainSpec>
+  private readonly maxRecords: number
+  private readonly maxRecordBytes: number
+  private readonly markers: readonly string[]
+
+  /**
+   * @param ctx - owning context; the domain handle closes with it.
+   * @param config - validated store configuration.
+   */
+  constructor(ctx: Context, config: Config) {
+    super(ctx, 'memory')
+    this.maxRecords = config.maxRecords
+    this.maxRecordBytes = config.maxRecordBytes
+    this.markers = config.projectRootMarkers ?? ['.git']
+  }
+
+  protected async [Service.init](): Promise<void> {
+    const domain = await this.ctx.storageDomain.open(memoryDomainSpec)
+    this.ctx.effect(() => () => domain.close(), 'memory.domainClose')
+    this.domain = domain
+  }
+
+  private requireDomain(): Domain<MemoryDomainSpec> {
+    if (this.domain === undefined) throw new Error('memory store is not open')
+    return this.domain
+  }
+
+  private globalTable(): KvTable<MemoryName, MemoryRecord> {
+    return this.requireDomain().table('global')
+  }
+
+  private projectTable(): KvTable<ProjectMemoryKey, MemoryRecord> {
+    return this.requireDomain().table('project')
+  }
+
+  /**
+   * Resolve the project root of one working directory.
+   * @param cwd - session working directory; `undefined` when the session has none.
+   * @returns the absolute root, or `undefined` when there is no cwd or no marker above it.
+   */
+  async resolveProjectRoot(cwd: string | undefined): Promise<string | undefined> {
+    if (cwd === undefined) return undefined
+    return findProjectRoot(cwd, this.markers)
+  }
+
+  private async requireProjectRoot(cwd: string | undefined): Promise<string> {
+    const root = await this.resolveProjectRoot(cwd)
+    if (root === undefined) {
+      throw new MemoryError(
+        'project-root-unavailable',
+        `project scope is unavailable: the session has no working directory inside a project (no ${this.markers.join(' or ')} above it); use scope "global"`,
+      )
+    }
+    return root
+  }
+
+  private projectRecords(root: string): MemoryRecord[] {
+    const records: MemoryRecord[] = []
+    for (const [, record] of this.projectTable().entries()) {
+      if (record.projectRoot === root) records.push(record)
+    }
+    return records
+  }
+
+  /**
+   * Every record visible from one working directory: all global records plus
+   * the current project's records when a root resolves.
+   * @param cwd - session working directory, when the session has one.
+   * @returns the visible records in stored order.
+   */
+  async visible(cwd: string | undefined): Promise<MemoryVisible> {
+    const global = [...this.globalTable().entries()].map(([, record]) => record)
+    const root = await this.resolveProjectRoot(cwd)
+    if (root === undefined) return { global }
+    return { global, project: { root, records: this.projectRecords(root) } }
+  }
+
+  /**
+   * Insert or replace one record durably.
+   * @param request - the memory to store.
+   * @returns whether the record was created or updated, and the stored record.
+   * @throws {@link MemoryError} for an invalid name, description, or content, a
+   * project scope without a project root, or a cap reached in the target scope.
+   */
+  async write(request: MemoryWriteRequest): Promise<MemoryWriteResult> {
+    const name = validateName(request.name)
+    const description = request.description.trim()
+    if (description.length === 0 || description.length > MEMORY_DESCRIPTION_MAX_CHARS) {
+      throw new MemoryError(
+        'invalid-description',
+        `description must be 1 to ${MEMORY_DESCRIPTION_MAX_CHARS} characters after trimming`,
+      )
+    }
+    const content = request.content.trim()
+    if (content.length === 0) throw new MemoryError('invalid-content', 'content must not be empty')
+    const bytes = Buffer.byteLength(content, 'utf8')
+    if (bytes > this.maxRecordBytes) {
+      throw new MemoryError('invalid-content', `content is ${bytes} UTF-8 bytes; the cap is ${this.maxRecordBytes}`)
+    }
+    const now = new Date().toISOString()
+    switch (request.scope) {
+      case 'global': {
+        const table = this.globalTable()
+        const existing = table.get(name)
+        this.assertCapacity(existing, table.size, 'global')
+        const record: MemoryRecord = {
+          name, type: request.type, scope: 'global', description, content,
+          createdAt: existing?.createdAt ?? now, updatedAt: now,
+        }
+        await table.put(name, record)
+        return { outcome: existing === undefined ? 'created' : 'updated', record }
+      }
+      case 'project': {
+        const root = await this.requireProjectRoot(request.cwd)
+        const table = this.projectTable()
+        const key = projectMemoryKey(root, name)
+        const existing = table.get(key)
+        this.assertCapacity(existing, this.projectRecords(root).length, `project ${root}`)
+        const record: MemoryRecord = {
+          name, type: request.type, scope: 'project', description, content, projectRoot: root,
+          createdAt: existing?.createdAt ?? now, updatedAt: now,
+        }
+        await table.put(key, record)
+        return { outcome: existing === undefined ? 'created' : 'updated', record }
+      }
+      /* v8 ignore next 2 -- MemoryScope is closed; the tool schema enum rejects other scopes */
+      default:
+        return assertNever(request.scope)
+    }
+  }
+
+  private assertCapacity(existing: MemoryRecord | undefined, count: number, scopeLabel: string): void {
+    if (existing === undefined && count >= this.maxRecords) {
+      throw new MemoryError(
+        'over-cap',
+        `the ${scopeLabel} scope already holds ${count} memories (cap ${this.maxRecords}); forget one before writing`,
+      )
+    }
+  }
+
+  /**
+   * Find visible records by substring, newest first.
+   * @param request - query, result cap, and working directory.
+   * @returns at most `limit` matching records.
+   */
+  async recall(request: MemoryRecallRequest): Promise<MemoryRecord[]> {
+    const visible = await this.visible(request.cwd)
+    const query = (request.query ?? '').trim().toLowerCase()
+    const candidates = [...visible.global, ...visible.project?.records ?? []]
+    const matches = query.length === 0
+      ? candidates
+      : candidates.filter(record =>
+        record.name.includes(query)
+        || record.description.toLowerCase().includes(query)
+        || record.content.toLowerCase().includes(query))
+    return matches.sort(newestFirst).slice(0, Math.max(0, request.limit))
+  }
+
+  /**
+   * Delete one record durably.
+   * @param request - name, scope, and working directory.
+   * @throws {@link MemoryError} when the name is invalid, the project root is
+   * unavailable, or no such record exists in the scope.
+   */
+  async forget(request: MemoryForgetRequest): Promise<void> {
+    const name = validateName(request.name)
+    switch (request.scope) {
+      case 'global': {
+        const table = this.globalTable()
+        if (table.get(name) === undefined) throw notFound(name, 'global')
+        await table.delete(name)
+        return
+      }
+      case 'project': {
+        const root = await this.requireProjectRoot(request.cwd)
+        const table = this.projectTable()
+        const key = projectMemoryKey(root, name)
+        if (table.get(key) === undefined) throw notFound(name, 'project')
+        await table.delete(key)
+        return
+      }
+      /* v8 ignore next 2 -- MemoryScope is closed; the tool schema enum rejects other scopes */
+      default:
+        return assertNever(request.scope)
+    }
+  }
+}
+
+function validateName(name: string): MemoryName {
+  if (!MEMORY_NAME_RE.test(name)) {
+    throw new MemoryError('invalid-name', `name must match ${MEMORY_NAME_RE} (lowercase kebab-case, 1 to 64 characters)`)
+  }
+  return name as MemoryName
+}
+
+function notFound(name: MemoryName, scope: MemoryScope): MemoryError {
+  return new MemoryError('not-found', `no ${scope} memory named "${name}"`)
+}
+
+/* v8 ignore next 3 -- closed-union backstop; unreachable without violating the TypeScript contract */
+function assertNever(value: never): never {
+  throw new Error(`unreachable memory scope: ${String(value)}`)
+}
+
+export default MemoryStore

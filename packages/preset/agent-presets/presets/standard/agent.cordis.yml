@@ -250,6 +250,14 @@
   config:
     allowParallelInProgress: true
 
+# The memory STORE stays on the host plane (one open domain per process); this
+# preset contributes the model-facing tools and the catalog injected per session.
+- id: tool-memory
+  name: '@deepseek-ai/dsh-tool-memory'
+  config:
+    injectMaxBytes: 4096
+    maxRecallResults: 8
+
 # The `web` service and its search provider stay in the host composition; only
 # the model-facing tool is per-session.
 - id: tool-web
