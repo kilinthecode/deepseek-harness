@@ -803,7 +803,7 @@ describe('headless stream-json snapshots', () => {
           if (index <= steeredMessageIndex || row.type !== 'tool/call') return false
           const data = row.data as JsonObject
           if (data.name !== 'team_task_update' || typeof data.arguments !== 'string') return false
-          return (JSON.parse(data.arguments) as JsonObject).action === 'complete'
+          return (JSON.parse(data.arguments) as JsonObject).action === 'submit'
         })
         const identityReminders = logs.flatMap((log) => {
           if (log === parent || log === workflowChild) return []
@@ -854,7 +854,7 @@ describe('headless stream-json snapshots', () => {
           "researcher",
         ],
         "checkedRoster": true,
-        "deliveredMessages": 2,
+        "deliveredMessages": 6,
         "identityReminders": [
           "<system-reminder>
       You are teammate "implementer".
@@ -864,7 +864,7 @@ describe('headless stream-json snapshots', () => {
       </system-reminder>",
         ],
         "memberEdges": 4,
-        "queuedMessages": 2,
+        "queuedMessages": 6,
         "sessions": 4,
         "steerEvidence": {
           "completedAfterMessage": true,
@@ -874,12 +874,12 @@ describe('headless stream-json snapshots', () => {
         },
         "tasks": [
           {
-            "revision": 3,
+            "revision": 4,
             "status": "completed",
             "subject": "Implementation",
           },
           {
-            "revision": 3,
+            "revision": 4,
             "status": "completed",
             "subject": "Research",
           },

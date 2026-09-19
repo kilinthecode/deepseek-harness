@@ -465,6 +465,24 @@ export const SERVICE_API: readonly ServiceApiEntry[] = [
         returns: 'a complete view first, then a view after every committed room change and a frame for every text chunk a participant streams.',
       },
       {
+        signature: '@Remote(\'roomPrompt\') remoteRoomPrompt(agent: Agent, request: PanelRoomPromptRequest): Promise<RoomPromptResult>',
+        description: 'Give one participant the floor through the generated Remote API.',
+        parameters: [{ name: 'agent', description: 'exact live Team member granting the floor.' }, { name: 'request', description: 'target name and the instruction to deliver.' }],
+        returns: 'durable message identity and immediate-delivery observation.',
+      },
+      {
+        signature: '@Remote(\'roomPropose\') remoteRoomPropose(agent: Agent, request: PanelProposeRoomDecisionRequest): Promise<RoomProposalView>',
+        description: 'Put one decision to the room through the generated Remote API.',
+        parameters: [{ name: 'agent', description: 'exact live Team member proposing the decision.' }, { name: 'request', description: 'the exact statement reviewers are asked to settle.' }],
+        returns: 'the opened revision with its quorum arithmetic.',
+      },
+      {
+        signature: '@Remote(\'roomEscalate\') remoteRoomEscalate(agent: Agent, request: PanelEscalateRoomDecisionRequest): Promise<RoomProposalView>',
+        description: 'Hand one unresolved decision to the human through the generated Remote API.',
+        parameters: [{ name: 'agent', description: 'exact live Team member escalating the decision.' }, { name: 'request', description: 'decision identity and why it cannot settle without a human.' }],
+        returns: 'the escalated decision with its recorded votes.',
+      },
+      {
         signature: '@Remote(\'createTask\') remoteCreateTask(agent: Agent, request: CreateTeamTaskRequest): Promise<TeamTaskMutationResult>',
         description: 'Create one shared task through the generated Remote API.',
         parameters: [{ name: 'agent', description: 'exact live Team member creating the task.' }, { name: 'request', description: 'task text, blockers, and advisory write scopes.' }],
@@ -5331,6 +5349,18 @@ export const TYPE_API: readonly TypeApiEntry[] = [
     declaration: 'export interface PackageResult {\n    exitCode: number;\n    output: string;\n    truncated: boolean;\n    logPath: string;\n    kind?: PluginInstallFailureKind;\n}',
   },
   {
+    name: 'PanelEscalateRoomDecisionRequest',
+    declaration: 'export interface PanelEscalateRoomDecisionRequest {\n    readonly proposalId: RoomProposalId;\n    readonly reason: string;\n}',
+  },
+  {
+    name: 'PanelProposeRoomDecisionRequest',
+    declaration: 'export interface PanelProposeRoomDecisionRequest {\n    readonly statement: string;\n}',
+  },
+  {
+    name: 'PanelRoomPromptRequest',
+    declaration: 'export interface PanelRoomPromptRequest {\n    readonly target: string;\n    readonly instruction: string;\n}',
+  },
+  {
     name: 'PermissionCatalog',
     declaration: 'export interface PermissionCatalog {\n    options: PresetOption[];\n}',
   },
@@ -5660,7 +5690,7 @@ export const TYPE_API: readonly TypeApiEntry[] = [
   },
   {
     name: 'RoomParticipantView',
-    declaration: 'export interface RoomParticipantView {\n    readonly id: SessionId;\n    readonly name: string;\n    readonly status: TeamMemberView[\'status\'];\n    readonly model?: string;\n}',
+    declaration: 'export interface RoomParticipantView {\n    readonly id: SessionId;\n    readonly name: string;\n    readonly status: TeamMemberView[\'status\'];\n    readonly model?: string;\n    readonly quiet: boolean;\n}',
   },
   {
     name: 'RoomPromptRequest',

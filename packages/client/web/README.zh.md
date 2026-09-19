@@ -33,11 +33,11 @@ kind: "package-library"
 
 ### 启动过程是怎样的
 
-启动分两个阶段：模块阶段接纳 parser 已加载的 bootstrap 批次，从 Host 提供的启动图构建模块系统，并通过只执行一次的共享 application 批次 URL 预取 `immediately` 层级。插件阶段随后激活每个图 entry 并等待全部就绪，之后才把带标记的启动 DOM 交给 UI 渲染器，由它 hydrate 并切换到完整 UI。
+启动分两个阶段：模块阶段接纳 parser 已加载的 bootstrap 批次，从 Host 提供的启动图构建模块系统，并通过只执行一次的共享 application 批次 URL 预取 `immediately` 层级。插件阶段随后激活每个图 entry 并等待全部就绪，之后才在带标记的启动 DOM 旁挂载 UI 渲染器：应用渲染于启动页遮罩之下，遮罩在品牌时刻结束后淡出。
 
 ### 启动页
 
-启动页只使用原生 DOM 与本地 CSS，因此 bundle 与插件激活失败保持可见：它显示一个 spinner 节点，其 CSS 圆弧随 entry 激活而增长，并逐 entry 报告状态。spinner 及其动画相位会一直保留，直到完整 UI 替换启动页。导入或激活失败的插件会按名称报告并给出原因（缺失服务、导入失败或状态），而不是白屏。控制台包含原始导入错误。
+启动页只使用原生 DOM 与本地 CSS，因此 bundle 与插件激活失败保持可见：它显示一个 spinner 节点，其 CSS 圆弧随 entry 激活而增长，并逐 entry 报告状态。spinner 及其动画相位会一直保留，直到启动页淡出于已挂载的完整 UI 之上。导入或激活失败的插件会按名称报告并给出原因（缺失服务、导入失败或状态），而不是白屏。控制台包含原始导入错误。
 
 ### 共享模块表
 
@@ -67,7 +67,7 @@ kind: "package-library"
 
 ### 启动页机制
 
-启动页是原生 DOM 加本地 CSS，其回退字体与颜色匹配加载期间到达的主题 token。`internal/status` 事件驱动一个 spinner 节点与逐 entry 标签；hydrate 会保留该节点与动画相位直到应用提交，`fail()` 渲染抛出的原因。React 挂载、slot 渲染与应用组装位于 `ui-renderer`；`ui-layout` 拥有组装后的浏览器标题投影。
+启动页是原生 DOM 加本地 CSS，其回退字体与颜色匹配加载期间到达的主题 token。`internal/status` 事件驱动一个 spinner 节点与逐 entry 标签；页面遮罩在应用挂载期间保留该节点与动画相位，`fail()` 渲染抛出的原因。React 挂载、slot 渲染与应用组装位于 `ui-renderer`；`ui-layout` 拥有组装后的浏览器标题投影。
 
 启动内核把清单条目创建交给 Client Modules，使启动后的动态图同步继续持有相同的条目身份。初始激活审计仍然严格；后续页面本地失败显示在「设置 → 插件 → 插件列表」。
 

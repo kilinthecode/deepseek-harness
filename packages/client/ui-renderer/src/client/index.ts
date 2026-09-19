@@ -3,9 +3,9 @@
  * dependencies activate and exposes the mount operation used by the web boot
  * kernel after the complete client roster settles.
  */
-import { createElement, useLayoutEffect, useState, type ReactNode } from 'react'
+import type { ReactNode } from 'react'
 import { flushSync } from 'react-dom'
-import { createRoot, hydrateRoot, type Root } from 'react-dom/client'
+import { createRoot, type Root } from 'react-dom/client'
 import type { Context } from '@deepseek-ai/cordis'
 import { createSlotRenderer } from './scoped-slots.tsx'
 import { buildRenderApp } from './app.tsx'
@@ -51,35 +51,26 @@ declare module '@deepseek-ai/cordis' {
 /** Services required before application assembly. */
 export const inject: string[] = []
 
-interface BootSnapshot {
-  className: string
-  html: string
+/** A mounted application root and the host element it renders into. */
+interface MountedApp {
+  root: Root
+  host: HTMLDivElement
 }
 
-/** Hydrate the kernel-owned loading DOM before replacing it with the application. */
-function BootHandoff(props: { app: () => ReactNode; boot: BootSnapshot }): ReactNode {
-  const [ready, setReady] = useState(false)
-  useLayoutEffect(() => { setReady(true) }, [])
-  if (ready) return props.app()
-  return createElement('div', {
-    className: props.boot.className,
-    'data-dsh-boot': '',
-    dangerouslySetInnerHTML: { __html: props.boot.html },
-  })
-}
-
-/** Mount React while preserving the framework-free boot DOM through hydration. */
-function mountApp(container: HTMLElement, app: () => ReactNode): Root {
-  const boot = container.querySelector<HTMLElement>(':scope > [data-dsh-boot]')
-  if (boot !== null) {
-    return hydrateRoot(container, createElement(BootHandoff, {
-      app,
-      boot: { className: boot.className, html: boot.innerHTML },
-    }))
-  }
-  const root = createRoot(container)
+/**
+ * Mount the application into a fresh host element appended to the container.
+ * The kernel-owned boot page, an overlay covering the screen, stays untouched
+ * as a sibling; the boot kernel fades it out once its brand moment finishes.
+ */
+function mountApp(container: HTMLElement, app: () => ReactNode): MountedApp {
+  const host = document.createElement('div')
+  // `contents` keeps the application resolving its layout against the
+  // container exactly as it did before the host wrapper existed.
+  host.style.display = 'contents'
+  container.append(host)
+  const root = createRoot(host)
   flushSync(() => { root.render(app()) })
-  return root
+  return { root, host }
 }
 
 /**
@@ -91,8 +82,11 @@ export function apply(ctx: Context): void {
   slots.install(createSlotRenderer())
   ctx.reflect.provide('uiRenderer', {
     mount: (container: HTMLElement): (() => void) => {
-      const root = mountApp(container, buildRenderApp({ ctx }))
-      return () => { root.unmount() }
+      const { root, host } = mountApp(container, buildRenderApp({ ctx }))
+      return () => {
+        root.unmount()
+        host.remove()
+      }
     },
   })
 }

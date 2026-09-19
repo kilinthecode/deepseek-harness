@@ -9,7 +9,15 @@
     - img
   - heading "Members" [level=3]
   - 'button "lead Idle · Model: deepseek-v4-flash" [disabled]'
-  - 'button "worker Inactive · Model: deepseek-v4-flash"'
+  - 'button "worker Inactive · Model: reviewer-model"'
+  - combobox "Participant":
+    - option "Participant" [selected]
+    - option "lead"
+    - option "worker"
+  - textbox "Instruction to deliver"
+  - button "Give the floor"
+  - textbox "Statement to put to the room"
+  - button "Open a decision"
   - heading "Transcript" [level=3]
   - text: worker an uninvalidated cache serves stale reads lead Room ready.
   - heading "Decisions" [level=3]

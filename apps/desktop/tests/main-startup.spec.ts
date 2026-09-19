@@ -80,6 +80,8 @@ const harness = await vi.hoisted(async () => {
       this.urls.push(url)
       this.webContents.mainFrame.url = url
       if (url === 'dsh-app://app/') navigated.resolve()
+      // Electron emits ready-to-show after the first paint of the loaded page.
+      this.emit('ready-to-show')
     }
     static getAllWindows() { return windows.filter(window => !window.destroyed) }
     setMenu() {}
@@ -1274,7 +1276,9 @@ describe('desktop main startup', () => {
     await harness.preparing.promise
     expect(harness.windows).toHaveLength(1)
     const window = harness.windows[0]!
-    expect(window.options.show).toBe(true)
+    // Created hidden and revealed by the first paint, never an empty frame.
+    expect(window.options.show).toBe(false)
+    expect(window.show).toHaveBeenCalledOnce()
     expect(window.urls).toEqual(['dsh-app://app/'])
     expect(harness.hosts).toHaveLength(0)
     const retry = invoke(DESKTOP_IPC.boot)

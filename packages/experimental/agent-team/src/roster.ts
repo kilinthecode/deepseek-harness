@@ -9,7 +9,7 @@ import type { ContentBlock, MessageId } from '@deepseek-ai/dsh-llm'
 import type {} from '@deepseek-ai/dsh-llm'
 import type { SessionId } from '@deepseek-ai/dsh-session'
 import { foldSubagentDescriptor } from '@deepseek-ai/dsh-subagent'
-import type { ContinuableStart } from '@deepseek-ai/dsh-subagent'
+import type { ContinuableStart, ContinuableSubagentDescriptorData } from '@deepseek-ai/dsh-subagent'
 import { errorMessage, TeamError } from './error.ts'
 import type { TeamJournal } from './journal.ts'
 import type { TeamRuntimeLifecycle } from './lifecycle.ts'
@@ -158,7 +158,7 @@ export class TeamRoster {
     }]
     for (const member of state.members) {
       const live = this.ctx.agents.get(member.id)
-      const model = live?.options.model ?? root.options.model
+      const model = member.agentModel ?? live?.options.model
       result.push({
         id: member.id,
         name: member.name,
@@ -332,9 +332,11 @@ export class TeamRoster {
       }
       throw error
     }
+    const child = this.ctx.agents.get(childId)
     const active = {
       ...member,
       phase: 'active' as const,
+      ...routeOf(child?.options.provider, child?.options.model),
     } satisfies TeamMemberSnapshot
     // Once the continuation accepted its first prompt, it is a real child. If
     // this checkpoint fails, keep the in-memory active edge instead of inventing
@@ -452,6 +454,7 @@ export class TeamRoster {
       if (this.ctx.agents.get(member.id) !== undefined) continue
       let phase: 'active' | 'failed' = 'failed'
       let failure = 'provisioning did not leave a resumable child Session'
+      let recovered: ContinuableSubagentDescriptorData | undefined
       try {
         const loaded = await readPersistedSession(this.ctx.sessionPersistence, member.id, signal)
         const suffix = loaded.events.slice(loaded.inheritedEventCount)
@@ -462,6 +465,7 @@ export class TeamRoster {
           && descriptor.provider === member.provider
           && acceptedInitialPrompt) {
           phase = 'active'
+          recovered = descriptor
         } else {
           failure = 'persisted child Session does not match the provisioned continuation'
         }
@@ -477,6 +481,7 @@ export class TeamRoster {
           ...current,
           phase,
           ...phase === 'failed' ? { error: failure } : {},
+          ...recovered === undefined ? {} : routeOf(recovered.agentProvider, recovered.agentModel),
         }
         await this.journal.appendAndFlush(root, 'team/member', {
           version: 2,
@@ -490,6 +495,7 @@ export class TeamRoster {
   /** Build one runtime member row after successful creation. */
   private memberView(member: TeamMemberSnapshot & { readonly phase: 'active' }): TeamMemberView {
     const live = this.ctx.agents.get(member.id)
+    const model = member.agentModel ?? live?.options.model
     return {
       id: member.id,
       name: member.name,
@@ -498,7 +504,7 @@ export class TeamRoster {
       description: member.description,
       provider: member.provider,
       context: member.context,
-      ...live?.options.model === undefined ? {} : { model: live.options.model },
+      ...model === undefined ? {} : { model },
       diagnostics: [],
     }
   }
@@ -539,5 +545,16 @@ export class TeamRoster {
   private subagentDescriptor(agent: Agent): boolean {
     // oxlint-disable-next-line typescript/no-deprecated -- Existing Session history read; migration deferred.
     return foldSubagentDescriptor(agent.session.snapshotEvents(agent.session.inheritedEventCount)) !== undefined
+  }
+}
+
+/** Copy the resolved route a child runs on, omitting what its composition leaves unset. */
+function routeOf(
+  agentProvider: string | undefined,
+  agentModel: string | undefined,
+): Pick<TeamMemberSnapshot, 'agentProvider' | 'agentModel'> {
+  return {
+    ...agentProvider === undefined ? {} : { agentProvider },
+    ...agentModel === undefined ? {} : { agentModel },
   }
 }

@@ -4,7 +4,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import { cleanup, render } from '@testing-library/react'
 import { SlotRegistry } from '@deepseek-ai/dsh-client-ui-renderer/client'
 import { apply, inject } from '../src/client/index.ts'
-import { OfficialBrandMark, OfficialBrandName } from '../src/client/Brand.tsx'
+import { OfficialBrandMark, OfficialBrandName, OfficialHeroBrandMark } from '../src/client/Brand.tsx'
 import { apply as hostApply } from '../src/index.ts'
 
 afterEach(() => {
@@ -15,9 +15,8 @@ afterEach(() => {
 const HOLES = [
   'sidebar.brand.mark',
   'sidebar.brand.name',
+  'conversation.hero.brand.mark',
 ] as const
-
-const HERO_HOLE = 'conversation.hero.brand.mark'
 
 async function bench(declare = true) {
   const ctx = new Context()
@@ -25,13 +24,13 @@ async function bench(declare = true) {
   const slots = ctx.get('slots') as SlotRegistry
   const declareHoles = () => slots.register({
     name: 'root',
-    children: Object.fromEntries([...HOLES, HERO_HOLE].map(name => [name, { kind: 'single', scope: 'root' }])),
+    children: Object.fromEntries(HOLES.map(name => [name, { kind: 'single', scope: 'root' }])),
   } as never, () => null)
   const disposeHoles = declare ? declareHoles() : undefined
   return { ctx, slots, declareHoles, disposeHoles }
 }
 
-describe('official browser-brand plugin', () => {
+describe('Portal browser-brand plugin', () => {
   it('keeps the host Loader entry inert', () => {
     expect(hostApply).not.toThrow()
   })
@@ -71,21 +70,42 @@ describe('official browser-brand plugin', () => {
     for (const hole of HOLES) expect(after.slots.entries(hole)).toHaveLength(1)
   })
 
-  it('leaves the conversation hero on its declaring fallback even in official builds', async () => {
+  it('keeps the sidebar brand when a composition declares no Conversation hero', async () => {
     vi.stubEnv('DSH_CLIENT_BUILD_PROFILE', 'official')
-    const subject = await bench()
-    await subject.ctx.plugin({ inject: [...inject], apply }).await()
-    expect(subject.slots.entries(HERO_HOLE)).toHaveLength(0)
+    const ctx = new Context()
+    await ctx.plugin(SlotRegistry).await()
+    const slots = ctx.get('slots') as SlotRegistry
+    slots.register({
+      name: 'root',
+      children: {
+        'sidebar.brand.mark': { kind: 'single', scope: 'root' },
+        'sidebar.brand.name': { kind: 'single', scope: 'root' },
+      },
+    } as never, () => null)
+    await ctx.plugin({ inject: [...inject], apply }).await()
+    expect(slots.entries('sidebar.brand.mark')).toHaveLength(1)
+    expect(slots.entries('sidebar.brand.name')).toHaveLength(1)
+    expect(slots.entries('conversation.hero.brand.mark')).toHaveLength(0)
   })
 
-  it('renders the official name independently from both requested mark sizes', () => {
+  it('renders the Portal mark for both marks and the wordmark with the nameplate as the name', () => {
     const name = render(<OfficialBrandName />)
-    expect(name.container.querySelector('svg')?.getAttribute('viewBox')).toBe('26 0 156 24')
+    expect(name.container.textContent).toBe('PORTAL')
+    expect(name.container.querySelector('span')?.getAttribute('aria-hidden')).toBe('true')
+    expect(name.container.querySelector('svg')?.getAttribute('viewBox')).toBe('129.348 0 52 24')
     name.unmount()
 
     const mark = render(<OfficialBrandMark size={34} />)
+    expect(mark.container.querySelector('svg')?.getAttribute('viewBox')).toBe('160 160 704 704')
     expect(mark.container.querySelector('svg')?.getAttribute('width')).toBe('34')
     mark.rerender(<OfficialBrandMark size={24} />)
     expect(mark.container.querySelector('svg')?.getAttribute('width')).toBe('24')
+    mark.unmount()
+
+    const hero = render(<OfficialHeroBrandMark size={34} className="heroMark" />)
+    const heroSvg = hero.container.querySelector('svg')!
+    expect(heroSvg.getAttribute('viewBox')).toBe('160 160 704 704')
+    expect(heroSvg.getAttribute('width')).toBe('34')
+    expect(heroSvg.getAttribute('class')).toBe('heroMark')
   })
 })

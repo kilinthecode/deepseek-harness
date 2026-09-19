@@ -60,7 +60,7 @@ kind: "package-reference"
 
 请 Lead 创建 teammate：给它一个唯一的小写名字（例如 `reviewer`）并描述其职责。teammate 可以 fresh 启动（不携带 Lead 对话的任何记忆），也可以作为 fork 启动（继承 Lead 已完成的轮次）；创建请求决定用哪种。teammate 名字是永久的——即使创建失败的 teammate 也保留其名字，任何名字都不会被复用。
 
-roster 显示每个成员的职责（`lead` 或 `teammate`）与当前状态：`running`、`idle`、`inactive`（存在但未加载的成员）、`provisioning` 或 `failed`。未加载的成员会在唤醒后收到其消息。
+roster 显示每个成员的职责（`lead` 或 `teammate`）与当前状态：`running`、`idle`、`inactive`（存在但未加载的成员）、`provisioning` 或 `failed`。未加载的成员会在唤醒后收到其消息。每行还会报告该成员运行的模型：即其 `team/member` 记录中记录的路由，因此 inactive teammate 仍会报告它就座时使用的模型。
 
 只有 Lead 可以创建 teammate 或中断它们。
 
@@ -75,6 +75,9 @@ roster 显示每个成员的职责（`lead` 或 `teammate`）与当前状态：`
 任何成员都可以添加任务，包含标题、详情、对其他任务的可选依赖，以及可选的文件触及提示。只有其全部依赖完成后，任务才可 claim。
 
 任务有 owner：成员 claim 任务开始工作、把完成的成果提交验证、释放回板或重新打开；Lead 可以把任务分配给任意成员。没有任何成员能结清自己的工作：`submit` 把当前 revision 交给同行，视图随后报告 `verifying`，只有另一位成员的 `verify` 裁决及其理由才会把任务推进到 `completed`，或连同反对意见退回。每次变更都是 compare-and-set：基于过期副本的更新会被拒绝，因此两个成员不会悄悄覆盖彼此的成果。
+
+
+任务板会唤醒下一步取决于该变更的成员：teammate 的 `submit` 会通知 Lead，以便它请一位同行验证；`verify` 会把裁决及其理由通知 owner。两类通知都是持久 mailbox 消息，因此处于轮次中的成员会在下一个步骤读到，而 inactive 的 owner 会在下次运行时读到。
 
 当两个 in-progress 任务计划触及重叠路径时，文件提示会产生警告——它们绝不阻止任何操作。已删除任务保留在历史中，但从活动列表中消失。
 
@@ -153,7 +156,7 @@ Team 事件追加到精确的 live Lead 会话，并在操作报告成功或唤�
 
 接受与否只由 `room-quorum.ts` 根据记录在案的 review 计算。每个有资格的 reviewer 都是 proposer 之外的参与者；只有当全部 reviewer 都已投票、其中至少 `roomApprovalRatio` 比例批准，且没有任何反对成立时，决策才会被接受。反对一旦达到 quorum，决策立即结清。proposer 不能 review 自己的决策，已结清的决策是最终的，被拒绝的决策只能通过携带修订后 statement 的新 revision 解决，其上限为 `roomMaxProposalRevisions`。没有任何操作可以强行给出结论；`roomEscalate` 会把未决决策交给人类。每条已记录的立场都带有理由，而每个参与者都能读到整块决策板，因此 proposer 能回应反对意见，而不是只知道有人反对。
 
-读取方通过 `roomStream` 这个 Remote stream 跟随一个 room：先收到完整的 room，随后在每次已提交变化后收到新的 view，并为参与者流式输出的每个 text chunk 收到一帧，因此 panel 无需轮询即可展示正在进行的审议。判定 reviewer 沉默的依据是该参与者自身被观察到的工作 —— 它自己 turn 的持久 Session event 与实时 `agent/assistant-stream` 帧 —— 而绝不是 room 自身的记录：Lead Session 保存着每个角色的记录。请求一次 standing 会启动该 reviewer 的 `roomReviewGraceMs` 窗口，至多 `roomReviewReminders` 次提醒各自会重启被提醒者的窗口；只有当所有仍欠 standing 的 reviewer 都用尽窗口后，决策才会升级，因此慢模型不会被误判为卡住。升级后的决策会把沉默的 reviewer 记入 `room/review-timeout`，绝不代替它们编造 standing。
+每个 participant view 都会报告该在线参与者在 `roomReviewGraceMs` 内是否没有产生任何被观察到的工作，用的正是停滞巡检所读的同一个窗口，因此决策板点名的正是 room 正在等待的那个参与者。读取方通过 `roomStream` 这个 Remote stream 跟随一个 room：先收到完整的 room，随后在每次已提交变化后收到新的 view，并为参与者流式输出的每个 text chunk 收到一帧，因此 panel 无需轮询即可展示正在进行的审议。判定 reviewer 沉默的依据是该参与者自身被观察到的工作 —— 它自己 turn 的持久 Session event 与实时 `agent/assistant-stream` 帧 —— 而绝不是 room 自身的记录：Lead Session 保存着每个角色的记录。请求一次 standing 会启动该 reviewer 的 `roomReviewGraceMs` 窗口，至多 `roomReviewReminders` 次提醒各自会重启被提醒者的窗口；只有当所有仍欠 standing 的 reviewer 都用尽窗口后，决策才会升级，因此慢模型不会被误判为卡住。升级后的决策会把沉默的 reviewer 记入 `room/review-timeout`，绝不代替它们编造 standing。
 
 ### Dispose
 
@@ -225,7 +228,7 @@ transcript 条目与决策绝不触及参与者复用的前缀。每次 prompt �
 - **不会自动释放 owner**——idle、interrupt、进程退出与工作失败都不会释放任务 owner。
 - **mailbox 不保证跨进程 exactly-once**——不支持多个 harness 进程并发操作同一 Team。
 
-- **尚无 room 工具** — room 引擎只能由直接驱动 `ctx.agentTeams` 的宿主使用；没有 model-facing 工具负责提交 verdict、交出发言权或读取 transcript。
+- **多成员流程没有录制会话用例** — Lead 与其同行会在取决于墙钟的时刻被唤醒，因此 session replay 通道无法复现它们的顺序；Team 与 room 行为改由包测试、无密钥 vendor adapter 套件和实时 real-API e2e 运行覆盖，而不是 corpus snapshot 用例。
 - **沉默只会升级，不会结清** — reviewer 用尽 `roomReviewGraceMs` 与 `roomReviewReminders` 后，决策会连同沉默者一并升级；没有任何操作会代替它们记录 standing，因此该决策仍在等待人类。
 - **room 复用 Team roster** — 一个 room 只有一个 Lead Session、一份共享 checkout，没有独立成员资格，因此成员不可能只属于 room 而不属于 roster。
 

@@ -33,7 +33,7 @@ Opening the panel calls `agentTeams/view`. Roster rows show durable names, runti
 
 ### Read the room
 
-When the composition has a room, the panel also shows the shared transcript and every collective decision: its phase, proposer, the exact statement, and the participants recorded on each side of the vote. The transcript names who said what; the decision board names who approved, rejected, abstained, and — while the decision is still open — who has yet to record a standing. A settled decision shows no awaiting participants, because nobody can change an outcome quorum already reached, and each recorded standing appears with the reason its reviewer gave. While the panel is open it follows the room: text a participant is streaming appears as it arrives, and every committed transcript entry or decision change replaces that live text with the durable record.
+When the composition has a room, the panel adds controls that grant one participant the floor, open a decision, or hand an unresolved decision to the human, and it shows the shared transcript and every collective decision: its phase, proposer, the exact statement, and the participants recorded on each side of the vote. The transcript names who said what; the decision board names who approved, rejected, abstained, and — while the decision is still open — who has yet to record a standing, and the room header names every live participant that produced no work within the room's window. A settled decision shows no awaiting participants, because nobody can change an outcome quorum already reached, and each recorded standing appears with the reason its reviewer gave. While the panel is open it follows the room: text a participant is streaming appears as it arrives, and every committed transcript entry or decision change replaces that live text with the durable record.
 
 ### Manage the task board
 
@@ -87,7 +87,7 @@ No direct effect; the Team tools and ordinary conversation submission own any la
 
 - **Live follow needs an open panel** — the panel subscribes to the room only while it is open and drops streaming text when a committed change replaces it; a closed panel refreshes from the durable log on the next open.
 - **A composition without a room shows no room section** — the panel omits it rather than rendering an empty one, because an absent room and an idle room are different states.
-- **The room panel is read-only** — it reads decisions and the transcript but cannot propose, review, escalate, or grant the floor; a human acts through the room tools instead.
+- **The room panel writes only three things** — it can grant one participant the floor with an instruction, open a decision with a statement, and hand an unresolved decision to the human with a reason, each through its own `agentTeams/room*` Remote call. It never records a standing: a review is a participant's own verdict, recorded by that participant or its model.
 - **The room reader has one assembled-browser case** — `apps/web/tests/agent-room-panel.e2e.ts` pins the rendered transcript and decision board and then opens a decision after the panel mounted, requiring it to appear through the live follow without a refresh; the roster and task-board paths keep their own cases.
 - **Ordinary child continuation** — a human message sent after navigation uses the stable addressed-subagent prompt path, not the Team peer mailbox.
 - **No lifecycle or workspace controls** — the panel cannot spawn, rename, delete, or interrupt teammates, and write scopes remain advisory metadata.

@@ -4,7 +4,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import type { SessionId } from '@deepseek-ai/dsh-session/types'
 import type {
-  RoomFollowFrame, RoomRemoteView, TeamTaskId, TeamTaskView as TeamTask, TeamView,
+  RoomFollowFrame, RoomPromptResult, RoomRemoteView, TeamTaskId, TeamTaskView as TeamTask, TeamView,
 } from '@deepseek-ai/dsh-experimental-agent-team/client'
 import { makeTranslate, RemoteError } from '@deepseek-ai/dsh-client-test-runtime'
 import { zh as commonZh } from '@deepseek-ai/dsh-client-locale/src/locales/zh.ts'
@@ -78,7 +78,9 @@ function props(actions: TeamActionInjected, sessionId: SessionId = SESSION): Tea
 
 const room: RoomRemoteView = {
   enabled: true,
-  participants: view.members.map(member => ({ id: member.id, name: member.name, status: member.status })),
+  participants: view.members.map(member => ({
+    id: member.id, name: member.name, status: member.status, quiet: false,
+  })),
   chair: 'lead',
   messages: [{ author: 'worker', text: 'the cache serves stale reads' }],
   proposals: [{
@@ -108,6 +110,15 @@ function actions(overrides: Partial<TeamActionInjected> = {}): TeamActionInjecte
     }),
     openTeammate: () => Promise.resolve(),
     followRoom: () => new Promise<void>(() => {}),
+    promptParticipant: () => Promise.resolve({ ok: true, value: { messageId: 'message-1' as never, status: 'accepted' } }),
+    proposeDecision: () => Promise.resolve({
+      ok: true,
+      value: { ...room.proposals[0]!, phase: 'open' },
+    }),
+    escalateDecision: () => Promise.resolve({
+      ok: true,
+      value: { ...room.proposals[0]!, phase: 'escalated' },
+    }),
     ...overrides,
   }
 }
@@ -536,9 +547,9 @@ describe('TeamAction', () => {
     fireEvent.click(screen.getByRole('button', { name: /Agent Team/u }))
     await screen.findByText('Implement runtime')
 
-    fireEvent.change(screen.getByRole('combobox'), { target: { value: 'worker' } })
+    fireEvent.change(screen.getByRole('combobox', { name: zh.owner }), { target: { value: 'worker' } })
     await waitFor(() => {
-      expect(screen.getByRole<HTMLSelectElement>('combobox').value).toBe('worker')
+      expect(screen.getByRole<HTMLSelectElement>('combobox', { name: zh.owner }).value).toBe('worker')
       expect(current).toMatchObject({ revision: 2, ownerName: 'worker' })
     })
 
@@ -595,12 +606,74 @@ describe('TeamAction', () => {
     expect(screen.queryByRole('button', { name: /提交验证/u })).toBeNull()
   })
 
+  it('grants the floor, opens a decision, and hands one to the human', async () => {
+    const promptParticipant = vi.fn((..._args: Parameters<TeamActionInjected['promptParticipant']>) =>
+      Promise.resolve({
+        ok: true as const,
+        value: { messageId: 'message-1' as RoomPromptResult['messageId'], status: 'accepted' as const },
+      }))
+    const proposeDecision = vi.fn((..._args: Parameters<TeamActionInjected['proposeDecision']>) =>
+      Promise.resolve({
+        ok: true as const,
+        value: { ...room.proposals[0]!, phase: 'open' as const, rejections: [], awaiting: ['worker'] },
+      }))
+    const escalateDecision = vi.fn((..._args: Parameters<TeamActionInjected['escalateDecision']>) =>
+      Promise.resolve({ ok: true as const, value: { ...room.proposals[0]!, phase: 'escalated' as const } }))
+    const open = { ...room, proposals: [{ ...room.proposals[0]!, phase: 'open' as const, rejections: [], awaiting: ['worker'] }] }
+    render(<TeamAction {...props(actions({
+      loadRoom: () => Promise.resolve({ ok: true, value: open }),
+      promptParticipant,
+      proposeDecision,
+      escalateDecision,
+    }))} />)
+    fireEvent.click(screen.getByRole('button', { name: /Agent Team/u }))
+    await screen.findByText('the cache serves stale reads')
+
+    // The panel refuses incomplete instructions before the Host is asked.
+    fireEvent.click(screen.getByRole('button', { name: new RegExp(zh['room.propose'], 'u') }))
+    expect(await screen.findByText(zh['room.statementRequired'])).toBeTruthy()
+    expect(proposeDecision).not.toHaveBeenCalled()
+    fireEvent.click(screen.getByRole('button', { name: new RegExp(zh['room.prompt'], 'u') }))
+    expect(await screen.findByText(zh['room.promptRequired'])).toBeTruthy()
+    expect(promptParticipant).not.toHaveBeenCalled()
+
+    fireEvent.change(screen.getByPlaceholderText(zh['room.statement']), {
+      target: { value: 'adopt the panel path' },
+    })
+    fireEvent.click(screen.getByRole('button', { name: new RegExp(zh['room.propose'], 'u') }))
+    await waitFor(() => { expect(proposeDecision).toHaveBeenCalledTimes(1) })
+    expect(proposeDecision.mock.calls[0]?.[1]).toEqual({ statement: 'adopt the panel path' })
+
+    fireEvent.change(screen.getByRole('combobox', { name: zh['room.promptTarget'] }), {
+      target: { value: 'worker' },
+    })
+    fireEvent.change(screen.getByPlaceholderText(zh['room.instruction']), {
+      target: { value: 'give your view' },
+    })
+    fireEvent.click(screen.getByRole('button', { name: new RegExp(zh['room.prompt'], 'u') }))
+    await waitFor(() => { expect(promptParticipant).toHaveBeenCalledTimes(1) })
+    expect(promptParticipant.mock.calls[0]?.[1]).toEqual({ target: 'worker', instruction: 'give your view' })
+
+    // An escalation carries the reason the human reads.
+    fireEvent.click(screen.getByRole('button', { name: new RegExp(zh['room.escalate'], 'u') }))
+    fireEvent.click(screen.getByRole('button', { name: new RegExp(zh['room.escalateSubmit'], 'u') }))
+    expect(await screen.findByText(zh['room.reasonRequired'])).toBeTruthy()
+    expect(escalateDecision).not.toHaveBeenCalled()
+    fireEvent.change(screen.getByPlaceholderText(zh['room.reason']), {
+      target: { value: 'the reviewers disagree' },
+    })
+    fireEvent.click(screen.getByRole('button', { name: new RegExp(zh['room.escalateSubmit'], 'u') }))
+    await waitFor(() => { expect(escalateDecision).toHaveBeenCalledTimes(1) })
+    expect(escalateDecision.mock.calls[0]?.[1]).toMatchObject({ reason: 'the reviewers disagree' })
+  })
+
   it('verifies a submitted task with the reason the verifier writes', async () => {
     const verifying = {
       ...view,
       tasks: [{ ...task, revision: 2, status: 'verifying' as const, verification: { submittedRevision: 2 } }],
     }
-    const updateTask = vi.fn(() => Promise.resolve(taskSuccess({ ...task, revision: 3, status: 'completed' })))
+    const updateTask = vi.fn((..._args: Parameters<TeamActionInjected['updateTask']>) =>
+      Promise.resolve(taskSuccess({ ...task, revision: 3, status: 'completed' })))
     render(<TeamAction {...props(actions({
       load: () => Promise.resolve({ ok: true, value: verifying }),
       updateTask,
@@ -619,7 +692,7 @@ describe('TeamAction', () => {
     })
     fireEvent.click(screen.getByRole('button', { name: new RegExp(zh['verdict.approve'], 'u') }))
     await waitFor(() => { expect(updateTask).toHaveBeenCalledTimes(1) })
-    expect(vi.mocked(updateTask).mock.calls[0]?.[1]).toMatchObject({
+    expect(updateTask.mock.calls[0]?.[1]).toMatchObject({
       action: 'verify',
       verdict: 'approved',
       reason: 'the cache bounds are enforced',
@@ -853,7 +926,7 @@ describe('TeamAction', () => {
     })
 
     fireEvent.click(screen.getByRole('button', { name: '取消' }))
-    fireEvent.change(screen.getByRole('combobox'), { target: { value: '' } })
+    fireEvent.change(screen.getByRole('combobox', { name: zh.owner }), { target: { value: '' } })
     await waitFor(() => {
       expect(updateTask).toHaveBeenLastCalledWith(SESSION, expect.objectContaining({
         action: 'reassign',

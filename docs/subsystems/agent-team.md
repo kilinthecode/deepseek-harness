@@ -16,12 +16,21 @@ interface TeamMemberSnapshot {
   readonly description: string
   readonly provider: string
   readonly context: 'fresh' | 'fork'
+  /**
+   * Resolved child `agentOptions.provider` for this teammate. A teammate holds
+   * no live Agent between turns, so the roster reads its route here instead of
+   * reporting the Lead's route. Absent for a member recorded before this field
+   * existed or resolved without a provider.
+   */
+  readonly agentProvider?: string
+  /** Resolved child `agentOptions.model`, recorded on {@link agentProvider}'s terms. */
+  readonly agentModel?: string
   readonly phase: TeamMemberPhase
   readonly error?: string
 }
 ```
 
-Every member starts in `provisioning` and reaches exactly one terminal roster phase, `active` or `failed`. Runtime `running`/`idle`/`inactive` status is derived separately and never rewrites this record.
+Every member starts in `provisioning` and reaches exactly one terminal roster phase, `active` or `failed`. Runtime `running`/`idle`/`inactive` status is derived separately and never rewrites this record. `agentProvider` and `agentModel` record the teammate's resolved route, so a roster row or room participant still reports the model it was seated on while that teammate's Agent is not live.
 
 ## Durable mailbox
 
@@ -68,6 +77,8 @@ interface TeamTaskSnapshot {
   readonly ownerId?: SessionId
   readonly blockedBy: TeamTaskId[]
   readonly writeScopes: string[]
+  /** Submission and peer verdict, present once the task leaves its owner's hands. */
+  readonly verification?: TeamTaskVerification
 }
 ```
 
@@ -122,9 +133,9 @@ interface RoomReviewSnapshot {
 
 `RoomMessageId` identifies one transcript entry; `RoomProposalId` is room-local and allocated as `proposal-<n>`. A reviewer changing its standing appends another record, so the fold keeps the latest verdict per reviewer and revision.
 
-Participants are the Team roster itself: the Lead plus every member that has not failed. A member is a participant from the moment provisioning records it, matching the rule the roster uses to resolve a live member's Team identity. Reading a room is total: a composition without rooms reports `enabled: false` and empty collections rather than failing, while every mutating room operation still refuses with `TEAM_ROOM_DISABLED`. `RoomView` exposes that flag, the roster, the transcript, the decisions, and the rotated chair; `RoomPromptRequest` and `RoomPromptResult` describe giving one participant the floor, `ProposeRoomDecisionRequest`, `ReviewRoomDecisionRequest`, and `EscalateRoomDecisionRequest` describe the decision operations, and `RoomStreamFrame` carries one live participant frame on the `room/stream` event.
+Participants are the Team roster itself: the Lead plus every member that has not failed. A member is a participant from the moment provisioning records it, matching the rule the roster uses to resolve a live member's Team identity. Reading a room is total: a composition without rooms reports `enabled: false` and empty collections rather than failing, while every mutating room operation still refuses with `TEAM_ROOM_DISABLED`. `RoomView` exposes that flag, the roster, the transcript, the decisions, and the rotated chair; `RoomPromptRequest` and `RoomPromptResult` describe giving one participant the floor, `ProposeRoomDecisionRequest`, `ReviewRoomDecisionRequest`, and `EscalateRoomDecisionRequest` describe the decision operations, and `RoomStreamFrame` carries one live participant frame on the `room/stream` event. `RoomParticipantView.quiet` reports a live participant that produced no observed work within `roomReviewGraceMs`, the same window the stall sweep reads, and `roomStream` follows one room through the Remote face: the complete view first, then a view after every committed change and a frame for every text chunk a participant streams. `PanelRoomPromptRequest`, `PanelProposeRoomDecisionRequest`, and `PanelEscalateRoomDecisionRequest` carry the browser panel's own calls to those same operations.
 
-Acceptance requires every eligible reviewer to have voted, at least `roomApprovalRatio` of them to approve, and no standing rejection. A proposer cannot review its own decision, a settled decision is final, and a rejected one is resolved only by carrying a revised statement back to the room. The chair rotates with the transcript and carries no decision authority.
+Acceptance requires every eligible reviewer to have voted, at least `roomApprovalRatio` of them to approve, and no standing rejection. A proposer cannot review its own decision, a settled decision is final, and a rejected one is resolved only by carrying a revised statement back to the room. The chair rotates with the transcript and carries no decision authority. A reviewer's silence is measured from that participant's own observed work, never from the room's records: the ask starts a window of `roomReviewGraceMs`, each of at most `roomReviewReminders` reminders restarts the window of the reviewer it reaches, and a decision escalates only once every reviewer still owing a standing has exhausted its window, naming them in `room/review-timeout` without inventing the standing it never received. Every recorded standing carries its reviewer's reason and is visible to the whole room. Shared work follows the same rule: a task owner submits the current revision, only another member's `verify` verdict with a reason carries it to `completed`, and the fold refuses any record whose verification cannot be true.
 
 ## Replay
 
@@ -291,6 +302,30 @@ roomView(caller: Agent): RoomView
  *   change and a frame for every text chunk a participant streams.
  */
 @Remote({ mode: 'stream' }) async *roomStream(agent: Agent, signal: AbortSignal): AsyncIterable<RoomFollowFrame>
+
+/**
+ * Give one participant the floor through the generated Remote API.
+ * @param agent - exact live Team member granting the floor.
+ * @param request - target name and the instruction to deliver.
+ * @returns durable message identity and immediate-delivery observation.
+ */
+@Remote('roomPrompt') remoteRoomPrompt(agent: Agent, request: PanelRoomPromptRequest): Promise<RoomPromptResult>
+
+/**
+ * Put one decision to the room through the generated Remote API.
+ * @param agent - exact live Team member proposing the decision.
+ * @param request - the exact statement reviewers are asked to settle.
+ * @returns the opened revision with its quorum arithmetic.
+ */
+@Remote('roomPropose') remoteRoomPropose(agent: Agent, request: PanelProposeRoomDecisionRequest): Promise<RoomProposalView>
+
+/**
+ * Hand one unresolved decision to the human through the generated Remote API.
+ * @param agent - exact live Team member escalating the decision.
+ * @param request - decision identity and why it cannot settle without a human.
+ * @returns the escalated decision with its recorded votes.
+ */
+@Remote('roomEscalate') remoteRoomEscalate(agent: Agent, request: PanelEscalateRoomDecisionRequest): Promise<RoomProposalView>
 
 /**
  * Create one shared task through the generated Remote API.

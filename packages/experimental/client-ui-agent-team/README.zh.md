@@ -33,7 +33,7 @@ kind: "package-reference"
 
 ### 读取 room
 
-当组合拥有 room 时，面板还会显示共享 transcript 与每个集体决策：其 phase、proposer、确切的 statement，以及投票两侧记录在案的参与者。transcript 指出谁说了什么；决策板指出谁批准、谁反对、谁弃权，以及在决策仍未结清时谁尚未记录立场。已结清的决策不显示等待中的参与者，因为没有人能改变 quorum 已经达成的结果；每条已记录的立场都会连同该 reviewer 给出的理由一并显示。面板打开期间会跟随 room：某个参与者正在流式输出的文本会随到达而显示，而每次已提交的 transcript 条目或决策变化都会用持久记录替换那段实时文本。
+当组合拥有 room 时，面板会新增控件来把发言权交给某个参与者、开启决策，或把未决决策交给人类，并显示共享 transcript 与每个集体决策：其 phase、proposer、确切的 statement，以及投票两侧记录在案的参与者。transcript 指出谁说了什么；决策板指出谁批准、谁反对、谁弃权，以及在决策仍未结清时谁尚未记录立场，而 room 标题会点名每个在该 room 窗口内没有产生任何工作的在线参与者。已结清的决策不显示等待中的参与者，因为没有人能改变 quorum 已经达成的结果；每条已记录的立场都会连同该 reviewer 给出的理由一并显示。面板打开期间会跟随 room：某个参与者正在流式输出的文本会随到达而显示，而每次已提交的 transcript 条目或决策变化都会用持久记录替换那段实时文本。
 
 ### 管理任务板
 
@@ -87,7 +87,7 @@ Client export 挂载来自 [`@deepseek-ai/dsh-experimental-agent-team/remote`](.
 
 - **实时跟随需要 panel 处于打开状态**——panel 只在打开期间订阅 room，并在已提交变化取代实时文本时丢弃它；关闭的 panel 会在下次打开时从持久日志刷新。
 - **没有 room 的组合不显示 room 区块**——面板会省略它，而不是渲染一个空的区块，因为「没有 room」与「空闲的 room」是不同状态。
-- **room 面板是只读的**——它读取决策与 transcript，但不能 propose、review、escalate 或交出发言权；人类改为通过 room 工具行动。
+- **room 面板只写三件事**——它可以用一条指示把发言权交给某个参与者、用一条 statement 开启决策，并连同理由把未决决策交给人类，各自经由对应的 `agentTeams/room*` Remote 调用。它绝不记录立场：review 是参与者自己的裁决，由该参与者或其模型记录。
 - **room 读取器只有一个组装浏览器用例**——`apps/web/tests/agent-room-panel.e2e.ts` 固定渲染出的 transcript 与决策板，然后在 panel 挂载之后再开启一个决策，要求它无需刷新就通过实时跟随出现；roster 与任务板路径保留各自的用例。
 - **普通 child continuation**——导航后发送的人类消息使用稳定 addressed-subagent 提示词路径，而不是 Team peer mailbox。
 - **没有 lifecycle 或 workspace control**——panel 不能 spawn、rename、delete 或 interrupt teammate，write scope 仍只是提示性 metadata。

@@ -16,12 +16,21 @@ interface TeamMemberSnapshot {
   readonly description: string
   readonly provider: string
   readonly context: 'fresh' | 'fork'
+  /**
+   * Resolved child `agentOptions.provider` for this teammate. A teammate holds
+   * no live Agent between turns, so the roster reads its route here instead of
+   * reporting the Lead's route. Absent for a member recorded before this field
+   * existed or resolved without a provider.
+   */
+  readonly agentProvider?: string
+  /** Resolved child `agentOptions.model`, recorded on {@link agentProvider}'s terms. */
+  readonly agentModel?: string
   readonly phase: TeamMemberPhase
   readonly error?: string
 }
 ```
 
-每个 member 都从 `provisioning` 开始，并且只到达一个终态 roster phase：`active` 或 `failed`。运行时 `running`／`idle`／`inactive` 状态单独派生，绝不会重写该记录。
+每个 member 都从 `provisioning` 开始，并且只到达一个终态 roster phase：`active` 或 `failed`。运行时 `running`／`idle`／`inactive` 状态单独派生，绝不会重写该记录。`agentProvider` 与 `agentModel` 记录该 teammate 解析后的路由，因此当该 teammate 的 Agent 不存活时，roster 行与房间参与者仍会报告它就座时使用的模型。
 
 ## 持久 mailbox
 
@@ -68,6 +77,8 @@ interface TeamTaskSnapshot {
   readonly ownerId?: SessionId
   readonly blockedBy: TeamTaskId[]
   readonly writeScopes: string[]
+  /** Submission and peer verdict, present once the task leaves its owner's hands. */
+  readonly verification?: TeamTaskVerification
 }
 ```
 
@@ -122,9 +133,9 @@ interface RoomReviewSnapshot {
 
 `RoomMessageId` 标识一条 transcript entry；`RoomProposalId` 属于 room 本地，按 `proposal-<n>` 分配。reviewer 改变立场会追加一条记录，因此 fold 对每个 reviewer 和 revision 保留最新 verdict。
 
-参与者就是 Team roster 本身：Lead 加上每个尚未失败的成员。成员从 provisioning 记录它的那一刻起就是参与者，与 roster 解析在线成员 Team 身份所用规则一致。读取 room 是全函数：没有 room 的组合会报告 `enabled: false` 与空集合，而不是失败；而每个会写入的 room 操作仍然以 `TEAM_ROOM_DISABLED` 拒绝。`RoomView` 暴露该标志、roster、transcript、决策与轮转 chair；`RoomPromptRequest` 与 `RoomPromptResult` 描述把发言权交给某个参与者，`ProposeRoomDecisionRequest`、`ReviewRoomDecisionRequest`、`EscalateRoomDecisionRequest` 描述决策操作，`RoomStreamFrame` 在 `room/stream` event 上承载一个参与者的实时 frame。
+参与者就是 Team roster 本身：Lead 加上每个尚未失败的成员。成员从 provisioning 记录它的那一刻起就是参与者，与 roster 解析在线成员 Team 身份所用规则一致。读取 room 是全函数：没有 room 的组合会报告 `enabled: false` 与空集合，而不是失败；而每个会写入的 room 操作仍然以 `TEAM_ROOM_DISABLED` 拒绝。`RoomView` 暴露该标志、roster、transcript、决策与轮转 chair；`RoomPromptRequest` 与 `RoomPromptResult` 描述把发言权交给某个参与者，`ProposeRoomDecisionRequest`、`ReviewRoomDecisionRequest`、`EscalateRoomDecisionRequest` 描述决策操作，`RoomStreamFrame` 在 `room/stream` event 上承载一个参与者的实时 frame。`RoomParticipantView.quiet` 报告某个在线参与者在 `roomReviewGraceMs` 内没有产生任何被观察到的工作，用的正是停滞巡检所读的同一个窗口；`roomStream` 通过 Remote face 跟随一个 room：先收到完整 view，随后在每次已提交变化后收到新的 view，并为参与者流式输出的每个 text chunk 收到一帧。`PanelRoomPromptRequest`、`PanelProposeRoomDecisionRequest` 与 `PanelEscalateRoomDecisionRequest` 承载浏览器面板对这些同一操作的调用。
 
-接受需要每个有资格的 reviewer 都已投票、其中至少 `roomApprovalRatio` 比例批准，且没有任何反对成立。proposer 不能 review 自己的决策，已结清的决策是最终的，被拒绝的决策只能通过把修订后的 statement 重新提交给 room 来解决。chair 随 transcript 轮转，不携带任何决策权。
+接受需要每个有资格的 reviewer 都已投票、其中至少 `roomApprovalRatio` 比例批准，且没有任何反对成立。proposer 不能 review 自己的决策，已结清的决策是最终的，被拒绝的决策只能通过把修订后的 statement 重新提交给 room 来解决。chair 随 transcript 轮转，不携带任何决策权。reviewer 的沉默依据该参与者自身被观察到的工作衡量，绝不依据 room 自身的记录：请求会启动 `roomReviewGraceMs` 窗口，至多 `roomReviewReminders` 次提醒各自重启被提醒者的窗口，只有当所有仍欠 standing 的 reviewer 都用尽窗口后决策才升级，并把它们记入 `room/review-timeout`，绝不编造从未收到的 standing。每条已记录的立场都带有其 reviewer 的理由并对整个 room 可见。共享工作遵循同一规则：任务 owner 提交当前 revision，只有另一位成员带理由的 `verify` 裁决才会把它推进到 `completed`，而折叠会拒绝任何验证无法成立的记录。
 
 ## 回放
 
@@ -291,6 +302,30 @@ roomView(caller: Agent): RoomView
  *   change and a frame for every text chunk a participant streams.
  */
 @Remote({ mode: 'stream' }) async *roomStream(agent: Agent, signal: AbortSignal): AsyncIterable<RoomFollowFrame>
+
+/**
+ * Give one participant the floor through the generated Remote API.
+ * @param agent - exact live Team member granting the floor.
+ * @param request - target name and the instruction to deliver.
+ * @returns durable message identity and immediate-delivery observation.
+ */
+@Remote('roomPrompt') remoteRoomPrompt(agent: Agent, request: PanelRoomPromptRequest): Promise<RoomPromptResult>
+
+/**
+ * Put one decision to the room through the generated Remote API.
+ * @param agent - exact live Team member proposing the decision.
+ * @param request - the exact statement reviewers are asked to settle.
+ * @returns the opened revision with its quorum arithmetic.
+ */
+@Remote('roomPropose') remoteRoomPropose(agent: Agent, request: PanelProposeRoomDecisionRequest): Promise<RoomProposalView>
+
+/**
+ * Hand one unresolved decision to the human through the generated Remote API.
+ * @param agent - exact live Team member escalating the decision.
+ * @param request - decision identity and why it cannot settle without a human.
+ * @returns the escalated decision with its recorded votes.
+ */
+@Remote('roomEscalate') remoteRoomEscalate(agent: Agent, request: PanelEscalateRoomDecisionRequest): Promise<RoomProposalView>
 
 /**
  * Create one shared task through the generated Remote API.

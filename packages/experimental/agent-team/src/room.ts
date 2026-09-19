@@ -89,6 +89,8 @@ export interface RoomConfig {
 interface RoomParticipant {
   readonly id: SessionId
   readonly name: string
+  /** Route the member record resolved for this participant, when it recorded one. */
+  readonly agentModel?: string
 }
 
 /**
@@ -589,7 +591,13 @@ export class TeamRoom {
   private participants(rootId: SessionId, state: TeamState): RoomParticipant[] {
     const result: RoomParticipant[] = [{ id: rootId, name: 'lead' }]
     for (const member of state.members) {
-      if (member.phase !== 'failed') result.push({ id: member.id, name: member.name })
+      if (member.phase !== 'failed') {
+        result.push({
+          id: member.id,
+          name: member.name,
+          ...member.agentModel === undefined ? {} : { agentModel: member.agentModel },
+        })
+      }
     }
     return result
   }
@@ -625,11 +633,18 @@ export class TeamRoom {
   /** Build one runtime participant row. */
   private participantView(rootId: SessionId, participant: RoomParticipant): RoomParticipantView {
     const live = participant.id === rootId ? this.ctx.agents.get(rootId) : this.ctx.agents.get(participant.id)
-    const model = live?.options.model
+    const model = participant.agentModel ?? live?.options.model
+    const status = live?.status ?? 'inactive'
+    // The same window the stall sweep uses, so a board that shows a quiet
+    // participant is showing exactly the reviewer the room is waiting on.
+    const seen = this.activity.get(participant.id)
     return {
       id: participant.id,
       name: participant.name,
-      status: live?.status ?? 'inactive',
+      status,
+      quiet: seen !== undefined
+        && status !== 'inactive'
+        && Date.now() - seen >= this.config.reviewGraceMs,
       ...model === undefined ? {} : { model },
     }
   }

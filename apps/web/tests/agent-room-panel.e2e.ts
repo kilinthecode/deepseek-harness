@@ -79,6 +79,8 @@ describe('web e2e: Agent room panel', () => {
       description: 'skeptical reviewer',
       provider: 'spawn',
       context: 'fresh' as const,
+      agentProvider: 'fixture',
+      agentModel: 'reviewer-model',
     }
     // One conversation turn so the panel's host action has a place to render.
     session.append('turn/start', { turn: 1 })
@@ -182,6 +184,12 @@ describe('web e2e: Agent room panel', () => {
       signal: new AbortController().signal,
     })
     await action.getByText('Adopt a bounded cache with invalidation.').waitFor({ timeout: 10_000 })
+
+    // The panel writes too: its own controls open a decision through the Remote
+    // write path, and the committed record renders like any other.
+    await page.getByPlaceholder('Statement to put to the room').fill('Adopt the panel-driven path.')
+    await action.getByRole('button', { name: 'Open a decision', exact: true }).click()
+    await action.getByText('Adopt the panel-driven path.').waitFor({ timeout: 10_000 })
 
     expect(tripwire.pageErrors).toEqual([])
     expect(tripwire.warnings).toEqual([])

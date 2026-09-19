@@ -659,7 +659,10 @@ async function main(): Promise<void> {
   }
 
   const createMainWindow = (): BrowserWindow => {
-    const window = createWindow(appPreload, true, true)
+    // Hidden until the first paint so the window never shows an empty
+    // transparent frame before the boot page renders.
+    const window = createWindow(appPreload, false, true)
+    window.once('ready-to-show', () => { if (!window.isDestroyed()) window.show() })
     mainWindow = window
     window.on('focus', automaticCheck)
     window.on('closed', () => { if (mainWindow === window) mainWindow = undefined })

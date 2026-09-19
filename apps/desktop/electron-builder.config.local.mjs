@@ -8,11 +8,18 @@ import { resolveDesktopPolicyEnvironment } from './scripts/desktop-policy-enviro
 const APP_ROOT = resolve(fileURLToPath(new URL('.', import.meta.url)))
 const buildPaths = desktopTargetBuildPaths('mac-arm64')
 const appId = process.env.DSH_DESKTOP_APP_ID ?? 'local.deepseek.harness'
-const policy = resolveDesktopPolicyEnvironment(process.env)
+// Without an explicit policy origin this local build omits the mandatory-update
+// policy entirely, so no test-login modal can ever block the packaged app.
+const policy = process.env.DSH_DESKTOP_MANDATORY_UPDATE_TEST_ORIGIN === undefined && process.env.DSH_DESKTOP_MANDATORY_UPDATE_PROD_ORIGIN === undefined
+  ? undefined
+  : resolveDesktopPolicyEnvironment(process.env)
 
 export default {
   appId,
-  extraMetadata: { dshDesktopAppId: appId, dshMandatoryUpdatePolicy: policy },
+  extraMetadata: {
+    dshDesktopAppId: appId,
+    ...(policy === undefined ? {} : { dshMandatoryUpdatePolicy: policy }),
+  },
   productName: 'Portal',
   directories: { output: join(buildPaths.root, 'local-artifacts') },
   asar: true,

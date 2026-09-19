@@ -48,6 +48,15 @@ function registerUi(ctx: ClientContext): void {
     async followRoom(sessionId, signal, frame) {
       for await (const next of ctx.remote.agentTeams.roomStream(leadSessionId(sessionId), signal)) frame(next)
     },
+    async promptParticipant(sessionId, input) {
+      return await ctx.remote.agentTeams.roomPrompt(leadSessionId(sessionId), input)
+    },
+    async proposeDecision(sessionId, input) {
+      return await ctx.remote.agentTeams.roomPropose(leadSessionId(sessionId), input)
+    },
+    async escalateDecision(sessionId, input) {
+      return await ctx.remote.agentTeams.roomEscalate(leadSessionId(sessionId), input)
+    },
     async createTask(sessionId, input): Promise<TeamTaskActionResult> {
       return await ctx.remote.agentTeams.createTask(leadSessionId(sessionId), input)
     },

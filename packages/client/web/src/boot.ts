@@ -88,6 +88,9 @@ export class AppWebEntry {
         },
       })
       await mountClient(ctx, this.container)
+      // The application now renders beneath the boot page overlay; start its
+      // leave sequence so the brand moment plays out and fades to the app.
+      this.page.dispose()
     } catch (reason) {
       console.error(reason)
       if (onFailure !== undefined) onFailure(reason)

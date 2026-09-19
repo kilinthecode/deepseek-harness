@@ -2,6 +2,10 @@
 
 export type {
   CreateTeamTaskRequest,
+  PanelEscalateRoomDecisionRequest,
+  PanelProposeRoomDecisionRequest,
+  PanelRoomPromptRequest,
+  RoomPromptResult,
   RoomFollowFrame,
   RoomParticipantView,
   RoomProposalView,

@@ -27,6 +27,9 @@ import type {
   RoomProposalView,
   RoomRemoteView,
   RoomView,
+  PanelEscalateRoomDecisionRequest,
+  PanelProposeRoomDecisionRequest,
+  PanelRoomPromptRequest,
   RoomFollowFrame,
   SendTeamMessageRequest,
   SendTeamMessageResult,
@@ -280,7 +283,67 @@ export class TeamService extends TypertRemoteService {
    * @returns the committed next task revision.
    */
   async updateTask(caller: Agent, request: UpdateTeamTaskRequest): Promise<TeamTaskView> {
-    return await this.tasks.update(caller, this.roster.membership(caller), request)
+    const membership = this.roster.membership(caller)
+    const view = await this.tasks.update(caller, membership, request)
+    await this.announceTaskOutcome(caller, membership, request, view)
+    return view
+  }
+
+  /**
+   * Wake the member whose next action depends on a committed submission or
+   * verdict: the Lead for a teammate's submission it must assign a verifier to,
+   * and the owner for the verdict its rework depends on. The mailbox keeps the
+   * notice durable, so an inactive recipient reads it on its next turn.
+   */
+  private async announceTaskOutcome(
+    caller: Agent,
+    membership: TeamMembership,
+    request: UpdateTeamTaskRequest,
+    view: TeamTaskView,
+  ): Promise<void> {
+    const notice = this.taskNotice(membership, request, view)
+    if (notice === undefined) return
+    await this.mailbox.send(caller, {
+      target: notice.target,
+      content: [{ type: 'text', text: notice.text }],
+      signal: this.lifecycle.signal,
+    })
+  }
+
+  /** Compose the notice one committed task transition owes another member, if any. */
+  private taskNotice(
+    membership: TeamMembership,
+    request: UpdateTeamTaskRequest,
+    view: TeamTaskView,
+  ): { readonly target: string; readonly text: string } | undefined {
+    if (request.action === 'submit') {
+      // The Lead assigns the verifier, and only another member may verify.
+      if (membership.role === 'lead') return undefined
+      return {
+        target: 'lead',
+        text: [
+          `Team task ${view.id} (revision ${String(view.revision)}) is awaiting a peer verdict:`,
+          `${membership.name} submitted it. Ask a member other than the owner for team_task_update`,
+          `with action "verify" and expected_revision ${String(view.revision)}.`,
+        ].join(' '),
+      }
+    }
+    const verification = view.verification
+    if (request.action !== 'verify' || verification?.verdict === undefined) return undefined
+    /* v8 ignore next -- only an owner can submit, so a verified revision always names one. */
+    if (view.ownerName === undefined) return undefined
+    /* v8 ignore next -- a rejection verdict always carries the reason it recorded. */
+    const detail = verification.reason ?? ''
+    return {
+      target: view.ownerName,
+      text: verification.verdict === 'rejected'
+        ? [
+          `Team task ${view.id} (revision ${String(view.revision)}) was rejected by ${membership.name}:`,
+          detail,
+          'Rework it and submit the next revision for a fresh verdict.',
+        ].join(' ')
+        : `Team task ${view.id} (revision ${String(view.revision)}) was approved by ${membership.name}; it is completed.`,
+    }
   }
 
   /**
@@ -418,6 +481,47 @@ export class TeamService extends TypertRemoteService {
       this.roomReaders.delete(reader)
       reader.end()
     }
+  }
+
+  /**
+   * Give one participant the floor through the generated Remote API.
+   * @param agent - exact live Team member granting the floor.
+   * @param request - target name and the instruction to deliver.
+   * @returns durable message identity and immediate-delivery observation.
+   */
+  @Remote('roomPrompt')
+  remoteRoomPrompt(agent: Agent, request: PanelRoomPromptRequest): Promise<RoomPromptResult> {
+    return this.roomPrompt(agent, {
+      target: request.target,
+      instruction: [{ type: 'text', text: request.instruction }],
+      signal: this.lifecycle.signal,
+    })
+  }
+
+  /**
+   * Put one decision to the room through the generated Remote API.
+   * @param agent - exact live Team member proposing the decision.
+   * @param request - the exact statement reviewers are asked to settle.
+   * @returns the opened revision with its quorum arithmetic.
+   */
+  @Remote('roomPropose')
+  remoteRoomPropose(agent: Agent, request: PanelProposeRoomDecisionRequest): Promise<RoomProposalView> {
+    return this.roomPropose(agent, { statement: request.statement, signal: this.lifecycle.signal })
+  }
+
+  /**
+   * Hand one unresolved decision to the human through the generated Remote API.
+   * @param agent - exact live Team member escalating the decision.
+   * @param request - decision identity and why it cannot settle without a human.
+   * @returns the escalated decision with its recorded votes.
+   */
+  @Remote('roomEscalate')
+  remoteRoomEscalate(agent: Agent, request: PanelEscalateRoomDecisionRequest): Promise<RoomProposalView> {
+    return this.roomEscalate(agent, {
+      proposalId: request.proposalId,
+      reason: request.reason,
+      signal: this.lifecycle.signal,
+    })
   }
 
   /**

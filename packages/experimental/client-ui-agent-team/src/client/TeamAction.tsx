@@ -6,6 +6,7 @@ import type {
   TeamTaskId,
   TeamTaskMutationResult,
   RoomProposalView,
+  RoomPromptResult,
   RoomFollowFrame,
   RoomRemoteView,
   TeamTaskView as TeamTask,
@@ -46,6 +47,8 @@ export interface TeamActionInjected {
     blockedBy?: TeamTaskId[]
     writeScopes?: string[]
     owner?: string
+    verdict?: 'approved' | 'rejected'
+    reason?: string
   }) => Promise<TeamTaskActionResult>
   openTeammate: (sessionId: SessionId, member: TeamRosterMember) => Promise<void>
   /**
@@ -60,6 +63,21 @@ export interface TeamActionInjected {
     signal: AbortSignal,
     frame: (next: RoomFollowFrame) => void,
   ) => Promise<void>
+  /** Give one participant the floor with an instruction the panel wrote. */
+  promptParticipant: (
+    sessionId: SessionId,
+    input: { target: string; instruction: string },
+  ) => Promise<TeamActionResult<RoomPromptResult>>
+  /** Put one statement to the room as a collective decision. */
+  proposeDecision: (
+    sessionId: SessionId,
+    input: { statement: string },
+  ) => Promise<TeamActionResult<RoomProposalView>>
+  /** Hand one unresolved decision to the human. */
+  escalateDecision: (
+    sessionId: SessionId,
+    input: { proposalId: RoomProposalView['id']; reason: string },
+  ) => Promise<TeamActionResult<RoomProposalView>>
 }
 
 /** Full props of the Team conversation-header action. */
@@ -145,7 +163,8 @@ function memberStatusKey(status: TeamRosterMember['status']): TeamKey {
 
 /** Render the live Team roster and compare-and-set task board. */
 export function TeamAction({
-  sessionId, load, loadRoom, createTask, updateTask, openTeammate, followRoom, t,
+  sessionId, load, loadRoom, createTask, updateTask, openTeammate, followRoom,
+  promptParticipant, proposeDecision, escalateDecision, t,
 }: TeamActionProps) {
   const [open, setOpen] = useState(false)
   const [loading, setLoading] = useState(false)
@@ -154,6 +173,12 @@ export function TeamAction({
   /** Text each participant is streaming right now, keyed by participant name. */
   const [streaming, setStreaming] = useState<Readonly<Record<string, string>>>({})
   /** Task whose verification form is open, and the reason being written. */
+  const [roomPromptTarget, setRoomPromptTarget] = useState('')
+  const [roomPromptDraft, setRoomPromptDraft] = useState('')
+  const [roomStatementDraft, setRoomStatementDraft] = useState('')
+  /** Decision whose escalate form is open, and the reason being written. */
+  const [escalatingRoom, setEscalatingRoom] = useState<string | null>(null)
+  const [escalateRoomReason, setEscalateRoomReason] = useState('')
   const [verifyingTask, setVerifyingTask] = useState<string | null>(null)
   const [verifyReason, setVerifyReason] = useState('')
   const [error, setError] = useState<string | null>(null)
@@ -175,6 +200,11 @@ export function TeamAction({
     setStreaming({})
     setVerifyingTask(null)
     setVerifyReason('')
+    setRoomPromptTarget('')
+    setRoomPromptDraft('')
+    setRoomStatementDraft('')
+    setEscalatingRoom(null)
+    setEscalateRoomReason('')
     setError(null)
     setCreating(false)
     setCreateDraft(EMPTY_DRAFT)
@@ -184,6 +214,8 @@ export function TeamAction({
   }, [sessionId])
 
   const liveEntries = Object.entries(streaming).filter(([, text]) => text.length > 0)
+  /** Live participants that produced no work within the room's window. */
+  const quiet = room === null ? [] : room.participants.filter(participant => participant.quiet).map(participant => participant.name)
   const roomOpen = open && room !== null && room.enabled
   useEffect(() => {
     if (!roomOpen) return
@@ -291,6 +323,80 @@ export function TeamAction({
     if (settled !== undefined) {
       setVerifyingTask(null)
       setVerifyReason('')
+    }
+  }
+
+  /** Run one room action, keeping failures visible and the view current. */
+  const runRoomAction = useCallback(async (
+    key: string,
+    operation: () => Promise<TeamActionResult<unknown>>,
+  ): Promise<boolean> => {
+    const requestedSession = sessionId
+    invalidateRefresh()
+    setPendingTasks(current => new Set(current).add(key))
+    try {
+      const result = await operation()
+      if (sessionRef.current !== requestedSession) return false
+      if (!result.ok) {
+        setError(failureText(result.error))
+        return false
+      }
+      setError(null)
+      await refresh()
+      return sessionRef.current === requestedSession
+    } catch (error: unknown) {
+      // A carrier failure reaches the panel as a thrown error, not a result.
+      if (sessionRef.current === requestedSession) {
+        setError(error instanceof Error ? error.message : String(error))
+      }
+      return false
+    } finally {
+      if (sessionRef.current === requestedSession) {
+        setPendingTasks((current) => {
+          const next = new Set(current)
+          next.delete(key)
+          return next
+        })
+      }
+    }
+  }, [invalidateRefresh, refresh, sessionId])
+
+  const submitRoomPrompt = async (): Promise<void> => {
+    const instruction = roomPromptDraft.trim()
+    if (roomPromptTarget === '' || instruction.length === 0) {
+      setError(t('room.promptRequired'))
+      return
+    }
+    const delivered = await runRoomAction('room-prompt', () => promptParticipant(sessionId, {
+      target: roomPromptTarget,
+      instruction,
+    }))
+    if (delivered) setRoomPromptDraft('')
+  }
+
+  const submitRoomProposal = async (): Promise<void> => {
+    const statement = roomStatementDraft.trim()
+    if (statement.length === 0) {
+      setError(t('room.statementRequired'))
+      return
+    }
+    const opened = await runRoomAction('room-propose', () => proposeDecision(sessionId, { statement }))
+    if (opened) setRoomStatementDraft('')
+  }
+
+  const submitRoomEscalation = async (proposalId: RoomProposalView['id']): Promise<void> => {
+    const reason = escalateRoomReason.trim()
+    if (reason.length === 0) {
+      setError(t('room.reasonRequired'))
+      return
+    }
+    const escalated = await runRoomAction(`room-escalate-${proposalId}`, () => escalateDecision(sessionId, {
+      proposalId,
+      reason,
+    }))
+    if (escalated) {
+      setEscalatingRoom(null)
+      setEscalateRoomReason('')
     }
   }
 
@@ -408,6 +514,46 @@ export function TeamAction({
               </section>
               {room !== null && room.enabled && (
                 <section>
+                  <div className={css.roomControls}>
+                    <select
+                      aria-label={t('room.promptTarget')}
+                      value={roomPromptTarget}
+                      onChange={(event: ChangeEvent<HTMLSelectElement>) => {
+                        setRoomPromptTarget(event.target.value)
+                      }}
+                    >
+                      <option value=''>{t('room.promptTarget')}</option>
+                      {room.participants.map(participant => (
+                        <option key={participant.name} value={participant.name}>{participant.name}</option>
+                      ))}
+                    </select>
+                    <input
+                      value={roomPromptDraft}
+                      placeholder={t('room.instruction')}
+                      onChange={(event: ChangeEvent<HTMLInputElement>) => {
+                        setRoomPromptDraft(event.target.value)
+                      }}
+                    />
+                    <button
+                      type="button"
+                      disabled={pendingTasks.has('room-prompt')}
+                      onClick={() => { void submitRoomPrompt() }}
+                    >{t('room.prompt')}</button>
+                  </div>
+                  <div className={css.roomControls}>
+                    <input
+                      value={roomStatementDraft}
+                      placeholder={t('room.statement')}
+                      onChange={(event: ChangeEvent<HTMLInputElement>) => {
+                        setRoomStatementDraft(event.target.value)
+                      }}
+                    />
+                    <button
+                      type="button"
+                      disabled={pendingTasks.has('room-propose')}
+                      onClick={() => { void submitRoomProposal() }}
+                    >{t('room.propose')}</button>
+                  </div>
                   <h3>{t('transcript')}</h3>
                   {room.messages.length === 0 && liveEntries.length === 0
                     && <div className={css.notice}>{t('noTranscript')}</div>}
@@ -429,6 +575,9 @@ export function TeamAction({
                     <h3>{t('decisions')}</h3>
                     <span className={css.chair}>{t('room')} · {t('chair')}: {room.chair}</span>
                   </div>
+                  {quiet.length > 0 && (
+                    <div className={css.warning}>{t('quiet')}: {quiet.join(', ')}</div>
+                  )}
                   {room.proposals.length === 0 && <div className={css.notice}>{t('noDecisions')}</div>}
                   <div className={css.decisions}>
                     {room.proposals.map(proposal => (
@@ -467,6 +616,36 @@ export function TeamAction({
                             ))}
                           </ul>
                         )}
+                        {proposal.phase === 'open' && (escalatingRoom === proposal.id
+                          ? (
+                            <div className={css.form}>
+                              <textarea
+                                value={escalateRoomReason}
+                                placeholder={t('room.reason')}
+                                onChange={(event: ChangeEvent<HTMLTextAreaElement>) => {
+                                  setEscalateRoomReason(event.target.value)
+                                }}
+                              />
+                              <div className={css.formActions}>
+                                <button
+                                  type="button"
+                                  disabled={pendingTasks.has(`room-escalate-${proposal.id}`)}
+                                  onClick={() => { void submitRoomEscalation(proposal.id) }}
+                                >{t('room.escalateSubmit')}</button>
+                                <button
+                                  type="button"
+                                  onClick={() => { setEscalatingRoom(null); setEscalateRoomReason('') }}
+                                >{t('cancel')}</button>
+                              </div>
+                            </div>
+                          )
+                          : (
+                            <button
+                              type="button"
+                              disabled={pendingTasks.has(`room-escalate-${proposal.id}`)}
+                              onClick={() => { setEscalatingRoom(proposal.id); setEscalateRoomReason('') }}
+                            >{t('room.escalate')}</button>
+                          ))}
                       </div>
                     ))}
                   </div>

@@ -50,6 +50,15 @@ export interface TeamMemberSnapshot {
   readonly description: string
   readonly provider: string
   readonly context: 'fresh' | 'fork'
+  /**
+   * Resolved child `agentOptions.provider` for this teammate. A teammate holds
+   * no live Agent between turns, so the roster reads its route here instead of
+   * reporting the Lead's route. Absent for a member recorded before this field
+   * existed or resolved without a provider.
+   */
+  readonly agentProvider?: string
+  /** Resolved child `agentOptions.model`, recorded on {@link agentProvider}'s terms. */
+  readonly agentModel?: string
   readonly phase: TeamMemberPhase
   readonly error?: string
 }
@@ -234,6 +243,12 @@ export interface RoomParticipantView {
   readonly name: string
   readonly status: TeamMemberView['status']
   readonly model?: string
+  /**
+   * Whether this live participant produced no observed work within
+   * `roomReviewGraceMs`. A streaming participant is never quiet, and a
+   * participant this process has not observed yet is not called quiet.
+   */
+  readonly quiet: boolean
 }
 
 /** One attributed transcript entry. */
@@ -274,6 +289,27 @@ export interface RoomStandingView {
   readonly reviewer: string
   readonly verdict: RoomReviewVerdict
   /** Why the reviewer chose this verdict, readable by every room participant. */
+  readonly reason: string
+}
+
+/** One instruction a browser client delivers to a room participant. */
+export interface PanelRoomPromptRequest {
+  /** Participant name to address. */
+  readonly target: string
+  /** Instruction delivered with the transcript that participant has not seen. */
+  readonly instruction: string
+}
+
+/** One statement a browser client puts to the room. */
+export interface PanelProposeRoomDecisionRequest {
+  /** Exact statement every eligible reviewer is asked to settle. */
+  readonly statement: string
+}
+
+/** One unresolved decision a browser client hands to the human. */
+export interface PanelEscalateRoomDecisionRequest {
+  readonly proposalId: RoomProposalId
+  /** Why the decision cannot settle without the human. */
   readonly reason: string
 }
 

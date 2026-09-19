@@ -1,8 +1,13 @@
 // @vitest-environment jsdom
-import { afterEach, describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import { BootPage } from '../src/boot-page.ts'
+import css from '../src/boot-page.module.css'
 
-afterEach(() => { document.body.innerHTML = '' })
+afterEach(() => {
+  document.body.innerHTML = ''
+  vi.unstubAllGlobals()
+  vi.useRealTimers()
+})
 
 function mount() {
   const el = document.createElement('div')
@@ -14,8 +19,35 @@ describe('BootPage', () => {
   it('draws the loading skeleton before any plugin state arrives', () => {
     const { el } = mount()
     expect(el.firstElementChild?.getAttribute('data-dsh-boot')).toBe('')
-    expect(el.textContent).toContain('HARNESS')
+    expect(el.querySelector('svg')?.getAttribute('viewBox')).toBe('160 160 704 704')
+    expect(el.textContent).toContain('PORTAL')
     expect(el.textContent).toContain('Loading plugins…')
+  })
+
+  it('types the wordmark letters in sequence behind the caret', () => {
+    vi.useFakeTimers()
+    const { el } = mount()
+    const spans = [...el.querySelectorAll('span')]
+    const word = spans.filter(span => span.textContent !== '')
+    const caret = spans.at(-1)!
+    expect(word).toHaveLength(6)
+    for (const span of word) expect(span.className).not.toContain(css.in)
+    vi.advanceTimersByTime(1050)
+    expect(word[0]!.className).toContain(css.in)
+    expect(word[1]!.className).not.toContain(css.in)
+    vi.advanceTimersByTime(5 * 80)
+    for (const span of word) expect(span.className).toContain(css.in)
+    expect(caret.className).toContain(css.caretOn)
+    vi.advanceTimersByTime(2150 - 1050 - 400)
+    expect(caret.className).toContain(css.caretDone)
+    expect(caret.className).not.toContain(css.caretOn)
+  })
+
+  it('reveals the finished brand immediately under reduced motion', () => {
+    vi.stubGlobal('matchMedia', () => ({ matches: true }))
+    const { el } = mount()
+    expect(el.firstElementChild?.classList.contains(css.static!)).toBe(true)
+    expect(el.querySelectorAll(`.${css.static!} svg .${css.draw!}`)).toHaveLength(14)
   })
 
   it('keeps loading while entries are active or loading', () => {
@@ -53,9 +85,14 @@ describe('BootPage', () => {
     expect(el.textContent).not.toContain('Loading plugins…')
   })
 
-  it('detaches on disposal', () => {
+  it('holds the brand moment through disposal, then detaches after the leave fade', () => {
+    vi.useFakeTimers()
     const { el, page } = mount()
     page.dispose()
+    expect(el.firstElementChild).not.toBeNull()
+    vi.advanceTimersByTime(2250)
+    expect(el.firstElementChild).not.toBeNull()
+    vi.advanceTimersByTime(300)
     expect(el.childNodes).toHaveLength(0)
   })
 })

@@ -12,6 +12,7 @@ import JsonlSessionPersistence from '@deepseek-ai/dsh-session-persistence-jsonl'
 import SubagentService from '@deepseek-ai/dsh-subagent'
 import * as SubagentFork from '@deepseek-ai/dsh-subagent-fork-in-process'
 import * as SubagentSpawn from '@deepseek-ai/dsh-subagent-spawn-in-process'
+import { createUserMessage } from '@deepseek-ai/dsh-llm'
 import { MockAdapter, textResponse } from '../../../core/agent-loop/tests/mock-adapter.ts'
 import TeamService, { TeamError } from '../src/index.ts'
 import type { RoomFollowFrame, RoomProposalId, RoomStreamFrame } from '../src/index.ts'
@@ -307,6 +308,22 @@ describe('room transcript', () => {
     expect(frames).toHaveLength(1)
   }, 15_000)
 
+  it('reports a live participant that produced no work in the window as quiet', async () => {
+    // A participant that streams nothing goes quiet once the window lapses; any
+    // observed work returns it to the board as an active participant.
+    const { ctx, lead } = await setup([HANGING], { roomReviewGraceMs: 200 })
+    const alice = await addLiveParticipant(ctx, lead, 'alice')
+    const quietNow = (): boolean => ctx.agentTeams.roomView(lead).participants
+      .find(participant => participant.id === alice)?.quiet ?? false
+
+    await vi.waitFor(() => { expect(quietNow()).toBe(true) }, { timeout: 5_000 })
+    ctx.agents.get(alice)?.steer(createUserMessage({
+      content: [{ type: 'text', text: 'keep going' }],
+      source: { kind: 'plugin', plugin: 'room-quiet-test' },
+    }))
+    await vi.waitFor(() => { expect(quietNow()).toBe(false) }, { timeout: 5_000 })
+  }, 15_000)
+
   it('records no transcript entry for a turn that never settles', async () => {
     const { ctx, lead } = await setup([HANGING])
     await addLiveParticipant(ctx, lead, 'alice')
@@ -395,6 +412,59 @@ describe('room collective decisions', () => {
       { reviewer: 'bob', verdict: 'approve', reason: 'agreed' },
     ])
     expect(ctx.agentTeams.roomView(lead).proposals).toEqual([settled])
+  })
+
+  it('drives the room through the generated Remote face', async () => {
+    const { ctx, lead } = await room()
+
+    // A browser client grants the floor, opens a decision, and escalates it.
+    const prompted = await ctx.agentTeams.remoteRoomPrompt(lead, { target: 'alice', instruction: 'give your view' })
+    expect(['accepted', 'queued']).toContain(prompted.status)
+    const opened = await ctx.agentTeams.remoteRoomPropose(lead, { statement: 'adopt the remote path' })
+    expect(opened).toMatchObject({ phase: 'open', statement: 'adopt the remote path', awaiting: ['alice', 'bob'] })
+    const escalated = await ctx.agentTeams.remoteRoomEscalate(lead, {
+      proposalId: opened.id,
+      reason: 'the panel hands this to the human',
+    })
+    expect(escalated.phase).toBe('escalated')
+    expect(ctx.agentTeams.remoteRoom(lead).proposals[0]?.phase).toBe('escalated')
+  })
+
+  it('settles two open decisions independently with the same reviewers', async () => {
+    const { ctx, lead, alice, bob } = await room()
+    const first = await ctx.agentTeams.roomPropose(lead, { statement: 'first decision', signal: SIGNAL })
+    const second = await ctx.agentTeams.roomPropose(lead, { statement: 'second decision', signal: SIGNAL })
+    expect(first.id).not.toBe(second.id)
+
+    // One reviewer's standing on one decision says nothing about the other.
+    await ctx.agentTeams.roomReview(ctx.agents.get(alice)!, {
+      proposalId: first.id, proposalRevision: 1, verdict: 'approve', reason: 'sound', signal: SIGNAL,
+    })
+    await ctx.agentTeams.roomReview(ctx.agents.get(alice)!, {
+      proposalId: second.id, proposalRevision: 1, verdict: 'reject', reason: 'not yet', signal: SIGNAL,
+    })
+    const afterAlice = ctx.agentTeams.roomView(lead).proposals
+    expect(afterAlice.find(proposal => proposal.id === first.id))
+      .toMatchObject({ phase: 'open', approvals: ['alice'], awaiting: ['bob'] })
+    // A quorum rejection settles its own decision and leaves the other open.
+    expect(afterAlice.find(proposal => proposal.id === second.id))
+      .toMatchObject({ phase: 'rejected', rejections: ['alice'], awaiting: [] })
+
+    // The second reviewer carries the first decision to acceptance, and each
+    // decision keeps its own standings.
+    const accepted = await ctx.agentTeams.roomReview(ctx.agents.get(bob)!, {
+      proposalId: first.id, proposalRevision: 1, verdict: 'approve', reason: 'agreed', signal: SIGNAL,
+    })
+    expect(accepted.phase).toBe('accepted')
+    expect(accepted.standings.map(standing => [standing.reviewer, standing.verdict])).toEqual([
+      ['alice', 'approve'],
+      ['bob', 'approve'],
+    ])
+    const settled = ctx.agentTeams.roomView(lead).proposals.find(proposal => proposal.id === second.id)
+    expect(settled).toMatchObject({ phase: 'rejected' })
+    expect(settled?.standings.map(standing => [standing.reviewer, standing.verdict])).toEqual([
+      ['alice', 'reject'],
+    ])
   })
 
   it('lets one quorum rejection settle a decision the proposer alone cannot carry', async () => {
@@ -662,6 +732,34 @@ describe('room collective decisions', () => {
     // can see that no two reviewers share one model's failure mode.
     const view = ctx.agentTeams.roomView(lead)
     expect(view.participants.map(participant => participant.model)).toEqual(['mock', 'mock-flash', 'mock-pro'])
+  })
+
+
+  it('keeps each participant on its recorded route after the child stops', async () => {
+    const { ctx, lead } = await setup([HANGING, HANGING])
+    const alice = await ctx.agentTeams.spawnTeammate(lead, {
+      ...spawnOptions('alice'),
+      agentOptions: { provider: 'mock', model: 'mock-flash' },
+    })
+    const bob = await ctx.agentTeams.spawnTeammate(lead, {
+      ...spawnOptions('bob'),
+      agentOptions: { provider: 'mock', model: 'mock-pro' },
+    })
+    await vi.waitFor(() => { expect(ctx.agents.get(bob.member.id)).toBeDefined() }, { timeout: 5_000 })
+    ctx.agents.get(alice.member.id)?.cancel({ kind: 'parent' })
+    ctx.agents.get(bob.member.id)?.cancel({ kind: 'parent' })
+
+    // A reviewer between turns holds no live Agent, and the board must still
+    // name the model a deployment seated it on.
+    const reviewers = () => ctx.agentTeams.roomView(lead).participants
+      .filter(participant => participant.name !== 'lead')
+    await vi.waitFor(() => {
+      expect(reviewers().map(participant => [participant.name, participant.status])).toEqual([
+        ['alice', 'inactive'],
+        ['bob', 'inactive'],
+      ])
+    }, { timeout: 5_000 })
+    expect(reviewers().map(participant => participant.model)).toEqual(['mock-flash', 'mock-pro'])
   })
 
 
