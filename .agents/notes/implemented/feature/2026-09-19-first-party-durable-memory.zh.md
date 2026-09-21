@@ -14,7 +14,7 @@ agent（智能体）在会话之间会忘记一切。用户表达过的偏好、
 
 `@deepseek-ai/dsh-memory` 是 `ctx.memory` 上的 Service Definition 与 Provider：基于现有存储 domain 数据形式的一个 `memory` domain，采用逐记录布局，包含以记忆名称为键的 `global` 表和以 `<project slug>__<name>` 为键的 `project` 表。一条记录携带 `name`、`type`（`user`、`feedback`、`project`、`reference`）、`scope`（`global`、`project`）、最多 256 个字符的一行 `description`、受 `maxRecordBytes` 限制的 `content`、项目记录的 `projectRoot`，以及绝不会到达模型的 ISO 时间戳。记录在打开时由 zod 以 `backup-and-skip` 校验，因此弄坏某个文件的手工编辑只会把该文件移到一旁并保留其余记录。存储对全局作用域和每个项目分别执行 `maxRecords`，通过从会话工作目录向上查找 `projectRootMarkers` 条目来解析项目根目录，并在无法解析根目录时让项目作用域的操作明确失败。
 
-`@deepseek-ai/dsh-tool-memory` 是 Consumer：`ctx.tools` 上的 `memory_write`、`memory_recall` 和 `memory_forget`，位于 `TOOL_MEMORY` 位置、说明何时记忆的静态提示词段落，以及以 `source.form: 'snapshot'` 的 `user/message` 注入的可见记忆目录。`memoryCatalog` 会话投影折叠插件自身的目录消息，并在 `compaction/summary` 时重置；前置的 `agent/pre-step` 监听器在投影为空、某轮第一步渲染出与投影不同的目录，以及压缩之后注入。正文只能通过 `memory_recall` 到达模型，受 `maxRecallResults` 和存储的字节上限约束。目录受 `injectMaxBytes` 约束；`0` 关闭注入。
+`@deepseek-ai/dsh-tool-memory` 是 Consumer：`ctx.tools` 上的 `memory_write`、`memory_recall` 和 `memory_forget`，位于 `TOOL_MEMORY` 位置、说明何时记忆的静态提示词段落，以及以 `source.form: 'snapshot'` 的 `user/message` 注入的可见记忆目录。`memoryCatalog` 会话投影折叠插件自身的目录消息，并在 `compaction/summary` 时重置；前置的 `agent/pre-step` 监听器在投影为空时的任意步骤、某轮第一步渲染出与投影不同的目录时，以及压缩之后注入；当某轮第一步发现存储在目录已送达模型之后被清空时，它注入一份唯一条目行为 `No saved memories.` 的目录，使已遗忘的条目不再被依赖。正文只能通过 `memory_recall` 到达模型，受 `maxRecallResults` 和存储的字节上限约束。目录受 `injectMaxBytes` 约束；`0` 关闭注入。
 
 不新增任何会话事件。每个模型可见的输入都是已有的事件类型：目录是一条 `user/message`，每次变更都是带有 `tool/result` 的 `tool/call`。因此本包不发布不变量配套插件，也不记录持久化类型变更。
 
@@ -50,4 +50,4 @@ agent 在同一 harness home 下跨会话、跨 profile 保留用户偏好、反
 
 ## Testing
 
-单元套件覆盖 domain schema、项目根目录发现、基于真实 JSON 后端的存储（上限、隔离、重新打开、隔离损坏记录、同一根目录上的两个存储）、通过真实工具注册表运行的工具、目录渲染以及通过真实预步骤瀑布流运行的注入门控，以及每个包的真实 Loader 组合。一个 agent 循环集成套件用脚本化模型驱动真实工具，并断言目录在日志和模型请求中的位置。一个无密钥的 headless 进程测试在一次运行中写入，并在同一 harness home 上的第二次运行中回忆。
+单元套件覆盖 domain schema、项目根目录发现、基于真实 JSON 后端的存储（上限、隔离、重新打开、隔离损坏记录、同一根目录上的两个存储）、通过真实工具注册表运行的工具、目录渲染以及通过真实预步骤瀑布流运行的注入门控，以及每个包的真实 Loader 组合。一个 agent 循环集成套件用脚本化模型驱动真实工具，并断言目录在日志和模型请求中的位置。一个无密钥的 headless 进程测试在一次运行中写入，并在同一 harness home 上的第二次运行中回忆。一个无密钥的双进程测试让两个 Node 子进程同时向同一根目录发布不同的和共享的记录，并断言每个文件都是一次完整的发布、没有任何文件被隔离。一个需要密钥的套件让真实模型在一个会话中写入记忆，并在同一存储上的全新会话中于第一次请求之前收到目录、调用 `memory_recall` 并据此作答。两个无密钥的录制场景运行随附的 headless profile：`memory-catalog-recall` 预置一条全局记录并让模型先回忆再写入，`memory-project-forget` 让模型通过提交的 `.dsh-project` 根目录标记写入一条项目记忆、收到目录的 `Project:` 分节并将其遗忘。`snapshots/` 下的录制语料在每个随附 profile 中引用提示词段落和工具 schema，因此该文本的每次变更之后都要做一次无密钥刷新。

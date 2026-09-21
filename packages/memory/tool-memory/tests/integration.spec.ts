@@ -2,15 +2,12 @@ import { readdir } from 'node:fs/promises'
 import { join } from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
 import { Context } from '@deepseek-ai/cordis'
-import type { Agent } from '@deepseek-ai/dsh-agent'
 import AgentLoop from '@deepseek-ai/dsh-agent-loop'
 import { mountAgentLoopTestDependencies } from '@deepseek-ai/dsh-agent-loop-testkit'
-import { createUserMessage } from '@deepseek-ai/dsh-llm'
 import { SessionId } from '@deepseek-ai/dsh-session'
-import type { SessionEvent } from '@deepseek-ai/dsh-session'
 import * as ToolMemory from '@deepseek-ai/dsh-tool-memory'
 import { MockAdapter, textResponse, toolCallResponse } from '../../../core/agent-loop/tests/mock-adapter.ts'
-import { cleanupRoots, freshRoot, mountStore, project } from './helpers.ts'
+import { ask, catalogEvents, cleanupRoots, freshRoot, mountStore, project, waitForIdle } from './helpers.ts'
 
 /**
  * Full-loop integration: a scripted mock model drives the REAL memory tools
@@ -33,31 +30,6 @@ async function harness(adapter: MockAdapter, root: string): Promise<Context> {
   await ctx.plugin(ToolMemory, { injectMaxBytes: 2048, maxRecallResults: 4 })
   ctx.llm.registerAdapter(['mock'], adapter)
   return ctx
-}
-
-function waitForIdle(ctx: Context, agent: Agent): Promise<void> {
-  return new Promise((resolve) => {
-    const dispose = ctx.on('agent/status', ({ agent: subject, status }) => {
-      if (subject === agent && status === 'idle') {
-        dispose()
-        resolve()
-      }
-    })
-  })
-}
-
-function ask(agent: Agent, text: string): void {
-  agent.followup(createUserMessage({ content: [{ type: 'text', text }], source: { kind: 'user' } }))
-}
-
-function catalogEvents(log: readonly SessionEvent[]): { index: number; text: string }[] {
-  const found: { index: number; text: string }[] = []
-  log.forEach((event, index) => {
-    if (event.type === 'user/message' && event.data.source.kind === 'plugin' && event.data.source.plugin === 'tool-memory') {
-      found.push({ index, text: event.data.content.map(block => block.type === 'text' ? block.text : '').join('') })
-    }
-  })
-  return found
 }
 
 describe('memory tools through the agent loop', () => {

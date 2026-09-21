@@ -55,7 +55,7 @@ The generated [configuration catalog](../../../docs/config-catalog.md#deepseek-a
 
 ### The catalog
 
-The catalog is a durable user-role message from this plugin. It lists global memories, then the current project's memories; within a section, entries sort by type (`user`, `feedback`, `project`, `reference`) then name. When the budget cuts entries, a final line says how many were omitted and points at `memory_recall`. The model sees it at the first step of a session, again at the first step of a later turn when the store's visible contents changed, and again after compaction shadowed the previous catalog. An empty store injects nothing.
+The catalog is a durable user-role message from this plugin. It lists global memories, then the current project's memories; within a section, entries sort by type (`user`, `feedback`, `project`, `reference`) then name. When the budget cuts entries, a final line says how many were omitted and points at `memory_recall`. The model sees it at the first step of a session, again at the first step of a later turn when the store's visible contents changed, and again after compaction shadowed the previous catalog. A store that was empty all along injects nothing; a store emptied after a catalog reached the model injects, at the next turn, a catalog whose only entry line is `No saved memories.`, so the model stops relying on forgotten entries.
 
 -----
 
@@ -123,7 +123,7 @@ One static section at the `TOOL_MEMORY` position of the system prompt.
 ##### Verbatim text for this field
 
 ```markdown
-You have durable memory that persists across sessions. A catalog of saved memories (type, name, one-line description) is added at the start of the session and refreshed when it changes; call memory_recall to read a memory's content before relying on it. Save a memory with memory_write when you learn something worth keeping beyond this session: who the user is and how they like to work (type user), feedback or corrections on how to do the work (type feedback), a durable fact or constraint about the current project (type project), or a pointer to an external resource such as a URL, ticket, or dashboard (type reference). Use scope project for facts about the current repository and scope global for everything else. Do not save task progress, transient state, secrets, or anything the repository already records. Writing an existing name in the same scope replaces it; remove a memory that turned out wrong with memory_forget.
+You have durable memory that persists across sessions. A catalog of saved memories (type, name, one-line description) is added at the start of the session and refreshed at the start of a later turn when it has changed; call memory_recall to read a memory's content before relying on it. Save a memory with memory_write when you learn something worth keeping beyond this session: who the user is and how they like to work (type user), feedback or corrections on how to do the work (type feedback), a durable fact or constraint about the current project (type project), or a pointer to an external resource such as a URL, ticket, or dashboard (type reference). Use scope project for facts about the current repository and scope global for everything else. Do not save task progress, transient state, secrets, or anything the repository already records. Writing an existing name in the same scope replaces it; remove a memory that turned out wrong with memory_forget.
 ```
 
 #### Token effect
@@ -152,7 +152,7 @@ Prefix-stable while the definitions and visibility are unchanged.
 
 #### What the model sees
 
-A user-role message listing the visible memories. `<type>` is one of `user`, `feedback`, `project`, `reference`; the `Project:` section appears only when the session has a project root with memories; the last line appears only when `injectMaxBytes` cut entries.
+A user-role message listing the visible memories. `<type>` is one of `user`, `feedback`, `project`, `reference`; the `Project:` section appears only when the session has a project root with memories; the last line appears only when `injectMaxBytes` cut entries. When every memory the session had seen has been forgotten, the next turn's catalog is the same header followed by the single line `No saved memories.`.
 
 ##### Verbatim text for this field
 
@@ -167,7 +167,7 @@ Project:
 
 #### Token effect
 
-Capped by `injectMaxBytes`; added at the first step of a session, at the first step of a turn whose visible memories changed, and after compaction. An empty store adds nothing.
+Capped by `injectMaxBytes`; added at the first step of a session, at the first step of a turn whose visible memories changed, and after compaction. A store that was always empty adds nothing; one emptied after a catalog adds the two-line empty catalog once.
 
 #### KV Cache effect
 

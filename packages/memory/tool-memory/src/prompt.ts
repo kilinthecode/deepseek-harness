@@ -8,7 +8,7 @@
 /** Section text registered at the `TOOL_MEMORY` position. */
 export const MEMORY_SECTION_TEXT =
   'You have durable memory that persists across sessions. A catalog of saved memories (type, name, '
-  + 'one-line description) is added at the start of the session and refreshed when it changes; call '
+  + 'one-line description) is added at the start of the session and refreshed at the start of a later turn when it has changed; call '
   + 'memory_recall to read a memory\'s content before relying on it. Save a memory with memory_write '
   + 'when you learn something worth keeping beyond this session: who the user is and how they like to '
   + 'work (type user), feedback or corrections on how to do the work (type feedback), a durable fact or '

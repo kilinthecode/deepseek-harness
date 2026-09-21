@@ -140,6 +140,7 @@ These limits define when the store is a poor fit. They are current package const
 - **Cross-process writes appear on reopen** — a process reads the store once when the domain opens, so memories written by another process (a headless run beside a long-lived Web host) become visible only after the domain reopens, and the same record written from two processes resolves by last complete publication.
 - **Substring recall only** — `recall` is a case-insensitive substring match; there is no ranking, no synonym handling, and no semantic search.
 - **No in-repository store** — project memories live under the harness home keyed by the project root, so they are not committed with the repository or shared through git.
+- **Project identity is the absolute root path** — a project record stores its root and is keyed by a slug derived from it, so moving or renaming the repository directory orphans its project memories; sessions inside the new path see none of them until they are written again.
 - **Content caps are bytes** — `maxRecordBytes` counts UTF-8 bytes, so scripts with multibyte characters fit fewer characters than ASCII.
 
 <a id="dev-note"></a>

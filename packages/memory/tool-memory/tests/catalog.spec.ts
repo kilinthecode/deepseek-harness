@@ -10,7 +10,7 @@ import SessionProjectionRegistry from '@deepseek-ai/dsh-session-projection'
 import SystemPrompt from '@deepseek-ai/dsh-system-prompt'
 import ToolRuntime from '@deepseek-ai/dsh-tools'
 import * as tool from '@deepseek-ai/dsh-tool-memory'
-import { renderCatalog } from '@deepseek-ai/dsh-tool-memory'
+import { EMPTY_CATALOG_TEXT, renderCatalog } from '@deepseek-ai/dsh-tool-memory'
 import type { MemoryCatalogState } from '@deepseek-ai/dsh-tool-memory'
 import { unsupportedInbox } from '@deepseek-ai/dsh-agent-loop-testkit'
 import { cleanupRoots, freshRoot, mountStore, project } from './helpers.ts'
@@ -217,6 +217,33 @@ describe('catalog injection', () => {
     expect(catalogs(session)).toHaveLength(3)
     expect(catalogs(session)[2]).toBe(catalogs(session)[1])
     expect((ctx.sessionProjections.stateOf(session, 'memoryCatalog') as MemoryCatalogState).lastCatalog).toBe(catalogs(session)[2])
+  })
+
+  it('supersedes the catalog with an explicit empty one at the next turn after the last memory is forgotten', async () => {
+    const { ctx } = await mount()
+    await ctx.memory.write({ ...WRITE, name: 'prefers-pnpm' })
+    const session = sessionAt(undefined)
+    const agent = sessionAgent(session)
+    await fire(ctx, agent, 1, 1)
+    expect(catalogs(session)).toHaveLength(1)
+
+    await ctx.memory.forget({ name: 'prefers-pnpm', scope: 'global' })
+    // Later steps of the same turn keep the surface; the next turn's first step supersedes it.
+    await fire(ctx, agent, 1, 2)
+    expect(catalogs(session)).toHaveLength(1)
+    await fire(ctx, agent, 2, 1)
+    expect(catalogs(session)).toEqual([catalogs(session)[0], EMPTY_CATALOG_TEXT])
+    expect((ctx.sessionProjections.stateOf(session, 'memoryCatalog') as MemoryCatalogState).lastCatalog).toBe(EMPTY_CATALOG_TEXT)
+
+    // An empty store that already announced itself stays quiet.
+    await fire(ctx, agent, 3, 1)
+    expect(catalogs(session)).toHaveLength(2)
+
+    // A later write replaces the empty catalog like any other change.
+    await ctx.memory.write({ ...WRITE, name: 'editor', description: 'Uses Cursor' })
+    await fire(ctx, agent, 4, 1)
+    expect(catalogs(session)).toHaveLength(3)
+    expect(catalogs(session)[2]).toContain('- [user] editor — Uses Cursor')
   })
 
   it('keeps checking every step while nothing has been injected, and shows global entries only without a project root', async () => {

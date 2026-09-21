@@ -104,6 +104,10 @@
   name: '@deepseek-ai/dsh-tool-todo'
   disabled: true
 
+- id: tool-memory
+  name: '@deepseek-ai/dsh-tool-memory'
+  disabled: true
+
 - id: tool-goal
   name: '@deepseek-ai/dsh-tool-goal'
   disabled: true

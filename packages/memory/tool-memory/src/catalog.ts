@@ -1,9 +1,9 @@
 /**
  * The memory catalog: one line per visible memory, injected as durable
- * user-role context when a session starts, when the store changed by the next
- * turn, and after compaction shadowed the previous catalog. The gate is a
- * projection over the session log, so replay reproduces every injection
- * decision without reading the store.
+ * user-role context when a session starts, when the store changed or emptied
+ * by the next turn, and after compaction shadowed the previous catalog. The
+ * gate is a projection over the session log, so replay reproduces every
+ * injection decision without reading the store.
  * @module @deepseek-ai/dsh-tool-memory/src/catalog
  */
 
@@ -31,6 +31,14 @@ const memoryCatalogStateSchema = zod.object({
 export type MemoryCatalogState = zod.infer<typeof memoryCatalogStateSchema>
 
 const CATALOG_HEADER = 'Saved memories (catalog; call memory_recall to read one):'
+
+/**
+ * Catalog text injected when every memory a session had seen has been
+ * forgotten: it supersedes the earlier catalog so the model stops relying on
+ * entries that no longer exist. A store that was empty all along injects
+ * nothing.
+ */
+export const EMPTY_CATALOG_TEXT = `${CATALOG_HEADER}\nNo saved memories.`
 
 const TYPE_RANK = Object.fromEntries(MEMORY_TYPES.map((type, index) => [type, index])) as Record<MemoryType, number>
 
@@ -110,7 +118,8 @@ export function registerCatalogInjection(ctx: Context, pluginName: string, maxBy
     const state = ctx.sessionProjections.stateOf(agent.session, 'memoryCatalog') as MemoryCatalogState
     // A catalog is on the surface: only a turn's first step re-checks the store.
     if (state.lastCatalog !== null && step !== 1) return decision
-    const text = renderCatalog(await ctx.memory.visible(agent.session.header.cwd), maxBytes)
+    const rendered = renderCatalog(await ctx.memory.visible(agent.session.header.cwd), maxBytes)
+    const text = rendered ?? (state.lastCatalog === null ? undefined : EMPTY_CATALOG_TEXT)
     if (text === undefined || text === state.lastCatalog) return decision
     return {
       ...decision,

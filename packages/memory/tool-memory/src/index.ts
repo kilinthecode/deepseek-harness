@@ -16,7 +16,7 @@ import { registerCatalogInjection } from './catalog.ts'
 import { MEMORY_SECTION_TEXT } from './prompt.ts'
 import { registerMemoryTools } from './tools.ts'
 
-export { renderCatalog } from './catalog.ts'
+export { EMPTY_CATALOG_TEXT, renderCatalog } from './catalog.ts'
 export type { MemoryCatalogState } from './catalog.ts'
 export { MEMORY_SECTION_TEXT } from './prompt.ts'
 

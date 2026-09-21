@@ -1,5 +1,16 @@
 # Memory snapshot patch: the seeded store lives under the scenario's `.dsh`
-# home; the shipped memory rows compose unchanged.
+# home. The store resolves the project root from the committed `.dsh-project`
+# marker (a `.git` entry cannot be committed), so `memory-project-forget`
+# writes into project scope while this scenario, whose workspace carries no
+# marker, sees global memories only.
+- id: memory
+  name: '@deepseek-ai/dsh-memory'
+  config:
+    maxRecords: 200
+    maxRecordBytes: 4096
+    projectRootMarkers:
+      - .dsh-project
+
 - id: agent-default-model
   name: '@deepseek-ai/dsh-agent-default-model'
   config:

@@ -1,0 +1,9 @@
+version: 1
+scenario: memory-project-forget
+profile: headless
+composition: memory-catalog-recall
+recording: authored
+header:
+  class: memory-catalog-recall
+replay:
+  override: true
