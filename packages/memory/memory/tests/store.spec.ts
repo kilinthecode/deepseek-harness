@@ -204,6 +204,16 @@ describe('MemoryStore over the json backend', () => {
     expect((await ctx.memory.recall({ limit: 8 })).map(record => record.name)).toEqual(['alpha', 'zeta'])
   })
 
+  it('keeps both records when one name exists in each scope at the same instant', async () => {
+    const root = await freshRoot()
+    const ctx = await open(root)
+    const alpha = await project(root, 'alpha')
+    await ctx.memory.write(write({ name: 'build' }))
+    await ctx.memory.write(write({ name: 'build', scope: 'project', cwd: alpha.cwd, content: 'pnpm run build' }))
+    const recalled = await ctx.memory.recall({ limit: 8, cwd: alpha.cwd })
+    expect(recalled.map(record => record.scope).sort()).toEqual(['global', 'project'])
+  })
+
   it('forgets a record durably and reports a missing one', async () => {
     const root = await freshRoot()
     const ctx = await open(root)

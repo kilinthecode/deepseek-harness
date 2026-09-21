@@ -72,7 +72,9 @@ describe.skipIf(!process.env.DEEPSEEK_API_KEY)('durable memory with a real model
     expect(document.version).toBe(1)
     expect(document.record).toMatchObject({ name: NAME, scope: 'global' })
     expect(document.record.content).toMatch(/pnpm/i)
-    expect(document.record.createdAt).toBe(document.record.updatedAt)
+    // Rewriting the same name is a legitimate model choice, so the timestamps
+    // are ordered rather than equal.
+    expect(Date.parse(document.record.createdAt)).toBeLessThanOrEqual(Date.parse(document.record.updatedAt))
     await first.fiber.dispose()
     contexts.splice(contexts.indexOf(first), 1)
 

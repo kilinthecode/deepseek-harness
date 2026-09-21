@@ -13,6 +13,7 @@ import type { Domain, KvTable } from '@deepseek-ai/dsh-storage-domain'
 import {
   MEMORY_DESCRIPTION_MAX_CHARS,
   MEMORY_NAME_RE,
+  compareStoredText,
   memoryDomainSpec,
 } from './domain.ts'
 import type { MemoryDomainSpec, MemoryName, MemoryRecord, MemoryScope, MemoryType, ProjectMemoryKey } from './domain.ts'
@@ -23,6 +24,7 @@ export {
   MEMORY_NAME_RE,
   MEMORY_SCOPES,
   MEMORY_TYPES,
+  compareStoredText,
   memoryDomainSpec,
   memoryRecord,
 } from './domain.ts'
@@ -34,6 +36,9 @@ declare module '@deepseek-ai/cordis' {
     memory: MemoryStore
   }
 }
+
+/** Project-root markers when a composition names none; mirrors the `agent-instructions` default. */
+const DEFAULT_PROJECT_ROOT_MARKERS = ['.git'] as const
 
 /** Store configuration. Invalid values fail plugin load. */
 export interface Config {
@@ -56,7 +61,7 @@ export interface Config {
 export const Config: z<Config> = z.object({
   maxRecords: z.number().step(1).min(1).required(),
   maxRecordBytes: z.number().step(1).min(1).required(),
-  projectRootMarkers: z.array(z.string()).default(['.git']),
+  projectRootMarkers: z.array(z.string()).default([...DEFAULT_PROJECT_ROOT_MARKERS]),
 })
 
 /** Why a store operation was rejected. */
@@ -133,7 +138,7 @@ export interface MemoryVisible {
 
 /** Sort key for recall results: newest first, then name. */
 function newestFirst(left: MemoryRecord, right: MemoryRecord): number {
-  return right.updatedAt.localeCompare(left.updatedAt) || left.name.localeCompare(right.name)
+  return compareStoredText(right.updatedAt, left.updatedAt) || compareStoredText(left.name, right.name)
 }
 
 /**
@@ -158,7 +163,7 @@ export class MemoryStore extends Service {
     super(ctx, 'memory')
     this.maxRecords = config.maxRecords
     this.maxRecordBytes = config.maxRecordBytes
-    this.markers = config.projectRootMarkers ?? ['.git']
+    this.markers = config.projectRootMarkers ?? DEFAULT_PROJECT_ROOT_MARKERS
   }
 
   protected async [Service.init](): Promise<void> {

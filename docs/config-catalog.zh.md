@@ -1752,7 +1752,7 @@ export interface Config {
 }
 ```
 
-来源：[`packages/memory/memory/src/index.ts:39`](../packages/memory/memory/src/index.ts)
+来源：[`packages/memory/memory/src/index.ts:44`](../packages/memory/memory/src/index.ts)
 
 <a id="deepseek-aidsh-message-feedback"></a>
 

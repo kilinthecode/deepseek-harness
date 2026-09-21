@@ -33,6 +33,18 @@ export const MEMORY_NAME_RE = /^[a-z0-9][a-z0-9-]{0,63}$/
 /** Upper bound of a description, the one-line catalog summary. Protocol constant, not configuration. */
 export const MEMORY_DESCRIPTION_MAX_CHARS = 256
 
+/**
+ * Compare two stored text values by code unit instead of locale collation, so
+ * every order the store and its consumers produce is identical on every host
+ * and ICU build.
+ * @param left - first value.
+ * @param right - second value.
+ * @returns a negative number, zero, or a positive number per the comparator contract.
+ */
+export function compareStoredText(left: string, right: string): number {
+  return Number(left > right) - Number(left < right)
+}
+
 /** A validated memory name; the global-table key. */
 export type MemoryName = Branded<'MemoryName'>
 

@@ -11,7 +11,7 @@ import type { Context } from '@deepseek-ai/cordis'
 import { z as zod } from 'zod'
 import type { PreStepDecision } from '@deepseek-ai/dsh-agent'
 import { createUserMessage } from '@deepseek-ai/dsh-llm'
-import { MEMORY_TYPES } from '@deepseek-ai/dsh-memory'
+import { MEMORY_TYPES, compareStoredText } from '@deepseek-ai/dsh-memory'
 import type { MemoryRecord, MemoryType, MemoryVisible } from '@deepseek-ai/dsh-memory'
 import type {} from '@deepseek-ai/dsh-compaction'
 import type {} from '@deepseek-ai/dsh-session-projection'
@@ -42,8 +42,9 @@ export const EMPTY_CATALOG_TEXT = `${CATALOG_HEADER}\nNo saved memories.`
 
 const TYPE_RANK = Object.fromEntries(MEMORY_TYPES.map((type, index) => [type, index])) as Record<MemoryType, number>
 
+/** Catalog order within one section: type rank, then name. */
 function byTypeThenName(left: MemoryRecord, right: MemoryRecord): number {
-  return TYPE_RANK[left.type] - TYPE_RANK[right.type] || left.name.localeCompare(right.name)
+  return TYPE_RANK[left.type] - TYPE_RANK[right.type] || compareStoredText(left.name, right.name)
 }
 
 function catalogLines(records: readonly MemoryRecord[]): string[] {
