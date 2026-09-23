@@ -249,6 +249,34 @@ describe('tool-call-model', () => {
     expect(errored.errorSummary).toBe('capture failed')
   })
 
+  it('declines the whole gallery when an image block beside a well-formed one is malformed, keeping both in output', () => {
+    const valid = { attachmentId: 'sha256:valid', mediaType: 'image/png', bytes: 10, width: 2, height: 2 }
+    const malformed: unknown[] = [
+      null, [], 'ref',
+      { ...valid, attachmentId: '' },
+      { ...valid, mediaType: 'text/html' },
+      { ...valid, bytes: 0 },
+      { ...valid, width: 1.5 },
+      { ...valid, height: 'tall' },
+      { ...valid, name: 5 },
+      { ...valid, originalDimensions: [] },
+      { ...valid, originalDimensions: { width: 4, height: 0 } },
+    ]
+    for (const attachment of malformed) {
+      for (const images of [
+        [{ type: 'image', attachment: valid }, { type: 'image', attachment }],
+        [{ type: 'image', attachment }, { type: 'image', attachment: valid }],
+      ]) {
+        const model = toolRowModel('mcp_screenshot', result({
+          content: [{ type: 'text', text: 'two shots' }, ...images] as never,
+        }), undefined, undefined, { claimImages: true })
+        expect(model.resultImages).toBeNull()
+        expect(model.resultImagesText).toBeNull()
+        expect(model.output).toBe(['two shots', ...images.map(block => JSON.stringify(block, null, 2))].join('\n'))
+      }
+    }
+  })
+
   it('resultImages skips a non-object content entry as wire noise instead of declining the gallery', () => {
     // Unlike read_image's stricter imageCardModel (which pre-declines the
     // whole card via fullyRendered), the generic row's claim only requires
