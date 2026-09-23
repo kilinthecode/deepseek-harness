@@ -3,7 +3,7 @@ import {
   IconApiOutlineRegular, IconBrowseOutlineRegular, IconCodeOutlineRegular, IconEditOutlineRegular, IconSearchOutlineRegular,
   IconSparkleRegular,
 } from '@deepseek-ai/dsh-client-ui-primitives'
-import type { ToolCallOwnerProps, ToolTreeProps } from '../../contract/slots.ts'
+import type { RenderResultImages, ToolCallOwnerProps, ToolTreeProps } from '../../contract/slots.ts'
 import { readCardModel } from '../models/read-card-model.ts'
 import { diffCardModel } from '../models/diff-card-model.ts'
 import { searchCardModel } from '../models/search-card-model.ts'
@@ -27,11 +27,19 @@ const VARIANT_ICONS: Record<ToolRowVariant, ReactNode> = {
 /** Card props: the owner payload plus the render site's locale seat (plain prop). */
 export type GenericToolCardProps = ToolCallOwnerProps & {
   t: ToolTreeProps['t']
+  /**
+   * Dispatch the generic-row image gallery through the Tool-tree-owned
+   * `tool.call.resultImages` slot. Absent (a caller outside the Tool call
+   * tree) claims no images, so the row's text output keeps them as JSON.
+   */
+  renderResultImages?: RenderResultImages | undefined
 }
 
-/** @param props - current tool stage and locale. @returns its preparation or dispatched card. */
-export function GenericToolCard({ toolName, block, cwd, home, openFile, inspect, useDisclosure, t }: GenericToolCardProps) {
-  const model = toolRowModel(toolName, block, cwd, home)
+/** @param props - current tool stage, locale, and the generic-row gallery dispatcher. @returns its preparation or dispatched card. */
+export function GenericToolCard({
+  toolName, block, cwd, home, openFile, inspect, useDisclosure, t, renderResultImages,
+}: GenericToolCardProps) {
+  const model = toolRowModel(toolName, block, cwd, home, { claimImages: renderResultImages !== undefined })
   const autoReview = model.autoReviewDenial === null
     ? null
     : localizeAutoReviewDenial(model.autoReviewDenial, t)
@@ -46,6 +54,10 @@ export function GenericToolCard({ toolName, block, cwd, home, openFile, inspect,
     ? 'error'
     : model.state
   const singleFile = model.filePath !== undefined
+  // The claimed gallery survives every card branch above (terminal/read/diff/
+  // search/web): none of those variants match an arbitrary image-bearing
+  // result, so the generic IN/OUT fallback is what actually renders it.
+  const resultImages = model.resultImages === null ? null : model.resultImages.map(attachment => ({ attachment }))
   return (
     <ToolRow
       useDisclosure={useDisclosure}
@@ -66,6 +78,9 @@ export function GenericToolCard({ toolName, block, cwd, home, openFile, inspect,
       read={read}
       search={search}
       web={web}
+      resultImages={resultImages}
+      resultImagesText={model.resultImagesText}
+      renderResultImages={renderResultImages}
       state={state}
       filePath={model.filePath}
       onOpenFile={singleFile ? openFile : undefined}

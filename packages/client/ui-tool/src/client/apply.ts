@@ -41,6 +41,7 @@ export function apply(ctx: ClientContext): void {
         kind: 'keyed', scope: 'session',
         inject: { hooks: { toolCallArgumentsPartial: bindToolCallArgumentsPartial } },
       },
+      'tool.call.resultImages': { kind: 'single', scope: 'session' },
     },
     inject: toolInject,
   }, ToolCallTree))

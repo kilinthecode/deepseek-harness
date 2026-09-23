@@ -7,7 +7,9 @@
  */
 import type { ToolCallBlock, ToolResultNode } from '@deepseek-ai/dsh-client-ui-chat/client'
 import type { LocaleKeysOf } from '@deepseek-ai/dsh-client-ui-slots'
+import type { ImageAttachmentRef } from '@deepseek-ai/dsh-attachment'
 import { abbreviateHomePath, relativizeToCwd } from '@deepseek-ai/dsh-util-workspace-path'
+import { imageReferences } from './image-card-model.ts'
 
 export type { ToolCallBlock } from '@deepseek-ai/dsh-client-ui-chat/client'
 
@@ -153,6 +155,24 @@ export interface ToolRowModel {
   bodyRaw: string | null
   /** Flattened result text ({@link resultText}); null while running or when the result carries no text. */
   output: string | null
+  /**
+   * Durable images this settled result's content returned, claimed via
+   * `imageReferences` only when the caller asked to claim images (see
+   * {@link ToolRowModelOptions.claimImages}): every image block in the content
+   * is well-formed and at least one is present. `output` skips each image
+   * block exactly when this is non-null; an unclaimed call, a malformed image
+   * block, or content with no image block leaves this null and `output` keeps
+   * flattening every non-text block (including any image block) as JSON.
+   * Null while running.
+   */
+  resultImages: readonly ImageAttachmentRef[] | null
+  /**
+   * The JSON text `output` omitted for the claimed image blocks, joined by
+   * newlines exactly as {@link resultText} would have flattened them; the
+   * gallery renders it when no attachment presentation plugin fills its slot.
+   * Null whenever {@link resultImages} is null.
+   */
+  resultImagesText: string | null
   /** First line of the result text on an error row; null for every other state. */
   errorSummary: string | null
   /** Structured Auto-review denial identity; null for every ordinary result. */
@@ -174,12 +194,20 @@ function deriveAutoReviewDenial(block: ToolCallBlock): AutoReviewDenial | null {
  * verbatim, other block shapes as pretty JSON. Empty content on a failed call
  * falls back to the structured error's `name: code` line.
  * @param node - the settled result node.
+ * @param options - `skipImages: true` drops every image block instead of
+ *   stringifying it. The caller opts in only after independently confirming a
+ *   claimed, well-formed gallery for the same content (see
+ *   {@link ToolRowModel.resultImages}); an unclaimed or malformed image block
+ *   must keep flattening to JSON here, or the row would lose that block with
+ *   nothing rendering it.
  * @returns the flattened result text (may be empty).
  */
-export function resultText(node: ToolResultNode): string {
+export function resultText(node: ToolResultNode, options?: { skipImages?: boolean }): string {
+  const skipImages = options?.skipImages ?? false
   const parts: string[] = []
   for (const block of node.content) {
     if (block.type === 'text') parts.push(block.text)
+    else if (skipImages && block.type === 'image') continue
     else parts.push(JSON.stringify(block, null, 2))
   }
   if (parts.length === 0 && node.error !== undefined) {
@@ -271,15 +299,32 @@ export function formatToolBody(variant: ToolRowVariant, argsRaw: string): string
   return JSON.stringify(parsed, null, 2)
 }
 
+/** Row-model derivation choices that belong to the rendering caller. */
+export interface ToolRowModelOptions {
+  /**
+   * Claim well-formed result images for a gallery the caller renders. Only a
+   * caller that renders {@link ToolRowModel.resultImages} may set this; every
+   * other row keeps image blocks in its flattened `output`.
+   */
+  claimImages?: boolean
+}
+
 /**
  * Derive the full row model from a frozen call slice.
  * @param toolName - wire tool name (dispatch-supplied; survives windowless results).
  * @param block - preparing call, dispatched call, or result from the snapshot.
  * @param cwd - session workspace root; workspace-rooted path summaries display relative to it.
  * @param home - host account home; a leftover POSIX home path displays as `~`.
+ * @param options - caller-owned derivation choices; omitted claims no images.
  * @returns the row model.
  */
-export function toolRowModel(toolName: string, block: ToolCallBlock, cwd?: string, home?: string): ToolRowModel {
+export function toolRowModel(
+  toolName: string,
+  block: ToolCallBlock,
+  cwd?: string,
+  home?: string,
+  options?: ToolRowModelOptions,
+): ToolRowModel {
   const variant = classifyTool(toolName)
   const titleKey = toolTitleKey(toolName)
   const done = 'kind' in block
@@ -291,10 +336,18 @@ export function toolRowModel(toolName: string, block: ToolCallBlock, cwd?: strin
     : argsRaw === '' ? block.callId
       : abbreviateHomePath(relativizeToCwd(deriveSummary(variant, argsRaw), cwd), home)
   const summary = [titleKey === 'tool.title.generic' ? toolName : '', base].filter(Boolean).join(' · ')
+  // The gallery claim: non-null only for a caller that renders the gallery,
+  // and only when every image block in the content is well-formed and at
+  // least one is present, in which case `output` skips those blocks.
+  const resultImages = done && options?.claimImages === true ? imageReferences(block.content) : null
+  const resultImagesText = !done || resultImages === null ? null : block.content
+    .filter(content => content.type === 'image')
+    .map(content => JSON.stringify(content, null, 2))
+    .join('\n')
   // The empty string is "no text" for both derived result fields: a settled
   // call with blank content has nothing to expand, and a blank first line
   // would erase the collapsed error row's summary slot.
-  const output = done ? (resultText(block) || null) : null
+  const output = done ? (resultText(block, { skipImages: resultImages !== null }) || null) : null
   const errorSummary = state === 'error' && output !== null ? firstLine(output) : null
   const bodyRaw = argsRaw === '' ? null : argsRaw
   return {
@@ -304,6 +357,8 @@ export function toolRowModel(toolName: string, block: ToolCallBlock, cwd?: strin
     filePath: argsRaw === null ? undefined : deriveFilePath(variant, argsRaw),
     bodyRaw,
     output,
+    resultImages,
+    resultImagesText,
     errorSummary,
     autoReviewDenial: deriveAutoReviewDenial(block),
     state,

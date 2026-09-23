@@ -31,4 +31,11 @@ export function apply(ctx: ClientContext): void {
     name: 'tool.call.images',
     locale: 'conversation',
   }, MessageImages))
+  // The generic tool row's gallery (every unclaimed tool name whose result
+  // carries a claimed image) shares the same owner share and renderer as
+  // `tool.call.images` above.
+  ctx.slots.inject('tool.call.resultImages', () => ctx.slots.register({
+    name: 'tool.call.resultImages',
+    locale: 'conversation',
+  }, MessageImages))
 }

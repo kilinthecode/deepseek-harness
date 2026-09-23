@@ -7,7 +7,8 @@ import {
 } from '@deepseek-ai/dsh-client-ui-primitives'
 import type { PropsRenderSlots, TranslateNS } from '@deepseek-ai/dsh-client-ui-slots'
 import type { OpenFileOptions, UseDisclosure } from '@deepseek-ai/dsh-client-ui-chat/client'
-import type { MessageImageLoader } from '@deepseek-ai/dsh-client-ui-conversation/client'
+import type { MessageImageLoader, MessageImageSource } from '@deepseek-ai/dsh-client-ui-conversation/client'
+import type { RenderResultImages } from '../../contract/slots.ts'
 import { CHAT_DIFF_MAX_LINES, type DiffCardModel } from '../models/diff-card-model.ts'
 import { CHAT_READ_MAX_LINES, type ReadCardModel } from '../models/read-card-model.ts'
 import type { ImageCardModel } from '../models/image-card-model.ts'
@@ -72,6 +73,29 @@ export interface ToolRowProps {
   renderSlot?: PropsRenderSlots<'tool.call.images'>['renderSlot'] | undefined
   /** Session-authorized image URL loader for the gallery slot. */
   loadImage?: MessageImageLoader | undefined
+  /**
+   * Durable images a settled GENERIC (non-`read_image`) result's content
+   * returned, claimed by `imageReferences`: every image block in the content
+   * is well-formed and at least one is present. Rendered below the output
+   * text inside the IN/OUT card through `renderResultImages`; independent of
+   * `image` above, which stays the dedicated `read_image` card's own field.
+   * null/absent = no claimed gallery (a malformed image block, or no image
+   * block at all, keeps that block inside `output` as ordinary JSON instead).
+   */
+  resultImages?: readonly MessageImageSource[] | null | undefined
+  /**
+   * Dispatch the generic-row gallery. Supplied by the Tool call tree itself,
+   * not a toolview: `GenericToolCard` is the render-site fallback shared by
+   * every unclaimed tool name, so no single toolview registration could own
+   * this the way `readImageToolview` owns `renderSlot`/`tool.call.images`
+   * above. Absent = no gallery, even when `resultImages` is present.
+   */
+  renderResultImages?: RenderResultImages | undefined
+  /**
+   * The JSON text `output` omitted for the claimed images; shown in the
+   * gallery's place when no attachment presentation plugin fills its slot.
+   */
+  resultImagesText?: string | null | undefined
   search?: SearchCardModel | null | undefined
   web?: WebCardModelProps | null | undefined
   /** Read-only fields/list card derived from a successful recorded result. */
@@ -128,6 +152,9 @@ export const ToolRow = memo(function ToolRow({
   image,
   renderSlot,
   loadImage,
+  resultImages,
+  renderResultImages,
+  resultImagesText,
   search,
   web,
   details,
@@ -152,6 +179,10 @@ export const ToolRow = memo(function ToolRow({
   const imageBody = image !== undefined && image !== null && renderSlot !== undefined && loadImage !== undefined
     ? image
     : null
+  const resultImagesBody = resultImages !== undefined && resultImages !== null && resultImages.length > 0
+    && renderResultImages !== undefined
+    ? resultImages
+    : null
   const searchBody = search ?? null
   const webBody = web ?? null
   const askQuestionBody = askQuestion ?? null
@@ -159,7 +190,11 @@ export const ToolRow = memo(function ToolRow({
   const inputRaw = bodyRaw ?? null
   const outputText = output ?? null
   const card = askQuestionBody ?? terminalBody ?? diffBody ?? readBody ?? imageBody ?? searchBody ?? webBody ?? detailsBody
-  const expandable = state !== 'preparing' && (inputRaw !== null || outputText !== null || card !== null)
+  // Image-only generic results (an MCP screenshot tool with no text block)
+  // must still expand: without this, resultImagesBody would be non-null with
+  // nothing on the row to open it.
+  const expandable = state !== 'preparing'
+    && (inputRaw !== null || outputText !== null || card !== null || resultImagesBody !== null)
   const open = expanded && expandable
   const bodyText = useMemo(
     () => open && card === null && inputRaw !== null ? formatToolBody(variant, inputRaw) : null,
@@ -294,7 +329,7 @@ export const ToolRow = memo(function ToolRow({
                                 toolbarLabels={codeToolbarLabels(t)} className={css.codeBody} />
                             </div>
                           )}
-                          {(cardBody !== null || outputText !== null) && (
+                          {(cardBody !== null || outputText !== null || resultImagesBody !== null) && (
                             <div className={css.ioCard}>
                               {cardBody !== null && (
                                 <div className={css.ioSection}>
@@ -311,6 +346,22 @@ export const ToolRow = memo(function ToolRow({
                                   <span className={css.ioText} data-error={state === 'error' || undefined}>
                                     {outputText}
                                   </span>
+                                </div>
+                              )}
+                              {(cardBody !== null || outputText !== null) && resultImagesBody !== null && (
+                                <span className={css.ioDivider} aria-hidden />
+                              )}
+                              {/* The generic row's own gallery: a settled result whose
+                                  content carries a claimed image (see
+                                  ToolRowModel.resultImages), below the output text so
+                                  the flattened text stays the primary record and the
+                                  gallery is the visual complement. */}
+                              {resultImagesBody !== null && renderResultImages !== undefined && (
+                                <div className={css.resultImages}>
+                                  {renderResultImages(
+                                    { images: resultImagesBody, align: 'start' },
+                                    <span className={css.ioText}>{resultImagesText}</span>,
+                                  )}
                                 </div>
                               )}
                             </div>
@@ -330,8 +381,8 @@ export const ToolRow = memo(function ToolRow({
     </div>
   ) : undefined, [
     open, detailsBody, askQuestionBody, terminalBody, terminalLabels, diffBody, diffLabels, readBody, readLabels,
-    imageBody, renderSlot, loadImage, searchBody, searchLabels, webBody, webLabels, inspect, t, onOpenFile,
-    variant, bodyText, cardBody, outputText, state,
+    imageBody, renderSlot, loadImage, resultImagesBody, renderResultImages, resultImagesText, searchBody, searchLabels, webBody,
+    webLabels, inspect, t, onOpenFile, variant, bodyText, cardBody, outputText, state,
   ])
   return (
     <div className={css.root} data-variant={variant} data-tool={toolName} data-state={state}>

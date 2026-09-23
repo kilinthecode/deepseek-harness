@@ -15,6 +15,7 @@ import { LocaleRuntime } from '@deepseek-ai/dsh-client-locale/client'
 import { apply as applyConversation, inject as injectConversation } from '@deepseek-ai/dsh-client-ui-conversation/client'
 import { apply as applyTool, inject as injectTool } from '@deepseek-ai/dsh-client-ui-tool/client'
 import type { ToolCallViewProps } from '@deepseek-ai/dsh-client-ui-tool/client'
+import type { ToolImagesOwnerProps } from '../src/client/contract/slots.ts'
 import { toolSessionEvents } from './tool-fixtures.client.ts'
 
 const SID = 's1' as SessionId
@@ -282,6 +283,33 @@ describe('keyed toolview hole through the real machinery', () => {
     expect(row.textContent).toBe(`for:${SID}`)
     row.click()
     expect(poked).toEqual([SID])
+    await b.runtime.dispose()
+  })
+
+  it('dispatches an unclaimed tool\'s claimed images through the Tool-tree-owned resultImages slot', async () => {
+    const sampleImage = {
+      attachmentId: 'sha256:slot-gallery', mediaType: 'image/png', bytes: 1, width: 1, height: 1,
+    }
+    const b = await bench([
+      toolResult(3, 'shot-1', 'mcp_screenshot', '{}', {
+        content: [{ type: 'image', attachment: sampleImage }] as never,
+      }),
+    ])
+    b.slots.register(
+      { name: 'tool.call.resultImages' },
+      ({ images }: ToolImagesOwnerProps) => (
+        <div data-testid="result-gallery">
+          {images.map(image => 'attachment' in image ? image.attachment.attachmentId : '').join(',')}
+        </div>
+      ),
+    )
+    const view = b.runtime.renderRoot()
+    fireEvent.click(view.container.querySelector('[data-expandable]')!)
+    expect(view.getByTestId('result-gallery').textContent).toBe('sha256:slot-gallery')
+    // read_image's own tool.call.images entry stays undeclared here, and this
+    // dispatch must not touch it: no toolview claims mcp_screenshot's key, so
+    // it renders through the generic fallback and this child slot alone.
+    expect(b.slots.entries('tool.call.images')).toHaveLength(0)
     await b.runtime.dispose()
   })
 })
