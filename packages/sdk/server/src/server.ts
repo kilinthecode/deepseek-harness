@@ -10,7 +10,7 @@ import { resolve } from 'node:path'
 import { brandString } from '@deepseek-ai/dsh-brand'
 import type { Agent, AgentHandle } from '@deepseek-ai/dsh-agent'
 import { admitEncodedImages, type EncodedImageAttachment, type ImageAttachmentRef } from '@deepseek-ai/dsh-attachment'
-import { createUserMessage, ReasoningEffortId, type ContentBlock, type LlmRuntime } from '@deepseek-ai/dsh-llm'
+import { createUserMessage, imageInputSupport, ReasoningEffortId, type ContentBlock, type LlmRuntime } from '@deepseek-ai/dsh-llm'
 import { carrierKeyOf, type Scoped } from '@deepseek-ai/dsh-scope'
 import type { SessionId } from '@deepseek-ai/dsh-session'
 import type SubagentRuntime from '@deepseek-ai/dsh-subagent'
@@ -34,6 +34,31 @@ interface SessionRecord {
 
 function encodedImage(block: SessionPromptParams['contentBlocks'][number]): block is SdkEncodedImageBlock {
   return block.type === 'image' && 'data' in block
+}
+
+/** Whether any top-level block is an image, encoded or already durable. */
+function hasImageBlock(blocks: SessionPromptParams['contentBlocks']): boolean {
+  return blocks.some(block => block.type === 'image')
+}
+
+/**
+ * Refuse one prompt's image content before any session or attachment side
+ * effect when the initialized route does not declare image input. An
+ * undeclared route is permitted: it matches the runtime's own text-only
+ * placeholder projection (`LlmRuntime.stream`), so a route this permissive
+ * gate admits never silently degrades once dispatched.
+ * @param ctx - server-owned context used to resolve the optional `llm` service.
+ * @param provider - the initialized SDK route's provider.
+ * @param model - the initialized SDK route's model.
+ * @throws when the model registry is unmounted or the resolved route declares no image input.
+ */
+async function assertImageRouteSupported(ctx: Context, provider: string, model: string): Promise<void> {
+  const llm = ctx.get('llm')
+  if (llm === undefined) throw new Error('SDK image prompt requires the model registry')
+  const info = await llm.resolveModelInfo(provider, model)
+  if (imageInputSupport(info) === 'unsupported') {
+    throw new Error(`Model "${model}" does not support image input; initialize the SDK with a model that accepts images.`)
+  }
 }
 
 async function durablePromptContent(ctx: Context, blocks: SessionPromptParams['contentBlocks']): Promise<ContentBlock[]> {
@@ -177,6 +202,9 @@ export class HarnessSdkJsonRpcServer {
    */
   async prompt(params: SessionPromptParams): Promise<SessionPromptResult> {
     if (!this.initialized) throw new Error('SDK server is not initialized')
+    if (hasImageBlock(params.contentBlocks)) {
+      await assertImageRouteSupported(this.ctx, this.provider, this.model)
+    }
     const rec = await this.getOrCreateSession(params.sessionId)
     // An agent-loop-only reload disposes the loop's agents while this record
     // survives; a retained agent accepts followup() silently, so validate the

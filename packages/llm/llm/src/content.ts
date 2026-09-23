@@ -1,6 +1,6 @@
 /** Content-block structure helpers. @module @deepseek-ai/dsh-llm/content */
 
-import type { ContentBlock, ImageBlock, LlmImageRequestBudget } from './types.ts'
+import type { ContentBlock, ImageBlock, LlmImageRequestBudget, LlmModelInfo } from './types.ts'
 import type { RequestMessage } from './types.ts'
 import type { Message } from './message.ts'
 import type {
@@ -125,6 +125,24 @@ export function offloadedImageText(
  */
 export function contentHasImage(content: readonly ContentBlock[]): boolean {
   return content.some(block => block.type === 'image')
+}
+
+/** Three-way image-input capability read off one resolved model's declared modalities. */
+export type ImageInputSupport = 'supported' | 'unsupported' | 'undeclared'
+
+/**
+ * Map one resolved model's declared input modalities to image-input support.
+ * `inputModalities` absent means the route never disclosed its accepted
+ * modalities ({@link LlmModelInfo.inputModalities}), which is distinct from a
+ * disclosed list that omits `image`. Callers resolve the model info themselves
+ * and choose their own policy for the `'undeclared'` case.
+ * @param info - the fields of one resolved model's info the mapping reads.
+ * @returns `'supported'` when the declared modalities include `image`,
+ *   `'unsupported'` when a declared list omits it, `'undeclared'` when no list was disclosed.
+ */
+export function imageInputSupport(info: Pick<LlmModelInfo, 'inputModalities'>): ImageInputSupport {
+  if (info.inputModalities === undefined) return 'undeclared'
+  return info.inputModalities.includes('image') ? 'supported' : 'unsupported'
 }
 
 /**

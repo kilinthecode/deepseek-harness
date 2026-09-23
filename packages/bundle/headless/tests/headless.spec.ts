@@ -1,7 +1,7 @@
 /** Direct one-shot Agent driving, exact Session adoption, machine-readable projection, and exit mapping. */
 
 import { Readable } from 'node:stream'
-import { afterEach, describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import { Context } from '@deepseek-ai/cordis'
 import { brandString } from '@deepseek-ai/dsh-brand'
 import AgentRegistry from '@deepseek-ai/dsh-agent'
@@ -57,6 +57,29 @@ interface BenchOptions {
   preliveMeta?: { cwd?: string; origin?: 'subagent'; agentPreset?: string }
   /** Run when the runner awaits idle, e.g. to append to the attached log. */
   onWhenIdle?: (agent: Agent) => void
+  /** `--image` paths passed to the runner, in invocation order. */
+  images?: string[]
+  /**
+   * In-memory files the image pipeline's `fs.resolve`/`stat`/`readBytes` reads,
+   * keyed by the raw `--image` path. Mounting this also satisfies the cwd
+   * resolution `run()` performs for every invocation, superseding `filesystemCwd`.
+   * A missing key models "not found"; `'directory'` models a non-regular file.
+   */
+  imageFiles?: Record<string, Uint8Array | 'directory'>
+  /** Model registry mock for the image route gate; `'omit'` leaves the service unmounted. */
+  llm?: 'omit' | { resolveModelInfo(provider: string, model: string): Promise<{ inputModalities?: string[] }> }
+  /** Attachment store mock for image admission; `'omit'` leaves the service unmounted. */
+  attachments?: 'omit' | {
+    saveImages(inputs: readonly { data: Uint8Array; mediaType: string; name?: string }[]): Promise<readonly unknown[]>
+    imageLimits: {
+      maxImageBytes: number
+      maxImagesPerMessage: number
+      maxMessageImageBytes: number
+      maxImagePixels: number
+      maxImageDimension: number
+      mediaTypes: readonly string[]
+    }
+  }
 }
 
 const frameStates = new WeakMap<Agent, { attemptId: ReturnType<typeof LlmAttemptId>; revision: number; index: number }>()
@@ -125,12 +148,37 @@ async function bench(script: Script, options: BenchOptions = {}): Promise<{
   run(): Promise<{ code: number; out: string; err: string; order: string[] }>
 }> {
   const ctx = new Context()
-  if (options.filesystemCwd !== undefined) {
+  if (options.imageFiles !== undefined) {
+    const files = options.imageFiles
+    const cwd = options.filesystemCwd ?? process.cwd()
+    ctx.provide('fs', {
+      resolve: async (path: string) => ({ targetKey: path, displayPath: path }),
+      processPath: () => cwd,
+      stat: async (target: { targetKey: string }) => {
+        const entry = files[target.targetKey]
+        if (entry === undefined) return undefined
+        if (entry === 'directory') return { version: 'v1' as never, type: 'directory' as const }
+        return { version: 'v1' as never, type: 'file' as const, size: entry.byteLength }
+      },
+      readBytes: async (target: { targetKey: string }, _signal: unknown, maxBytes: number) => {
+        const entry = files[target.targetKey]
+        if (entry === undefined || entry === 'directory') throw new Error(`unexpected read of ${target.targetKey}`)
+        if (entry.byteLength > maxBytes) throw new Error(`${target.targetKey} exceeds the byte cap`)
+        return entry
+      },
+    } as never)
+  } else if (options.filesystemCwd !== undefined) {
     const cwd = options.filesystemCwd
     ctx.provide('fs', {
       resolve: async () => ({ targetKey: cwd, displayPath: cwd }),
       processPath: () => cwd,
     } as never)
+  }
+  if (options.llm !== undefined && options.llm !== 'omit') {
+    ctx.provide('llm', options.llm as never)
+  }
+  if (options.attachments !== undefined && options.attachments !== 'omit') {
+    ctx.provide('attachments', options.attachments as never)
   }
   let out = ''
   let err = ''
@@ -217,6 +265,7 @@ async function bench(script: Script, options: BenchOptions = {}): Promise<{
         ...options.useStdin === true ? {} : { task: options.task ?? 'do the thing' },
         ...options.sessionId === undefined ? {} : { sessionId: options.sessionId },
         ...options.json === undefined ? {} : { json: options.json },
+        ...options.images === undefined ? {} : { images: options.images },
       })
       return { code: await exited, out, err, order }
     },
@@ -1044,9 +1093,259 @@ describe('headless runner', () => {
     expect(() => { apply(ctx, { task: 't' }) }).toThrow('must provide ctx.appExit')
   })
 
-  it('validates config: the task and run options are optional', () => {
-    expect(new Config({})).toEqual({})
+  it('validates config: the task and run options are optional, and images defaults to empty', () => {
+    expect(new Config({})).toEqual({ images: [] })
     expect(new Config({ task: 'x', sessionId: 'session-x', json: true }))
-      .toEqual({ task: 'x', sessionId: 'session-x', json: true })
+      .toEqual({ task: 'x', sessionId: 'session-x', json: true, images: [] })
+    expect(new Config({ images: ['a.png', 'b.png'] })).toEqual({ images: ['a.png', 'b.png'] })
+  })
+
+  describe('--image', () => {
+    /** Deployment image limits generous enough that only a test's own override refuses a batch. */
+    const IMAGE_LIMITS = {
+      maxImageBytes: 1_000_000,
+      maxImagesPerMessage: 10,
+      maxMessageImageBytes: 1_000_000,
+      maxImagePixels: 1_000_000,
+      maxImageDimension: 4096,
+      mediaTypes: ['image/png', 'image/jpeg', 'image/webp', 'image/gif'],
+    }
+
+    /** Permissive route: declares image input. */
+    const IMAGE_CAPABLE_LLM = { resolveModelInfo: async () => ({ inputModalities: ['text', 'image'] }) }
+
+    /** A minimal, not necessarily decodable, PNG-signed byte string; extension-declared reads never sniff it. */
+    const PNG_BYTES = Uint8Array.of(1, 2, 3)
+
+    /** Real PNG file-signature bytes, for extension-less sniffing. */
+    const PNG_SIGNATURE = Uint8Array.of(0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0, 0)
+
+    function savingAttachments(saveImages = vi.fn(async (inputs: readonly { data: Uint8Array; mediaType: string; name?: string }[]) =>
+      inputs.map((input, index) => ({
+        attachmentId: `sha256:att-${index}`, mediaType: input.mediaType, bytes: input.data.byteLength, width: 1, height: 1, name: input.name,
+      })))) {
+      return { saveImages, imageLimits: IMAGE_LIMITS }
+    }
+
+    it('attaches image content blocks after the task text, in invocation order', async () => {
+      const attachments = savingAttachments()
+      let seenContent: unknown
+      const test = await bench({
+        afterPrompt(session, message) {
+          seenContent = message.content
+          appendTurn(session, 1, message, 'described', true)
+        },
+      }, {
+        images: ['first.png', 'second.png'],
+        imageFiles: { 'first.png': PNG_BYTES, 'second.png': PNG_BYTES },
+        llm: IMAGE_CAPABLE_LLM,
+        attachments,
+      })
+      expect(await test.run()).toMatchObject({ code: 0, out: 'described\n' })
+      expect(attachments.saveImages).toHaveBeenCalledWith([
+        { data: PNG_BYTES, mediaType: 'image/png', name: 'first.png' },
+        { data: PNG_BYTES, mediaType: 'image/png', name: 'second.png' },
+      ])
+      expect(seenContent).toEqual([
+        { type: 'text', text: 'do the thing' },
+        { type: 'image', attachment: { attachmentId: 'sha256:att-0', mediaType: 'image/png', bytes: 3, width: 1, height: 1, name: 'first.png' } },
+        { type: 'image', attachment: { attachmentId: 'sha256:att-1', mediaType: 'image/png', bytes: 3, width: 1, height: 1, name: 'second.png' } },
+      ])
+      await test.ctx.fiber.dispose()
+    })
+
+    it('admits an image on a route with undeclared modalities', async () => {
+      const attachments = savingAttachments()
+      const test = await bench({
+        afterPrompt(session, message) { appendTurn(session, 1, message, 'described', true) },
+      }, {
+        images: ['a.png'],
+        imageFiles: { 'a.png': PNG_BYTES },
+        llm: { resolveModelInfo: async () => ({}) },
+        attachments,
+      })
+      expect(await test.run()).toMatchObject({ code: 0, out: 'described\n' })
+      expect(attachments.saveImages).toHaveBeenCalledOnce()
+      await test.ctx.fiber.dispose()
+    })
+
+    it('refuses --image on a text-only route before creating an agent', async () => {
+      const attachments = savingAttachments()
+      const test = await bench({ afterPrompt: () => { throw new Error('must not run: no agent should have been created') } }, {
+        images: ['a.png'],
+        imageFiles: { 'a.png': PNG_BYTES },
+        llm: { resolveModelInfo: async () => ({ inputModalities: ['text'] }) },
+        attachments,
+      })
+      const result = await test.run()
+      expect(result.code).toBe(1)
+      expect(result.err).toContain('does not support image input')
+      expect(result.out).toBe('')
+      expect(attachments.saveImages).not.toHaveBeenCalled()
+      await test.ctx.fiber.dispose()
+    })
+
+    it('emits the JSON error event when an image prompt is refused', async () => {
+      const test = await bench({ afterPrompt: () => { throw new Error('must not run') } }, {
+        images: ['a.png'],
+        imageFiles: { 'a.png': PNG_BYTES },
+        llm: { resolveModelInfo: async () => ({ inputModalities: ['text'] }) },
+        json: true,
+      })
+      const result = await test.run()
+      expect(result.code).toBe(1)
+      const event = JSON.parse(result.out.trim().split('\n')[0] as string) as { type: string; message: string }
+      expect(event.type).toBe('error')
+      expect(event.message).toContain('does not support image input')
+      await test.ctx.fiber.dispose()
+    })
+
+    it('rejects a blank overlay image path before any service lookup', async () => {
+      const resolveModelInfo = vi.fn()
+      const test = await bench({ afterPrompt: () => { throw new Error('must not run') } }, {
+        images: ['a.png', '  '],
+        imageFiles: { 'a.png': PNG_BYTES },
+        llm: { resolveModelInfo },
+      })
+      const result = await test.run()
+      expect(result.code).toBe(1)
+      expect(result.err).toContain('images must not contain a blank path')
+      expect(resolveModelInfo).not.toHaveBeenCalled()
+      await test.ctx.fiber.dispose()
+    })
+
+    it('fails loud when --image is used without the model registry mounted', async () => {
+      const test = await bench({ afterPrompt: () => { throw new Error('must not run') } }, {
+        images: ['a.png'],
+        imageFiles: { 'a.png': PNG_BYTES },
+        llm: 'omit',
+      })
+      const result = await test.run()
+      expect(result.code).toBe(1)
+      expect(result.err).toContain('headless --image requires the model registry')
+      await test.ctx.fiber.dispose()
+    })
+
+    it('fails loud when --image is used without a mounted attachment store', async () => {
+      const test = await bench({ afterPrompt: () => { throw new Error('must not run') } }, {
+        images: ['a.png'],
+        imageFiles: { 'a.png': PNG_BYTES },
+        llm: IMAGE_CAPABLE_LLM,
+        attachments: 'omit',
+      })
+      const result = await test.run()
+      expect(result.code).toBe(1)
+      expect(result.err).toContain('headless --image requires an attachment store')
+      await test.ctx.fiber.dispose()
+    })
+
+    it('fails loud when --image is used without a mounted filesystem service', async () => {
+      const test = await bench({ afterPrompt: () => { throw new Error('must not run') } }, {
+        images: ['a.png'],
+        llm: IMAGE_CAPABLE_LLM,
+        attachments: savingAttachments(),
+      })
+      const result = await test.run()
+      expect(result.code).toBe(1)
+      expect(result.err).toContain('headless --image requires a filesystem service')
+      await test.ctx.fiber.dispose()
+    })
+
+    it('names the path of a missing image file', async () => {
+      const test = await bench({ afterPrompt: () => { throw new Error('must not run') } }, {
+        images: ['missing.png'],
+        imageFiles: {},
+        llm: IMAGE_CAPABLE_LLM,
+        attachments: savingAttachments(),
+      })
+      const result = await test.run()
+      expect(result.code).toBe(1)
+      expect(result.err).toContain('missing.png')
+      expect(result.err).toContain('not found')
+      await test.ctx.fiber.dispose()
+    })
+
+    it('names the path of a directory passed to --image', async () => {
+      const test = await bench({ afterPrompt: () => { throw new Error('must not run') } }, {
+        images: ['a-directory'],
+        imageFiles: { 'a-directory': 'directory' },
+        llm: IMAGE_CAPABLE_LLM,
+        attachments: savingAttachments(),
+      })
+      const result = await test.run()
+      expect(result.code).toBe(1)
+      expect(result.err).toContain('a-directory')
+      expect(result.err).toContain('not a regular file')
+      await test.ctx.fiber.dispose()
+    })
+
+    it('sniffs the media type of an extension-less image from its bytes', async () => {
+      const attachments = savingAttachments()
+      const test = await bench({
+        afterPrompt(session, message) { appendTurn(session, 1, message, 'described', true) },
+      }, {
+        images: ['attachment-object'],
+        imageFiles: { 'attachment-object': PNG_SIGNATURE },
+        llm: IMAGE_CAPABLE_LLM,
+        attachments,
+      })
+      expect(await test.run()).toMatchObject({ code: 0 })
+      expect(attachments.saveImages).toHaveBeenCalledWith([
+        { data: PNG_SIGNATURE, mediaType: 'image/png', name: 'attachment-object' },
+      ])
+      await test.ctx.fiber.dispose()
+    })
+
+    it('names the path when neither the extension nor the content is a supported image', async () => {
+      const attachments = savingAttachments()
+      const test = await bench({ afterPrompt: () => { throw new Error('must not run') } }, {
+        images: ['notes.txt'],
+        imageFiles: { 'notes.txt': new TextEncoder().encode('plain text') },
+        llm: IMAGE_CAPABLE_LLM,
+        attachments,
+      })
+      const result = await test.run()
+      expect(result.code).toBe(1)
+      expect(result.err).toContain('notes.txt')
+      expect(result.err).toContain('not a supported image')
+      expect(attachments.saveImages).not.toHaveBeenCalled()
+      await test.ctx.fiber.dispose()
+    })
+
+    it('propagates a whole-batch refusal from the attachment store', async () => {
+      const saveImages = vi.fn(() => Promise.reject(new Error('Image batch exceeds the configured image-count limit.')))
+      const test = await bench({ afterPrompt: () => { throw new Error('must not run') } }, {
+        images: ['a.png', 'b.png'],
+        imageFiles: { 'a.png': PNG_BYTES, 'b.png': PNG_BYTES },
+        llm: IMAGE_CAPABLE_LLM,
+        attachments: savingAttachments(saveImages),
+      })
+      const result = await test.run()
+      expect(result.code).toBe(1)
+      expect(result.err).toContain('Image batch exceeds the configured image-count limit.')
+      await test.ctx.fiber.dispose()
+    })
+
+    it('attaches an image while resuming a persisted Session', async () => {
+      const attachments = savingAttachments()
+      const test = await bench({
+        afterPrompt(session, message) { appendTurn(session, 1, message, 'resumed with image', true) },
+      }, {
+        sessionId: 'session-exact',
+        images: ['a.png'],
+        imageFiles: { 'a.png': PNG_BYTES },
+        llm: IMAGE_CAPABLE_LLM,
+        attachments,
+        observe: () => Promise.resolve({
+          header: { cwd: process.cwd(), origin: 'user' },
+          events: [],
+          [Symbol.dispose]() {},
+        }),
+      })
+      test.ctx.sessions.create(brandString<SessionId>('session-exact'), { meta: { cwd: process.cwd() } })
+      expect(await test.run()).toMatchObject({ code: 0, out: 'resumed with image\n' })
+      expect(attachments.saveImages).toHaveBeenCalledOnce()
+      await test.ctx.fiber.dispose()
+    })
   })
 })

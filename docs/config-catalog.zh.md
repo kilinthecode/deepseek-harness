@@ -1182,10 +1182,12 @@ export interface Config {
   sessionId?: string
   /** Whether stdout carries the machine-readable event stream instead of final text. */
   json?: boolean
+  /** Image file paths to attach to the task, in invocation order; absent or empty attaches none. */
+  images?: string[]
 }
 ```
 
-来源： [`packages/bundle/headless/src/index.ts:42`](../packages/bundle/headless/src/index.ts)
+来源： [`packages/bundle/headless/src/index.ts:46`](../packages/bundle/headless/src/index.ts)
 
 <a id="deepseek-aidsh-hmr"></a>
 
@@ -3109,7 +3111,7 @@ export interface Config {
   cwd?: string
   /** Provider route the child runtime initializes with (default `deepseek-official`). */
   provider: string
-  /** Model the child runtime initializes with (default `deepseek-v4-flash`). */
+  /** Model the child runtime initializes with (default `deepseek-flash`). */
   model: string
   /** Optional per-request output-token cap for the child runtime. */
   maxTokens?: number

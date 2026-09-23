@@ -1,6 +1,7 @@
 /** Recorded-session replay through the shipped headless `dsh` profile. */
 
 import { startHttpMcpFixture } from '../../packages/mcp/mcp-client/tests/http-fixture.ts'
+import { Buffer } from 'node:buffer'
 import { cp, copyFile, mkdir, mkdtemp, readFile, readdir, rm, symlink, utimes, writeFile } from 'node:fs/promises'
 import { existsSync } from 'node:fs'
 import { spawnSync } from 'node:child_process'
@@ -47,6 +48,7 @@ import {
   writesCurrentSessionFixtures,
   type HarvestedLog,
   type NormalizeContext,
+  type SnapshotInputAttachment,
   type SnapshotManifest,
   type WorkspaceSnapshotEntry,
 } from '@deepseek-ai/dsh-session-snapshot'
@@ -305,33 +307,92 @@ async function writeHeaderSidecars(
   }
 }
 
-function taskFromSession(log: string): string | undefined {
-  const text = (value: unknown): string | undefined => {
-    if (value === null || typeof value !== 'object') return undefined
-    const message = value as JsonObject
-    const source = message.source as JsonObject | undefined
-    if (source?.kind !== 'user' || !Array.isArray(message.content)) return undefined
-    const blocks = message.content as JsonObject[]
-    return blocks.length === 1 && blocks[0]?.type === 'text' && typeof blocks[0].text === 'string'
-      ? blocks[0].text
-      : undefined
+/** One derived one-shot task: its text and, for an image prompt, ordered attachment ids. */
+interface DerivedTask {
+  readonly text: string
+  readonly imageIds: readonly string[]
+}
+
+/** A user message's task text, plus ordered image attachment ids when the text leads one or more image blocks. */
+function taskFromMessage(value: unknown): DerivedTask | undefined {
+  if (value === null || typeof value !== 'object') return undefined
+  const message = value as JsonObject
+  const source = message.source as JsonObject | undefined
+  if (source?.kind !== 'user' || !Array.isArray(message.content)) return undefined
+  const blocks = message.content as JsonObject[]
+  const [first, ...rest] = blocks
+  if (first?.type !== 'text' || typeof first.text !== 'string') return undefined
+  if (rest.length === 0) return { text: first.text, imageIds: [] }
+  const imageIds: string[] = []
+  for (const block of rest) {
+    if (block.type !== 'image') return undefined
+    const attachment = block.attachment as JsonObject | undefined
+    const id = attachment?.attachmentId
+    if (typeof id !== 'string') return undefined
+    imageIds.push(id)
   }
+  return { text: first.text, imageIds }
+}
+
+function taskFromSession(log: string): DerivedTask | undefined {
   // Inbox text retains canonical mentions that pre-step renders as readable labels.
   for (const record of records(log)) {
     if (record.type !== 'agent/inbox/spliced') continue
     const data = record.data as JsonObject | undefined
     if (!Array.isArray(data?.inserted)) continue
     for (const message of data.inserted) {
-      const task = text(message)
+      const task = taskFromMessage(message)
       if (task !== undefined) return task
     }
   }
   for (const record of records(log)) {
     if (record.type !== 'user/message') continue
-    const task = text(record.data)
+    const task = taskFromMessage(record.data)
     if (task !== undefined) return task
   }
   return undefined
+}
+
+/** File extension the headless `--image` flag recognizes for one saved attachment's media type. */
+function imageExtension(scenario: string, mediaType: string): string {
+  switch (mediaType) {
+    case 'image/png': return 'png'
+    case 'image/jpeg': return 'jpg'
+    case 'image/webp': return 'webp'
+    case 'image/gif': return 'gif'
+    default: throw new Error(`${scenario}: unsupported image mediaType ${mediaType}`)
+  }
+}
+
+/**
+ * Write one scenario's ordered image attachment bytes to a fresh temp directory
+ * outside the scenario cwd, so the seeded workspace snapshot stays unaffected.
+ * @param scenario - owning scenario, whose `manifest.input.attachments` supplies bytes by id.
+ * @param imageIds - ordered content-addressed ids referenced by the derived task's image blocks.
+ * @returns absolute `--image` paths in invocation order, and a disposer that removes the temp directory.
+ */
+async function materializeTaskImages(
+  scenario: HeadlessScenario,
+  imageIds: readonly string[],
+): Promise<{ paths: string[]; cleanup: () => Promise<void> }> {
+  if (imageIds.length === 0) return { paths: [], cleanup: async () => {} }
+  const byId = new Map<string, SnapshotInputAttachment>(
+    (scenario.manifest.input?.attachments ?? []).map(attachment => [attachment.id, attachment]),
+  )
+  const dir = await mkdtemp(join(tmpdir(), 'dsh-headless-task-images-'))
+  try {
+    const paths = await Promise.all(imageIds.map(async (id, index) => {
+      const attachment = byId.get(id)
+      if (attachment === undefined) throw new Error(`${scenario.name}: no input bytes for image attachment ${id}`)
+      const path = join(dir, `image-${String(index + 1)}.${imageExtension(scenario.name, attachment.mediaType)}`)
+      await writeFile(path, Buffer.from(attachment.data, 'base64'))
+      return path
+    }))
+    return { paths, cleanup: async () => { await rm(dir, { recursive: true, force: true }) } }
+  } catch (error) {
+    await rm(dir, { recursive: true, force: true })
+    throw error
+  }
 }
 
 function finalTextFromSession(log: string): string {
@@ -883,8 +944,32 @@ describe('headless recorded-session snapshots', () => {
       { type: 'agent/inbox/spliced', data: { inserted: [message(original)] } },
       { type: 'user/message', data: message('Use @Research') },
     ].map(record => JSON.stringify(record)).join('\n')
-    expect(taskFromSession(log)).toBe(original)
-    expect(taskFromSession(JSON.stringify({ type: 'user/message', data: message('legacy task') }))).toBe('legacy task')
+    expect(taskFromSession(log)).toEqual({ text: original, imageIds: [] })
+    expect(taskFromSession(JSON.stringify({ type: 'user/message', data: message('legacy task') })))
+      .toEqual({ text: 'legacy task', imageIds: [] })
+  })
+
+  it('derives task text and ordered image attachment ids from a leading text block plus image blocks', () => {
+    const image = (id: string) => ({ type: 'image', attachment: { attachmentId: id, mediaType: 'image/png' } })
+    const message = (content: JsonObject[]) => ({ source: { kind: 'user' }, content })
+    const log = JSON.stringify({
+      type: 'user/message',
+      data: message([
+        { type: 'text', text: 'Describe these images' },
+        image('sha256:one'),
+        image('sha256:two'),
+      ]),
+    })
+    expect(taskFromSession(log)).toEqual({ text: 'Describe these images', imageIds: ['sha256:one', 'sha256:two'] })
+    // A leading image with no preceding text is not an accepted task derivation.
+    const imageFirst = JSON.stringify({ type: 'user/message', data: message([image('sha256:one')]) })
+    expect(taskFromSession(imageFirst)).toBeUndefined()
+    // A non-image block after the leading text is not an accepted task derivation.
+    const trailingText = JSON.stringify({
+      type: 'user/message',
+      data: message([{ type: 'text', text: 'task' }, { type: 'text', text: 'more' }]),
+    })
+    expect(taskFromSession(trailingText)).toBeUndefined()
   })
 
   it('reconstructs reasoning stderr across packed output boundaries', () => {
@@ -1084,8 +1169,10 @@ describe('headless recorded-session snapshots', () => {
       let fixtures = await fixtureSessions(scenario, fixtureFiles)
       const primaryFixture = fixtures[0]
       if (primaryFixture === undefined) throw new Error(`${scenario.name}: missing primary session fixture`)
-      const task = taskFromSession(primaryFixture) ?? scenario.manifest.input?.task
+      const derivedTask = taskFromSession(primaryFixture)
+      const task = derivedTask?.text ?? scenario.manifest.input?.task
       if (task === undefined) throw new Error(`${scenario.name}: no accepted or exceptional task input`)
+      const imageIds = derivedTask?.imageIds ?? []
       const pin = pinOf(scenario)
       let model: { provider: string; model: string }
       try {
@@ -1114,6 +1201,7 @@ describe('headless recorded-session snapshots', () => {
       const spillRoot = await mkdtemp(join(tmpdir(), 'acp-snap-spill-'))
       const locatorRoot = snapshotSpillRoot(join(scenario.dir, fixtureFiles[0] as string))
       const mcpDemo = scenario.name === 'plugin-manager-mcp' ? await startHttpMcpFixture() : undefined
+      const taskImages = await materializeTaskImages(scenario, imageIds)
       let result: Awaited<ReturnType<typeof runLoaderSmoke>>
       try {
         result = await runLoaderSmoke({
@@ -1126,6 +1214,7 @@ describe('headless recorded-session snapshots', () => {
           binArgs: [
             '--profile', 'headless',
             ...patches.flatMap(file => ['--patch', file]),
+            ...taskImages.paths.flatMap(path => ['--image', path]),
             task,
           ],
           tsconfigPath,
@@ -1214,6 +1303,7 @@ describe('headless recorded-session snapshots', () => {
       } finally {
         await mcpDemo?.close()
         await rm(spillRoot, { recursive: true, force: true })
+        await taskImages.cleanup()
       }
 
       const stderrLog = mode === 'replay' ? primaryFixture : actualLogs[0]?.content
