@@ -324,7 +324,7 @@ describe('HarnessSdkJsonRpcServer', () => {
     })
 
     it('admits an image on a route that declares no modalities', async () => {
-      const followup = vi.fn()
+      const followup = vi.fn<Agent['followup']>()
       const agent = { id: SessionId('image-undeclared'), followup }
       const handle = { agent, dispose: vi.fn(() => Promise.resolve()) }
       const ref = { attachmentId: AttachmentId('sha256:image'), mediaType: 'image/png', bytes: 1, width: 1, height: 1 }
