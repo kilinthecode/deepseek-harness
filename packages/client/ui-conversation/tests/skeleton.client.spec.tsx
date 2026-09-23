@@ -31,7 +31,7 @@ import './control-row-dom.ts'
 import { InputBar } from '../src/client/skeleton/InputBar.tsx'
 import type { InputBarProps } from '../src/client/skeleton/InputBar.tsx'
 import type {
-  ComposerBarOwnerProps, ConversationContentInputProps, ConversationContentProps,
+  ComposerAttachmentsOwnerProps, ComposerBarOwnerProps, ConversationContentInputProps, ConversationContentProps,
   ConversationHeaderLineageOwnerProps, ConversationSessionHeaderSlotProps, ConversationSessionSlotProps, ConversationSlotProps,
   ConversationViewsProps,
 } from '../src/client/contract/slots.ts'
@@ -462,6 +462,26 @@ describe('ConversationRoot resident composer', () => {
     expect(box.getAttribute('data-placeholder')).not.toBe('select a model first')
     const modelSeat = b.seatOwners.filter(call => call.key === 'conversation.input.model').at(-1)?.owner
     expect(modelSeat).toEqual({ locked: true })
+  })
+
+  it('refuses image intake in the resident composer only when the Session route refuses images', () => {
+    const addImage = (b: ReturnType<typeof mount>) => {
+      const seat = b.seatOwners.filter(call => call.key === 'conversation.input.attachments').at(-1)?.owner
+      act(() => {
+        (seat as ComposerAttachmentsOwnerProps).onAddFiles([
+          new File([Uint8Array.of(1)], 'x.png', { type: 'image/png' }),
+        ])
+      })
+    }
+    const refused = mount(sessionSnapshotOf(), undefined, undefined, { acceptsImages: false })
+    addImage(refused)
+    expect(refused.view.getByRole('alert').textContent).toContain(t('image.modelUnsupported'))
+    refused.view.unmount()
+
+    // Unknown capability is advisory allow, matching Host prompt admission.
+    const unknown = mount(sessionSnapshotOf())
+    addImage(unknown)
+    expect(unknown.view.queryByRole('alert')).toBeNull()
   })
 
   it('keeps composer text in the machine, mirrors to the Conversation store, and submits through the sink', () => {
