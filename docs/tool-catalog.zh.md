@@ -1860,6 +1860,13 @@ lsp 工具将提供方选择和语言服务器子进程置于 ctx.lsp 之后，�
       "type": "string",
       "description": "The complete, self-contained task for the subagent. It does not share this conversation's context, so include everything it needs."
     },
+    "images": {
+      "type": "array",
+      "description": "Attachment ids of images already shown in this conversation, handed to the child after the text. Refused when the child's model or transport cannot accept images.",
+      "items": {
+        "type": "string"
+      }
+    },
     "run_in_background": {
       "type": "boolean",
       "description": "Whether to run as a background job and return its id. Defaults to false; collect with job_output or stop with job_kill."
@@ -1938,6 +1945,13 @@ lsp 工具将提供方选择和语言服务器子进程置于 ctx.lsp 之后，�
     "message": {
       "type": "string",
       "description": "The message to deliver to the agent."
+    },
+    "images": {
+      "type": "array",
+      "description": "Attachment ids of images already shown in this conversation, delivered to the target agent after the text. Refused when the target's model or transport cannot accept images.",
+      "items": {
+        "type": "string"
+      }
     }
   },
   "required": [
@@ -2077,6 +2091,13 @@ lsp 工具将提供方选择和语言服务器子进程置于 ctx.lsp 之后，�
     "message": {
       "type": "string",
       "description": "Self-contained message for the target."
+    },
+    "images": {
+      "type": "array",
+      "description": "Attachment ids of images already shown in this conversation, delivered to the target after the text. Refused when the target's model or transport cannot accept images.",
+      "items": {
+        "type": "string"
+      }
     }
   },
   "required": [
@@ -2108,9 +2129,16 @@ lsp 工具将提供方选择和语言服务器子进程置于 ctx.lsp 之后，�
       "type": "string",
       "description": "Complete initial task for the teammate."
     },
+    "images": {
+      "type": "array",
+      "description": "Attachment ids of images already shown in this conversation, handed to the teammate after the text. Refused when the teammate's model or transport cannot accept images.",
+      "items": {
+        "type": "string"
+      }
+    },
     "context": {
       "type": "string",
-      "description": "fresh starts without Lead history; fork inherits completed Lead turns. Defaults to fresh.",
+      "description": "fresh starts without Lead history; fork inherits completed Lead turns (images from the current turn are not inherited; pass them in images). Defaults to fresh.",
       "enum": [
         "fresh",
         "fork"

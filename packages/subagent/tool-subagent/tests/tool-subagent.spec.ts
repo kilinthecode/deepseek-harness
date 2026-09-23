@@ -4,7 +4,8 @@ import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { Context } from '@deepseek-ai/cordis'
 import Loader from '@deepseek-ai/cordis-plugin-loader'
-import { ToolCallId, ReasoningEffortId } from '@deepseek-ai/dsh-llm'
+import { ToolCallId, ReasoningEffortId, createUserMessage, createToolResultMessage } from '@deepseek-ai/dsh-llm'
+import { AttachmentId } from '@deepseek-ai/dsh-attachment'
 import SystemPrompt from '@deepseek-ai/dsh-system-prompt'
 import ToolRuntime, { TOOL_ABORTED_BEFORE_DISPATCH } from '@deepseek-ai/dsh-tools'
 import { assembleContextFor, type Agent } from '@deepseek-ai/dsh-agent'
@@ -95,6 +96,7 @@ describe('dsh-tool-subagent', () => {
     const props = (schema!.parameters as { properties?: Record<string, unknown> }).properties ?? {}
     expect(Object.keys(props).sort()).toEqual([
       'description',
+      'images',
       'prompt',
     ])
     expect(schema!.description).not.toContain('job_output')
@@ -464,6 +466,19 @@ describe('dsh-tool-subagent', () => {
     expect(schema.description).not.toContain('can prevent provider-side reuse of the inherited conversation prefix')
     const props = (schema.parameters as { properties: Record<string, { description: string }> }).properties
     expect(props['prompt']!.description).toContain('completed turns')
+    // A fork inherits only completed turns, so the wording points current-turn images at `images`.
+    expect(props['prompt']!.description).toContain('not inherited')
+    expect(props['images']!.description).toContain('Attachment ids of images already shown in this conversation')
+  })
+
+  it('documents the images parameter on a fresh-conversation provider without fork wording', async () => {
+    const ctx = await setup({ provider: 'mock' })
+    const schema = ctx.tools.schemas().find(s => s.name === 'subagent')!
+    const props = (schema.parameters as { properties: Record<string, { description: string }> }).properties
+    expect(props['prompt']!.description).not.toContain('not inherited')
+    expect(props['images']!.description).toBe(
+      'Attachment ids of images already shown in this conversation, handed to the child after the text. Refused when the child\'s model or transport cannot accept images.',
+    )
   })
 
   it('disposes the run on the success path (no leaked child)', async () => {
@@ -1492,5 +1507,145 @@ describe('depth budget configuration', () => {
     await callSubagent(ctx, { description: 'd', prompt: 'p' })
     expect(requests[0]?.maxDepth).toBeUndefined()
     expect(requests[0]?.toolFilter).toBeUndefined()
+  })
+})
+
+describe('image handoff to the child', () => {
+  const IMAGE_ID = `sha256:${'f'.repeat(64)}`
+  const UNKNOWN_IMAGE_ID = `sha256:${'0'.repeat(64)}`
+  const imageRef = {
+    attachmentId: AttachmentId(IMAGE_ID),
+    mediaType: 'image/png' as const,
+    bytes: 75,
+    width: 8,
+    height: 8,
+    name: 'image-1.png',
+  }
+
+  const USER_IMAGE_ID = `sha256:${'a'.repeat(64)}`
+  const TOOL_IMAGE_ID = `sha256:${'b'.repeat(64)}`
+  const userImageRef = {
+    attachmentId: AttachmentId(USER_IMAGE_ID),
+    mediaType: 'image/png' as const,
+    bytes: 75,
+    width: 8,
+    height: 8,
+    name: 'user.png',
+  }
+  const toolImageRef = {
+    attachmentId: AttachmentId(TOOL_IMAGE_ID),
+    mediaType: 'image/png' as const,
+    bytes: 75,
+    width: 8,
+    height: 8,
+    name: 'tool.png',
+  }
+
+  /** A parent whose derived history shows the image once, with an offload mark that must not travel. */
+  function parentShowingImage(): Agent {
+    const parent = fakeAgent('parent-showing-image')
+    parent.session.append('user/message', createUserMessage({
+      content: [
+        { type: 'text', text: 'the reference image' },
+        { type: 'image', attachment: imageRef, offloaded: true as const },
+      ],
+      source: { kind: 'user' },
+    }), { surfaceOp: 'append' })
+    return parent
+  }
+
+  /** User-message image plus a nested tool-result image; citing one must not copy the other. */
+  function parentShowingUserAndToolResultImages(): Agent {
+    const parent = fakeAgent('parent-two-images')
+    parent.session.append('user/message', createUserMessage({
+      content: [
+        { type: 'text', text: 'the user image' },
+        { type: 'image', attachment: userImageRef },
+      ],
+      source: { kind: 'user' },
+    }), { surfaceOp: 'append' })
+    parent.session.append('tool/result', {
+      turn: 1,
+      step: 1,
+      message: createToolResultMessage({
+        callId: ToolCallId('history-image'),
+        content: [{ type: 'image', attachment: toolImageRef }],
+        isError: false,
+      }),
+    }, { surfaceOp: 'append' })
+    return parent
+  }
+
+  it('hands cited conversation images to the child after the text, without the history offload mark', async () => {
+    let seen: SubagentStartRequest | undefined
+    const ctx = await setup({ provider: 'mock' }, { onStart: (request) => { seen = request } })
+    const result = await callSubagent(ctx, {
+      description: 'd',
+      prompt: 'describe it',
+      images: [IMAGE_ID],
+      run_in_background: false,
+    }, { agent: parentShowingImage() })
+    if (result.isError) throw new Error(text(result))
+    expect(seen?.prompt).toEqual([
+      { type: 'text', text: 'describe it' },
+      { type: 'image', attachment: imageRef },
+    ])
+  })
+
+  it('hands only the cited tool-result image when the conversation also shows a user image', async () => {
+    let seen: SubagentStartRequest | undefined
+    const ctx = await setup({ provider: 'mock' }, { onStart: (request) => { seen = request } })
+    const result = await callSubagent(ctx, {
+      description: 'd',
+      prompt: 'describe the tool image',
+      images: [TOOL_IMAGE_ID],
+      run_in_background: false,
+    }, { agent: parentShowingUserAndToolResultImages() })
+    if (result.isError) throw new Error(text(result))
+    expect(seen?.prompt).toEqual([
+      { type: 'text', text: 'describe the tool image' },
+      { type: 'image', attachment: toolImageRef },
+    ])
+  })
+
+  it('rejects an image id the conversation never showed before any provider work', async () => {
+    let started = 0
+    const ctx = await setup({ provider: 'mock' }, { onStart: () => { started += 1 } })
+    const result = await callSubagent(ctx, { description: 'd', prompt: 'p', images: [UNKNOWN_IMAGE_ID] })
+    expect(result.isError).toBe(true)
+    expect(text(result)).toContain(`"${UNKNOWN_IMAGE_ID}" is not an image shown in this conversation`)
+    expect(started).toBe(0)
+  })
+
+  it('rejects duplicated image ids before any provider work', async () => {
+    let started = 0
+    const ctx = await setup({ provider: 'mock' }, { onStart: () => { started += 1 } })
+    const result = await callSubagent(ctx, {
+      description: 'd', prompt: 'p', images: [IMAGE_ID, IMAGE_ID],
+    }, { agent: parentShowingImage() })
+    expect(result.isError).toBe(true)
+    expect(text(result)).toContain(`images lists attachment id "${IMAGE_ID}" more than once`)
+    expect(started).toBe(0)
+  })
+
+  it('enforces the deployment per-message image limit when the attachments service is present', async () => {
+    let started = 0
+    const ctx = await setup({ provider: 'mock' }, { onStart: () => { started += 1 } })
+    ctx.provide('attachments', { imageLimits: { maxImagesPerMessage: 1 } } as never)
+    const result = await callSubagent(ctx, {
+      description: 'd', prompt: 'p', images: [IMAGE_ID, UNKNOWN_IMAGE_ID],
+    }, { agent: parentShowingImage() })
+    expect(result.isError).toBe(true)
+    expect(text(result)).toContain('images lists 2 attachments, over the per-message image limit of 1')
+    expect(started).toBe(0)
+  })
+
+  it('surfaces the provider image-transport refusal unchanged', async () => {
+    const ctx = await setup({ provider: 'mock' }, { imageInput: false })
+    const result = await callSubagent(ctx, {
+      description: 'd', prompt: 'p', images: [IMAGE_ID], run_in_background: false,
+    }, { agent: parentShowingImage() })
+    expect(result.isError).toBe(true)
+    expect(text(result)).toContain('subagent provider "mock" does not accept image input')
   })
 })

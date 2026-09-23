@@ -4,7 +4,8 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { Context } from '@deepseek-ai/cordis'
 import type { Agent } from '@deepseek-ai/dsh-agent'
-import { ToolCallId, createUserMessage } from '@deepseek-ai/dsh-llm'
+import { ToolCallId, createUserMessage, createToolResultMessage } from '@deepseek-ai/dsh-llm'
+import { AttachmentId } from '@deepseek-ai/dsh-attachment'
 import AgentLoop from '@deepseek-ai/dsh-agent-loop'
 import { mountAgentLoopTestDependencies } from '@deepseek-ai/dsh-agent-loop-testkit'
 import { SessionId } from '@deepseek-ai/dsh-session'
@@ -108,13 +109,45 @@ async function waitNoActivation(ctx: Context, childId: SessionId): Promise<void>
   }, { timeout: 5_000 })
 }
 
+function conversationImage(id: string, name: string) {
+  return {
+    attachmentId: AttachmentId(id),
+    mediaType: 'image/png' as const,
+    bytes: 75,
+    width: 8,
+    height: 8,
+    name,
+  }
+}
+
+/** Seed one user-message image and one nested tool-result image. */
+function showUserAndToolResultImages(
+  agent: Agent,
+  userRef: ReturnType<typeof conversationImage>,
+  toolRef: ReturnType<typeof conversationImage>,
+): void {
+  agent.session.append('user/message', createUserMessage({
+    content: [{ type: 'text', text: 'user image' }, { type: 'image', attachment: userRef }],
+    source: { kind: 'user' },
+  }), { surfaceOp: 'append' })
+  agent.session.append('tool/result', {
+    turn: 1,
+    step: 1,
+    message: createToolResultMessage({
+      callId: ToolCallId('history-image'),
+      content: [{ type: 'image', attachment: toolRef }],
+      isError: false,
+    }),
+  }, { surfaceOp: 'append' })
+}
+
 describe('dsh-tool-subagent-control', () => {
   it('registers send_message once, globally, with the two required parameters', async () => {
     const { ctx } = await setup([])
     const schemas = ctx.tools.schemas().filter(schema => schema.name === 'send_message')
     expect(schemas).toHaveLength(1)
     const props = (schemas[0]!.parameters as { properties?: Record<string, unknown> }).properties ?? {}
-    expect(Object.keys(props).sort()).toEqual(['agent_id', 'message'])
+    expect(Object.keys(props).sort()).toEqual(['agent_id', 'images', 'message'])
     // The continuable path has no Task, so the schema must not promise one.
     expect(schemas[0]!.description).not.toContain('job_output')
     expect(schemas[0]!.description).not.toContain('job id')
@@ -230,6 +263,187 @@ describe('dsh-tool-subagent-control', () => {
 
     release.resolve(undefined)
     await waitNoActivation(ctx, started.childId)
+  })
+
+  it('delivers cited conversation images to a cold-resumed child after the message text', async () => {
+    const IMAGE_ID = `sha256:${'f'.repeat(64)}`
+    const imageRef = {
+      attachmentId: AttachmentId(IMAGE_ID),
+      mediaType: 'image/png' as const,
+      bytes: 75,
+      width: 8,
+      height: 8,
+      name: 'image-1.png',
+    }
+    const { ctx, parent } = await setup([textResponse('first answer'), textResponse('second answer')])
+    ctx.provide('attachments', { imageLimits: { maxImagesPerMessage: 20 } } as never)
+    const started = await ctx.subagents.startContinuable({
+      provider: 'spawn',
+      label: 'child task',
+      request: { prompt: [{ type: 'text', text: 'child task' }], parent },
+      signal: testToolSignal,
+    })
+    await waitNoActivation(ctx, started.childId)
+    parent.session.append('user/message', createUserMessage({
+      content: [
+        { type: 'text', text: 'the chart' },
+        { type: 'image', attachment: imageRef, offloaded: true as const },
+      ],
+      source: { kind: 'user' },
+    }), { surfaceOp: 'append' })
+
+    const result = await callTool(ctx, 'send_message', {
+      agent_id: started.childId,
+      message: 'what changed?',
+      images: [IMAGE_ID],
+    }, parent)
+
+    expect(result.isError).toBe(false)
+    await waitNoActivation(ctx, started.childId)
+    const loaded = await loadStoredSession(ctx.sessionPersistence, started.childId)
+    const followUp = loaded.events.findLast(event => event.type === 'user/message')
+    // The history block's offload mark never travels with the delivered image.
+    expect(followUp?.type === 'user/message' && followUp.data.content).toEqual([
+      { type: 'text', text: `Agent ${parent.id} sent a message: ` },
+      { type: 'text', text: 'what changed?' },
+      { type: 'image', attachment: imageRef },
+    ])
+  })
+
+  it('delivers only the cited tool-result image when the conversation also shows a user image', async () => {
+    const USER_IMAGE_ID = `sha256:${'a'.repeat(64)}`
+    const TOOL_IMAGE_ID = `sha256:${'b'.repeat(64)}`
+    const userRef = conversationImage(USER_IMAGE_ID, 'user.png')
+    const toolRef = conversationImage(TOOL_IMAGE_ID, 'tool.png')
+    const { ctx, parent } = await setup([textResponse('first answer'), textResponse('second answer')])
+    ctx.provide('attachments', { imageLimits: { maxImagesPerMessage: 20 } } as never)
+    const started = await ctx.subagents.startContinuable({
+      provider: 'spawn',
+      label: 'child task',
+      request: { prompt: [{ type: 'text', text: 'child task' }], parent },
+      signal: testToolSignal,
+    })
+    await waitNoActivation(ctx, started.childId)
+    showUserAndToolResultImages(parent, userRef, toolRef)
+
+    const result = await callTool(ctx, 'send_message', {
+      agent_id: started.childId,
+      message: 'what changed?',
+      images: [TOOL_IMAGE_ID],
+    }, parent)
+
+    expect(result.isError).toBe(false)
+    await waitNoActivation(ctx, started.childId)
+    const loaded = await loadStoredSession(ctx.sessionPersistence, started.childId)
+    const followUp = loaded.events.findLast(event => event.type === 'user/message')
+    expect(followUp?.type === 'user/message' && followUp.data.content).toEqual([
+      { type: 'text', text: `Agent ${parent.id} sent a message: ` },
+      { type: 'text', text: 'what changed?' },
+      { type: 'image', attachment: toolRef },
+    ])
+  })
+
+  it('rejects duplicated image ids before any delivery', async () => {
+    const IMAGE_ID = `sha256:${'f'.repeat(64)}`
+    const imageRef = conversationImage(IMAGE_ID, 'image-1.png')
+    const { ctx, parent } = await setup([textResponse('first answer')])
+    const started = await ctx.subagents.startContinuable({
+      provider: 'spawn',
+      label: 'child task',
+      request: { prompt: [{ type: 'text', text: 'child task' }], parent },
+      signal: testToolSignal,
+    })
+    await waitNoActivation(ctx, started.childId)
+    parent.session.append('user/message', createUserMessage({
+      content: [{ type: 'text', text: 'the chart' }, { type: 'image', attachment: imageRef }],
+      source: { kind: 'user' },
+    }), { surfaceOp: 'append' })
+
+    const result = await callTool(ctx, 'send_message', {
+      agent_id: started.childId,
+      message: 'what changed?',
+      images: [IMAGE_ID, IMAGE_ID],
+    }, parent)
+
+    expect(result.isError).toBe(true)
+    expect(text(result)).toContain(`images lists attachment id "${IMAGE_ID}" more than once`)
+    const loaded = await loadStoredSession(ctx.sessionPersistence, started.childId)
+    expect(JSON.stringify(loaded.events)).not.toContain('what changed?')
+  })
+
+  it('enforces the deployment per-message image limit when the attachments service is present', async () => {
+    const USER_IMAGE_ID = `sha256:${'a'.repeat(64)}`
+    const TOOL_IMAGE_ID = `sha256:${'b'.repeat(64)}`
+    const userRef = conversationImage(USER_IMAGE_ID, 'user.png')
+    const toolRef = conversationImage(TOOL_IMAGE_ID, 'tool.png')
+    const { ctx, parent } = await setup([textResponse('first answer')])
+    ctx.provide('attachments', { imageLimits: { maxImagesPerMessage: 1 } } as never)
+    const started = await ctx.subagents.startContinuable({
+      provider: 'spawn',
+      label: 'child task',
+      request: { prompt: [{ type: 'text', text: 'child task' }], parent },
+      signal: testToolSignal,
+    })
+    await waitNoActivation(ctx, started.childId)
+    showUserAndToolResultImages(parent, userRef, toolRef)
+
+    const result = await callTool(ctx, 'send_message', {
+      agent_id: started.childId,
+      message: 'what changed?',
+      images: [USER_IMAGE_ID, TOOL_IMAGE_ID],
+    }, parent)
+
+    expect(result.isError).toBe(true)
+    expect(text(result)).toContain('images lists 2 attachments, over the per-message image limit of 1')
+    const loaded = await loadStoredSession(ctx.sessionPersistence, started.childId)
+    expect(JSON.stringify(loaded.events)).not.toContain('what changed?')
+  })
+
+  it('rejects an image id the conversation never showed before any delivery', async () => {
+    const unknown = `sha256:${'0'.repeat(64)}`
+    const { ctx, parent } = await setup([])
+    const result = await callTool(ctx, 'send_message', {
+      agent_id: 'no-such-child',
+      message: 'hello?',
+      images: [unknown],
+    }, parent)
+    expect(result.isError).toBe(true)
+    expect(text(result)).toContain(`"${unknown}" is not an image shown in this conversation`)
+  })
+
+  it('surfaces the continuation image-route refusal unchanged', async () => {
+    const IMAGE_ID = `sha256:${'f'.repeat(64)}`
+    const { ctx, parent } = await setup([textResponse('first')])
+    const started = await ctx.subagents.startContinuable({
+      provider: 'spawn',
+      label: 'child task',
+      request: { prompt: [{ type: 'text', text: 'child task' }], parent },
+      signal: testToolSignal,
+    })
+    await waitNoActivation(ctx, started.childId)
+    parent.session.append('user/message', createUserMessage({
+      content: [{
+        type: 'image',
+        attachment: {
+          attachmentId: AttachmentId(IMAGE_ID),
+          mediaType: 'image/png' as const,
+          bytes: 75,
+          width: 8,
+          height: 8,
+        },
+      }],
+      source: { kind: 'user' },
+    }), { surfaceOp: 'append' })
+    vi.spyOn(ctx.llm, 'resolveModelInfo').mockResolvedValue({ inputModalities: ['text'] } as never)
+
+    const result = await callTool(ctx, 'send_message', {
+      agent_id: started.childId,
+      message: 'see this',
+      images: [IMAGE_ID],
+    }, parent)
+
+    expect(result.isError).toBe(true)
+    expect(text(result)).toContain('Model "mock" does not support image input.')
   })
 
   it('cold-resumes a settled child and reports delivery', async () => {

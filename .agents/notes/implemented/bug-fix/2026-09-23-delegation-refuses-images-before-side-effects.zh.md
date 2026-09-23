@@ -59,7 +59,7 @@ Status: implemented
 
 **将 `SubagentContinuationManager.assertImageCapable` 折叠进其调用点。** 该私有方法已经委托给 `assertImageCapableRoute`,因此每条委派路径共享同一个策略定义;折叠它只会改变调用点的写法。
 
-**用 `images` 参数扩大 `subagent`/`send_message`/`spawn_teammate` 工具 schema。** 那是图像进入委派的传输——让模型将图像附加到 child prompt——与拒绝 child 无法接受的内容是两项独立的决策。无论由哪个调用方提供图像,这些闸门都同样生效。
+**用 `images` 参数扩大 `subagent`/`send_message`/`spawn_teammate` 工具 schema。** 那是图像进入委派的传输——让模型将图像附加到 child prompt——与拒绝 child 无法接受的内容是两项独立的决策。委派工具带有可选的 `images` 参数,并把解析得到的图像块传入同一组已设闸门的操作,因此无论由哪个调用方提供图像,这些闸门都同样生效;本 note 只负责副作用前拒绝这一决策。
 
 ## 影响
 

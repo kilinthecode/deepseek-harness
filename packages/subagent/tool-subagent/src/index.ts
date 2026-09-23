@@ -13,8 +13,9 @@ import z from '@deepseek-ai/schemastery'
 import { scopeChainOf, scopeOf } from '@deepseek-ai/dsh-scope'
 import { defineTool } from '@deepseek-ai/dsh-tools'
 import type { Agent, AgentOptions } from '@deepseek-ai/dsh-agent'
-import { ReasoningEffortId } from '@deepseek-ai/dsh-llm'
+import { ReasoningEffortId, resolveDelegationImages } from '@deepseek-ai/dsh-llm'
 import type { ContentBlock } from '@deepseek-ai/dsh-llm'
+import type {} from '@deepseek-ai/dsh-attachment'
 import type { JsonValue } from '@deepseek-ai/dsh-util-values'
 import { SessionSeq } from '@deepseek-ai/dsh-session'
 import type { Session } from '@deepseek-ai/dsh-session'
@@ -260,7 +261,7 @@ function providerWording(inheritsConversation: boolean): { description: string; 
         + 'You receive its result, not its intermediate steps.',
       promptDescription:
         'The task for the subagent. It already sees this conversation\'s completed turns, so build on them '
-        + 'freely and state only what is new.',
+        + 'freely and state only what is new. Images from the current turn are not inherited; hand them to the child with `images`.',
     }
   }
   return {
@@ -398,6 +399,11 @@ export function apply(ctx: Context, config: Config, session?: Session): void {
             required: true,
             description: wording.promptDescription,
           },
+          images: {
+            type: 'array',
+            items: { type: 'string' },
+            description: 'Attachment ids of images already shown in this conversation, handed to the child after the text. Refused when the child\'s model or transport cannot accept images.',
+          },
           ...modelSelectionEnabled ? {
             provider: {
               type: 'string' as const,
@@ -476,6 +482,12 @@ export function apply(ctx: Context, config: Config, session?: Session): void {
             throw new Error('subagent tool requires a calling agent (exec.agent was undefined)')
           }
 
+          // An uncitable image id fails before route preflight or child work.
+          const imageBlocks = resolveDelegationImages(
+            parent.session.deriveMessages(),
+            args.images,
+            runtimeCtx.get('attachments')?.imageLimits.maxImagesPerMessage,
+          )
           const modelRequest = args as DelegationModelRequest
           const parentOptions = parentAgentOptionsForDelegation(parent)
           const requiresRoutePreflight = hasDelegationModelRequest(modelRequest)
@@ -515,7 +527,7 @@ export function apply(ctx: Context, config: Config, session?: Session): void {
           const maxDepth = runtimeCtx.subagents.resolveMaxDepth(config.maxDepth)
           const request = {
             label: args.description,
-            prompt: [{ type: 'text', text: args.prompt }] as ContentBlock[],
+            prompt: [{ type: 'text', text: args.prompt }, ...imageBlocks] as ContentBlock[],
             parent,
             ...requestedChildAgentOptions !== undefined ? { agentOptions: requestedChildAgentOptions } : {},
             ...config.persona !== undefined ? { persona: config.persona } : {},

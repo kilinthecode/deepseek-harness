@@ -97,7 +97,7 @@ for await (const chunk of ctx.llm.stream({
 | [`src/call-config.ts`](src/call-config.ts) | 调用配置校验、适配器默认值填入与请求冻结 |
 | [`src/retry-policy.ts`](src/retry-policy.ts) | 提供方自有重试策略解析（normal 与 always 模式） |
 | [`src/error.ts`](src/error.ts) | `HarnessError`/`LlmError` 分类体系与提供方无关失败 code |
-| [`src/content.ts`](src/content.ts) | 共享文件与图片辅助函数：内容遍历、文件投影、图片卸载计数与已卸载图片投影 |
+| [`src/content.ts`](src/content.ts) | 共享文件与图片辅助函数：内容遍历、文件投影、图片卸载计数、已卸载图片投影与会话图片 id 解析。`resolveImageAttachmentRefs()` 返回用户内容与工具结果图片中被引用 id 的引用（首次出现者优先），以及没有任何图片携带的 id；`resolveDelegationImages()` 校验委派工具的 `images` 参数（非空、无重复、不超过每条消息上限、每个 id 均已知），并返回不含 `offloaded` 的新图片块。 |
 | [`src/api-key.ts`](src/api-key.ts) | 每个适配器共享的凭据格式校验 |
 | [`src/adapter-failure.ts`](src/adapter-failure.ts) | 把失败归一化为终止 finish 分片 |
 

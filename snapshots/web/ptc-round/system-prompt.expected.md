@@ -189,6 +189,8 @@ interface ToolArgsMap {
     agent_id: string;
     /** The message to deliver to the agent. */
     message: string;
+    /** Attachment ids of images already shown in this conversation, delivered to the target agent after the text. Refused when the target's model or transport cannot accept images. */
+    images?: string[];
   } & Record<string, JsonValue>;
   /** Load the full instructions for an available skill. Call this with the exact skill name from the session skill catalog before acting on a task that names or clearly matches that skill. */
   skill: {
@@ -201,6 +203,8 @@ interface ToolArgsMap {
     description: string;
     /** The complete, self-contained task for the subagent. It does not share this conversation's context, so include everything it needs. */
     prompt: string;
+    /** Attachment ids of images already shown in this conversation, handed to the child after the text. Refused when the child's model or transport cannot accept images. */
+    images?: string[];
     /** Whether to run in the background and return a durable subagent id immediately. Defaults to true. Set false to wait for the result when your next action depends on it. */
     run_in_background?: boolean;
   } & Record<string, JsonValue>;
@@ -208,8 +212,10 @@ interface ToolArgsMap {
   subagent_fork: {
     /** A short (3-5 word) description of the delegated task, for display. */
     description: string;
-    /** The task for the subagent. It already sees this conversation's completed turns, so build on them freely and state only what is new. */
+    /** The task for the subagent. It already sees this conversation's completed turns, so build on them freely and state only what is new. Images from the current turn are not inherited; hand them to the child with `images`. */
     prompt: string;
+    /** Attachment ids of images already shown in this conversation, handed to the child after the text. Refused when the child's model or transport cannot accept images. */
+    images?: string[];
     /** Whether to run in the background and return a durable subagent id immediately. Defaults to true. Set false to wait for the result when your next action depends on it. */
     run_in_background?: boolean;
   } & Record<string, JsonValue>;
