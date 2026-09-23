@@ -138,6 +138,8 @@ function mount(
     nestedSubagent?: boolean
     /** A composer block another plugin raised for this session. */
     composerBlock?: { reason: string }
+    /** The route-image advisory another plugin published for this session. */
+    acceptsImages?: boolean | null
     /** Mutable view ledger used by registration-order regressions. */
     viewTabs?: ViewTab[]
   } = {},
@@ -337,6 +339,7 @@ function mount(
       useWorkspaces: bindSnapshotSelector(workspaces),
       useProjection: (() => undefined),
       useComposerBlock: select => select(options.composerBlock),
+      useRouteImage: select => select(options.acceptsImages ?? null),
       useInput,
       inputActions,
       renderSlot,

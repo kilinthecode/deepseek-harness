@@ -19,11 +19,31 @@ import type { SessionId } from '@deepseek-ai/dsh-session/types'
 import { WeakMapWithValues } from '@deepseek-ai/dsh-util-values'
 import { ModelCatalogDirectory } from './catalog.ts'
 import { ModelDirectory } from './directory.ts'
+import type { ModelDirectoryState } from './directory.ts'
 
 declare module '@deepseek-ai/cordis' {
   interface Context {
     modelDirectories: ModelDirectoryResolver
   }
+}
+
+/**
+ * Derive the Session's route-image advisory from the shared directory
+ * snapshot. Unknown while the catalog has not resolved a current selection,
+ * or when that selection is not a listed model (advisory-unlisted stays
+ * allow, matching Host prompt admission); a retained snapshot after a
+ * refresh error keeps its prior derived value because `current`/`groups`
+ * themselves are retained.
+ * @param state - the shared directory snapshot.
+ * @returns whether the current route accepts image input, or null when unknown.
+ */
+function routeImageOf(state: ModelDirectoryState): boolean | null {
+  const { current, groups } = state
+  if (current === null) return null
+  const group = groups.find(candidate => candidate.id === current.provider)
+  const model = group?.models.find(candidate => candidate.id === current.model)
+  if (model === undefined) return null
+  return model.inputModalities === undefined || model.inputModalities.includes('image')
 }
 
 /** Live mutable state in one holder (service methods run behind the caller-ctx tracker). */
@@ -84,17 +104,22 @@ export class ModelDirectoryResolver extends Service {
     )
     live.directories.set(binding, directory)
     // The composer cannot read this plugin (the dependency runs one way), so
-    // the block is pushed: the Host says whether an adapter serves the
-    // session's route, and only a definite `false` makes the input inert.
-    // `null` — before the first load, or after one failed — must not, or a
-    // slow or unreachable Host would lock a working composer.
+    // the block and the route-image advisory are both pushed from the same
+    // directory snapshot. The block follows Host routability: only a
+    // definite `false` makes the input inert. `null` — before the first
+    // load, or after one failed — must not, or a slow or unreachable Host
+    // would lock a working composer. The route-image advisory follows the
+    // current selection's catalog `inputModalities`: only a definite `false`
+    // refuses image intake.
     const conversation = this.ctx.get('conversation')
     if (conversation !== undefined) {
       const publish = (): void => {
         if (sessions.binding(sessionId) !== binding) return
-        conversation.blocks.set(sessionId, directory.store.getSnapshot().routable === false
+        const snapshot = directory.store.getSnapshot()
+        conversation.blocks.set(sessionId, snapshot.routable === false
           ? { reason: this.blockReason() }
           : undefined)
+        conversation.routeImage.set(sessionId, routeImageOf(snapshot))
       }
       publish()
       actx.effect(() => {
@@ -104,8 +129,9 @@ export class ModelDirectoryResolver extends Service {
           const current = sessions.binding(sessionId)
           if (current !== undefined && current !== binding && live.directories.get(current) !== undefined) return
           conversation.blocks.set(sessionId, undefined)
+          conversation.routeImage.set(sessionId, null)
         }
-      }, 'ui-model-selection: composer block')
+      }, 'ui-model-selection: conversation publish')
     }
     actx.effect(() => () => {
       directory.dispose()

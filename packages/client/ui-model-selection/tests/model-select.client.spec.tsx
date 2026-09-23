@@ -464,3 +464,72 @@ describe('ModelSelect keyboard walk', () => {
     expect(document.activeElement).toBe(rows[0])
   })
 })
+
+describe('ModelSelect image capability', () => {
+  it('captions only an image-capable row as its accessible description, keeping the model name as its accessible name', () => {
+    const directory = createSnapshotStore(state({
+      groups: [{
+        id: 'deepseek-official',
+        name: 'DeepSeek',
+        models: [
+          { id: 'deepseek-v4-flash', name: 'DeepSeek-V4-Flash', inputModalities: ['text', 'image'] },
+          { id: 'deepseek-v4-pro', name: 'DeepSeek-V4-Pro', inputModalities: ['text'] },
+          { id: 'external-model', name: 'External Model' },
+        ],
+      }],
+      current: { provider: 'deepseek-official', model: 'deepseek-v4-flash' },
+    }))
+    render(<ModelSelect
+      locked={false}
+      available
+      directory={directory}
+      load={vi.fn()}
+      select={vi.fn().mockResolvedValue({ ok: true, value: undefined })}
+      t={t}
+    />)
+    fireEvent.click(screen.getByRole('button', { name: /选择模型/ }))
+    fireEvent.click(screen.getByRole('menuitem', { name: /^模型/ }))
+
+    const rows = screen.getAllByRole('menuitemradio')
+    expect(rows.map(row => row.textContent)).toEqual([
+      'DeepSeek-V4-Flash图片', 'DeepSeek-V4-Pro', 'External Model',
+    ])
+    // Accessible names stay the model names; only the image-capable row is described by the caption.
+    const imageRow = screen.getByRole('menuitemradio', { name: 'DeepSeek-V4-Flash' })
+    const describedBy = imageRow.getAttribute('aria-describedby')
+    expect(describedBy === null ? undefined : document.getElementById(describedBy)?.textContent).toBe('图片')
+    expect(screen.getByRole('menuitemradio', { name: 'DeepSeek-V4-Pro' }).getAttribute('aria-describedby')).toBeNull()
+    expect(screen.getByRole('menuitemradio', { name: 'External Model' }).getAttribute('aria-describedby')).toBeNull()
+  })
+
+  it('switches models with no extra confirm step regardless of image capability', async () => {
+    const directory = createSnapshotStore(state({
+      groups: [{
+        id: 'deepseek-official',
+        name: 'DeepSeek',
+        models: [
+          { id: 'deepseek-v4-flash', name: 'DeepSeek-V4-Flash', inputModalities: ['text', 'image'] },
+          { id: 'deepseek-v4-pro', name: 'DeepSeek-V4-Pro', inputModalities: ['text'] },
+        ],
+      }],
+      current: { provider: 'deepseek-official', model: 'deepseek-v4-flash' },
+    }))
+    const select = vi.fn(async (selection: ModelSelection) => {
+      directory.set(state({ current: selection }))
+      return { ok: true as const, value: undefined }
+    })
+    render(<ModelSelect
+      locked={false}
+      available
+      directory={directory}
+      load={vi.fn()}
+      select={select}
+      t={t}
+    />)
+    fireEvent.click(screen.getByRole('button', { name: /选择模型/ }))
+    fireEvent.click(screen.getByRole('menuitem', { name: /^模型/ }))
+    fireEvent.click(screen.getByRole('menuitemradio', { name: 'DeepSeek-V4-Pro' }))
+    expect(select).toHaveBeenCalledWith({ provider: 'deepseek-official', model: 'deepseek-v4-pro' })
+    await waitFor(() => { expect(screen.queryByRole('menu')).toBeNull() })
+  })
+})

@@ -431,6 +431,10 @@ export function ModelSelect(
                       <div className={css.groupTitle} id={headingId}>{group.name}</div>
                       {group.models.map((model) => {
                         const selected = state.current?.provider === group.id && state.current.model === model.id
+                        // The capability caption describes the option; the accessible name stays the model name.
+                        const imageCaptionId = model.inputModalities?.includes('image') === true
+                          ? `${headingId}-${model.id}-image`
+                          : undefined
                         return (
                           <button
                             ref={itemRef()}
@@ -440,11 +444,15 @@ export function ModelSelect(
                             className={clsx(css.option, selected && css.selected)}
                             key={model.id}
                             title={model.name}
+                            aria-describedby={imageCaptionId}
                             disabled={busy}
                             onClick={() => { choose({ provider: group.id, model: model.id }) }}
                           >
                             <span className={css.optionCopy}>
                               <span className={css.modelName}>{model.name}</span>
+                              {imageCaptionId !== undefined && (
+                                <span className={css.optionCaption} id={imageCaptionId} aria-hidden="true">{t('capability.image')}</span>
+                              )}
                             </span>
                             <span className={css.check}>
                               {selected ? <IconCheckOutlineRegular /> : null}

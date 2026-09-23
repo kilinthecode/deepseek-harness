@@ -21,7 +21,7 @@ function NoConversationWidthControls() {
 export function ConversationContent(props: ConversationContentProps) {
   const {
     sessionId, phase, hero, useSession, useSessions, useSessionStatus,
-    useWorkspaces, useInput, useComposerBlock, renderSlot, renderSlotChain,
+    useWorkspaces, useInput, useComposerBlock, useRouteImage, renderSlot, renderSlotChain,
     selectWorkspace, t, useFactorySlot,
   } = props
   const session = useSession(snapshot => snapshot)
@@ -36,6 +36,9 @@ export function ConversationContent(props: ConversationContentProps) {
   // A plugin this package cannot import (ui-model-selection) says this session cannot
   // send; its reason is already localized by whoever raised it.
   const composerBlock = useComposerBlock(block => block)
+  // The same plugin advises whether the current model route accepts images;
+  // only `false` refuses — unknown capability stays permissive.
+  const acceptsImages = useRouteImage(value => value)
 
   const [pickerOpen, setPickerOpen] = useState(false)
   const [pendingWorkspaceId, setPendingWorkspaceId] = useState<WorkspaceId | undefined>()
@@ -139,6 +142,7 @@ export function ConversationContent(props: ConversationContentProps) {
   const blocked = !inert && composerBlock !== undefined
   const inputBar = renderSlot('conversation.composer.bar', {
     variant: hero ? 'hero' : 'composer',
+    acceptsImages,
     ...(inert
       ? {
         disabled: true,

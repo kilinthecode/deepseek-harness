@@ -35,6 +35,10 @@ Models stay grouped by provider. The composer menu shows model and effort names 
 
 The composer replaces the model and effort text with the Models icon when the expanded controls cannot share one line, and restores the text when space permits. The full selection remains available in the trigger's accessible name, tooltip, and menu.
 
+### Image-capable routes
+
+Each menu row whose catalog `inputModalities` includes `'image'` shows an `Image` caption beside its name, which is also the option's accessible description (the accessible name stays the model name); a row that omits the field or lists only `'text'` shows no caption. This plugin also publishes a per-session route-image advisory to `ctx.conversation.routeImage`, mirroring the composer block: `false` for a listed text-only current selection, `true` for a listed image-capable one or a listed row that omits the field (unknown capability stays allowed), and `null` before the first load or on an unlisted current selection. The composer uses it to refuse new image attachments and disable Send while the rail holds one; Host prompt admission remains the sole enforcement point.
+
 ### Unroutable sessions
 
 When the Host reports that no adapter serves the session's route, this plugin raises a composer block and the input goes inert with its own copy; recovering clears it without a reload. A `null` before the first load or after one failed never blocks, and catalog membership never blocks either — a route serving a model it does not advertise is missing from the groups yet usable.
