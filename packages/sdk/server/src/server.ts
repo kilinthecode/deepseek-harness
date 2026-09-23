@@ -46,15 +46,17 @@ function hasImageBlock(blocks: SessionPromptParams['contentBlocks']): boolean {
  * effect when the initialized route does not declare image input. An
  * undeclared route is permitted: it matches the runtime's own text-only
  * placeholder projection (`LlmRuntime.stream`), so a route this permissive
- * gate admits never silently degrades once dispatched.
+ * gate admits never silently degrades once dispatched. `initialize` requires
+ * the model registry, so an unmounted registry leaves the decision to the
+ * runtime projection.
  * @param ctx - server-owned context used to resolve the optional `llm` service.
  * @param provider - the initialized SDK route's provider.
  * @param model - the initialized SDK route's model.
- * @throws when the model registry is unmounted or the resolved route declares no image input.
+ * @throws when the resolved route declares input modalities without image.
  */
 async function assertImageRouteSupported(ctx: Context, provider: string, model: string): Promise<void> {
   const llm = ctx.get('llm')
-  if (llm === undefined) throw new Error('SDK image prompt requires the model registry')
+  if (llm === undefined) return
   const info = await llm.resolveModelInfo(provider, model)
   if (imageInputSupport(info) === 'unsupported') {
     throw new Error(`Model "${model}" does not support image input; initialize the SDK with a model that accepts images.`)
