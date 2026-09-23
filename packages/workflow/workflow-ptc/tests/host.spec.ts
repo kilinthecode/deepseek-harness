@@ -36,6 +36,7 @@ async function setup(execute?: (bindings: HostBindings, spec: PtcRunSpec) => Pro
     name: 'stub',
     capabilities: { agentOptions: true, outputSchema: true, depthLimit: false, toolFilter: false, persona: false },
     inheritsParentContext: false,
+    imageInput: false,
     start: async () => ({
       id: SessionId('host-child'),
       localAgent: undefined,

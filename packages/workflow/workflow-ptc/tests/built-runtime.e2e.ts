@@ -43,6 +43,7 @@ try {
     name: 'built-selected',
     capabilities: { agentOptions: true, outputSchema: true, depthLimit: false, toolFilter: false, persona: false },
     inheritsParentContext: false,
+    imageInput: false,
     async start() {
       selectedStarts += 1
       return {

@@ -16,6 +16,7 @@ async function setup(mode: SandboxMode) {
     name: 'spawn',
     capabilities: { agentOptions: true, outputSchema: true, depthLimit: true, toolFilter: true, persona: true },
     inheritsParentContext: false,
+    imageInput: false,
     start: () => Promise.reject(new Error('source runtime smoke must not start a child')),
   })
   await ctx.plugin(PtcWorkflowEngine, {})

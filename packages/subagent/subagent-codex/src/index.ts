@@ -63,6 +63,8 @@ type ResolvedConfig = Omit<Required<Config>, 'model'> & Pick<Config, 'model'>
 class CodexProvider implements SubagentProvider {
   readonly capabilities: SubagentCapabilities = NO_START_CAPABILITIES
   readonly inheritsParentContext = false
+  // The task maps to a text-only CLI prompt; textTask throws on a non-text block.
+  readonly imageInput = false
 
   constructor(
     readonly name: string,

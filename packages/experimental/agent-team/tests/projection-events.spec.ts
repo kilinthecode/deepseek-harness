@@ -107,6 +107,56 @@ describe('Agent Teams projection events', () => {
     }, SessionSeq(0))])).toThrow(/team\/message\/queued payload is invalid/)
   })
 
+  it('accepts a downscaled image reference and replayed offloaded mark, and still rejects unknown image keys', () => {
+    const imageContent: ContentBlock[] = [{
+      type: 'image',
+      attachment: {
+        attachmentId: 'sha256:downscaled' as never,
+        mediaType: 'image/png',
+        bytes: 100,
+        width: 50,
+        height: 50,
+        originalDimensions: { width: 200, height: 200 },
+      },
+    }]
+    const downscaled = projectTeam(ROOT, [event('team/message/queued', {
+      version: 2, teamId: TEAM, message: message({ content: imageContent }),
+    }, SessionSeq(0))])
+    expect(pending(downscaled)[0]?.content).toEqual(imageContent)
+
+    const offloadedContent: ContentBlock[] = [{
+      type: 'image',
+      attachment: {
+        attachmentId: 'sha256:offloaded' as never,
+        mediaType: 'image/png',
+        bytes: 100,
+        width: 50,
+        height: 50,
+      },
+      offloaded: true,
+    }]
+    const offloadedProjected = project(ROOT, [event('team/message/queued', {
+      version: 2, teamId: TEAM, message: message({ content: offloadedContent }),
+    }, SessionSeq(0))])
+    expect(offloadedProjected.failure).toBeUndefined()
+    expect(pending(teamState(offloadedProjected))[0]?.content).toEqual(offloadedContent)
+
+    // A plain (non-literal) attachment reference skips excess-property checking, so
+    // the extra key reaches runtime validation instead of a compile-time rejection.
+    const unknownKeyAttachment = {
+      attachmentId: 'sha256:unknown' as never,
+      mediaType: 'image/png' as const,
+      bytes: 100,
+      width: 50,
+      height: 50,
+      unknownField: true,
+    }
+    const unknownKeyContent: ContentBlock[] = [{ type: 'image', attachment: unknownKeyAttachment }]
+    expect(() => projectTeam(ROOT, [event('team/message/queued', {
+      version: 2, teamId: TEAM, message: message({ content: unknownKeyContent }),
+    }, SessionSeq(0))])).toThrow(/team\/message\/queued payload is invalid/)
+  })
+
   it('projects current-team records independently from inherited records', () => {
     const records: SessionEvent[] = [
       event('team/member', { version: 2, teamId: TeamId('ancestor'), member: member() }, SessionSeq(0)),

@@ -74,6 +74,7 @@ async function setup(script: Script, options: SetupOptions = {}) {
     name: 'spawn',
     capabilities: { agentOptions: true, outputSchema: true, depthLimit: true, toolFilter: false, persona: false },
     inheritsParentContext: false,
+    imageInput: false,
     start: (request: ResolvedSubagentStartRequest) => startInProcessRun(request, {}),
   })
   ctx.llm.registerAdapter(['mock'], adapter)

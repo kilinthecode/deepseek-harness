@@ -330,15 +330,17 @@ export const SERVICE_API: readonly ServiceApiEntry[] = [
       },
       {
         signature: 'async spawnTeammate(caller: Agent, request: SpawnTeammateRequest): Promise<SpawnTeammateResult>',
-        description: 'Create one named, continuable direct child of the Team Lead.',
+        description: 'Create one named, continuable direct child of the Team Lead. When the first prompt has an image, the inherited child route (the Lead\'s current delegation route; spawn requests no per-child override) is checked before the provisioning `team/member` record, so a refusal leaves the name and a member slot available for a retry.',
         parameters: [{ name: 'caller', description: 'exact live Lead Agent.' }, { name: 'request', description: 'immutable name, description, prompt, context mode, provider, and cancellation.' }],
         returns: 'the active roster row.',
+        throws: ['{TeamError} `TEAM_IMAGES_UNSUPPORTED` when the first prompt has an image and the inherited route\'s declared modalities omit `image`.'],
       },
       {
         signature: 'async sendMessage(caller: Agent, request: SendTeamMessageRequest): Promise<SendTeamMessageResult>',
-        description: 'Queue one durable peer message, then attempt immediate delivery.',
+        description: 'Queue one durable peer message, then attempt immediate delivery. When content has an image, the resolved target route — the live root Agent\'s current delegation route for the Lead, or `dsh-subagent`\'s continuable-child probe for a teammate — is checked before the `team/message/queued` append, so a refusal never queues and a later message to the same target is unaffected.',
         parameters: [{ name: 'caller', description: 'exact live sending Team member.' }, { name: 'request', description: 'target name, content, and pre-queue cancellation.' }],
         returns: 'durable message identity and immediate-delivery observation.',
+        throws: ['{TeamError} `TEAM_IMAGES_UNSUPPORTED` when content has an image and the resolved target route\'s declared modalities omit `image`.'],
       },
       {
         signature: 'async createTask(caller: Agent, request: CreateTeamTaskRequest): Promise<TeamTaskView>',
@@ -6895,7 +6897,7 @@ export const TYPE_API: readonly TypeApiEntry[] = [
   },
   {
     name: 'SubagentProvider',
-    declaration: 'export interface SubagentProvider {\n    readonly name: string;\n    readonly capabilities: SubagentCapabilities;\n    readonly inheritsParentContext: boolean;\n    readonly agentRouteDefaults?: Readonly<{\n        provider: string;\n        model: string;\n    }>;\n    start(request: ResolvedSubagentStartRequest): Promise<SubagentRun>;\n    prepareContinuable?(request: ContinuableCreateRequest): Promise<ContinuableCreateSpec>;\n}',
+    declaration: 'export interface SubagentProvider {\n    readonly name: string;\n    readonly capabilities: SubagentCapabilities;\n    readonly inheritsParentContext: boolean;\n    readonly imageInput: boolean;\n    readonly agentRouteDefaults?: Readonly<{\n        provider: string;\n        model: string;\n    }>;\n    start(request: ResolvedSubagentStartRequest): Promise<SubagentRun>;\n    prepareContinuable?(request: ContinuableCreateRequest): Promise<ContinuableCreateSpec>;\n}',
   },
   {
     name: 'SubagentResult',

@@ -136,6 +136,8 @@ class SdkSubagentProvider implements SubagentProvider {
   readonly agentRouteDefaults: Readonly<{ provider: string; model: string }>
   // Context contract: an out-of-process SDK child starts fresh — no parent conversation crosses the process boundary.
   readonly inheritsParentContext = false
+  // The child process has its own attachment store; byte encoding across the boundary is deferred.
+  readonly imageInput = false
 
   constructor(readonly name: string, private readonly ctx: Context, private readonly config: ResolvedConfig) {
     this.agentRouteDefaults = Object.freeze({ provider: config.provider, model: config.model })

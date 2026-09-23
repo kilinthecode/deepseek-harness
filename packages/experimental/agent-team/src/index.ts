@@ -142,20 +142,33 @@ export class TeamService extends Service {
   }
 
   /**
-   * Create one named, continuable direct child of the Team Lead.
+   * Create one named, continuable direct child of the Team Lead. When the
+   * first prompt has an image, the inherited child route (the Lead's current
+   * delegation route; spawn requests no per-child override) is checked before
+   * the provisioning `team/member` record, so a refusal leaves the name and a
+   * member slot available for a retry.
    * @param caller - exact live Lead Agent.
    * @param request - immutable name, description, prompt, context mode, provider, and cancellation.
    * @returns the active roster row.
+   * @throws {TeamError} `TEAM_IMAGES_UNSUPPORTED` when the first prompt has an
+   *   image and the inherited route's declared modalities omit `image`.
    */
   async spawnTeammate(caller: Agent, request: SpawnTeammateRequest): Promise<SpawnTeammateResult> {
     return await this.roster.spawn(caller, request)
   }
 
   /**
-   * Queue one durable peer message, then attempt immediate delivery.
+   * Queue one durable peer message, then attempt immediate delivery. When
+   * content has an image, the resolved target route — the live root Agent's
+   * current delegation route for the Lead, or `dsh-subagent`'s
+   * continuable-child probe for a teammate — is checked before the
+   * `team/message/queued` append, so a refusal never queues and a later
+   * message to the same target is unaffected.
    * @param caller - exact live sending Team member.
    * @param request - target name, content, and pre-queue cancellation.
    * @returns durable message identity and immediate-delivery observation.
+   * @throws {TeamError} `TEAM_IMAGES_UNSUPPORTED` when content has an image
+   *   and the resolved target route's declared modalities omit `image`.
    */
   async sendMessage(caller: Agent, request: SendTeamMessageRequest): Promise<SendTeamMessageResult> {
     return await this.mailbox.send(caller, request)

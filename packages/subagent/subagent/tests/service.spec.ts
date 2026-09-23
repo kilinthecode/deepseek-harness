@@ -18,11 +18,19 @@ import SubagentRuntime, {
   type SubagentRunEndInfo,
   type SubagentStartRequest,
 } from '@deepseek-ai/dsh-subagent'
+import { assertContinuableChildAcceptsImages } from '@deepseek-ai/dsh-subagent/internal'
 import { Session, SessionId, type SessionEvent } from '@deepseek-ai/dsh-session'
 import SessionProjectionRegistry from '@deepseek-ai/dsh-session-projection'
 
 function fakeParent(id = 'parent-1'): Agent {
   return { id: SessionId(id) } as unknown as Agent
+}
+
+const imageBlock = {
+  type: 'image' as const,
+  attachment: {
+    attachmentId: 'att-1' as never, mediaType: 'image/png' as const, bytes: 1, width: 1, height: 1,
+  },
 }
 
 const ALL_CAPS: SubagentCapabilities = { agentOptions: true, outputSchema: true, depthLimit: true, toolFilter: true, persona: true }
@@ -39,6 +47,7 @@ function baseRequest(overrides: Partial<SubagentStartRequest> = {}): SubagentSta
 
 class StubProvider implements SubagentProvider {
   readonly inheritsParentContext = false
+  readonly imageInput: boolean
   startCount = 0
   lastRequest: ResolvedSubagentStartRequest | undefined
 
@@ -49,7 +58,10 @@ class StubProvider implements SubagentProvider {
       output: [{ type: 'text', text: 'ok' }],
       stopReason: 'completed',
     },
-  ) {}
+    imageInput = true,
+  ) {
+    this.imageInput = imageInput
+  }
 
   async start(request: ResolvedSubagentStartRequest): Promise<SubagentRun> {
     this.startCount += 1
@@ -181,6 +193,8 @@ describe('SubagentRuntime', () => {
       [{ type: 'text', text: 'hello' }],
       { signal: new AbortController().signal },
     )).rejects.toMatchObject({ code: 'CONTINUATION_UNAVAILABLE' })
+    await expect(assertContinuableChildAcceptsImages(subagents, fakeParent(), SessionId('child'), new AbortController().signal))
+      .rejects.toMatchObject({ code: 'CONTINUATION_UNAVAILABLE' })
   })
 
   it.each([
@@ -210,6 +224,29 @@ describe('SubagentRuntime', () => {
     expect(() => { assertSubagentMaxDepth(undefined) }).not.toThrow()
   })
 
+  it('refuses a one-shot image prompt before provider.start when the provider declares no image input', async () => {
+    const { subagents } = await service()
+    const provider = new StubProvider('no-image', ALL_CAPS, undefined, false)
+    subagents.registerProvider(provider)
+    await expect(subagents.start('no-image', baseRequest({ prompt: [{ type: 'text', text: 'see' }, imageBlock] })))
+      .rejects.toMatchObject({ code: 'UNSUPPORTED_CAPABILITY' })
+    expect(provider.startCount).toBe(0)
+  })
+
+  it('passes an image prompt straight to provider.start on an image-capable transport', async () => {
+    // The resolved-route check (llm route missing, undeclared, or refusing)
+    // is the in-process driver's own concern (`startInProcessRun`, covered in
+    // `subagent-in-process-driver/tests/inheritance.spec.ts`): this stub
+    // provider never resolves a route, so `start()` itself does nothing here
+    // beyond the transport check above.
+    const { subagents } = await service()
+    const provider = new StubProvider('image-ok')
+    subagents.registerProvider(provider)
+    const run = await subagents.start('image-ok', baseRequest({ prompt: [imageBlock] }))
+    await run.result
+    expect(provider.startCount).toBe(1)
+  })
+
   it('publishes lifecycle only after async provider start and keeps parent scope', async () => {
     const { ctx, subagents } = await service()
     const ready = Promise.withResolvers<SubagentRun>()
@@ -218,6 +255,7 @@ describe('SubagentRuntime', () => {
       name: 'deferred',
       capabilities: NO_CAPS,
       inheritsParentContext: false,
+      imageInput: false,
       start: () => ready.promise,
     })
     const parent = fakeParent('delegator')
@@ -261,6 +299,7 @@ describe('SubagentRuntime', () => {
       name: 'failed',
       capabilities: NO_CAPS,
       inheritsParentContext: false,
+      imageInput: false,
       start: async () => { throw new Error('setup rolled back') },
     })
     const lifecycle = vi.fn()
@@ -290,6 +329,7 @@ describe('SubagentRuntime', () => {
       name: 'catalog-failure',
       capabilities: NO_CAPS,
       inheritsParentContext: false,
+      imageInput: false,
       start: () => Promise.resolve({
         id: childSession.id,
         localAgent,
@@ -343,6 +383,7 @@ describe('SubagentRuntime', () => {
       name: 'infra',
       capabilities: NO_CAPS,
       inheritsParentContext: false,
+      imageInput: false,
       async start() {
         return { id: SessionId('infra-child'), localAgent: undefined, result: failure.promise, async dispose() {} }
       },

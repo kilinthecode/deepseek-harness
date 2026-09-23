@@ -70,6 +70,8 @@ class ForkInProcessProvider implements SubagentProvider {
   }
   // Context contract: a forked child IS seeded with the parent's completed-turn prefix.
   readonly inheritsParentContext = true
+  // Same process, same attachment store: seeded and fresh durable image references stay valid.
+  readonly imageInput = true
 
   constructor(readonly name: string) {}
 

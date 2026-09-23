@@ -49,6 +49,7 @@ try {
       name: provider.name,
       capabilities: provider.capabilities,
       inheritsParentContext: provider.inheritsParentContext,
+      imageInput: provider.imageInput,
     }
   })
   const tools = toolNames.map((toolName) => {

@@ -4,12 +4,13 @@ import { randomUUID } from 'node:crypto'
 import type { Context } from '@deepseek-ai/cordis'
 import { brandString } from '@deepseek-ai/dsh-brand'
 import type { Agent } from '@deepseek-ai/dsh-agent'
-import { createUserMessage } from '@deepseek-ai/dsh-llm'
+import { contentHasImage, createUserMessage } from '@deepseek-ai/dsh-llm'
 import type { ContentBlock } from '@deepseek-ai/dsh-llm'
 import { SessionId } from '@deepseek-ai/dsh-session'
 import type { Session, SessionEvent } from '@deepseek-ai/dsh-session'
 import { steerHostSubagentPrompt } from '@deepseek-ai/dsh-subagent/internal'
 import { errorMessage, TeamError } from './error.ts'
+import { admitTeamContent, assertTeamTargetAcceptsImages } from './image-content.ts'
 import type { TeamJournal } from './journal.ts'
 import type { TeamRuntimeLifecycle } from './lifecycle.ts'
 import { readPersistedSession } from './persisted.ts'
@@ -113,7 +114,16 @@ export class TeamMailbox {
     const membership = this.roster.membership(caller)
     request.signal.throwIfAborted()
     const root = membership.root
-    const content = structuredClone(request.content)
+    const content = admitTeamContent(request.content)
+    if (contentHasImage(content)) {
+      // Resolve the target and its route before the transaction so the LLM
+      // I/O this refusal check needs does not hold the journal lock; the
+      // append below re-resolves the target against the current state and
+      // repeats the self-message check as defense in depth.
+      const preflightTarget = resolveActiveMember(root, this.journal.state(root), request.target)
+      if (preflightTarget.id === caller.id) throw new TeamError('a Team member cannot message itself', 'TEAM_SELF_MESSAGE')
+      await assertTeamTargetAcceptsImages(this.ctx, root, preflightTarget.id, request.signal)
+    }
     const queued = await this.journal.transact(root.id, async () => {
       request.signal.throwIfAborted()
       const state = this.journal.state(root)

@@ -22,6 +22,12 @@ import SubagentRuntime, {
   SubagentError,
   SUBAGENT_DESCRIPTOR_VERSION,
 } from '../src/index.ts'
+import {
+  assertContinuableChildAcceptsImages,
+  isAdjacentAgentSendMessageTool,
+  markAdjacentAgentSendMessageTool,
+  steerHostSubagentPrompt,
+} from '@deepseek-ai/dsh-subagent/internal'
 import type { SubagentRunEndInfo, SubagentRunInfo } from '../src/index.ts'
 import type { SubagentPromptRequestId } from '../src/control-types.ts'
 import * as SubagentInvariant from '../src/invariant.ts'
@@ -126,6 +132,13 @@ function startSpec(parent: Agent, provider = 'spawn', signal: AbortSignal = test
 
 function message(text: string) {
   return [{ type: 'text' as const, text }]
+}
+
+const imageBlock = {
+  type: 'image' as const,
+  attachment: {
+    attachmentId: 'att-1' as never, mediaType: 'image/png' as const, bytes: 1, width: 1, height: 1,
+  },
 }
 
 function hasUserText(events: readonly SessionEvent[], text: string): boolean {
@@ -519,6 +532,34 @@ describe('SubagentRuntime.startContinuable', () => {
     expect(hasUserText(loaded.events, 'child task')).toBe(true)
   })
 
+  it('appends the continuable return-guidance suffix when the child has the standard send_message tool', async () => {
+    const { ctx, parent } = await setup([textResponse('child done')])
+    ctx.tools.register(markAdjacentAgentSendMessageTool(defineTool({
+      name: 'send_message',
+      description: 'send a message to an adjacent Agent',
+      parameters: {},
+      output: {
+        schema: { type: 'object', additionalProperties: false, properties: {} },
+        render: () => [{ type: 'text', text: 'sent' }],
+      },
+      execute: () => Promise.resolve({}),
+    })))
+
+    const started = await ctx.subagents.startContinuable(startSpec(parent))
+    await waitNoActivation(ctx, started.childId)
+
+    const loaded = await loadStoredSession(ctx.sessionPersistence, started.childId)
+    const encodedParentId = JSON.stringify(parent.id)
+    expect(hasUserText(
+      loaded.events,
+      `Your parent agent id is ${encodedParentId}. Before you finish, send your result to that agent with `
+      + `send_message({ agent_id: ${encodedParentId}, message: "<self-contained result>" }). The parent shares `
+      + 'your workspace but does not automatically receive your transcript, tool output, or reasoning. Send '
+      + 'earlier messages as well when a finding changes what the parent should do next; sending a message '
+      + 'does not end your turn.',
+    )).toBe(true)
+  })
+
   it('uses a caller-reserved child identity and rejects a duplicate reservation', async () => {
     const release = Promise.withResolvers<undefined>()
     const adapter = new GatedAdapter([
@@ -558,6 +599,7 @@ describe('SubagentRuntime.startContinuable', () => {
       name: 'one-shot',
       capabilities: { agentOptions: false, outputSchema: false, depthLimit: false, toolFilter: false, persona: false },
       inheritsParentContext: false,
+      imageInput: false,
       start,
     })
 
@@ -900,16 +942,107 @@ describe('SubagentRuntime.startContinuable', () => {
     const resumed = await loadStoredSession(ctx.sessionPersistence, started.childId)
     expect(hasUserText(resumed.events, 'resume it')).toBe(true)
   })
+
+  it('refuses an image initial prompt against the resolved child route before any child write', async () => {
+    const { ctx, parent } = await setup([])
+    const resolve = vi.spyOn(ctx.llm, 'resolveModelInfo')
+      .mockResolvedValue({ inputModalities: ['text'] } as never)
+    const childId = SessionId('image-precheck-child')
+
+    await expect(ctx.subagents.startContinuable({
+      ...startSpec(parent),
+      childId,
+      request: { prompt: [imageBlock], parent },
+    })).rejects.toMatchObject({ code: 'MODEL_DOES_NOT_SUPPORT_IMAGES' })
+
+    expect(resolve).toHaveBeenCalledWith('mock', 'mock', testSignal)
+    expect(ctx.agents.get(childId)).toBeUndefined()
+    await expect(ctx.sessionPersistence.stat(childId, { signal: testSignal })).resolves.toBeUndefined()
+  })
+
+  it('accepts an image initial prompt against an explicit child route distinct from the text-only parent', async () => {
+    const { ctx, parent } = await setup([textResponse('child work')])
+    const resolve = vi.spyOn(ctx.llm, 'resolveModelInfo')
+      .mockImplementation(async (_provider, model) =>
+        (model === 'child-model' ? { inputModalities: ['text', 'image'] } : { inputModalities: ['text'] }) as never)
+
+    const started = await ctx.subagents.startContinuable({
+      ...startSpec(parent),
+      request: {
+        prompt: [imageBlock],
+        parent,
+        agentOptions: { provider: 'mock', model: 'child-model' },
+      },
+    })
+
+    // The parent's own route is `mock`/`mock`, which the mocked resolver
+    // above declines. A gate that read the parent's route instead of the
+    // resolved child route would wrongly refuse this admitted prompt.
+    expect(resolve).toHaveBeenCalledWith('mock', 'child-model', testSignal)
+    await waitNoActivation(ctx, started.childId)
+  })
+
+  it('refuses an image initial prompt against an explicit child route distinct from an image-capable parent', async () => {
+    const { ctx, parent } = await setup([])
+    const resolve = vi.spyOn(ctx.llm, 'resolveModelInfo')
+      .mockImplementation(async (_provider, model) =>
+        (model === 'child-model' ? { inputModalities: ['text'] } : { inputModalities: ['text', 'image'] }) as never)
+    const childId = SessionId('explicit-child-route-refuses-images')
+
+    await expect(ctx.subagents.startContinuable({
+      ...startSpec(parent),
+      childId,
+      request: {
+        prompt: [imageBlock],
+        parent,
+        agentOptions: { provider: 'mock', model: 'child-model' },
+      },
+    })).rejects.toMatchObject({ code: 'MODEL_DOES_NOT_SUPPORT_IMAGES' })
+
+    // The parent's own route accepts images under the mocked resolver above.
+    // A gate that read the parent's route instead of the resolved child
+    // route would wrongly admit this prompt.
+    expect(resolve).toHaveBeenCalledWith('mock', 'child-model', testSignal)
+    expect(ctx.agents.get(childId)).toBeUndefined()
+    await expect(ctx.sessionPersistence.stat(childId, { signal: testSignal })).resolves.toBeUndefined()
+  })
+
+  it('holds the delegating parent before the pending image-capability check resolves', async () => {
+    const adapter = new GatedAdapter([{ chunks: textResponse('outer') }])
+    const { ctx, parent } = await setupWith(adapter)
+    const outer = await ctx.subagents.startContinuable(startSpec(parent))
+    const middle = await vi.waitFor(() => {
+      const live = ctx.agents.get(outer.childId)
+      expect(live).toBeDefined()
+      return live!
+    })
+
+    const gate = Promise.withResolvers<{ inputModalities?: string[] }>()
+    vi.spyOn(ctx.llm, 'resolveModelInfo').mockReturnValue(gate.promise as never)
+    const innerChildId = SessionId('inner-image-child')
+
+    const starting = ctx.subagents.startContinuable({
+      ...startSpec(middle),
+      childId: innerChildId,
+      request: { prompt: [imageBlock], parent: middle },
+    })
+
+    // The image-capability check is still pending, but the ownership hold
+    // that must precede it, per this operation's before-first-await
+    // ordering, already registered — proving `middle` cannot naturally
+    // settle away while its own child creation is still deciding.
+    await vi.waitFor(() => {
+      expect(continuationActivations(ctx).get(middle.id)?.ownedChildren.has(innerChildId)).toBe(true)
+    })
+
+    gate.resolve({ inputModalities: ['text', 'image'] })
+    await starting
+    await waitNoActivation(ctx, innerChildId)
+    await waitNoActivation(ctx, outer.childId)
+  })
 })
 
 describe('continuable image Queue prompts', () => {
-  const imageBlock = {
-    type: 'image' as const,
-    attachment: {
-      attachmentId: 'att-1' as never, mediaType: 'image/png' as const, bytes: 1, width: 1, height: 1,
-    },
-  }
-
   it('refuses an image follow-up when the child model declines image input, leaving no partial message', async () => {
     const { ctx, parent } = await setup([textResponse('child work')])
     const started = await ctx.subagents.startContinuable(startSpec(parent))
@@ -1093,6 +1226,7 @@ describe('direct-child Queue residency routing', () => {
       name: 'retired',
       capabilities: { agentOptions: false, outputSchema: false, depthLimit: false, toolFilter: false, persona: false },
       inheritsParentContext: false,
+      imageInput: false,
       start: async () => { throw new Error('one-shot start is not used') },
       prepareContinuable: () => Promise.resolve({}),
     })
@@ -1326,6 +1460,57 @@ describe('continuable human steering delivery', () => {
       && event.data.target === 'next-step'
       && event.data.inserted.some(message => message.id === receipt.messageId))).toBe(true)
     expect(hasUserText(loaded.events, 'cold steer')).toBe(true)
+  })
+
+  it('delivers a host-protocol steer through steerHostSubagentPrompt', async () => {
+    const release = Promise.withResolvers<undefined>()
+    const adapter = new GatedAdapter([
+      { chunks: textResponse('first'), gate: release.promise },
+      { chunks: textResponse('host steered') },
+    ])
+    const { ctx, parent } = await setupWith(adapter)
+    parkParent(ctx, parent)
+    const started = await ctx.subagents.startContinuable(startSpec(parent))
+    await vi.waitFor(() => { expect(adapter.requests).toHaveLength(1) })
+    const child = ctx.agents.get(started.childId)!
+
+    const messageId = await steerHostSubagentPrompt(
+      ctx.subagents, parent, started.childId,
+      message('host steer'), { kind: 'user' }, testSignal,
+    )
+
+    expect(child.inbox.nextStep).toContainEqual(expect.objectContaining({
+      id: messageId,
+      content: message('host steer'),
+    }))
+
+    release.resolve(undefined)
+    await waitNoActivation(ctx, started.childId)
+  })
+})
+
+describe('adjacent-Agent send_message tool identity', () => {
+  it('marks and detects the standard send_message tool without changing its model-visible schema', () => {
+    const definition = defineTool({
+      name: 'send_message',
+      description: 'send a message',
+      parameters: {},
+      output: {
+        schema: { type: 'object', additionalProperties: false, properties: {} },
+        render: () => [{ type: 'text', text: 'sent' }],
+      },
+      execute: () => Promise.resolve({}),
+    })
+
+    expect(isAdjacentAgentSendMessageTool(definition)).toBe(false)
+    expect(isAdjacentAgentSendMessageTool(undefined)).toBe(false)
+
+    const marked = markAdjacentAgentSendMessageTool(definition)
+
+    expect(marked).toBe(definition)
+    expect(marked.name).toBe('send_message')
+    expect(marked.description).toBe('send a message')
+    expect(isAdjacentAgentSendMessageTool(marked)).toBe(true)
   })
 })
 
@@ -2600,6 +2785,28 @@ function settlementNotices(agent: Agent): { sender: string; text: string; summar
 }
 
 describe('continuable adjacent-Agent delivery', () => {
+  it('steers a model-authored message from a non-resident sender to a live direct child', async () => {
+    const { ctx, parent } = await setupWith(new GatedAdapter([
+      { chunks: textResponse('child reply') },
+    ]))
+    const started = await ctx.subagents.startContinuable(startSpec(parent))
+    const child = await vi.waitFor(() => {
+      const found = ctx.agents.get(started.childId)
+      expect(found).toBeDefined()
+      return found!
+    })
+
+    // `parent` is not itself a resident continuable child of anything, so
+    // this call falls through both adjacent-target checks into the
+    // ordinary steer-to-child delivery path.
+    await ctx.subagents.sendMessage(parent, started.childId, message('steered to child'), { signal: testSignal })
+
+    await vi.waitFor(() => {
+      expect(hasUserText(child.session.snapshotEvents(), 'steered to child')).toBe(true)
+    })
+    await waitNoActivation(ctx, started.childId)
+  })
+
   it('rejects a stale sender before resolving either adjacent target', async () => {
     const { ctx, parent } = await setup([])
     const stale = { ...parent, id: parent.id } as Agent
@@ -2717,6 +2924,283 @@ describe('continuable adjacent-Agent delivery', () => {
 
     releaseChild.resolve(undefined)
     await waitNoActivation(ctx, started.childId)
+  })
+
+  it('refuses a child-to-parent image message when the live parent route declines image input', async () => {
+    const releaseChild = Promise.withResolvers<undefined>()
+    const adapter = new GatedAdapter([{ chunks: textResponse('child answer'), gate: releaseChild.promise }])
+    const { ctx, parent } = await setupWith(adapter)
+    const started = await ctx.subagents.startContinuable(startSpec(parent))
+    const child = await vi.waitFor(() => {
+      const found = ctx.agents.get(started.childId)
+      expect(found).toBeDefined()
+      return found!
+    })
+    const resolve = vi.spyOn(ctx.llm, 'resolveModelInfo')
+      .mockResolvedValue({ inputModalities: ['text'] } as never)
+
+    await expect(ctx.subagents.sendMessage(child, parent.id, [imageBlock], {
+      signal: testSignal,
+    })).rejects.toMatchObject({ code: 'MODEL_DOES_NOT_SUPPORT_IMAGES' })
+
+    expect(resolve).toHaveBeenCalledWith('mock', 'mock', testSignal)
+    expect(parent.session.snapshotEvents().some(event => event.type === 'user/message'
+      && event.data.content.some(block => block.type === 'image'))).toBe(false)
+
+    releaseChild.resolve(undefined)
+    await waitNoActivation(ctx, started.childId)
+  })
+
+  it('checks the parent\'s live delegation route rather than its creation-time options', async () => {
+    const releaseChild = Promise.withResolvers<undefined>()
+    const adapter = new GatedAdapter([{ chunks: textResponse('child answer'), gate: releaseChild.promise }])
+    const { ctx, parent } = await setupWith(adapter)
+    const started = await ctx.subagents.startContinuable(startSpec(parent))
+    const child = await vi.waitFor(() => {
+      const found = ctx.agents.get(started.childId)
+      expect(found).toBeDefined()
+      return found!
+    })
+    const resolve = vi.spyOn(ctx.llm, 'resolveModelInfo')
+      .mockImplementation(async (_provider, model) =>
+        (model === 'switched-model' ? { inputModalities: ['text'] } : { inputModalities: ['text', 'image'] }) as never)
+    // The parent's logged request header names a different model than its
+    // creation options, e.g. after a mid-session model switch.
+    vi.spyOn(parent.session, 'requestHeader').mockReturnValue({
+      config: { provider: 'mock', model: 'switched-model' },
+    })
+
+    await expect(ctx.subagents.sendMessage(child, parent.id, [imageBlock], {
+      signal: testSignal,
+    })).rejects.toMatchObject({ code: 'MODEL_DOES_NOT_SUPPORT_IMAGES' })
+
+    expect(resolve).toHaveBeenCalledWith('mock', 'switched-model', testSignal)
+
+    releaseChild.resolve(undefined)
+    await waitNoActivation(ctx, started.childId)
+  })
+
+  it('delivers a child-to-parent image message when the live parent route accepts image input', async () => {
+    const releaseChild = Promise.withResolvers<undefined>()
+    const adapter = new GatedAdapter([
+      { chunks: textResponse('child answer'), gate: releaseChild.promise },
+      { chunks: textResponse('parent report ack') },
+    ])
+    const { ctx, parent } = await setupWith(adapter)
+    const started = await ctx.subagents.startContinuable(startSpec(parent))
+    const child = await vi.waitFor(() => {
+      const found = ctx.agents.get(started.childId)
+      expect(found).toBeDefined()
+      return found!
+    })
+    vi.spyOn(ctx.llm, 'resolveModelInfo').mockResolvedValue({ inputModalities: ['text', 'image'] } as never)
+
+    await ctx.subagents.sendMessage(child, parent.id, [imageBlock], { signal: testSignal })
+
+    await vi.waitFor(() => {
+      expect(adapter.requests.filter(request => request.sessionId === parent.id)).toHaveLength(1)
+    })
+    const delivered = parent.session.snapshotEvents().flatMap(event => event.type === 'user/message'
+      && event.data.source.kind === 'agent-message' ? [event.data] : [])[0]
+    expect(delivered?.content).toEqual([
+      { type: 'text', text: `Agent ${started.childId} sent a message: ` },
+      imageBlock,
+    ])
+
+    releaseChild.resolve(undefined)
+    await waitNoActivation(ctx, started.childId)
+  })
+
+  it('re-checks the sender disposal cutoff when a drain begins during a live parent image capability read', async () => {
+    const releaseChild = Promise.withResolvers<undefined>()
+    const adapter = new GatedAdapter([{ chunks: textResponse('child answer'), gate: releaseChild.promise }])
+    const { ctx, parent } = await setupWith(adapter)
+    const started = await ctx.subagents.startContinuable(startSpec(parent))
+    const child = await vi.waitFor(() => {
+      const found = ctx.agents.get(started.childId)
+      expect(found).toBeDefined()
+      return found!
+    })
+    const capability = Promise.withResolvers<{ inputModalities: string[] }>()
+    const readingCapability = Promise.withResolvers<undefined>()
+    vi.spyOn(ctx.llm, 'resolveModelInfo').mockImplementation(() => {
+      readingCapability.resolve(undefined)
+      return capability.promise as never
+    })
+
+    const delivery = ctx.subagents.sendMessage(child, parent.id, [imageBlock], { signal: testSignal })
+    try {
+      await readingCapability.promise
+      releaseChild.resolve(undefined)
+      const draining = drainManager(ctx)
+      capability.resolve({ inputModalities: ['text', 'image'] })
+
+      await expect(delivery).rejects.toMatchObject({ code: 'ACTIVATION_CLOSING' })
+      await draining
+    } finally {
+      releaseChild.resolve(undefined)
+      capability.resolve({ inputModalities: ['text', 'image'] })
+      await Promise.allSettled([delivery, drainManager(ctx)])
+    }
+  })
+
+  it('rejects a child-to-parent image message whose parent left the registry during the capability read', async () => {
+    const releaseChild = Promise.withResolvers<undefined>()
+    const adapter = new GatedAdapter([{ chunks: textResponse('child answer'), gate: releaseChild.promise }])
+    const { ctx, parent } = await setupWith(adapter)
+    const started = await ctx.subagents.startContinuable(startSpec(parent))
+    const child = await vi.waitFor(() => {
+      const found = ctx.agents.get(started.childId)
+      expect(found).toBeDefined()
+      return found!
+    })
+    const capability = Promise.withResolvers<{ inputModalities: string[] }>()
+    const readingCapability = Promise.withResolvers<undefined>()
+    vi.spyOn(ctx.llm, 'resolveModelInfo').mockImplementation(() => {
+      readingCapability.resolve(undefined)
+      return capability.promise as never
+    })
+
+    const delivery = ctx.subagents.sendMessage(child, parent.id, [imageBlock], { signal: testSignal })
+    await readingCapability.promise
+    const lookup = ctx.agents.get.bind(ctx.agents)
+    const unregistered = vi.spyOn(ctx.agents, 'get').mockImplementation(id => id === parent.id ? undefined : lookup(id))
+    capability.resolve({ inputModalities: ['text', 'image'] })
+
+    await expect(delivery).rejects.toMatchObject({ code: 'PARENT_UNAVAILABLE' })
+    unregistered.mockRestore()
+    expect(parent.session.snapshotEvents().some(event => event.type === 'user/message'
+      && event.data.content.some(block => block.type === 'image'))).toBe(false)
+
+    releaseChild.resolve(undefined)
+    await waitNoActivation(ctx, started.childId)
+  })
+
+  it('rejects a child-to-parent image message the caller aborted while the capability read was pending', async () => {
+    const releaseChild = Promise.withResolvers<undefined>()
+    const adapter = new GatedAdapter([{ chunks: textResponse('child answer'), gate: releaseChild.promise }])
+    const { ctx, parent } = await setupWith(adapter)
+    const started = await ctx.subagents.startContinuable(startSpec(parent))
+    const child = await vi.waitFor(() => {
+      const found = ctx.agents.get(started.childId)
+      expect(found).toBeDefined()
+      return found!
+    })
+    const capability = Promise.withResolvers<{ inputModalities: string[] }>()
+    const readingCapability = Promise.withResolvers<undefined>()
+    vi.spyOn(ctx.llm, 'resolveModelInfo').mockImplementation(() => {
+      readingCapability.resolve(undefined)
+      return capability.promise as never
+    })
+    const controller = new AbortController()
+
+    const delivery = ctx.subagents.sendMessage(child, parent.id, [imageBlock], { signal: controller.signal })
+    await readingCapability.promise
+    controller.abort('caller gave up')
+    // The adapter ignores caller cancellation and resolves anyway; the
+    // manager must still reject instead of steering the message through.
+    capability.resolve({ inputModalities: ['text', 'image'] })
+
+    await expect(delivery).rejects.toThrow()
+    expect(parent.session.snapshotEvents().some(event => event.type === 'user/message'
+      && event.data.content.some(block => block.type === 'image'))).toBe(false)
+
+    releaseChild.resolve(undefined)
+    await waitNoActivation(ctx, started.childId)
+  })
+})
+
+describe('continuable child route probe', () => {
+  it('reads a resident child route from its live Activation options, not the parent route', async () => {
+    const releaseChild = Promise.withResolvers<undefined>()
+    const adapter = new GatedAdapter([{ chunks: textResponse('child answer'), gate: releaseChild.promise }])
+    const { ctx, parent } = await setupWith(adapter)
+    const started = await ctx.subagents.startContinuable({
+      ...startSpec(parent),
+      request: { prompt: message('child task'), parent, agentOptions: { provider: 'mock', model: 'child-model' } },
+    })
+    await vi.waitFor(() => { expect(ctx.agents.get(started.childId)).toBeDefined() })
+    const resolve = vi.spyOn(ctx.llm, 'resolveModelInfo')
+      .mockResolvedValue({ inputModalities: ['text', 'image'] } as never)
+
+    await assertContinuableChildAcceptsImages(ctx.subagents, parent, started.childId, testSignal)
+
+    // The parent's own route is `mock`/`mock`; a probe that read the parent
+    // instead of the live child would call resolveModelInfo with that route.
+    expect(resolve).toHaveBeenCalledWith('mock', 'child-model', testSignal)
+    releaseChild.resolve(undefined)
+    await waitNoActivation(ctx, started.childId)
+  })
+
+  it('reads a cold direct child route from its persisted continuable descriptor, not the parent route', async () => {
+    const { ctx, parent } = await setup([textResponse('child work')])
+    const started = await ctx.subagents.startContinuable({
+      ...startSpec(parent),
+      request: { prompt: message('child task'), parent, agentOptions: { provider: 'mock', model: 'child-model' } },
+    })
+    await waitNoActivation(ctx, started.childId)
+    const resolve = vi.spyOn(ctx.llm, 'resolveModelInfo')
+      .mockResolvedValue({ inputModalities: ['text'] } as never)
+
+    await expect(assertContinuableChildAcceptsImages(ctx.subagents, parent, started.childId, testSignal))
+      .rejects.toMatchObject({ code: 'MODEL_DOES_NOT_SUPPORT_IMAGES' })
+
+    expect(resolve).toHaveBeenCalledWith('mock', 'child-model', testSignal)
+  })
+
+  it('surfaces a cold route read against a session removed since creation as NOT_RESUMABLE', async () => {
+    const { ctx, parent } = await setup([textResponse('child work')])
+    const started = await ctx.subagents.startContinuable(startSpec(parent))
+    await waitNoActivation(ctx, started.childId)
+    const cause = new Error('session store entry removed')
+    vi.spyOn(ctx.sessionQuery, 'observeSession').mockRejectedValueOnce(cause)
+
+    await expect(assertContinuableChildAcceptsImages(ctx.subagents, parent, started.childId, testSignal))
+      .rejects.toMatchObject({ code: 'NOT_RESUMABLE', cause })
+  })
+
+  it('falls back to the parent delegation route when the persisted descriptor is not continuable', async () => {
+    const { ctx, parent } = await setup([textResponse('one-shot reply')])
+    const run = await ctx.subagents.start('spawn', {
+      prompt: message('one-shot task'),
+      parent,
+      signal: testSignal,
+    })
+    await run.result
+    await run.dispose()
+    const resolve = vi.spyOn(ctx.llm, 'resolveModelInfo')
+      .mockResolvedValue({ inputModalities: ['text', 'image'] } as never)
+
+    // `run.id` is a one-shot child: its descriptor carries no `agentProvider`/
+    // `agentModel`, so the probe falls back to the parent's current route.
+    await assertContinuableChildAcceptsImages(ctx.subagents, parent, run.id, testSignal)
+
+    expect(resolve).toHaveBeenCalledWith('mock', 'mock', testSignal)
+  })
+
+  it('proceeds without a route when a live child and its parent both declare none', async () => {
+    const { ctx } = await setup([])
+    const routeless = await ctx.agentLoop.create(SessionId('routeless-probe-live'), {})
+    const started = await ctx.subagents.startContinuable(startSpec(routeless))
+    await vi.waitFor(() => { expect(ctx.agents.get(started.childId)).toBeDefined() })
+    const resolve = vi.spyOn(ctx.llm, 'resolveModelInfo')
+
+    await assertContinuableChildAcceptsImages(ctx.subagents, routeless, started.childId, testSignal)
+
+    expect(resolve).not.toHaveBeenCalled()
+    await waitNoActivation(ctx, started.childId)
+  })
+
+  it('proceeds without a route when a cold child and its parent both declare none', async () => {
+    const { ctx } = await setup([])
+    const routeless = await ctx.agentLoop.create(SessionId('routeless-probe-cold'), {})
+    const started = await ctx.subagents.startContinuable(startSpec(routeless))
+    await waitNoActivation(ctx, started.childId)
+    const resolve = vi.spyOn(ctx.llm, 'resolveModelInfo')
+
+    await assertContinuableChildAcceptsImages(ctx.subagents, routeless, started.childId, testSignal)
+
+    expect(resolve).not.toHaveBeenCalled()
   })
 })
 

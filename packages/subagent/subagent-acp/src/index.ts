@@ -153,6 +153,8 @@ class AcpProvider implements SubagentProvider {
   }
   // Context contract: an out-of-process ACP child starts fresh — no parent conversation crosses the process boundary.
   readonly inheritsParentContext = false
+  // No image handling exists in the ACP protocol mapping yet; refuse loudly instead of dropping the block.
+  readonly imageInput = false
 
   constructor(readonly name: string, private readonly ctx: Context, private readonly config: ResolvedConfig) {}
 

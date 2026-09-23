@@ -185,6 +185,7 @@ You are a delegated subagent: your permission scope was fixed when you were star
 这些限制说明该 seam 何时不合适，或何时需要特别的运维注意。它们是当前包约束，不是通用委派对比或任务积压。
 
 - **ACP 子级仍为一次性，且无法通过追踪枚举**——ACP 运行在父级会话语料中没有本地子会话，远程提供方需要 Activation 所有权约定才能支持可继续子级。
+- **只有同进程 child 接受图片提示词**——`spawn` 与 `fork` 共享 parent 的附件存储，声明 `imageInput: true`；ACP、Claude Code、Codex 与 DSH SDK 提供方声明 `imageInput: false`，在 `start()` 阶段、任何子进程或 Agent 出现之前拒绝图片提示词。具备该能力的提供方，其解析出的 child 路由会在可继续创建、一次性 `start()` 与每次后续投递时以同一方式检查；声明的输入模态省略 `image` 的路由会以 `MODEL_DOES_NOT_SUPPORT_IMAGES` 拒绝。
 - **仅允许相邻模型消息**——`sendMessage()` 要求确切在线 sender；每个 sender 都可以指定直接可继续 child，只有具备驻留可继续 Activation 的 sender 可以指定自己的直接 parent。浏览器提示使用独立的人类 Queue 或 Steer 控制路径。
 - **child 到 parent 的投递要求直接 parent 保持在线**——服务没有持久 parent mailbox；parent 缺失时会拒绝消息，而非接受无法唤醒的工作。
 - **取消收敛期间存在唤醒缺口**——中断信号发出后、driver 进入 idle 前被接受的后续消息会保持排队，直到另一条唤醒发送到达。

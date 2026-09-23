@@ -128,11 +128,15 @@ The [Agent Teams Agent Note](../../../.agents/notes/implemented/feature/2026-08-
 
 Every ordinary runtime root is the implicit Lead of a Team whose `TeamId` equals its `SessionId`; there is no creation event, and durable state begins with the first member, message, or task record. `spawnTeammate()` first appends and flushes a `provisioning` member record, then asks the configured provider to create the reserved child; a provider failure appends a durable `failed` member. A fresh child starts with no Lead history; a fork child captures the Lead's completed-turn prefix once. Recovery reconciles an unterminated provisioning record against the child's independently persisted Session: a matching direct-parent and continuable descriptor plus a recorded initial user message produces `active`, and anything else produces `failed`. If recovery wins a same-process race, the creator accepts the terminal state or reports `TEAM_PROVISIONING_CONFLICT` and drains the child. Names are reserved by the first provisioning record and never reused.
 
+When the first prompt has an image, `spawnTeammate()` checks it against the teammate's inherited route (the Lead's current delegation route, since spawn requests no per-child override) before the `provisioning` member record, so a refusal leaves the name and a member slot available for a retry.
+
 ### Durable mailbox
 
 `sendMessage()` validates peer membership, appends `team/message/queued`, and flushes before attempting delivery. The target message begins with `Team message <id> from <name>:` and keeps the same id and sender in `TeamMessageSource`. A target receipt is acknowledged with `team/message/delivered` only after the target Session durably holds the message identity in its pending inbox or recorded history. Immediate admissions are serialized per target in durable queue order; recovery dispatches queued-minus-delivered records in the same order. Delivery folds both live and persisted target inbox/history state before retrying, so a crash between inbox acceptance and model claim does not duplicate the message. The guarantee is process-local retry plus target-Session de-duplication, not cross-process exactly-once delivery.
 
 Lead delivery calls `Agent.steer()` directly. Teammate delivery uses the continuation owner's host-only Steer path, which preserves the Team sender source while authorizing the Lead-to-child edge and cold-resuming inactive targets. Sibling messages never impersonate the Lead through the public adjacent-Agent messaging operation.
+
+When content has an image, `sendMessage()` checks the resolved target route — the live root Agent's current delegation route for the Lead, or `dsh-subagent`'s continuable-child probe for a teammate — before the `team/message/queued` append and outside the journal transaction, so the LLM route lookup never holds the journal lock. The Lead's current delegation route follows its latest logged request, the same source a teammate's own creation inherits, so a Lead that switched models after creation is checked against its current model, not the one it started with. A refusal never queues: nothing is appended, and a following message to the same target is unaffected. Admission also strips a sender's or a replayed copy's `offloaded` mark from every image block before it enters the mailbox or a spawn prompt, because offload is a per-target compaction decision the receiver makes about its own request history.
 
 ### Shared task board
 
@@ -208,6 +212,8 @@ These limits describe what a team cannot do yet or what needs special operationa
 - **Flat immutable roster** — only the Lead creates direct teammates; there is no nested Team, rename, deletion, or name reuse.
 - **No automatic ownership release** — inactivity, interruption, process exit, and failed work do not release a task owner.
 - **Mailbox is not cross-process exactly-once** — concurrent harness processes over one Team are unsupported.
+- **Teammates inherit the Lead's delegation route** — `spawnTeammate()` requests no per-child `agentOptions`, so an image-bearing initial prompt or peer message can only reach a teammate whose inherited route accepts images; picking a different model for one teammate is a model-selection feature outside this package.
+- **Lead-target route check can lag a pending model switch** — the mailbox's Lead-as-target gate and `sendToParent` read `parentAgentOptionsForDelegation`, the Lead's last logged request route: a pending switch to an image-capable model can still refuse a teammate's image to the Lead until the Lead's next request logs the new route, and a pending switch to a text-only model admits the image, after which the runtime projects it to placeholder text.
 
 <a id="dev-note"></a>
 ### Dev Note

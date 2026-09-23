@@ -81,6 +81,7 @@ async function settleSubagent(
     name: info.provider,
     capabilities: { agentOptions: false, outputSchema: false, depthLimit: false, toolFilter: false, persona: false },
     inheritsParentContext: false,
+    imageInput: false,
     async start() {
       return {
         id: info.id,
@@ -679,6 +680,7 @@ describe('HarnessSdkJsonRpcServer', () => {
         name: 'reused',
         capabilities: { agentOptions: false, outputSchema: false, depthLimit: false, toolFilter: false, persona: false },
         inheritsParentContext: false,
+        imageInput: false,
         start() {
           const result = results[starts]
           starts += 1
@@ -776,6 +778,7 @@ describe('HarnessSdkJsonRpcServer', () => {
         name: 'reused-provider',
         capabilities: { agentOptions: false, outputSchema: false, depthLimit: false, toolFilter: false, persona: false },
         inheritsParentContext: false,
+        imageInput: false,
         start: () => Promise.resolve({
           id: SessionId('provider-reuse-child'),
           localAgent: child.agent,
@@ -794,6 +797,7 @@ describe('HarnessSdkJsonRpcServer', () => {
         name: 'reused-provider',
         capabilities: { agentOptions: false, outputSchema: false, depthLimit: false, toolFilter: false, persona: false },
         inheritsParentContext: false,
+        imageInput: false,
         start: () => Promise.resolve({
           id: SessionId('provider-reuse-child'),
           localAgent: undefined,
@@ -876,6 +880,7 @@ describe('HarnessSdkJsonRpcServer', () => {
         name: 'fork',
         capabilities: { agentOptions: false, outputSchema: false, depthLimit: false, toolFilter: false, persona: false },
         inheritsParentContext: true,
+        imageInput: false,
         start: () => Promise.resolve({
           id: SessionId('fallback-child-session'),
           localAgent: fallbackChild,

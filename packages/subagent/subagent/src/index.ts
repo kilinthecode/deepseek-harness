@@ -36,6 +36,7 @@ import type {} from '@deepseek-ai/dsh-attachment'
 import { scopeTarget } from '@deepseek-ai/dsh-scope'
 import type { Scoped } from '@deepseek-ai/dsh-scope'
 import { assertObjectJsonSchema } from '@deepseek-ai/dsh-tools'
+import { contentHasImage } from '@deepseek-ai/dsh-llm'
 import type { ContentBlock, MessageId, MessageSource } from '@deepseek-ai/dsh-llm'
 import type { Agent } from '@deepseek-ai/dsh-agent'
 import type { SessionId } from '@deepseek-ai/dsh-session'
@@ -567,6 +568,7 @@ export class SubagentRuntime extends TypertRemoteService {
       ...request.label !== undefined ? { label: request.label } : {},
     })
     const resolved: ResolvedSubagentStartRequest = { ...request, descriptor }
+    if (contentHasImage(request.prompt)) this.assertStartImageCapableTransport(provider)
     const run = await provider.start(resolved)
     const child = run.localAgent?.session
     if (child !== undefined) {
@@ -656,6 +658,26 @@ export class SubagentRuntime extends TypertRemoteService {
           'UNSUPPORTED_CAPABILITY',
         )
       }
+    }
+  }
+
+  /**
+   * Refuse a one-shot image prompt synchronously, before `provider.start` and
+   * before any other await in this call: an incapable transport is rejected
+   * outright before any process spawn. A capable in-process transport's
+   * resolved child route is checked later, inside the shared driver
+   * (`startInProcessRun`) right after it captures delegated policy overrides
+   * and before it calls `ctx.agents.create()` — not here, so this method
+   * never introduces an await ahead of `provider.start`. Introducing one here
+   * would run that provider's own pre-first-await captures (delegated policy
+   * overrides, the fork seed) after this call's await instead of before it.
+   */
+  private assertStartImageCapableTransport(provider: SubagentProvider): void {
+    if (!provider.imageInput) {
+      throw new SubagentError(
+        `subagent provider "${provider.name}" does not accept image input`,
+        'UNSUPPORTED_CAPABILITY',
+      )
     }
   }
 }

@@ -2956,7 +2956,7 @@ export interface Config {
 
 Depends on: `Volatile` (`@deepseek-ai/cordis`)
 
-Source: [`packages/subagent/subagent/src/index.ts:192`](../packages/subagent/subagent/src/index.ts)
+Source: [`packages/subagent/subagent/src/index.ts:193`](../packages/subagent/subagent/src/index.ts)
 
 <a id="deepseek-aidsh-subagent-acp"></a>
 
