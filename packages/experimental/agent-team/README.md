@@ -130,6 +130,8 @@ Every ordinary runtime root is the implicit Lead of a Team whose `TeamId` equals
 
 When the first prompt has an image, `spawnTeammate()` checks it against the teammate's inherited route (the Lead's current delegation route, since spawn requests no per-child override) before the `provisioning` member record, so a refusal leaves the name and a member slot available for a retry.
 
+`resolveMemberImageSupport()` maps each member's live LLM route — the Lead's current delegation route, or a teammate's continuable-child probe against the Team Lead — to `'supported'`, `'unsupported'`, or `'undeclared'`, and omits that member's map entry when resolution fails. `listMembers()` stays synchronous.
+
 ### Durable mailbox
 
 `sendMessage()` validates peer membership, appends `team/message/queued`, and flushes before attempting delivery. The target message begins with `Team message <id> from <name>:` and keeps the same id and sender in `TeamMessageSource`. A target receipt is acknowledged with `team/message/delivered` only after the target Session durably holds the message identity in its pending inbox or recorded history. Immediate admissions are serialized per target in durable queue order; recovery dispatches queued-minus-delivered records in the same order. Delivery folds both live and persisted target inbox/history state before retrying, so a crash between inbox acceptance and model claim does not duplicate the message. The guarantee is process-local retry plus target-Session de-duplication, not cross-process exactly-once delivery.

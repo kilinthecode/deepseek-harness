@@ -34,10 +34,11 @@ import type { LlmCallConfig, LlmCallConfigAdapterDefaults } from './call-config.
 import { HarnessError, INVALID_CREDENTIAL_CODE } from './error.ts'
 import { normalizeLlmFailure } from './adapter-failure.ts'
 import { normalizeApiKey } from './api-key.ts'
+import type { ImageAttachmentAccess } from './content.ts'
 import {
-  contentHasFile, contentHasImage, fileHandleText, projectFilesToText, projectImagesForTextModel,
+  contentHasFile, contentHasImage, fileHandleText, projectFilesToText, projectImagesForTextModel, resolveImageAttachmentAccess,
 } from './content.ts'
-import type { FileAttachmentRef } from '@deepseek-ai/dsh-attachment'
+import type { FileAttachmentRef, ImageAttachmentRef } from '@deepseek-ai/dsh-attachment'
 
 export * from './attribution.ts'
 export * from './brand.ts'
@@ -990,6 +991,22 @@ export class LlmRuntime extends TypertRemoteService {
   }
 
   /**
+   * Resolve the current execution-world read path of one durable image
+   * reference through the mounted attachment and filesystem providers.
+   */
+  private imageReadAccess(ref: ImageAttachmentRef): ImageAttachmentAccess | undefined {
+    const fs = this.ctx.get('fs') as { processPathFromHostPath(hostPath: string): string | undefined } | undefined
+    const attachments = this.ctx.get('attachments')
+    if (fs === undefined || attachments === undefined) return undefined
+    try {
+      return resolveImageAttachmentAccess(attachments, hostPath => fs.processPathFromHostPath(hostPath), ref)
+    } catch (_error: unknown) {
+      // A malformed durable reference degrades this occurrence instead of failing the request.
+      return undefined
+    }
+  }
+
+  /**
    * Resolve the current execution-world read path of one durable file
    * reference through the mounted attachment and filesystem providers.
    */
@@ -1054,7 +1071,7 @@ export class LlmRuntime extends TypertRemoteService {
       if (modelInfo.inputModalities !== undefined
         && !modelInfo.inputModalities.includes('image')
         && projectedMessages.some(message => contentHasImage(message.content))) {
-        projectedMessages = projectImagesForTextModel(projectedMessages)
+        projectedMessages = projectImagesForTextModel(projectedMessages, ref => this.imageReadAccess(ref))
       }
       const projectedOptions = projectedMessages === resolvedOptions.messages
         ? resolvedOptions

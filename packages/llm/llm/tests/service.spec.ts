@@ -1070,7 +1070,7 @@ describe('LlmRuntime', () => {
     expect(waterfall[0]?.messages[0]?.content).toEqual([{ type: 'image', attachment }])
     expect(seen[0]?.messages[0]?.content).toEqual([{
       type: 'text',
-      text: '[image omitted because this model accepts text only; attachment sha256:aaaaaaaa]',
+      text: '[image omitted because this model accepts text only; sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.]',
     }])
 
     const frozen = Object.freeze({
@@ -1084,6 +1084,60 @@ describe('LlmRuntime', () => {
     await collect(ctx.llm.stream(frozen))
     expect(Object.isFrozen(seen[1])).toBe(true)
     expect(Object.isFrozen(seen[1]?.messages)).toBe(true)
+  })
+
+  it('projects text-only images through access resolution and degrades a malformed ref', async () => {
+    const attachment = {
+      attachmentId: AttachmentId(`sha256:${'a'.repeat(64)}`),
+      mediaType: 'image/png' as const,
+      bytes: 3,
+      width: 1,
+      height: 1,
+    }
+    const cases = [
+      {
+        name: 'mapped execution-world path',
+        attachments: { imageHostPath: () => '/host/img.png' },
+        fs: { processPathFromHostPath: () => '/sandbox/img.png' },
+        expected: '/sandbox/img.png',
+      },
+      {
+        name: 'invalid durable reference',
+        attachments: { imageHostPath: () => { throw new Error('invalid ref') } },
+        fs: { processPathFromHostPath: () => '/sandbox/img.png' },
+        expected: `[image omitted because this model accepts text only; ${attachment.attachmentId}.]`,
+      },
+    ]
+    for (const fixture of cases) {
+      const ctx = new Context()
+      ctx.provide('attachments', fixture.attachments as never)
+      ctx.provide('fs', fixture.fs as never)
+      await ctx.plugin(LlmRuntime)
+      const seen: GenerateOptions[] = []
+      const adapter = new class extends ScriptedAdapter {
+        override resolveModel(provider: string, model: string): Promise<LlmResolvedModelInfo> {
+          return Promise.resolve({ provider, id: model, name: model, inputModalities: ['text'] })
+        }
+
+        override async * stream(options: GenerateOptions): AsyncIterable<StreamChunk> {
+          seen.push(options)
+          yield * super.stream(options)
+        }
+      }(SCRIPT)
+      ctx.llm.registerAdapter(['route'], adapter)
+      await collect(ctx.llm.stream({
+        provider: 'route',
+        model: 'text-only',
+        messages: [createUserMessage({
+          content: [{ type: 'image', attachment }],
+          source: { kind: 'test' },
+        })],
+      }))
+      const projected = seen[0]?.messages[0]?.content[0]
+      expect(projected, fixture.name).toMatchObject({ type: 'text' })
+      if (projected?.type !== 'text') throw new Error(`expected projected text for ${fixture.name}`)
+      expect(projected.text, fixture.name).toContain(fixture.expected)
+    }
   })
 
   it('passes cancellation through exact-model resolution', async () => {

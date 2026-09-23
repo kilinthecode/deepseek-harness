@@ -7,6 +7,7 @@ import type { Agent } from '@deepseek-ai/dsh-agent'
 import AgentLoop from '@deepseek-ai/dsh-agent-loop'
 import { mountAgentLoopTestDependencies } from '@deepseek-ai/dsh-agent-loop-testkit'
 import { ToolCallId, createUserMessage, createToolResultMessage } from '@deepseek-ai/dsh-llm'
+import type { ImageInputSupport } from '@deepseek-ai/dsh-llm'
 import { AttachmentId } from '@deepseek-ai/dsh-attachment'
 import { scopeOf } from '@deepseek-ai/dsh-scope'
 import { SessionId, SessionLogOffset } from '@deepseek-ai/dsh-session'
@@ -164,6 +165,8 @@ describe('dsh-tool-team', () => {
         expect(schema?.properties).toHaveProperty('target')
         expect(schema?.properties).not.toHaveProperty('id')
         expect(schema?.properties).not.toHaveProperty('name')
+        expect(schema?.properties).toHaveProperty('acceptsImages')
+        expect(schema?.properties?.acceptsImages?.enum).toEqual(['supported', 'unsupported', 'undeclared'])
         expect(schema?.properties?.status?.enum).toEqual(['running', 'inactive', 'provisioning', 'failed'])
       }
       expect(ctx.agentTeams.listMembers(lead)).toEqual([member])
@@ -708,6 +711,41 @@ describe('dsh-tool-team', () => {
       && event.data.source.kind === 'user')).toHaveLength(1)
     await execute(ctx, lead, 'interrupt_agent', { target: 'cold-worker' })
     await vi.waitFor(() => { expect(ctx.agents.get(childId)).toBeUndefined() }, { timeout: 5_000 })
+  })
+
+  it('merges acceptsImages into list_agents rows and omits it when resolution fails', async () => {
+    const { ctx, lead } = await setup(['hang'])
+    const spawned = await execute(ctx, lead, 'spawn_teammate', {
+      name: 'reviewer', description: 'review changes', prompt: 'wait for work',
+    })
+    const childId = spawnedChildId(ctx, lead, spawned)
+    const child = await waitRunning(ctx, childId)
+    vi.spyOn(lead.session, 'requestHeader').mockReturnValue({
+      config: { provider: 'mock', model: 'lead-model' },
+    })
+    vi.spyOn(ctx.llm, 'resolveModelInfo').mockImplementation(async (_provider, model) => (
+      model === 'lead-model'
+        ? { inputModalities: ['text', 'image'] }
+        : { inputModalities: ['text'] }
+    ) as never)
+    const listed = JSON.parse(text(await execute(ctx, child, 'list_agents', {}))) as Array<{
+      target: string
+      acceptsImages?: ImageInputSupport
+    }>
+    expect(listed).toEqual([
+      expect.objectContaining({ target: 'lead', acceptsImages: 'supported' }),
+      expect.objectContaining({ target: 'reviewer', acceptsImages: 'unsupported' }),
+    ])
+    vi.spyOn(ctx.llm, 'resolveModelInfo').mockRejectedValue(new Error('catalog down'))
+    const omitted = JSON.parse(text(await execute(ctx, lead, 'list_agents', {}))) as Array<{
+      target: string
+      acceptsImages?: ImageInputSupport
+    }>
+    expect(omitted).toHaveLength(2)
+    expect(omitted.map(row => row.target)).toEqual(['lead', 'reviewer'])
+    expect(omitted.every(row => row.acceptsImages === undefined)).toBe(true)
+    await execute(ctx, lead, 'interrupt_agent', { target: 'reviewer' })
+    await waitNoAgent(ctx, childId)
   })
 
   it('fails safely without a calling Agent and has the function-plugin export shape', async () => {

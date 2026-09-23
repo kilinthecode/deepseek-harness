@@ -2093,3 +2093,81 @@ describe('Team mailbox and waiting', () => {
     await target.whenIdle()
   })
 })
+
+describe('Team member image-input discovery', () => {
+  it.each([
+    [{ inputModalities: ['text', 'image'] }, 'supported'],
+    [{ inputModalities: ['text'] }, 'unsupported'],
+    [{}, 'undeclared'],
+  ] as const)('maps the Lead live delegation route to %s', async (info, expected) => {
+    const { ctx, lead } = await setup([])
+    vi.spyOn(ctx.llm, 'resolveModelInfo').mockResolvedValue(info as never)
+    const support = await ctx.agentTeams.resolveMemberImageSupport(lead, SIGNAL)
+    expect([...support]).toEqual([[lead.id, expected]])
+  })
+
+  it('reads the Lead live delegation route rather than its creation-time options', async () => {
+    const { ctx, lead } = await setup([])
+    const resolve = vi.spyOn(ctx.llm, 'resolveModelInfo').mockResolvedValue({ inputModalities: ['text'] } as never)
+    vi.spyOn(lead.session, 'requestHeader').mockReturnValue({
+      config: { provider: 'mock', model: 'switched-model' },
+    })
+    const support = await ctx.agentTeams.resolveMemberImageSupport(lead, SIGNAL)
+    expect(support.get(lead.id)).toBe('unsupported')
+    expect(resolve).toHaveBeenCalledWith('mock', 'switched-model', SIGNAL)
+  })
+
+  it('resolves a live teammate route from the Team Lead even when a teammate lists', async () => {
+    const { ctx, lead } = await setup(['hang'])
+    const started = await spawn(ctx, lead, 'reviewer')
+    const child = await waitRunning(ctx, started.member.id)
+    vi.spyOn(lead.session, 'requestHeader').mockReturnValue({
+      config: { provider: 'mock', model: 'lead-model' },
+    })
+    const resolve = vi.spyOn(ctx.llm, 'resolveModelInfo').mockImplementation(async (_provider, model) => (
+      model === 'lead-model'
+        ? { inputModalities: ['text', 'image'] }
+        : { inputModalities: ['text'] }
+    ) as never)
+    const fromLead = await ctx.agentTeams.resolveMemberImageSupport(lead, SIGNAL)
+    const fromTeammate = await ctx.agentTeams.resolveMemberImageSupport(child, SIGNAL)
+    expect(fromLead.get(lead.id)).toBe('supported')
+    expect(fromLead.get(child.id)).toBe('unsupported')
+    expect([...fromTeammate]).toEqual([...fromLead])
+    expect(resolve).toHaveBeenCalledWith('mock', 'lead-model', SIGNAL)
+    expect(resolve).toHaveBeenCalledWith('mock', 'mock', SIGNAL)
+    child.cancel({ kind: 'parent' })
+    await child.whenIdle()
+  })
+
+  it('omits a member whose model-info resolution fails and keeps resolved peers', async () => {
+    const { ctx, lead } = await setup(['hang'])
+    const started = await spawn(ctx, lead, 'reviewer')
+    const child = await waitRunning(ctx, started.member.id)
+    vi.spyOn(lead.session, 'requestHeader').mockReturnValue({
+      config: { provider: 'mock', model: 'lead-model' },
+    })
+    vi.spyOn(ctx.llm, 'resolveModelInfo').mockImplementation(async (_provider, model) => {
+      if (model === 'mock') throw new Error('child catalog miss')
+      return { inputModalities: ['text', 'image'] } as never
+    })
+    const support = await ctx.agentTeams.resolveMemberImageSupport(child, SIGNAL)
+    expect([...support]).toEqual([[lead.id, 'supported']])
+    child.cancel({ kind: 'parent' })
+    await child.whenIdle()
+  })
+
+  it('omits the Lead when its route has no provider or model', async () => {
+    const ctx = new Context()
+    contexts.push(ctx)
+    await mountAgentLoopTestDependencies(ctx)
+    const storageRoot = mkdtempSync(join(tmpdir(), 'dsh-team-noroute-'))
+    roots.push(storageRoot)
+    await ctx.plugin(JsonlSessionPersistence, { root: storageRoot })
+    await ctx.plugin(AgentLoop, { agents: [] })
+    await ctx.plugin(SubagentService)
+    const lead = await ctx.agentLoop.create(SessionId('lead-no-route'), {})
+    const service = new TeamService(ctx)
+    expect([...(await service.resolveMemberImageSupport(lead, SIGNAL))]).toEqual([])
+  })
+})

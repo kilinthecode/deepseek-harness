@@ -1,0 +1,17 @@
+version: 1
+scenario: text-only-image-placeholder
+profile: headless
+composition: text-only-image-placeholder
+recording: authored
+header:
+  class: text-only-image-placeholder
+  pin: true
+  changes: 1
+  promptChanges: 1
+replay:
+  override: true
+input:
+  attachments:
+    - id: sha256:9fa0f2ae2b655c877690c6ed5649dad9f248147f7e21d0f8011636c20d627162
+      mediaType: image/png
+      data: iVBORw0KGgoAAAANSUhEUgAAAAgAAAAICAIAAABLbSncAAAAEklEQVR4nGP8z4AdMOEQH6QSAM1BAQ/oQeJvAAAAAElFTkSuQmCC

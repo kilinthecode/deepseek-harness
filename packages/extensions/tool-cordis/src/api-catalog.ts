@@ -329,6 +329,12 @@ export const SERVICE_API: readonly ServiceApiEntry[] = [
         returns: 'Lead and teammate rows in creation order.',
       },
       {
+        signature: 'async resolveMemberImageSupport( caller: Agent, signal: AbortSignal, ): Promise<ReadonlyMap<TeamMemberView[\'id\'], ImageInputSupport>>',
+        description: 'Resolve each roster member\'s image-input support from its live LLM route. The Lead uses the root\'s current delegation route; a teammate uses the continuable-child probe against that same root so a teammate caller cannot fail the probe. A member whose route or model info cannot be resolved has its map entry omitted.',
+        parameters: [{ name: 'caller', description: 'exact live Team member requesting the listing.' }, { name: 'signal', description: 'caller cancellation for route and model-info resolution.' }],
+        returns: 'member ids mapped to `\'supported\'`, `\'unsupported\'`, or `\'undeclared\'`.',
+      },
+      {
         signature: 'async spawnTeammate(caller: Agent, request: SpawnTeammateRequest): Promise<SpawnTeammateResult>',
         description: 'Create one named, continuable direct child of the Team Lead. When the first prompt has an image, the inherited child route (the Lead\'s current delegation route; spawn requests no per-child override) is checked before the provisioning `team/member` record, so a refusal leaves the name and a member slot available for a retry.',
         parameters: [{ name: 'caller', description: 'exact live Lead Agent.' }, { name: 'request', description: 'immutable name, description, prompt, context mode, provider, and cancellation.' }],
@@ -5098,6 +5104,10 @@ export const TYPE_API: readonly TypeApiEntry[] = [
   {
     name: 'ImageBlock',
     declaration: 'export interface ImageBlock {\n    type: \'image\';\n    attachment: ImageAttachmentRef;\n    offloaded?: true;\n}',
+  },
+  {
+    name: 'ImageInputSupport',
+    declaration: 'export type ImageInputSupport = \'supported\' | \'unsupported\' | \'undeclared\';',
   },
   {
     name: 'ImageMediaType',

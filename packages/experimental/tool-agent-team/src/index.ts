@@ -5,6 +5,7 @@ import z from '@deepseek-ai/schemastery'
 import type { Agent } from '@deepseek-ai/dsh-agent'
 import { TeamTaskId } from '@deepseek-ai/dsh-experimental-agent-team'
 import type { TeamMemberView } from '@deepseek-ai/dsh-experimental-agent-team'
+import type { ImageInputSupport } from '@deepseek-ai/dsh-llm'
 import { defineTool } from '@deepseek-ai/dsh-tools'
 import type { InferValue, ValueSchemaSpec } from '@deepseek-ai/dsh-tools'
 import { resolveDelegationImages } from '@deepseek-ai/dsh-llm'
@@ -32,7 +33,7 @@ export const Config: z<Config> = z.object({
 /** Model-facing collaboration guidance shared by Lead and teammates. */
 const POLICY = `Agent Teams is available in this session, but create teammates only when the user explicitly asks to use Agent Teams or teammates.
 
-The Team Lead and all teammates share the same working directory and filesystem. Edits are immediately visible to every member. Split write work into disjoint scopes, record expected write scopes on shared tasks, and use task dependencies when work must be ordered. Write-scope overlap is advisory, not a lock.
+The Team Lead and all teammates share the same working directory and filesystem. Edits are immediately visible to every member. Split write work into disjoint scopes, record expected write scopes on shared tasks, and use task dependencies when work must be ordered. Write-scope overlap is advisory, not a lock. Send images only to members whose acceptsImages is not unsupported.
 
 Prefer read/edit/write for file changes. If a file operation returns FS_STALE_VERSION, read the current file, rebase your intended change onto the new content, and retry. Bash, formatters, code generators, and scripts are not fully protected by the filesystem version guard; coordinate them explicitly and have the Lead review the final diff and run tests.
 
@@ -57,9 +58,13 @@ const MEMBER_VIEW_SCHEMA = {
     provider: { type: 'string' },
     context: { type: 'string', enum: ['fresh', 'fork'] },
     model: { type: 'string' },
+    acceptsImages: { type: 'string', enum: ['supported', 'unsupported', 'undeclared'] },
     diagnostics: { type: 'array', required: true, items: { type: 'string' } },
   },
 } as const
+
+/** One `list_agents` result row: the roster view plus listing-time image-input support. */
+type ListedMember = TeamMemberView & { acceptsImages?: ImageInputSupport }
 
 /** Expose the member name as its model-facing target. */
 function modelMember(member: TeamMemberView): InferValue<typeof MEMBER_VIEW_SCHEMA> {
@@ -254,11 +259,18 @@ To message another teammate, use send_message({ target: "<teammate name>", messa
 
     register(scoped.tools.register(defineTool({
       name: 'list_agents',
-      description: 'List the Lead and every durable teammate with an addressable target and current availability. inactive means no turn is executing, not a task result. provisioning and failed describe member creation.',
+      description: 'List the Lead and every durable teammate with an addressable target, current availability, and image-input support. inactive means no turn is executing, not a task result. provisioning and failed describe member creation. acceptsImages is omitted when that member\'s route cannot be resolved.',
       parameters: {},
       output: jsonOutput(MEMBER_LIST_VALUE_SCHEMA),
-      execute(_args, exec) {
-        return Promise.resolve(ctx.agentTeams.listMembers(callingAgent(exec.agent, 'list_agents')).map(modelMember))
+      async execute(_args, exec) {
+        const caller = callingAgent(exec.agent, 'list_agents')
+        const members = ctx.agentTeams.listMembers(caller)
+        const imageSupport = await ctx.agentTeams.resolveMemberImageSupport(caller, exec.signal)
+        return members.map((member) => {
+          const view = modelMember(member)
+          const acceptsImages: ListedMember['acceptsImages'] = imageSupport.get(member.id)
+          return acceptsImages === undefined ? view : { ...view, acceptsImages }
+        })
       },
     })))
 
