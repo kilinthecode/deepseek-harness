@@ -240,6 +240,12 @@ describe('imageCardModel', () => {
     // layer prepended must not be mistaken for it.
     expect(imageCardModel(settled({ content: [{ type: 'text', text: 'hook preamble' }] } as never))).toBeNull()
     expect(imageCardModel(settled({ content: [] }))).toBeNull()
+    // A valid image reference alone is not enough: the text block beside it
+    // must still match the envelope shape, or the card declines to the
+    // generic form rather than showing a picture with no caption.
+    expect(imageCardModel(settled({
+      content: [{ type: 'text', text: 'unrelated caption' }, { type: 'image', attachment: sampleImage }],
+    } as never))).toBeNull()
   })
 
   it('declines a running call and an error result, and derives a nested call from its own path', () => {

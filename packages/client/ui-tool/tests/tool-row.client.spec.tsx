@@ -10,7 +10,7 @@ import { localizeAutoReviewDenial, normalizeAutoReviewReason } from '../src/clie
 import {
   classifyTool, formatToolBody, resultText, toolRowModel,
 } from '../src/client/tool/models/tool-call-model.ts'
-import { ToolRow } from '../src/client/tool/components/ToolRow.tsx'
+import { ToolRow, type ToolRowResultImages } from '../src/client/tool/components/ToolRow.tsx'
 import { GenericToolCard, type GenericToolCardProps } from '../src/client/tool/toolviews/GenericToolCard.tsx'
 import { zh } from '@deepseek-ai/dsh-client-ui-conversation/src/client/locales.ts'
 
@@ -120,6 +120,12 @@ describe('tool-call-model', () => {
       name: 'web_search',
       argsRaw: '{"queries":["first query","second\\nquery"]}',
     })).summary).toBe('first query, second')
+    // An empty (or all-blank-filtered) queries array falls through to the
+    // ordinary args-object summary fallback instead of joining nothing.
+    expect(toolRowModel('web_search', running({
+      name: 'web_search',
+      argsRaw: '{"queries":[]}',
+    })).summary).toBe('{"queries":[]}')
   })
 
   it('exposes filePath for path/file_path args and skips URL-only reads', () => {
@@ -172,6 +178,7 @@ describe('tool-call-model', () => {
       .toBe('{\n  "a": 1\n}')
     expect(formatToolBody('bash', toolRowModel('bash', running({ argsRaw: 'raw' })).bodyRaw ?? ''))
       .toBe('raw')
+    expect(formatToolBody('bash', '')).toBeNull()
     expect(toolRowModel('bash', running({ argsRaw: '' })).bodyRaw).toBeNull()
     expect(toolRowModel('bash', result({ call: null })).bodyRaw).toBeNull()
   })
@@ -191,10 +198,108 @@ describe('tool-call-model', () => {
     expect(resultText(result({ content: [] }))).toBe('')
   })
 
+  it('resultText only drops image blocks when the caller opts in with skipImages', () => {
+    const mixed = result({ content: [{ type: 'text', text: 'a' }, { type: 'image', data: 'x' } as never] })
+    expect(resultText(mixed)).toBe(`a\n${JSON.stringify({ type: 'image', data: 'x' }, null, 2)}`)
+    expect(resultText(mixed, { skipImages: true })).toBe('a')
+    // A default-arg call and an explicit false both keep the flattened JSON.
+    expect(resultText(mixed, {})).toBe(`a\n${JSON.stringify({ type: 'image', data: 'x' }, null, 2)}`)
+    expect(resultText(mixed, { skipImages: false })).toBe(`a\n${JSON.stringify({ type: 'image', data: 'x' }, null, 2)}`)
+    // An image-only result with skipImages drops to the empty string, not a blank JSON line.
+    expect(resultText(result({ content: [{ type: 'image', data: 'x' } as never] }), { skipImages: true })).toBe('')
+  })
+
   it('derives output from the settled result and null while running or blank', () => {
     expect(toolRowModel('bash', result({ content: [{ type: 'text', text: 'out' }] })).output).toBe('out')
     expect(toolRowModel('bash', running()).output).toBeNull()
     expect(toolRowModel('bash', result({ content: [] })).output).toBeNull()
+  })
+
+  it('derives resultImages only from a fully well-formed, non-empty gallery, and skips those blocks in output', () => {
+    const sampleImage = {
+      attachmentId: 'sha256:gallery', mediaType: 'image/png', bytes: 10, width: 2, height: 2,
+    }
+    const claim = { claimImages: true }
+    const withImage = toolRowModel('mcp_screenshot', result({
+      content: [{ type: 'text', text: 'took a screenshot' }, { type: 'image', attachment: sampleImage } as never],
+    }), undefined, undefined, claim)
+    expect(withImage.resultImages).toEqual({
+      images: [sampleImage],
+      text: JSON.stringify({ type: 'image', attachment: sampleImage }, null, 2),
+    })
+    expect(withImage.output).toBe('took a screenshot')
+
+    // A malformed image block (missing attachmentId) declines the gallery
+    // entirely and keeps the ordinary JSON flattening — no information loss.
+    const malformed = toolRowModel('mcp_screenshot', result({
+      content: [{ type: 'text', text: 'took a screenshot' }, { type: 'image', attachment: { ...sampleImage, attachmentId: '' } } as never],
+    }), undefined, undefined, claim)
+    expect(malformed.resultImages).toBeNull()
+    expect(malformed.output).toBe(`took a screenshot\n${JSON.stringify({ type: 'image', attachment: { ...sampleImage, attachmentId: '' } }, null, 2)}`)
+
+    // No image block at all: same null gallery, unaffected text output.
+    expect(toolRowModel('bash', result({ content: [{ type: 'text', text: 'out' }] }), undefined, undefined, claim).resultImages).toBeNull()
+    // Running calls carry no content yet.
+    expect(toolRowModel('mcp_screenshot', running(), undefined, undefined, claim).resultImages).toBeNull()
+    // An error result's images still claim the gallery (error first line stays independent).
+    const errored = toolRowModel('mcp_screenshot', result({
+      isError: true,
+      content: [{ type: 'text', text: 'capture failed' }, { type: 'image', attachment: sampleImage } as never],
+    }), undefined, undefined, claim)
+    expect(errored.resultImages?.images).toEqual([sampleImage])
+    expect(errored.errorSummary).toBe('capture failed')
+  })
+
+  it('declines the whole gallery when an image block beside a well-formed one is malformed, keeping both in output', () => {
+    const valid = { attachmentId: 'sha256:valid', mediaType: 'image/png', bytes: 10, width: 2, height: 2 }
+    const malformed: unknown[] = [
+      null, [], 'ref',
+      { ...valid, attachmentId: '' },
+      { ...valid, mediaType: 'text/html' },
+      { ...valid, bytes: 0 },
+      { ...valid, width: 1.5 },
+      { ...valid, height: 'tall' },
+      { ...valid, name: 5 },
+      { ...valid, originalDimensions: [] },
+      { ...valid, originalDimensions: { width: 4, height: 0 } },
+    ]
+    for (const attachment of malformed) {
+      for (const images of [
+        [{ type: 'image', attachment: valid }, { type: 'image', attachment }],
+        [{ type: 'image', attachment }, { type: 'image', attachment: valid }],
+      ]) {
+        const model = toolRowModel('mcp_screenshot', result({
+          content: [{ type: 'text', text: 'two shots' }, ...images] as never,
+        }), undefined, undefined, { claimImages: true })
+        expect(model.resultImages).toBeNull()
+        expect(model.output).toBe(['two shots', ...images.map(block => JSON.stringify(block, null, 2))].join('\n'))
+      }
+    }
+  })
+
+  it('resultImages skips a non-object content entry as wire noise instead of declining the gallery', () => {
+    // Unlike read_image's stricter imageCardModel (which pre-declines the
+    // whole card via fullyRendered), the generic row's claim only requires
+    // every IMAGE block to be well-formed: a stray non-object entry elsewhere
+    // in the content is skipped by imageReferences, not fatal to the gallery.
+    const sampleImage = {
+      attachmentId: 'sha256:stray', mediaType: 'image/png', bytes: 1, width: 1, height: 1,
+    }
+    const model = toolRowModel('mcp_screenshot', result({
+      content: [{ type: 'text', text: 'noted' }, 'stray-string', { type: 'image', attachment: sampleImage }] as never,
+    }), undefined, undefined, { claimImages: true })
+    expect(model.resultImages?.images).toEqual([sampleImage])
+    expect(model.output).toBe('noted\n"stray-string"')
+  })
+
+  it('claims no images for a caller that does not render the gallery, keeping them in the output JSON', () => {
+    const sampleImage = {
+      attachmentId: 'sha256:keyed', mediaType: 'image/png', bytes: 1, width: 1, height: 1,
+    }
+    const content = [{ type: 'text', text: 'caption' }, { type: 'image', attachment: sampleImage }] as never
+    const model = toolRowModel('read_image', result({ content }))
+    expect(model.resultImages).toBeNull()
+    expect(model.output).toBe(`caption\n${JSON.stringify({ type: 'image', attachment: sampleImage }, null, 2)}`)
   })
 
   it('derives errorSummary as the first output line on error rows only', () => {
@@ -491,6 +596,87 @@ describe('ToolRow', () => {
     expect(outputOnly.getByText('输出')).toBeTruthy()
     expect(outputOnly.getByText('only out')).toBeTruthy()
   })
+
+  const sampleImage = { attachment: { attachmentId: 'sha256:g1', mediaType: 'image/png', bytes: 1, width: 1, height: 1 } }
+  const claimed = (
+    renderImages: ToolRowResultImages['render'],
+    images: readonly unknown[] = [sampleImage],
+  ): ToolRowResultImages => ({ images: images as never, text: '{"type": "image"}', render: renderImages })
+
+  it('renders the generic-row gallery below the output text inside the IO card', () => {
+    const renderResultImages = vi.fn((owner: { images: readonly unknown[]; align: 'start' | 'end' }) => (
+      <div data-testid="gallery">{owner.images.length}</div>
+    ))
+    const view = render(
+      <ToolRow
+        {...rowProps}
+        bodyRaw={null}
+        output="took a screenshot"
+        resultImages={claimed(renderResultImages)}
+      />,
+    )
+    expect(view.queryByTestId('gallery')).toBeNull()
+    fireEvent.click(view.getByRole('button'))
+    expect(renderResultImages).toHaveBeenCalledWith({ images: [sampleImage], align: 'start' }, expect.anything())
+    const gallery = view.getByTestId('gallery')
+    expect(gallery.textContent).toBe('1')
+    // The gallery sits inside the same IO card, after the OUT section.
+    const ioCard = view.container.querySelector('[class*="ioCard"]')
+    expect(ioCard?.contains(gallery)).toBe(true)
+    const output = view.getByText('took a screenshot')
+    const position = gallery.compareDocumentPosition(output)
+    expect(Boolean(position & Node.DOCUMENT_POSITION_PRECEDING)).toBe(true)
+  })
+
+  it('an image-only result (no args body, no output text) is still expandable', () => {
+    const renderResultImages = vi.fn(() => <div data-testid="gallery" />)
+    const view = render(
+      <ToolRow
+        {...rowProps}
+        bodyRaw={null}
+        output={null}
+        resultImages={claimed(renderResultImages)}
+      />,
+    )
+    expect(view.container.querySelector('[aria-expanded]')).not.toBeNull()
+    fireEvent.click(view.getByRole('button'))
+    expect(view.getByTestId('gallery')).toBeTruthy()
+  })
+
+  it('shows the omitted image JSON in the gallery position when no attachment plugin fills the slot', () => {
+    const view = render(
+      <ToolRow
+        {...rowProps}
+        bodyRaw={null}
+        output="took a screenshot"
+        resultImages={claimed((_owner, fallback) => fallback)}
+      />,
+    )
+    fireEvent.click(view.getByRole('button'))
+    expect(view.getByText('took a screenshot')).toBeTruthy()
+    expect(view.getByText('{"type": "image"}')).toBeTruthy()
+  })
+
+  it('an empty, null, or absent resultImages renders no gallery', () => {
+    const renderResultImages = vi.fn(() => <div data-testid="gallery" />)
+    for (const resultImages of [claimed(renderResultImages, []), null, undefined]) {
+      const view = render(<ToolRow {...rowProps} resultImages={resultImages} />)
+      fireEvent.click(view.getByRole('button'))
+      expect(view.queryByTestId('gallery')).toBeNull()
+      cleanup()
+    }
+    expect(renderResultImages).not.toHaveBeenCalled()
+  })
+
+  it('accepts a claimed gallery only with its fallback text and dispatcher (compile-time; body never runs)', () => {
+    const negatives = (renderImages: ToolRowResultImages['render']) => [
+      // @ts-expect-error without its text, an unfilled slot would show nothing for images `output` omitted
+      <ToolRow key="text" {...rowProps} resultImages={{ images: [], render: renderImages }} />,
+      // @ts-expect-error without its dispatcher, the images `output` omitted would render nowhere
+      <ToolRow key="render" {...rowProps} resultImages={{ images: [], text: '' }} />,
+    ]
+    expect(negatives).toBeTypeOf('function')
+  })
 })
 
 describe('GenericToolCard', () => {
@@ -595,5 +781,75 @@ describe('GenericToolCard', () => {
     ))).toBe(false)
     expect(view.queryByText('Tool execution rejected by user')).toBeNull()
     expect(view.queryByText(/"path"/)).toBeNull()
+  })
+
+  it('claims a well-formed image block into the gallery and skips it from the output text', () => {
+    const sampleImage = {
+      attachmentId: 'sha256:g1', mediaType: 'image/png', bytes: 1, width: 1, height: 1,
+    }
+    const renderResultImages = vi.fn((owner: { images: readonly unknown[]; align: 'start' | 'end' }) => (
+      <div data-testid="gallery">{owner.align}</div>
+    ))
+    const settled = result({
+      call: { name: 'mcp_screenshot', argsRaw: '{}' },
+      content: [{ type: 'text', text: 'took a screenshot' }, { type: 'image', attachment: sampleImage } as never],
+    })
+    const view = render(
+      <GenericToolCard {...props('mcp_screenshot', settled)} renderResultImages={renderResultImages} />,
+    )
+    fireEvent.click(view.getByRole('button'))
+    expect(view.getByText('took a screenshot')).toBeTruthy()
+    expect(view.queryByText(/"attachmentId"/)).toBeNull()
+    expect(renderResultImages).toHaveBeenCalledWith({ images: [{ attachment: sampleImage }], align: 'start' }, expect.anything())
+    expect(view.getByTestId('gallery')).toBeTruthy()
+  })
+
+  it('keeps a malformed image block as ordinary JSON output and renders no gallery', () => {
+    const badAttachment = { attachmentId: '', mediaType: 'image/png', bytes: 1, width: 1, height: 1 }
+    const renderResultImages = vi.fn(() => <div data-testid="gallery" />)
+    const settled = result({
+      call: { name: 'mcp_screenshot', argsRaw: '{}' },
+      content: [{ type: 'text', text: 'took a screenshot' }, { type: 'image', attachment: badAttachment } as never],
+    })
+    const view = render(
+      <GenericToolCard {...props('mcp_screenshot', settled)} renderResultImages={renderResultImages} />,
+    )
+    fireEvent.click(view.getByRole('button'))
+    expect(view.getByText(/"attachmentId": ""/)).toBeTruthy()
+    expect(renderResultImages).not.toHaveBeenCalled()
+    expect(view.queryByTestId('gallery')).toBeNull()
+  })
+
+  it('renders images on an error result alongside its unchanged error first line', () => {
+    const sampleImage = {
+      attachmentId: 'sha256:g2', mediaType: 'image/png', bytes: 1, width: 1, height: 1,
+    }
+    const renderResultImages = vi.fn(() => <div data-testid="gallery" />)
+    const failed = result({
+      call: { name: 'mcp_screenshot', argsRaw: '{}' },
+      isError: true,
+      content: [{ type: 'text', text: 'capture failed' }, { type: 'image', attachment: sampleImage } as never],
+    })
+    const view = render(
+      <GenericToolCard {...props('mcp_screenshot', failed)} renderResultImages={renderResultImages} />,
+    )
+    expect(view.getByText('capture failed')).toBeTruthy()
+    fireEvent.click(view.getByRole('button'))
+    expect(renderResultImages).toHaveBeenCalledWith({ images: [{ attachment: sampleImage }], align: 'start' }, expect.anything())
+    expect(view.getByTestId('gallery')).toBeTruthy()
+  })
+
+  it('without renderResultImages, a well-formed image block stays in the output JSON and renders no gallery', () => {
+    const sampleImage = {
+      attachmentId: 'sha256:g3', mediaType: 'image/png', bytes: 1, width: 1, height: 1,
+    }
+    const settled = result({
+      call: { name: 'mcp_screenshot', argsRaw: '{}' },
+      content: [{ type: 'text', text: 'took a screenshot' }, { type: 'image', attachment: sampleImage } as never],
+    })
+    const view = render(<GenericToolCard {...props('mcp_screenshot', settled)} />)
+    fireEvent.click(view.getByRole('button'))
+    expect(view.getByText(/took a screenshot/)).toBeTruthy()
+    expect(view.getByText(/"attachmentId": "sha256:g3"/)).toBeTruthy()
   })
 })

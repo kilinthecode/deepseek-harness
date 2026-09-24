@@ -73,7 +73,7 @@ slot 注入的 `useToolCallArgumentsPartial` 钩子按需订阅所属 Step 的 `
 ### 卡片
 
 
-每张卡片都直接在调用树中查看；选中调用后不会再显示第二个全高视图。行 renderer 为 terminal、read、diff、search 和 web 卡片各复用同一个纯 card model，image 卡片的图库经由工具自有 `tool.call.images` slot 渲染。这些 model 校验原始调用参数、结果内容、失败状态、持久 metadata、PTC dispatch 的 `parentCallId` 与会话路径信息。不受支持或格式错误的输入使用压平的工具结果文本。文件路径摘要经属主的 `openFile` 打开文件，chat 视图把它路由到右侧 Sidebar 的文本预览；`inspect` 打开轨迹视图；该视图不可用时不提供此回调，卡片随之隐藏 Inspect。terminal、diff、read、search 与 web 卡片的上限与 fallback 规则仍由 [ui-primitives README](../ui-primitives/README.zh.md) 负责；image 卡片的 fallback 规则由本包内的 card model 自行承载。
+每张卡片都直接在调用树中查看；选中调用后不会再显示第二个全高视图。行 renderer 为 terminal、read、diff、search 和 web 卡片各复用同一个纯 card model，image 卡片的图库经由工具自有 `tool.call.images` slot 渲染。未被专用视图认领、且没有 terminal、read、diff、search 或 web 卡片渲染的通用已完成结果，若其内容含有一个或多个 image 区块且全部合法，则经由 Tool 调用树自有的 `tool.call.resultImages` slot 把这些图片渲染为图库，位置在 IN/OUT 卡片内、压平输出文本的下方；若没有附件展示插件填充该 slot，则在图库位置显示被省略的 image JSON。其余情况（包括格式错误的 image 区块或任何专用视图行）下，每个 image 区块都以 JSON 形式留在压平输出文本中。这些 model 校验原始调用参数、结果内容、失败状态、持久 metadata、PTC dispatch 的 `parentCallId` 与会话路径信息。不受支持或格式错误的输入使用压平的工具结果文本。文件路径摘要经属主的 `openFile` 打开文件，chat 视图把它路由到右侧 Sidebar 的文本预览；`inspect` 打开轨迹视图；该视图不可用时不提供此回调，卡片随之隐藏 Inspect。terminal、diff、read、search 与 web 卡片的上限与 fallback 规则仍由 [ui-primitives README](../ui-primitives/README.zh.md) 负责；image 卡片的 fallback 规则由本包内的 card model 自行承载。
 
 Chat diff 卡片在折叠前保留九行，足以容纳文件标题、一对删除与新增行及两侧各三行上下文。工具行显示原语提供的精确或粗粒度替换统计；展开卡片包含差异正文，不显示底部统计。
 

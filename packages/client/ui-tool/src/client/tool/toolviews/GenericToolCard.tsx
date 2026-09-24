@@ -3,7 +3,7 @@ import {
   IconApiOutlineRegular, IconBrowseOutlineRegular, IconCodeOutlineRegular, IconEditOutlineRegular, IconSearchOutlineRegular,
   IconSparkleRegular,
 } from '@deepseek-ai/dsh-client-ui-primitives'
-import type { ToolCallOwnerProps, ToolTreeProps } from '../../contract/slots.ts'
+import type { RenderResultImages, ToolCallOwnerProps, ToolTreeProps } from '../../contract/slots.ts'
 import { readCardModel } from '../models/read-card-model.ts'
 import { diffCardModel } from '../models/diff-card-model.ts'
 import { searchCardModel } from '../models/search-card-model.ts'
@@ -27,25 +27,44 @@ const VARIANT_ICONS: Record<ToolRowVariant, ReactNode> = {
 /** Card props: the owner payload plus the render site's locale seat (plain prop). */
 export type GenericToolCardProps = ToolCallOwnerProps & {
   t: ToolTreeProps['t']
+  /**
+   * Dispatch the generic-row image gallery through the Tool-tree-owned
+   * `tool.call.resultImages` slot. Absent (a caller outside the Tool call
+   * tree) claims no images, so the row's text output keeps them as JSON.
+   */
+  renderResultImages?: RenderResultImages | undefined
 }
 
-/** @param props - current tool stage and locale. @returns its preparation or dispatched card. */
-export function GenericToolCard({ toolName, block, cwd, home, openFile, inspect, useDisclosure, t }: GenericToolCardProps) {
-  const model = toolRowModel(toolName, block, cwd, home)
-  const autoReview = model.autoReviewDenial === null
-    ? null
-    : localizeAutoReviewDenial(model.autoReviewDenial, t)
+/** @param props - current tool stage, locale, and the generic-row gallery dispatcher. @returns its preparation or dispatched card. */
+export function GenericToolCard({
+  toolName, block, cwd, home, openFile, inspect, useDisclosure, t, renderResultImages,
+}: GenericToolCardProps) {
   const terminal = terminalCardModel(block, cwd)
   const read = readCardModel(block, cwd, home)
   const diff = diffCardModel(block)
   const search = searchCardModel(block)
   const web = webCardModel(block)
+  // ToolRow renders the claimed gallery only with its IN/OUT text sections,
+  // which any card replaces, so images are claimed only while every card model
+  // is null.
+  const renderGallery = renderResultImages !== undefined && [terminal, read, diff, search, web].every(card => card === null)
+    ? renderResultImages
+    : undefined
+  const model = toolRowModel(toolName, block, cwd, home, { claimImages: renderGallery !== undefined })
+  const autoReview = model.autoReviewDenial === null
+    ? null
+    : localizeAutoReviewDenial(model.autoReviewDenial, t)
   // A failing exit status is the terminal card's own error signal (the call
   // itself settles isError:false), surfaced through the row's error summary.
   const state = model.state === 'ok' && terminal !== null && terminalFailed(terminal)
     ? 'error'
     : model.state
   const singleFile = model.filePath !== undefined
+  const resultImages = model.resultImages === null || renderGallery === undefined ? null : {
+    images: model.resultImages.images.map(attachment => ({ attachment })),
+    text: model.resultImages.text,
+    render: renderGallery,
+  }
   return (
     <ToolRow
       useDisclosure={useDisclosure}
@@ -66,6 +85,7 @@ export function GenericToolCard({ toolName, block, cwd, home, openFile, inspect,
       read={read}
       search={search}
       web={web}
+      resultImages={resultImages}
       state={state}
       filePath={model.filePath}
       onOpenFile={singleFile ? openFile : undefined}

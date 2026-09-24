@@ -146,6 +146,19 @@ describe('SkillRow', () => {
     expect(screen.getAllByText('SkillError: missing')).toHaveLength(2)
   })
 
+  it('keeps a well-formed image block visible as JSON because the row renders no gallery', () => {
+    const image = {
+      type: 'image',
+      attachment: { attachmentId: 'sha256:skill-image', mediaType: 'image/png', bytes: 1, width: 1, height: 1 },
+    }
+    render(<SkillRow {...props(settled({
+      content: [{ type: 'text', text: 'See the diagram.' }, image as never],
+    }))} />)
+    fireEvent.click(screen.getByRole('button'))
+    expect(screen.getByLabelText('说明').querySelector('pre')?.textContent)
+      .toBe(`See the diagram.\n${JSON.stringify(image, null, 2)}`)
+  })
+
   it('falls back to durable args or call id when the skill name is unavailable', () => {
     const invalid = render(<SkillRow {...props(running('{"name":\n'))} />)
     expect(invalid.container.textContent).toContain('{"name":')

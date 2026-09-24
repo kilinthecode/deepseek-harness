@@ -1,4 +1,5 @@
 /** Tool UI slot declarations and their composed component props. */
+import type { ReactNode } from 'react'
 import type {
   HostObservable, InjectFace, PropsLocale, PropsRenderSlots, PropsRuntime, SlotHookFactory,
 } from '@deepseek-ai/dsh-client-ui-slots'
@@ -43,6 +44,27 @@ declare module '@deepseek-ai/dsh-client-ui-slots' {
      * slot.
      */
     'tool.call.images': { kind: 'single'; scope: 'session'; owner: ToolImagesOwnerProps }
+    /**
+     * Durable images of a settled result that the generic Tool row renders.
+     * `GenericToolCard` renders every call whose tool name no keyed
+     * `tool.call.toolview` entry claims, and every Auto-review-denied call
+     * regardless of its keyed entry. It fills this child only when no
+     * terminal, read, diff, search, or web card replaces its IN/OUT text
+     * sections and the result content carries one or more image blocks, all
+     * well-formed.
+     * Keyed rows never render this child; the `read_image` card renders its
+     * gallery through `tool.call.images` above. Declared by the Tool call tree
+     * itself, not a toolview, because `GenericToolCard` is the render-site
+     * fallback shared by every unclaimed tool name, so no single toolview
+     * registration could own this child the way `readImageToolview` owns
+     * `tool.call.images`.
+     *
+     * `imageReferences` (models/image-card-model.ts) derives the references
+     * from the result's own content and declines — no gallery, ordinary JSON
+     * text instead — when any image block in the content is malformed, so a
+     * partial gallery never hides a block the text would otherwise show.
+     */
+    'tool.call.resultImages': { kind: 'single'; scope: 'session'; owner: ToolImagesOwnerProps }
   }
 }
 
@@ -72,6 +94,18 @@ export interface ToolImagesOwnerProps {
   /** Horizontal placement inside the owning record. */
   align: 'start' | 'end'
 }
+
+/**
+ * Render the generic row's image gallery through the Tool-tree-owned
+ * `tool.call.resultImages` slot. The Tool call tree closes over the
+ * session-authorized loader (it already carries `loadImage` for every call),
+ * so a caller supplies only the claimed images and their placement.
+ * @param owner - the claimed images and horizontal placement.
+ * @param fallback - rendered instead when no attachment presentation plugin
+ *   fills the slot, so the claimed images stay visible as text.
+ * @returns the rendered gallery, or `fallback` for an unfilled slot.
+ */
+export type RenderResultImages = (owner: Omit<ToolImagesOwnerProps, 'loadImage'>, fallback: ReactNode) => ReactNode
 
 /** Standard owner currency supplied to every atomic Tool view. */
 export interface ToolCallCommonProps {
@@ -123,6 +157,6 @@ export type ToolHostInfoInjected = {
 
 /** Full props of the Tool call-tree renderer registered as a tool-call Chat Node. */
 export type ToolTreeProps = PropsRuntime<'conversation.chat.node', 'tool-call'>
-  & PropsRenderSlots<'tool.call.toolview'>
+  & PropsRenderSlots<'tool.call.toolview' | 'tool.call.resultImages'>
   & PropsLocale<'conversation'>
   & InjectFace<ToolHostInfoInjected>

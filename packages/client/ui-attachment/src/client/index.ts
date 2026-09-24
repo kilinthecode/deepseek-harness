@@ -31,4 +31,10 @@ export function apply(ctx: ClientContext): void {
     name: 'tool.call.images',
     locale: 'conversation',
   }, MessageImages))
+  // The generic tool row's gallery takes the same `ToolImagesOwnerProps` owner
+  // as `tool.call.images`, so it registers the same gallery component.
+  ctx.slots.inject('tool.call.resultImages', () => ctx.slots.register({
+    name: 'tool.call.resultImages',
+    locale: 'conversation',
+  }, MessageImages))
 }
