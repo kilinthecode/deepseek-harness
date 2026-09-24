@@ -58,7 +58,7 @@ transcript 是一种派生，而不是第二个存储。`TeamRoom` 的 observer 
 
 `room-vendors.spec.ts` 在没有凭据的情况下把一个 room 铺设在三种 vendor 适配器上：原生 DeepSeek 适配器使用 chat-completions、一条 pi-ai 的 `anthropic-messages` 路由，以及一条 pi-ai 的 `openai-completions` 路由，各自背后是本地的替身端点。它要求共享 transcript 中每个 peer 的发言就是它自己 vendor 返回的文本、每个 peer 的立场都经由 `room_review` 抵达其自身路由、两条理由都保留到 decision view 中，并要求结清通知在第三条路由上唤醒 DeepSeek Lead。真实 vendor 端点在凭据具备前仍未验证；room 的路由、署名与 quorum 已在没有它们的情况下跨适配器得到证明。
 
-`agent-room-panel.e2e.ts` 在组装后的浏览器中认证该面板：它在 room 与 Agent Teams Web 层之上启动 Host 与 Web 应用，在 Session 中记录一个决策与一条同伴发言，断言渲染出的 transcript、决策 phase、具名反对，以及不存在等待中的 reviewer，然后比对稳定的 ARIA 快照。该次运行是面板确实经由真实 Remote 流程渲染、而非只针对 stub 渲染的唯一证据。
+`agent-room-panel.e2e.ts` 在组装后的浏览器中认证该面板：它在同时携带 Team 浏览器 UI 的 room profile 层之上启动 Host 与 Web 应用，在 Session 中记录一个决策与一条同伴发言，断言渲染出的 transcript、决策 phase、具名反对，以及不存在等待中的 reviewer，然后比对稳定的 ARIA 快照。该次运行是面板确实经由真实 Remote 流程渲染、而非只针对 stub 渲染的唯一证据。
 
 `team-action.client.spec.tsx` 与 `browser-plugin.client.spec.ts` 覆盖该面板：渲染 transcript 与决策、每个决策 phase 标签、空 room、与健康 roster 并列报告的 room 加载失败，以及 mount 生命周期发起的 `agentTeams/room` 调用。
 
