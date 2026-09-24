@@ -393,6 +393,7 @@
 .phase {
   padding: 1px 6px;
   border-radius: 999px;
+  corner-shape: round;
   background: var(--dsw-alias-fill-l2);
   color: var(--dsw-alias-label-primary);
 }
@@ -438,7 +439,7 @@
   flex-direction: column;
   gap: 1px;
   padding-left: 8px;
-  border-left: 2px solid var(--dsw-alias-border-l4);
+  border-left: 0.5px solid var(--dsw-alias-border-l4);
 }
 
 .standingHead {
