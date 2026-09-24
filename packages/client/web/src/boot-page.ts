@@ -48,31 +48,36 @@ const WORD = 'PORTAL'
 const PLATE = 'HARNESS'
 
 /**
- * Mark reveal schedule in ms from mount. The four stages bloom outward from
- * the mark's center — spokes, inner cell, lifts, outer cell — and each one
- * animates opacity and transform alone, so the sequence keeps its frame rate
- * while the plugin roster loads on the same main thread.
+ * Brand schedule in ms from the first animation frame. Every step is a CSS
+ * animation with an inline delay, so the compositor runs the whole sequence
+ * and plugin loading on the main thread cannot delay or bunch its steps.
+ * The lead-in keeps the first frames still while a hidden desktop window
+ * finishes appearing; the four mark stages then open outward from the centre
+ * (spokes, inner cell, lifts, outer cell).
  */
-const STAGE_MS = 340
-const STAGE_DELAY_MS = { spokes: 40, inner: 200, lifts: 300, outer: 380 } as const
-
-/** Lettering schedule in ms from mount; the caret leaves as the nameplate lands. */
-const CARET_ON_MS = 360
-const LETTER_START_MS = 430
-const LETTER_STEP_MS = 55
-const CARET_OFF_MS = 900
-const PLATE_MS = 900
-
-/** Delay after which a boot still running earns the progress spinner and hint. */
-const STATUS_MS = 1500
+const STAGE_DELAY_MS = [240, 350, 460, 570] as const
+/** Caret visible while the word types, fading out as the nameplate lands. */
+const CARET_DELAY_MS = 980
+const LETTER_DELAY_MS = 1060
+const LETTER_STEP_MS = 85
+/** Time the caret takes to hop past a letter as that letter appears. */
+const CARET_HOP_MS = 60
+/** Easing shared with every arrival in the stylesheet (`--dsh-boot-ease-out`). */
+const EASE_OUT = 'cubic-bezier(0.16, 1, 0.3, 1)'
+const PLATE_DELAY_MS = 1900
 /**
- * Shortest brand moment held before the handoff, covering a sequence that
- * settles at ~1.16s: the mark completes at ~720ms, the word at ~965ms, and the
- * nameplate at ~1160ms.
+ * Hold used where the host cannot report animation progress: the plate
+ * settles at ~2340ms, followed by a short rest before the handoff.
  */
-const MIN_HOLD_MS = 1350
+const FALLBACK_HOLD_MS = 2600
+/** Rest between the settled brand and the leave fade. */
+const SETTLE_REST_MS = 260
+/** Longest wait for the brand animations to finish once the application is ready. */
+const MAX_SETTLE_MS = 4000
 /** Leave fade, matching the dispose transition in the stylesheet. */
-const LEAVE_MS = 320
+const LEAVE_MS = 480
+/** Delay after which a boot still running earns the progress spinner and hint. */
+const STATUS_MS = 2800
 
 /** Whether the host exposes a reduced-motion preference (jsdom does not). */
 function prefersReducedMotion(): boolean {
@@ -95,27 +100,36 @@ function svgElement<K extends keyof SVGElementTagNameMap>(tag: K, attributes: Re
 }
 
 /**
- * Create one mark stage that scales up from the mark's center as it fades in.
- * Stage translucency rides on `stroke-opacity`, which the reveal keyframe's
- * `opacity` does not overwrite.
- * @param delay - Reveal start in ms from page mount.
- * @returns the element, hidden until its delay passes.
+ * Create one mark stage as its own `<svg>` layer. Chromium composites
+ * opacity and transform animations on an outer `<svg>` element but runs them
+ * on the main thread for shapes inside one, so each stage is a separate
+ * layer over the same viewBox.
+ * @param delay - Reveal start in ms from the first animation frame.
+ * @param parts - Stroked shapes drawn by this stage.
+ * @returns the stage layer, hidden until its delay passes.
  */
-function stage<K extends keyof SVGElementTagNameMap>(
-  tag: K,
-  attributes: Record<string, string | number>,
-  delay: number,
-): SVGElementTagNameMap[K] {
-  const el = svgElement(tag, attributes)
-  el.setAttribute('class', klass('stage'))
-  el.style.animationDelay = `${String(delay)}ms`
-  el.style.animationDuration = `${String(STAGE_MS)}ms`
-  return el
+function stage(delay: number, parts: readonly SVGElement[]): SVGSVGElement {
+  const layer = svgElement('svg', {
+    viewBox: '160 160 704 704',
+    fill: 'none',
+    stroke: 'currentColor',
+    'stroke-linecap': 'round',
+    'stroke-linejoin': 'round',
+  })
+  layer.setAttribute('class', klass('stage'))
+  layer.style.animationDelay = `${String(delay)}ms`
+  layer.append(...parts)
+  return layer
 }
 
 /** Render one polygon's vertices as an SVG `points` list. */
 function points(vertices: ReadonlyArray<readonly [number, number]>): string {
   return vertices.map(([x, y]) => `${String(x)},${String(y)}`).join(' ')
+}
+
+/** Resolve after `ms`, registering the timer so disposal can release it. */
+function delay(timers: ReturnType<typeof setTimeout>[], ms: number): Promise<void> {
+  return new Promise((resolve) => { timers.push(setTimeout(resolve, ms)) })
 }
 
 /** Kernel-owned page mounted below the application's root element. */
@@ -126,9 +140,6 @@ export class BootPage {
   private readonly status: HTMLDivElement
   private readonly spinner: HTMLDivElement
   private readonly hint: HTMLDivElement
-  private readonly letters: HTMLSpanElement[] = []
-  private caret!: HTMLSpanElement
-  private plate!: HTMLDivElement
   private readonly states = new Map<string, LoaderEntryState>()
   private readonly active = new Set<string>()
   private readonly timers: ReturnType<typeof setTimeout>[] = []
@@ -145,12 +156,12 @@ export class BootPage {
    * @param container - Application mount point.
    */
   constructor(container: HTMLElement) {
-    const reduced = this.reduced
     this.root = div(css.boot)
     this.root.dataset.dshBoot = ''
-    if (reduced) this.root.classList.add(klass('static'))
+    if (this.reduced) this.root.classList.add(klass('static'))
     this.card = div(css.card)
-    this.brand = this.buildBrand()
+    const { brand, letters, caret } = this.buildBrand()
+    this.brand = brand
     this.status = div(css.status)
     this.spinner = div(css.spinner)
     this.spinner.dataset.dshBootSpinner = ''
@@ -159,8 +170,8 @@ export class BootPage {
     this.card.append(this.brand)
     this.root.append(this.card)
     container.append(this.root)
+    if (!this.reduced) this.followTyping(letters, caret)
     this.updateProgress()
-    if (!reduced) this.scheduleLettering()
     // A boot that outlasts the brand moment owes the reader progress; one that
     // finishes inside it never shows a spinner at all.
     this.timers.push(setTimeout(() => { this.revealStatus() }, STATUS_MS))
@@ -198,30 +209,50 @@ export class BootPage {
 
   /**
    * Detach the page once the UI renderer takes the mount point. The page stays
-   * on top while the brand moment finishes, then dissolves to reveal the ready
-   * application; the lettering timers keep running through the hold.
+   * on top until every brand animation has finished, rests briefly, then
+   * dissolves to reveal the ready application. Reduced motion detaches at once.
    */
   dispose(): void {
     if (this.disposed) return
     this.disposed = true
-    const remaining = this.reduced ? 0 : Math.max(0, this.mountedAt + MIN_HOLD_MS - Date.now())
-    this.timers.push(setTimeout(() => {
+    if (this.reduced) {
+      this.detach()
+      return
+    }
+    void this.settled().then(() => {
       this.root.classList.add(klass('leaving'))
-      this.timers.push(setTimeout(() => {
-        this.root.remove()
-        this.clearTimers()
-      }, this.reduced ? 0 : LEAVE_MS))
-    }, remaining))
+      return delay(this.timers, LEAVE_MS)
+    }).then(() => { this.detach() })
   }
 
-  /** Release every pending timer once the page is detached. */
-  private clearTimers(): void {
+  /**
+   * Resolve once the brand sequence has played out. Hosts that report
+   * animations wait for the finite brand animations to finish, bounded by
+   * {@link MAX_SETTLE_MS} for throttled background documents; others hold
+   * until {@link FALLBACK_HOLD_MS} after mount.
+   */
+  private async settled(): Promise<void> {
+    if (typeof this.brand.getAnimations !== 'function') {
+      await delay(this.timers, Math.max(0, this.mountedAt + FALLBACK_HOLD_MS - Date.now()))
+      return
+    }
+    const finishing = this.brand.getAnimations({ subtree: true })
+      .map(animation => animation.finished.then(() => undefined, (_cancelled: unknown) => {
+        // A cancelled animation has stopped moving, which is all the hold waits for.
+      }))
+    await Promise.race([Promise.all(finishing), delay(this.timers, MAX_SETTLE_MS)])
+    await delay(this.timers, SETTLE_REST_MS)
+  }
+
+  /** Remove the page and release every pending timer. */
+  private detach(): void {
+    this.root.remove()
     for (const timer of this.timers) clearTimeout(timer)
     this.timers.length = 0
   }
 
   /** Build the tesseract mark, the typed wordmark, and the nameplate beside it. */
-  private buildBrand(): HTMLDivElement {
+  private buildBrand(): { brand: HTMLDivElement; letters: HTMLSpanElement[]; caret: HTMLSpanElement } {
     const brand = div(css.brand)
     // The lettering is brand artwork drawn glyph by glyph, so the row carries
     // one name rather than letting a reader spell it out.
@@ -230,80 +261,93 @@ export class BootPage {
     brand.append(this.buildMark())
     const row = div(css.row)
     const word = div(css.word)
-    for (const letter of WORD) {
+    const letters = Array.from(WORD, (letter, i) => {
       const span = document.createElement('span')
       span.className = klass('letter')
       span.textContent = letter
-      this.letters.push(span)
-      word.append(span)
-    }
-    this.caret = document.createElement('span')
-    this.caret.className = klass('caret')
-    word.append(this.caret)
-    this.plate = div(css.plate, PLATE)
-    row.append(word, this.plate)
+      span.style.animationDelay = `${String(LETTER_DELAY_MS + i * LETTER_STEP_MS)}ms`
+      return span
+    })
+    const caret = document.createElement('span')
+    caret.className = klass('caret')
+    caret.style.animationDelay = `${String(CARET_DELAY_MS)}ms`
+    word.append(...letters, caret)
+    const plate = div(css.plate, PLATE)
+    plate.style.animationDelay = `${String(PLATE_DELAY_MS)}ms`
+    row.append(word, plate)
     brand.append(row)
-    return brand
+    return { brand, letters, caret }
   }
 
-  /** Build the mark svg as four stages revealed from the center outward. */
-  private buildMark(): SVGSVGElement {
-    const mark = svgElement('svg', {
-      viewBox: '160 160 704 704',
-      width: 96,
-      height: 96,
-      fill: 'none',
-      stroke: 'currentColor',
-      'stroke-linecap': 'round',
-      'stroke-linejoin': 'round',
-    })
-    mark.setAttribute('class', klass('mark'))
-    mark.setAttribute('aria-hidden', 'true')
-    const spokes = stage('g', {}, STAGE_DELAY_MS.spokes)
-    for (const [x, y] of OUTER_VERTICES) {
-      // One ray per outer vertex; the inner cell's spokes lie along these.
-      spokes.append(svgElement('line', {
-        x1: CENTER, y1: CENTER, x2: x, y2: y,
-        'stroke-width': 1.9,
-        'stroke-opacity': 0.9,
-        'vector-effect': 'non-scaling-stroke',
-      }))
+  /**
+   * Carry the caret along the typing: it waits before the first letter, then
+   * hops past each letter as that letter appears, ending in its laid-out place
+   * after the word. The hops animate `transform` alone, so they composite like
+   * the rest of the brand. Positions are measured once from the laid-out row;
+   * letters hold their space while hidden, so the measurements stay valid.
+   * Hosts without Web Animations leave the caret in its laid-out place.
+   * @param letters - Wordmark letters in typing order.
+   * @param caret - Caret laid out after the last letter.
+   */
+  private followTyping(letters: readonly HTMLSpanElement[], caret: HTMLSpanElement): void {
+    const first = letters[0]
+    const last = letters.at(-1)
+    if (typeof caret.animate !== 'function' || first === undefined || last === undefined) return
+    const home = caret.getBoundingClientRect()
+    // The caret sits `gap` past a letter's box, as it does after the last one.
+    const gap = home.left - last.getBoundingClientRect().right
+    const shift = (x: number): string => `translateX(${String(x - home.left)}px)`
+    const duration = LETTER_DELAY_MS + (letters.length - 1) * LETTER_STEP_MS + CARET_HOP_MS - CARET_DELAY_MS
+    const at = (ms: number): number => (ms - CARET_DELAY_MS) / duration
+    let from = shift(first.getBoundingClientRect().left - gap - home.width)
+    const keyframes: Keyframe[] = [{ offset: 0, transform: from }]
+    for (const [i, letter] of letters.entries()) {
+      const appears = LETTER_DELAY_MS + i * LETTER_STEP_MS
+      const to = shift(letter.getBoundingClientRect().right + gap)
+      keyframes.push(
+        { offset: at(appears), transform: from, easing: EASE_OUT },
+        { offset: at(appears + CARET_HOP_MS), transform: to },
+      )
+      from = to
     }
-    const inner = stage('polygon', {
+    caret.animate(keyframes, { delay: CARET_DELAY_MS, duration, fill: 'both' })
+  }
+
+  /** Build the mark as four stacked stage layers revealed from the centre outward. */
+  private buildMark(): HTMLDivElement {
+    const mark = div(css.mark)
+    mark.setAttribute('aria-hidden', 'true')
+    const spokes = OUTER_VERTICES.map(([x, y]) => svgElement('line', {
+      // One ray per outer vertex; the inner cell's spokes lie along these.
+      x1: CENTER, y1: CENTER, x2: x, y2: y,
+      'stroke-width': 1.9,
+      'stroke-opacity': 0.9,
+      'vector-effect': 'non-scaling-stroke',
+    }))
+    const inner = svgElement('polygon', {
       points: points(INNER_VERTICES),
       'stroke-width': 1.9,
       'stroke-opacity': 0.9,
       'vector-effect': 'non-scaling-stroke',
-    }, STAGE_DELAY_MS.inner)
-    const lifts = stage('g', {}, STAGE_DELAY_MS.lifts)
-    for (const [x1, y1, x2, y2] of LIFT_EDGES) {
-      lifts.append(svgElement('line', {
-        x1, y1, x2, y2,
-        'stroke-width': 1.5,
-        'stroke-opacity': 0.7,
-        'vector-effect': 'non-scaling-stroke',
-      }))
-    }
-    const outer = stage('polygon', {
+    })
+    const lifts = LIFT_EDGES.map(([x1, y1, x2, y2]) => svgElement('line', {
+      x1, y1, x2, y2,
+      'stroke-width': 1.5,
+      'stroke-opacity': 0.7,
+      'vector-effect': 'non-scaling-stroke',
+    }))
+    const outer = svgElement('polygon', {
       points: points(OUTER_VERTICES),
       'stroke-width': 2.25,
       'vector-effect': 'non-scaling-stroke',
-    }, STAGE_DELAY_MS.outer)
-    mark.append(spokes, inner, lifts, outer)
+    })
+    mark.append(
+      stage(STAGE_DELAY_MS[0], spokes),
+      stage(STAGE_DELAY_MS[1], [inner]),
+      stage(STAGE_DELAY_MS[2], lifts),
+      stage(STAGE_DELAY_MS[3], [outer]),
+    )
     return mark
-  }
-
-  /** Reveal the wordmark letters one at a time, then hand the row to the nameplate. */
-  private scheduleLettering(): void {
-    this.timers.push(setTimeout(() => { this.caret.classList.add(klass('caretOn')) }, CARET_ON_MS))
-    for (const [i, span] of this.letters.entries()) {
-      this.timers.push(setTimeout(() => { span.classList.add(klass('in')) }, LETTER_START_MS + i * LETTER_STEP_MS))
-    }
-    this.timers.push(setTimeout(() => {
-      this.caret.classList.remove(klass('caretOn'))
-      this.caret.classList.add(klass('caretDone'))
-    }, CARET_OFF_MS))
-    this.timers.push(setTimeout(() => { this.plate.classList.add(klass('in')) }, PLATE_MS))
   }
 
   /** Admit the progress spinner and hint, unless the handoff already started. */
