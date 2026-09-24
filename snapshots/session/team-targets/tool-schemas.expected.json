@@ -304,6 +304,13 @@
           "message": {
             "type": "string",
             "description": "Self-contained message for the target."
+          },
+          "images": {
+            "type": "array",
+            "description": "Attachment ids of images already shown in this conversation, appended to the message.",
+            "items": {
+              "type": "string"
+            }
           }
         },
         "required": [
@@ -345,6 +352,13 @@
           "prompt": {
             "type": "string",
             "description": "Complete initial task for the teammate."
+          },
+          "images": {
+            "type": "array",
+            "description": "Attachment ids of images already shown in this conversation, appended to the prompt.",
+            "items": {
+              "type": "string"
+            }
           },
           "context": {
             "type": "string",

@@ -3,6 +3,7 @@
  * - attachment access mapping from an attachment provider's host path into the tool execution world;
  * - content-block walks, and the text projections and handle text that stand in for image and file blocks;
  * - image-input support mapped from a resolved model's declared input modalities;
+ * - delegation image resolution: model-cited attachment ids matched in the caller's own history and returned as image blocks;
  * - the count of image occurrences a route's image budget still requires offloading;
  * - tool-update projection of one route's provider declarations and developer messages.
  * @module @deepseek-ai/dsh-llm/content
@@ -155,6 +156,84 @@ export type ImageInputSupport = 'supported' | 'unsupported' | 'undeclared'
 export function imageInputSupport(info: Pick<LlmModelInfo, 'inputModalities'>): ImageInputSupport {
   if (info.inputModalities === undefined) return 'undeclared'
   return info.inputModalities.includes('image') ? 'supported' : 'unsupported'
+}
+
+/** Resolution of model-cited attachment ids against one derived conversation history. */
+export interface ImageAttachmentRefResolution {
+  /** Matched durable references in requested order. */
+  readonly refs: ImageAttachmentRef[]
+  /** Requested ids no eligible image block carries, in request order. */
+  readonly missing: string[]
+}
+
+/**
+ * Resolve model-cited attachment ids to durable image references from one
+ * derived conversation history. Only user content and image blocks nested in
+ * tool-result content are eligible, and the first occurrence in message order
+ * wins when several blocks carry one id. The complete reference always comes
+ * from the history block; model-supplied metadata is never trusted.
+ * @param messages - the caller's own derived conversation history.
+ * @param attachmentIds - attachment ids cited by the model, in request order.
+ * @returns the matched references in requested order and the unmatched ids.
+ */
+export function resolveImageAttachmentRefs(
+  messages: readonly Message[],
+  attachmentIds: readonly string[],
+): ImageAttachmentRefResolution {
+  const found = new Map<string, ImageAttachmentRef>()
+  for (const message of messages) {
+    if (message.role !== 'user' && message.role !== 'tool') continue
+    visitImageBlocks(message.content, (block) => {
+      const id = String(block.attachment.attachmentId)
+      if (!found.has(id)) found.set(id, block.attachment)
+    })
+  }
+  const refs: ImageAttachmentRef[] = []
+  const missing: string[] = []
+  for (const id of attachmentIds) {
+    const ref = found.get(id)
+    if (ref === undefined) missing.push(id)
+    else refs.push(ref)
+  }
+  return { refs, missing }
+}
+
+/**
+ * Validate and resolve one delegation tool's model-supplied `images`
+ * parameter into the image blocks the tool appends after its text blocks.
+ * Entries must be non-empty and duplicate-free, stay within the deployment's
+ * per-message image limit when the caller resolved one, and every id must
+ * resolve against the caller's own history; each failure is a
+ * model-correctable error raised before any child or message work. Returned
+ * blocks are fresh and never carry `offloaded`, even when the history block
+ * they resolved from does — offload is the receiver's own request decision.
+ * @param messages - the calling agent's derived conversation history.
+ * @param images - the tool call's raw `images` argument, when supplied.
+ * @param maxImagesPerMessage - the deployment's per-message image limit when the attachments service is present.
+ * @returns one fresh image block per cited id, in cited order.
+ * @throws {Error} a model-correctable validation or unknown-id error.
+ */
+export function resolveDelegationImages(
+  messages: readonly Message[],
+  images: readonly string[] | undefined,
+  maxImagesPerMessage?: number,
+): ImageBlock[] {
+  if (images === undefined || images.length === 0) return []
+  const seen = new Set<string>()
+  for (const id of images) {
+    if (id.length === 0) throw new Error('images entries must be non-empty attachment id strings')
+    if (seen.has(id)) throw new Error(`images lists attachment id ${JSON.stringify(id)} more than once`)
+    seen.add(id)
+  }
+  if (maxImagesPerMessage !== undefined && images.length > maxImagesPerMessage) {
+    throw new Error(`images lists ${images.length} attachments, over the per-message image limit of ${maxImagesPerMessage}`)
+  }
+  const { refs, missing } = resolveImageAttachmentRefs(messages, images)
+  const firstMissing = missing.length === 0 ? undefined : missing[0]
+  if (firstMissing !== undefined) {
+    throw new Error(`${JSON.stringify(firstMissing)} is not an image shown in this conversation`)
+  }
+  return refs.map(attachment => ({ type: 'image', attachment }))
 }
 
 /**

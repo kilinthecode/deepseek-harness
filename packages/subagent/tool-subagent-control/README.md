@@ -46,7 +46,7 @@ This package takes no configuration: the root plugin provides `send_message` and
 
 ### send_message
 
-Sends a message to an Agent named by `agent_id`: any exact live Agent may target its direct continuable child, while a resident continuable child may also target its direct parent. A working target receives the message at its nearest step boundary through Steer; an inactive target starts or resumes a turn through the continuation lifecycle. The call returns only acceptance (the accepted message's stable `messageId`), never a reply. A failure — an unsupported target, unavailable parent, unknown child, descriptor-less child that cannot be resumed, or rejected admission — states the message was not delivered.
+Sends a message to an Agent named by `agent_id`: any exact live Agent may target its direct continuable child, while a resident continuable child may also target its direct parent. A working target receives the message at its nearest step boundary through Steer; an inactive target starts or resumes a turn through the continuation lifecycle. The call returns only acceptance (the accepted message's stable `messageId`), never a reply. An optional `images` parameter hands attachment ids of images already shown in the caller's conversation to the target after the text; an unknown id, or a target whose resolved route refuses images, fails before any delivery. A failure — an unsupported target, unavailable parent, unknown child, descriptor-less child that cannot be resumed, or rejected admission — states the message was not delivered.
 
 ### interrupt_agent
 
@@ -108,7 +108,7 @@ Read these pages when the package-level contract is not enough; they move from t
 
 #### What the model sees
 
-The generated [schemas](../../../docs/tool-catalog.md#deepseek-aidsh-tool-subagent-control): `send_message` takes `agent_id` and `message`; `interrupt_agent` takes `agent_id`; `list_agents` takes the optional `scope` enum.
+The generated [schemas](../../../docs/tool-catalog.md#deepseek-aidsh-tool-subagent-control): `send_message` takes `agent_id` and `message` plus an optional `images` parameter — 'Attachment ids of images already shown in this conversation, appended to the message.'; `interrupt_agent` takes `agent_id`; `list_agents` takes the optional `scope` enum.
 
 #### Token effect
 

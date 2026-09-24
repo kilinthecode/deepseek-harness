@@ -21,11 +21,11 @@ interface TeamMemberSnapshot {
 }
 ```
 
-Every member starts in `provisioning` and reaches exactly one terminal roster phase, `active` or `failed`. Roster `running`/`inactive` status is derived separately and never rewrites this record.
+Every member starts in `provisioning` and reaches exactly one terminal roster phase, `active` or `failed`. Roster `running`/`inactive` status is derived separately and never rewrites this record. The model-facing `spawn_teammate` adapter accepts an optional `images` list of attachment ids already shown in the caller's conversation, resolves it against the caller's derived history, and appends those image blocks after the initial task text; an unknown id fails the call before the provisioning `team/member` record.
 
 ## Durable mailbox
 
-The Lead Session first stores the complete queued message. A target receipt is acknowledged only after its pending inbox item or recorded user message is durable, leaving queued-minus-delivered as the recovery mailbox.
+The Lead Session first stores the complete queued message. A target receipt is acknowledged only after its pending inbox item or recorded user message is durable, leaving queued-minus-delivered as the recovery mailbox. The model-facing `send_message` adapter accepts an optional `images` list of attachment ids already shown in the caller's conversation, resolves it against the caller's derived history, and appends those image blocks after the text; an unknown id fails the call before any durable mailbox record.
 
 ```ts type-equiv
 /** One peer message retained until its target Session records it. */

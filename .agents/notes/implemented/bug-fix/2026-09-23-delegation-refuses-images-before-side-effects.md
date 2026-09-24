@@ -59,7 +59,7 @@ The five call sites share one function, `assertImageCapableRoute(ctx, provider, 
 
 **Folding `SubagentContinuationManager.assertImageCapable` into its call site.** The private method already delegates to `assertImageCapableRoute`, so every delegation path shares one policy definition; folding it would change only the call-site form.
 
-**Widening the `subagent`/`send_message`/`spawn_teammate` tool schemas with an `images` parameter.** That is image travel into delegation — letting a model attach an image to a child prompt — a decision separate from refusing content a child cannot take. The gates hold for whichever caller supplies the image.
+**Widening the `subagent`/`send_message`/`spawn_teammate` tool schemas with an `images` parameter.** That is image travel into delegation — letting a model attach an image to a child prompt — a decision separate from refusing content a child cannot take. The delegation tools carry an optional `images` parameter and pass the resolved image blocks into the same gated operations, so the gates hold for whichever caller supplies the image; this note owns only the refuse-before-side-effect decision.
 
 ## Consequences
 

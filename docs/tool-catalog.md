@@ -2051,6 +2051,13 @@ Delegate a self-contained task to a subagent (a separate agent that works in its
       "type": "string",
       "description": "The complete, self-contained task for the subagent. It does not share this conversation's context, so include everything it needs."
     },
+    "images": {
+      "type": "array",
+      "description": "Attachment ids of images already shown in this conversation, appended to the prompt.",
+      "items": {
+        "type": "string"
+      }
+    },
     "run_in_background": {
       "type": "boolean",
       "description": "Run as a background job and return its id (collect with job_output, stop with job_kill). Defaults to false."
@@ -2129,6 +2136,13 @@ Send a message to an agent. A working agent receives it at its next step; an idl
     "message": {
       "type": "string",
       "description": "The message to deliver to the agent."
+    },
+    "images": {
+      "type": "array",
+      "description": "Attachment ids of images already shown in this conversation, appended to the message.",
+      "items": {
+        "type": "string"
+      }
     }
   },
   "required": [
@@ -2268,6 +2282,13 @@ Send one durable message to another Team member. A running target receives it at
     "message": {
       "type": "string",
       "description": "Self-contained message for the target."
+    },
+    "images": {
+      "type": "array",
+      "description": "Attachment ids of images already shown in this conversation, appended to the message.",
+      "items": {
+        "type": "string"
+      }
     }
   },
   "required": [
@@ -2298,6 +2319,13 @@ Create one named, durable teammate. Only the Team Lead may call this tool.
     "prompt": {
       "type": "string",
       "description": "Complete initial task for the teammate."
+    },
+    "images": {
+      "type": "array",
+      "description": "Attachment ids of images already shown in this conversation, appended to the prompt.",
+      "items": {
+        "type": "string"
+      }
     },
     "context": {
       "type": "string",

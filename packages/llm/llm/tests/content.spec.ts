@@ -4,6 +4,7 @@ import type { AttachmentStore, ImageMediaType } from '@deepseek-ai/dsh-attachmen
 import {
   ToolCallId,
   contentHasFile,
+  createAssistantMessage,
   createDeveloperMessage,
   createToolResultMessage,
   createUserMessage,
@@ -15,7 +16,9 @@ import {
   projectOffloadedImages,
   projectToolUpdates,
   requiredImageOffload,
+  resolveDelegationImages,
   resolveImageAttachmentAccess,
+  resolveImageAttachmentRefs,
   requestImageHandleText,
 } from '../src/index.ts'
 import type { ContentBlock, RequestMessage, RequestUserInput, ToolHistory, ToolSchema } from '../src/index.ts'
@@ -326,6 +329,80 @@ describe('imageInputSupport', () => {
 
   it('reports undeclared when no modality list was disclosed', () => {
     expect(imageInputSupport({})).toBe('undeclared')
+  })
+})
+
+describe('delegation image resolution', () => {
+  const idA = `sha256:${'f'.repeat(64)}`
+  const idB = `sha256:${'0'.repeat(64)}`
+  const unknownA = `sha256:${'1'.repeat(64)}`
+  const unknownB = `sha256:${'2'.repeat(64)}`
+  const ref = (id: string, bytes: number) => ({
+    attachmentId: AttachmentId(id), mediaType: 'image/png' as const, bytes, width: 1, height: 1,
+  })
+  const imageBlock = (id: string, bytes: number): Extract<ContentBlock, { type: 'image' }> => ({
+    type: 'image', attachment: ref(id, bytes),
+  })
+
+  it('resolves user and tool-result occurrences in request order, first occurrence winning', () => {
+    const messages = [
+      createUserMessage({ content: [imageBlock(idA, 1)], source }),
+      createToolResultMessage({
+        callId: ToolCallId('shot'),
+        content: [imageBlock(idA, 2), imageBlock(idB, 3)],
+        isError: false,
+      }),
+      createUserMessage({ content: [imageBlock(idB, 4)], source }),
+    ]
+    expect(resolveImageAttachmentRefs(messages, [idB, idA])).toEqual({
+      refs: [ref(idB, 3), ref(idA, 1)],
+      missing: [],
+    })
+  })
+
+  it('never resolves an id only an assistant message carries', () => {
+    const messages = [
+      createAssistantMessage({ content: [imageBlock(idA, 1)], source: { provider: 'p', model: 'm' } }),
+    ]
+    expect(resolveImageAttachmentRefs(messages, [idA])).toEqual({ refs: [], missing: [idA] })
+  })
+
+  it('repeats a duplicated request id and reports every unknown id in request order', () => {
+    const messages = [createUserMessage({ content: [imageBlock(idA, 1)], source })]
+    expect(resolveImageAttachmentRefs(messages, [unknownA, idA, unknownB, idA])).toEqual({
+      refs: [ref(idA, 1), ref(idA, 1)],
+      missing: [unknownA, unknownB],
+    })
+  })
+
+  it('returns no blocks for an omitted or empty images argument', () => {
+    expect(resolveDelegationImages([], undefined)).toEqual([])
+    expect(resolveDelegationImages([], [])).toEqual([])
+  })
+
+  it('rejects empty entries, duplicates, and over-limit lists before resolution', () => {
+    const messages = [createUserMessage({ content: [imageBlock(idA, 1), imageBlock(idB, 2)], source })]
+    expect(() => resolveDelegationImages(messages, ['']))
+      .toThrow('images entries must be non-empty attachment id strings')
+    expect(() => resolveDelegationImages(messages, [idA, idA]))
+      .toThrow(`images lists attachment id ${JSON.stringify(idA)} more than once`)
+    expect(() => resolveDelegationImages(messages, [idA, idB], 1))
+      .toThrow('images lists 2 attachments, over the per-message image limit of 1')
+    expect(resolveDelegationImages(messages, [idA, idB], 2)).toHaveLength(2)
+  })
+
+  it('fails model-correctably on the first unknown id', () => {
+    const messages = [createUserMessage({ content: [imageBlock(idA, 1)], source })]
+    expect(() => resolveDelegationImages(messages, [idA, unknownA, unknownB]))
+      .toThrow(`${JSON.stringify(unknownA)} is not an image shown in this conversation`)
+  })
+
+  it('returns fresh blocks in cited order that never carry the history offload mark', () => {
+    const messages = [createUserMessage({
+      content: [{ type: 'text', text: 'see' }, { ...imageBlock(idA, 1), offloaded: true as const }],
+      source,
+    })]
+    expect(resolveDelegationImages(messages, [idA])).toEqual([{ type: 'image', attachment: ref(idA, 1) }])
   })
 })
 

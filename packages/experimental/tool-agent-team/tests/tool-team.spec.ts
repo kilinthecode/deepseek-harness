@@ -6,7 +6,8 @@ import { Context } from '@deepseek-ai/cordis'
 import type { Agent } from '@deepseek-ai/dsh-agent'
 import AgentLoop from '@deepseek-ai/dsh-agent-loop'
 import { mountAgentLoopTestDependencies } from '@deepseek-ai/dsh-agent-loop-testkit'
-import { ToolCallId, createUserMessage } from '@deepseek-ai/dsh-llm'
+import { ToolCallId, createUserMessage, createToolResultMessage } from '@deepseek-ai/dsh-llm'
+import { AttachmentId } from '@deepseek-ai/dsh-attachment'
 import { scopeOf } from '@deepseek-ai/dsh-scope'
 import { SessionId, SessionLogOffset } from '@deepseek-ai/dsh-session'
 import JsonlSessionPersistence from '@deepseek-ai/dsh-session-persistence-jsonl'
@@ -731,5 +732,263 @@ describe('dsh-tool-team', () => {
     const childId = spawnedChildId(ctx, lead, result)
     await vi.waitFor(() => { expect(ctx.agents.get(childId)).toBeUndefined() }, { timeout: 5_000 })
     expect(ctx.agentTeams.listMembers(lead)[1]).toMatchObject({ provider: 'team-fresh' })
+  })
+
+  describe('image handoff', () => {
+    const IMAGE_ID = `sha256:${'7'.repeat(64)}`
+    const USER_IMAGE_ID = `sha256:${'a'.repeat(64)}`
+    const TOOL_IMAGE_ID = `sha256:${'b'.repeat(64)}`
+    const imageBlock = {
+      type: 'image' as const,
+      attachment: {
+        attachmentId: AttachmentId(IMAGE_ID),
+        mediaType: 'image/png' as const,
+        bytes: 75,
+        width: 8,
+        height: 8,
+        name: 'image-1.png',
+      },
+    }
+
+    /** Put the image into the caller's derived history once. */
+    function showImage(agent: Agent): void {
+      agent.session.append('user/message', createUserMessage({
+        content: [{ type: 'text', text: 'reference image' }, imageBlock],
+        source: { kind: 'user' },
+      }), { surfaceOp: 'append' })
+    }
+
+    const userImageRef = {
+      attachmentId: AttachmentId(USER_IMAGE_ID),
+      mediaType: 'image/png' as const,
+      bytes: 75,
+      width: 8,
+      height: 8,
+      name: 'user.png',
+    }
+    const toolImageRef = {
+      attachmentId: AttachmentId(TOOL_IMAGE_ID),
+      mediaType: 'image/png' as const,
+      bytes: 75,
+      width: 8,
+      height: 8,
+      name: 'tool.png',
+    }
+
+    /** User-message image plus a nested tool-result image; citing one must not copy the other. */
+    function showUserAndToolResultImages(agent: Agent): void {
+      agent.session.append('user/message', createUserMessage({
+        content: [{ type: 'text', text: 'user image' }, { type: 'image', attachment: userImageRef }],
+        source: { kind: 'user' },
+      }), { surfaceOp: 'append' })
+      agent.session.append('tool/result', {
+        turn: 1,
+        step: 1,
+        message: createToolResultMessage({
+          callId: ToolCallId('history-image'),
+          content: [{ type: 'image', attachment: toolImageRef }],
+          isError: false,
+        }),
+      }, { surfaceOp: 'append' })
+    }
+
+    it('hands cited conversation images to a spawned teammate after the prompt text', async () => {
+      const { ctx, lead } = await setup([textResponse('image child answer')])
+      showImage(lead)
+      const spawned = await execute(ctx, lead, 'spawn_teammate', {
+        name: 'image-worker',
+        description: 'image worker responsibility',
+        prompt: 'Describe the image.',
+        images: [IMAGE_ID],
+      })
+      expect(spawned.isError, text(spawned)).toBe(false)
+      const childId = spawnedChildId(ctx, lead, spawned)
+      await waitNoAgent(ctx, childId)
+      await using persisted = await ctx.sessionPersistence.open(childId, 'read')
+      const { events } = await persisted.read()
+      const initial = events.find(event => event.type === 'user/message' && event.data.source.kind === 'user')
+      expect(initial?.type === 'user/message' ? initial.data.content.at(-2) : undefined)
+        .toEqual({ type: 'text', text: 'Describe the image.' })
+      expect(initial?.type === 'user/message' ? initial.data.content.at(-1) : undefined).toEqual(imageBlock)
+    })
+
+    it('delivers cited conversation images to a teammate after the message text', async () => {
+      const { ctx, lead } = await setup([
+        textResponse('first turn'),
+        textResponse('image follow-up'),
+      ])
+      showImage(lead)
+      const spawned = await execute(ctx, lead, 'spawn_teammate', {
+        name: 'image-peer', description: 'image peer responsibility', prompt: 'wait',
+      })
+      expect(spawned.isError, text(spawned)).toBe(false)
+      const childId = spawnedChildId(ctx, lead, spawned)
+      await waitNoAgent(ctx, childId)
+
+      const sent = await execute(ctx, lead, 'send_message', {
+        target: 'image-peer', message: 'see the image', images: [IMAGE_ID],
+      })
+      expect(sent.isError, text(sent)).toBe(false)
+      expect(JSON.parse(text(sent))).toMatchObject({ status: 'accepted' })
+      await waitNoAgent(ctx, childId)
+      await using persisted = await ctx.sessionPersistence.open(childId, 'read')
+      const { events } = await persisted.read()
+      const contents = events.flatMap((event) => {
+        if (event.type === 'agent/inbox/spliced') return (event.data.inserted ?? []).map(message => message.content)
+        if (event.type === 'user/message') return [event.data.content]
+        return []
+      })
+      const delivered = contents.find(content => content.some(block => block.type === 'image'))
+      expect(delivered?.at(-2)).toEqual({ type: 'text', text: 'see the image' })
+      expect(delivered?.at(-1)).toEqual(imageBlock)
+    })
+
+    it('rejects an image id the conversation never showed before any durable Team work', async () => {
+      const { ctx, lead } = await setup([])
+      const sent = await execute(ctx, lead, 'send_message', { target: 'lead', message: 'm', images: [IMAGE_ID] })
+      expect(sent.isError).toBe(true)
+      expect(text(sent)).toContain(`"${IMAGE_ID}" is not an image shown in this conversation`)
+      const spawned = await execute(ctx, lead, 'spawn_teammate', {
+        name: 'image-worker', description: 'image worker responsibility', prompt: 'p', images: [IMAGE_ID],
+      })
+      expect(spawned.isError).toBe(true)
+      expect(text(spawned)).toContain('is not an image shown in this conversation')
+      expect(ctx.agentTeams.listMembers(lead)).toHaveLength(1)
+    })
+
+    it('surfaces the Team image-route refusal unchanged to the model', async () => {
+      const { ctx, lead } = await setup([textResponse('image-peer done')])
+      showImage(lead)
+      const spawned = await execute(ctx, lead, 'spawn_teammate', {
+        name: 'image-peer', description: 'image peer responsibility', prompt: 'wait',
+      })
+      expect(spawned.isError, text(spawned)).toBe(false)
+      await waitNoAgent(ctx, spawnedChildId(ctx, lead, spawned))
+      vi.spyOn(ctx.llm, 'resolveModelInfo').mockResolvedValue({ inputModalities: ['text'] } as never)
+      const sent = await execute(ctx, lead, 'send_message', {
+        target: 'image-peer', message: 'see this', images: [IMAGE_ID],
+      })
+      expect(sent.isError).toBe(true)
+      expect(text(sent)).toContain('Model "mock" does not support image input.')
+    })
+
+    it('enforces the deployment per-message image limit when the attachments service is present', async () => {
+      const { ctx, lead } = await setup([])
+      ctx.provide('attachments', { imageLimits: { maxImagesPerMessage: 1 } } as never)
+      showImage(lead)
+      const sent = await execute(ctx, lead, 'send_message', {
+        target: 'lead', message: 'm', images: [IMAGE_ID, `sha256:${'8'.repeat(64)}`],
+      })
+      expect(sent.isError).toBe(true)
+      expect(text(sent)).toContain('images lists 2 attachments, over the per-message image limit of 1')
+    })
+
+    it('hands only the cited tool-result image to a spawned teammate when the conversation also shows a user image', async () => {
+      const { ctx, lead } = await setup([textResponse('select child answer')])
+      showUserAndToolResultImages(lead)
+      const spawned = await execute(ctx, lead, 'spawn_teammate', {
+        name: 'image-select',
+        description: 'image select responsibility',
+        prompt: 'Describe the cited image.',
+        images: [TOOL_IMAGE_ID],
+      })
+      expect(spawned.isError, text(spawned)).toBe(false)
+      const childId = spawnedChildId(ctx, lead, spawned)
+      await waitNoAgent(ctx, childId)
+      await using persisted = await ctx.sessionPersistence.open(childId, 'read')
+      const { events } = await persisted.read()
+      const initial = events.find(event => event.type === 'user/message' && event.data.source.kind === 'user')
+      const content = initial?.type === 'user/message' ? initial.data.content : []
+      expect(content.filter(block => block.type === 'image')).toEqual([{ type: 'image', attachment: toolImageRef }])
+      expect(content.at(-2)).toEqual({ type: 'text', text: 'Describe the cited image.' })
+      expect(content.at(-1)).toEqual({ type: 'image', attachment: toolImageRef })
+    })
+
+    it('rejects duplicated spawn_teammate image ids before provisioning a teammate', async () => {
+      const { ctx, lead } = await setup([])
+      showImage(lead)
+      const spawned = await execute(ctx, lead, 'spawn_teammate', {
+        name: 'dup-worker', description: 'dup worker responsibility', prompt: 'p', images: [IMAGE_ID, IMAGE_ID],
+      })
+      expect(spawned.isError).toBe(true)
+      expect(text(spawned)).toContain(`images lists attachment id "${IMAGE_ID}" more than once`)
+      const listed = JSON.parse(text(await execute(ctx, lead, 'list_agents', {}))) as Array<{ target: string }>
+      expect(listed.map(row => row.target)).toEqual(['lead'])
+    })
+
+    it('enforces the spawn_teammate per-message image limit before provisioning a teammate', async () => {
+      const { ctx, lead } = await setup([])
+      ctx.provide('attachments', { imageLimits: { maxImagesPerMessage: 1 } } as never)
+      showUserAndToolResultImages(lead)
+      const spawned = await execute(ctx, lead, 'spawn_teammate', {
+        name: 'limit-worker',
+        description: 'limit worker responsibility',
+        prompt: 'p',
+        images: [USER_IMAGE_ID, TOOL_IMAGE_ID],
+      })
+      expect(spawned.isError).toBe(true)
+      expect(text(spawned)).toContain('images lists 2 attachments, over the per-message image limit of 1')
+      const listed = JSON.parse(text(await execute(ctx, lead, 'list_agents', {}))) as Array<{ target: string }>
+      expect(listed.map(row => row.target)).toEqual(['lead'])
+    })
+
+    it('strips the history offload mark from spawn_teammate image blocks', async () => {
+      const { ctx, lead } = await setup([textResponse('offload child answer')])
+      lead.session.append('user/message', createUserMessage({
+        content: [{ type: 'text', text: 'reference image' }, { ...imageBlock, offloaded: true as const }],
+        source: { kind: 'user' },
+      }), { surfaceOp: 'append' })
+      const spawn = vi.spyOn(ctx.agentTeams, 'spawnTeammate')
+      const spawned = await execute(ctx, lead, 'spawn_teammate', {
+        name: 'offload-worker',
+        description: 'offload worker responsibility',
+        prompt: 'Describe the image.',
+        images: [IMAGE_ID],
+      })
+      expect(spawned.isError, text(spawned)).toBe(false)
+      const delivered = spawn.mock.calls[0]?.[1].prompt.at(-1)
+      expect(delivered).toEqual({ type: 'image', attachment: imageBlock.attachment })
+      expect(delivered).not.toHaveProperty('offloaded')
+      await waitNoAgent(ctx, spawnedChildId(ctx, lead, spawned))
+    })
+
+    it('rejects duplicated send_message image ids before any mailbox enqueue', async () => {
+      const { ctx, lead } = await setup([])
+      showImage(lead)
+      const sent = await execute(ctx, lead, 'send_message', {
+        target: 'lead', message: 'm', images: [IMAGE_ID, IMAGE_ID],
+      })
+      expect(sent.isError).toBe(true)
+      expect(text(sent)).toContain(`images lists attachment id "${IMAGE_ID}" more than once`)
+      expect(lead.session.snapshotEvents().some(event => event.type === 'team/message/queued')).toBe(false)
+    })
+
+    it('strips the history offload mark from send_message image blocks', async () => {
+      const { ctx, lead } = await setup([
+        textResponse('first turn'),
+        textResponse('offload follow-up'),
+      ])
+      const spawned = await execute(ctx, lead, 'spawn_teammate', {
+        name: 'offload-peer', description: 'offload peer responsibility', prompt: 'wait',
+      })
+      expect(spawned.isError, text(spawned)).toBe(false)
+      const childId = spawnedChildId(ctx, lead, spawned)
+      await waitNoAgent(ctx, childId)
+      lead.session.append('user/message', createUserMessage({
+        content: [{ type: 'text', text: 'reference image' }, { ...imageBlock, offloaded: true as const }],
+        source: { kind: 'user' },
+      }), { surfaceOp: 'append' })
+      const send = vi.spyOn(ctx.agentTeams, 'sendMessage')
+      const sent = await execute(ctx, lead, 'send_message', {
+        target: 'offload-peer', message: 'see the image', images: [IMAGE_ID],
+      })
+      expect(sent.isError, text(sent)).toBe(false)
+      expect(send.mock.calls[0]?.[1].content).toEqual([
+        { type: 'text', text: 'see the image' },
+        { type: 'image', attachment: imageBlock.attachment },
+      ])
+      expect(send.mock.calls[0]?.[1].content.at(-1)).not.toHaveProperty('offloaded')
+      await waitNoAgent(ctx, childId)
+    })
   })
 })

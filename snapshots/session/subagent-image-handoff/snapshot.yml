@@ -1,0 +1,12 @@
+version: 1
+scenario: subagent-image-handoff
+profile: headless
+composition: image
+recording: authored
+header:
+  class: image
+input:
+  attachments:
+    - id: sha256:9fa0f2ae2b655c877690c6ed5649dad9f248147f7e21d0f8011636c20d627162
+      mediaType: image/png
+      data: iVBORw0KGgoAAAANSUhEUgAAAAgAAAAICAIAAABLbSncAAAAEklEQVR4nGP8z4AdMOEQH6QSAM1BAQ/oQeJvAAAAAElFTkSuQmCC

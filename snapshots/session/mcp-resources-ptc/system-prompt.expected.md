@@ -189,6 +189,8 @@ interface ToolArgsMap {
     agent_id: string;
     /** The message to deliver to the agent. */
     message: string;
+    /** Attachment ids of images already shown in this conversation, appended to the message. */
+    images?: string[];
   } & Record<string, JsonValue>;
   /** Load the full instructions for a skill. Call it before acting on a task that names or clearly matches a skill in the session skill catalog. */
   skill: {
@@ -201,6 +203,8 @@ interface ToolArgsMap {
     description: string;
     /** The complete, self-contained task for the subagent. It does not share this conversation's context, so include everything it needs. */
     prompt: string;
+    /** Attachment ids of images already shown in this conversation, appended to the prompt. */
+    images?: string[];
     /** Defaults to true. Set false only when your next action depends on the result. */
     run_in_background?: boolean;
   } & Record<string, JsonValue>;
@@ -210,6 +214,8 @@ interface ToolArgsMap {
     description: string;
     /** The task for the subagent. It already sees this conversation's completed turns, so build on them freely and state only what is new. */
     prompt: string;
+    /** Attachment ids of images already shown in this conversation, appended to the prompt. */
+    images?: string[];
   } & Record<string, JsonValue>;
   /** Record and update a task list to plan multi-step work and show progress; skip it for trivial single-step tasks. Add one todo per concrete step before you start. While work remains, keep the todos being worked on `in_progress`, several only when work runs in parallel. Mark each todo `completed` as soon as it is done. */
   todo_write: {

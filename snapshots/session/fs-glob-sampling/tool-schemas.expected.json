@@ -233,6 +233,13 @@
           "message": {
             "type": "string",
             "description": "The message to deliver to the agent."
+          },
+          "images": {
+            "type": "array",
+            "description": "Attachment ids of images already shown in this conversation, appended to the message.",
+            "items": {
+              "type": "string"
+            }
           }
         },
         "required": [
@@ -254,6 +261,13 @@
           "prompt": {
             "type": "string",
             "description": "The complete, self-contained task for the subagent. It does not share this conversation's context, so include everything it needs."
+          },
+          "images": {
+            "type": "array",
+            "description": "Attachment ids of images already shown in this conversation, appended to the prompt.",
+            "items": {
+              "type": "string"
+            }
           },
           "run_in_background": {
             "type": "boolean",
@@ -279,6 +293,13 @@
           "prompt": {
             "type": "string",
             "description": "The task for the subagent. It already sees this conversation's completed turns, so build on them freely and state only what is new."
+          },
+          "images": {
+            "type": "array",
+            "description": "Attachment ids of images already shown in this conversation, appended to the prompt.",
+            "items": {
+              "type": "string"
+            }
           }
         },
         "required": [

@@ -21,11 +21,11 @@ interface TeamMemberSnapshot {
 }
 ```
 
-每个 member 都从 `provisioning` 开始，并且只到达一个终态 roster phase：`active` 或 `failed`。roster 的 `running`／`inactive` 状态单独派生，绝不会重写该记录。
+每个 member 都从 `provisioning` 开始，并且只到达一个终态 roster phase：`active` 或 `failed`。roster 的 `running`／`inactive` 状态单独派生，绝不会重写该记录。面向模型的 `spawn_teammate` 适配器接受可选的 `images` 列表（调用方会话中已展示图片的附件 id），对照调用方的派生历史解析，并把这些图片块追加在初始任务文本之后；未知 id 会在写入 provisioning 的 `team/member` 记录之前使调用失败。
 
 ## 持久 mailbox
 
-Lead Session 首先存储完整 queued message。只有 target 的 pending inbox 条目或已记录用户消息完成持久化，才会写入独立 acknowledgement event，queued-minus-delivered 因而构成恢复 mailbox。
+Lead Session 首先存储完整 queued message。只有 target 的 pending inbox 条目或已记录用户消息完成持久化，才会写入独立 acknowledgement event，queued-minus-delivered 因而构成恢复 mailbox。面向模型的 `send_message` 适配器接受可选的 `images` 列表（调用方会话中已展示图片的附件 id），对照调用方的派生历史解析，并把这些图片块追加在文本之后；未知 id 会在任何持久 mailbox 记录之前使调用失败。
 
 ```ts type-equiv
 /** One peer message retained until its target Session records it. */

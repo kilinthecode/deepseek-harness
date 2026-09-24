@@ -46,7 +46,7 @@ kind: "package-reference"
 
 ### send_message
 
-向 `agent_id` 指定的 Agent 发送消息：任何确切在线 Agent 都可以向自己的直接可继续子级发送消息，驻留的可继续子级还可以向自己的直接父级发送消息。正在工作的目标通过 Steer 在最近的步骤边界接收消息；非活跃目标会通过继续执行生命周期启动或恢复一个轮次。调用只返回接受结果（被接受消息的稳定 `messageId`），绝不返回回复。失败——不受支持的目标、不可用的父级、未知子级、缺少描述符而无法恢复的子级，或准入被拒——会明确说明消息未送达。
+向 `agent_id` 指定的 Agent 发送消息：任何确切在线 Agent 都可以向自己的直接可继续子级发送消息，驻留的可继续子级还可以向自己的直接父级发送消息。正在工作的目标通过 Steer 在最近的步骤边界接收消息；非活跃目标会通过继续执行生命周期启动或恢复一个轮次。调用只返回接受结果（被接受消息的稳定 `messageId`），绝不返回回复。可选的 `images` 参数把调用方会话中已展示图片的附件 id 追加在文本之后交给目标；未知 id 或解析路由拒绝图片的目标会在任何投递之前失败。失败——不受支持的目标、不可用的父级、未知子级、缺少描述符而无法恢复的子级，或准入被拒——会明确说明消息未送达。
 
 ### interrupt_agent
 
@@ -108,7 +108,7 @@ kind: "package-reference"
 
 #### 模型看到什么
 
-已生成的 [schema](../../../docs/tool-catalog.zh.md#deepseek-aidsh-tool-subagent-control)：`send_message` 接受 `agent_id` 与 `message`；`interrupt_agent` 接受 `agent_id`；`list_agents` 接受可选的 `scope` 枚举。
+已生成的 [schema](../../../docs/tool-catalog.zh.md#deepseek-aidsh-tool-subagent-control)：`send_message` 接受 `agent_id` 与 `message`，以及可选的 `images` 参数——「Attachment ids of images already shown in this conversation, appended to the message.」；`interrupt_agent` 接受 `agent_id`；`list_agents` 接受可选的 `scope` 枚举。
 
 #### Token 影响
 

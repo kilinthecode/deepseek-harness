@@ -2061,6 +2061,13 @@ lsp 工具将提供方选择和语言服务器子进程置于 ctx.lsp 之后，�
       "type": "string",
       "description": "The complete, self-contained task for the subagent. It does not share this conversation's context, so include everything it needs."
     },
+    "images": {
+      "type": "array",
+      "description": "Attachment ids of images already shown in this conversation, appended to the prompt.",
+      "items": {
+        "type": "string"
+      }
+    },
     "run_in_background": {
       "type": "boolean",
       "description": "Run as a background job and return its id (collect with job_output, stop with job_kill). Defaults to false."
@@ -2139,6 +2146,13 @@ lsp 工具将提供方选择和语言服务器子进程置于 ctx.lsp 之后，�
     "message": {
       "type": "string",
       "description": "The message to deliver to the agent."
+    },
+    "images": {
+      "type": "array",
+      "description": "Attachment ids of images already shown in this conversation, appended to the message.",
+      "items": {
+        "type": "string"
+      }
     }
   },
   "required": [
@@ -2278,6 +2292,13 @@ lsp 工具将提供方选择和语言服务器子进程置于 ctx.lsp 之后，�
     "message": {
       "type": "string",
       "description": "Self-contained message for the target."
+    },
+    "images": {
+      "type": "array",
+      "description": "Attachment ids of images already shown in this conversation, appended to the message.",
+      "items": {
+        "type": "string"
+      }
     }
   },
   "required": [
@@ -2308,6 +2329,13 @@ lsp 工具将提供方选择和语言服务器子进程置于 ctx.lsp 之后，�
     "prompt": {
       "type": "string",
       "description": "Complete initial task for the teammate."
+    },
+    "images": {
+      "type": "array",
+      "description": "Attachment ids of images already shown in this conversation, appended to the prompt.",
+      "items": {
+        "type": "string"
+      }
     },
     "context": {
       "type": "string",

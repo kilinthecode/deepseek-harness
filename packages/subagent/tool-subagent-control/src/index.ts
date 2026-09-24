@@ -12,7 +12,9 @@
 import type { Context } from '@deepseek-ai/cordis'
 import { brandString } from '@deepseek-ai/dsh-brand'
 import { defineTool } from '@deepseek-ai/dsh-tools'
+import { resolveDelegationImages } from '@deepseek-ai/dsh-llm'
 import type { ContentBlock } from '@deepseek-ai/dsh-llm'
+import type {} from '@deepseek-ai/dsh-attachment'
 import type { SessionId } from '@deepseek-ai/dsh-session'
 import type {} from '@deepseek-ai/dsh-subagent'
 import { markAdjacentAgentSendMessageTool } from '@deepseek-ai/dsh-subagent/internal'
@@ -41,6 +43,11 @@ export function apply(ctx: Context): void {
         required: true,
         description: 'The message to deliver to the agent.',
       },
+      images: {
+        type: 'array',
+        items: { type: 'string' },
+        description: 'Attachment ids of images already shown in this conversation, appended to the message.',
+      },
     },
     output: {
       schema: {
@@ -60,7 +67,11 @@ export function apply(ctx: Context): void {
       if (!sender) {
         throw new Error('send_message requires a calling agent (exec.agent was undefined)')
       }
-      const message: ContentBlock[] = [{ type: 'text', text: args.message }]
+      const message: ContentBlock[] = [{ type: 'text', text: args.message }, ...resolveDelegationImages(
+        sender.session.deriveMessages(),
+        args.images,
+        ctx.get('attachments')?.imageLimits.maxImagesPerMessage,
+      )]
       const messageId = await ctx.subagents.sendMessage(
         sender,
         brandString<SessionId>(args.agent_id),
