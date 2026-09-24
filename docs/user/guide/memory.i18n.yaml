@@ -1,6 +1,22 @@
-# Bilingual-pair consistency record (docs/i18n/README.md): the git blob hash of each
-# side as of the last confirmed-consistent state. Both languages carry equal authority;
-# after editing either side, bring the other along and re-record with:
+# Bilingual-pair consistency record for memory.md (docs/i18n/README.md): per heading
+# section, a hash of its English and Chinese blocks outside code blocks and generated regions.
+# After editing either side, bring the other along and re-record with:
 #   pnpm run verify-translation-pairing --write docs/user/guide/memory.md
-memory.md: e5d184f780fcefdb8d25ed8fca5429c214e1d814
-memory.zh.md: 75a2a77abd460efb6e88184ddfd0c34b247783cd
+/remember-across-sessions:
+  en: 39c7b8eb192c9fb9
+  zh: be5a5004d9c8ede2
+/remember-across-sessions/how-the-agent-uses-memory:
+  en: d1610705dae68a81
+  zh: 9f063da4dcb33827
+/remember-across-sessions/types-and-scopes:
+  en: b7f9281e40fb7c6a
+  zh: 182cdcdc10a002e6
+/remember-across-sessions/inspect-edit-or-delete-memories:
+  en: 92fe3414b800e0c4
+  zh: 6b7259f85081c394
+/remember-across-sessions/configure-or-turn-it-off:
+  en: 9447bbc08d46dcf8
+  zh: b83750d7639a0726
+/remember-across-sessions/limitations:
+  en: 5df6ea29d0308b87
+  zh: 2b6310002940406b

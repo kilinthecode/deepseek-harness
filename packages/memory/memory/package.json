@@ -1,7 +1,7 @@
 {
   "name": "@deepseek-ai/dsh-memory",
   "description": "Durable agent memory store (ctx.memory): cross-session user, feedback, project, and reference records over the domain data form for the DeepSeek Harness",
-  "version": "0.1.7-rc.1",
+  "version": "0.1.7-rc.2",
   "publishConfig": {
     "access": "public"
   },
