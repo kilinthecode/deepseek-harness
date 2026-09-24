@@ -67,6 +67,20 @@ type MemberStatus = 'running' | 'inactive' | 'provisioning' | 'failed'
 export type TeamActionProps =
   PropsRuntime<'conversation.session.header.actions'> & TeamActionInjected & PropsLocale<typeof NS>
 
+/**
+ * Participants with more committed utterances in `next` than in `previous`.
+ * @param previous - view the panel rendered before, if any.
+ * @param next - view a committed room change republished.
+ * @returns names whose transcript entry count grew.
+ */
+function committedAuthors(previous: RoomRemoteView | null, next: RoomRemoteView): Set<string> {
+  const before = new Map<string, number>()
+  for (const message of previous?.messages ?? []) before.set(message.author, (before.get(message.author) ?? 0) + 1)
+  const after = new Map<string, number>()
+  for (const message of next.messages) after.set(message.author, (after.get(message.author) ?? 0) + 1)
+  return new Set([...after].filter(([author, count]) => count > (before.get(author) ?? 0)).map(([author]) => author))
+}
+
 /** One failure line for a room Remote failure. */
 function failureText(error: { readonly code: string; readonly message: string }): string {
   return `${error.message} (${error.code})`
@@ -282,13 +296,18 @@ function RoomSection({
   const [escalating, setEscalating] = useState<string | null>(null)
   const [escalateReason, setEscalateReason] = useState('')
   const generation = useRef(0)
+  /** Latest view the panel rendered, read when the next view frame arrives. */
+  const shown = useRef<RoomRemoteView | null>(null)
 
   const refresh = useCallback(async (): Promise<void> => {
     const current = ++generation.current
     try {
       const result = await loadRoom(sessionId)
       if (generation.current !== current) return
-      if (result.ok) setRoom(result.value)
+      if (result.ok) {
+        shown.current = result.value
+        setRoom(result.value)
+      }
       else setError(failureText(result.error))
     } catch (reason: unknown) {
       // An unmounted Remote namespace reaches the panel as a rejection, not a result.
@@ -305,12 +324,19 @@ function RoomSection({
   useEffect(() => {
     if (!enabled) return
     const controller = new AbortController()
-    // A committed change republishes the whole view, so streaming text is
-    // dropped once its utterance is durable.
+    // A committed change republishes the whole view. Only the participants
+    // whose utterance it committed stop streaming; another participant's live
+    // text survives a view that records someone else's message or a review.
     followRoom(sessionId, controller.signal, (frame) => {
       if (frame.type === 'view') {
+        const committed = committedAuthors(shown.current, frame.view)
+        shown.current = frame.view
         setRoom(frame.view)
-        setStreaming({})
+        if (committed.size > 0) {
+          setStreaming(previous => Object.fromEntries(
+            Object.entries(previous).filter(([author]) => !committed.has(author)),
+          ))
+        }
         return
       }
       setStreaming(previous => ({

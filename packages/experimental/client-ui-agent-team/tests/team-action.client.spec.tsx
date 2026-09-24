@@ -760,6 +760,36 @@ describe('TeamAction room', () => {
     expect(screen.queryByText('stale reads are')).toBeNull()
   })
 
+  it('keeps a live answer while another participant commits its own', async () => {
+    let emit: ((frame: RoomFollowFrame) => void) | undefined
+    const followRoom = vi.fn((_sessionId: SessionId, _signal: AbortSignal, frame: (next: RoomFollowFrame) => void) => {
+      emit = frame
+      return new Promise<void>(() => {})
+    })
+    render(<TeamAction {...roomBench(room, { followRoom }).props} />)
+    openPanel()
+    await screen.findByText('the cache serves stale reads')
+    await waitFor(() => { expect(emit).toBeDefined() })
+
+    act(() => { emit?.({ type: 'stream', participant: 'worker', delta: 'a long answer' }) })
+    act(() => { emit?.({ type: 'stream', participant: 'lead', delta: 'a short note' }) })
+    // A change that commits no utterance, such as a review, leaves both streams live.
+    act(() => { emit?.({ type: 'view', view: { ...room, chair: 'worker' } }) })
+    expect(screen.getByText('a long answer')).toBeTruthy()
+    expect(screen.getByText('a short note')).toBeTruthy()
+    // The Lead's utterance commits first; the worker is still answering.
+    act(() => {
+      emit?.({
+        type: 'view',
+        view: { ...room, messages: [...room.messages, { author: 'lead', text: 'a short note, committed' }] },
+      })
+    })
+    act(() => { emit?.({ type: 'stream', participant: 'worker', delta: ' continues' }) })
+    expect(screen.getByText('a long answer continues')).toBeTruthy()
+    expect(screen.queryByText('a short note')).toBeNull()
+    expect(screen.getByText('a short note, committed')).toBeTruthy()
+  })
+
   it('stops following the room when the panel closes', async () => {
     let signal: AbortSignal | undefined
     const followRoom = vi.fn((_sessionId: SessionId, next: AbortSignal) => {
