@@ -1,6 +1,37 @@
-# Bilingual-pair consistency record (docs/i18n/README.md): the git blob hash of each
-# side as of the last confirmed-consistent state. Both languages carry equal authority;
-# after editing either side, bring the other along and re-record with:
+# Bilingual-pair consistency record for 2026-09-23-delegation-refuses-images-before-side-effects.md (docs/i18n/README.md): per heading
+# section, a hash of its English and Chinese blocks outside code blocks and generated regions.
+# After editing either side, bring the other along and re-record with:
 #   pnpm run verify-translation-pairing --write .agents/notes/implemented/bug-fix/2026-09-23-delegation-refuses-images-before-side-effects.md
-2026-09-23-delegation-refuses-images-before-side-effects.md: bcb60965416f847b1d94d4886661f08e3dbff5ab
-2026-09-23-delegation-refuses-images-before-side-effects.zh.md: f8c5030816dd04367bb09198f2f75dacdba90fd3
+/agent-note-delegation-refuses-images-a-child-cannot-take-before-any-side-effect:
+  en: 19853d428c5f935d
+  zh: 801864177c1fe6b9
+/agent-note-delegation-refuses-images-a-child-cannot-take-before-any-side-effect/problem:
+  en: 040a500cfacd448b
+  zh: 03a69cf536e260b0
+/agent-note-delegation-refuses-images-a-child-cannot-take-before-any-side-effect/decision:
+  en: a15c7c13f167e5ac
+  zh: 63bcc2ef60c2f344
+/agent-note-delegation-refuses-images-a-child-cannot-take-before-any-side-effect/decision/gates-live-in-the-operation-that-decides-before-its-durable-or-process-side-effect:
+  en: ec3e4b34a63eb20d
+  zh: 55f4602c7e1c0996
+/agent-note-delegation-refuses-images-a-child-cannot-take-before-any-side-effect/decision/imageinput-is-a-provider-transport-fact-not-a-start-time-capability:
+  en: 62f94827c4c2918e
+  zh: f6e44d8815cae764
+/agent-note-delegation-refuses-images-a-child-cannot-take-before-any-side-effect/decision/the-team-route-probe-stays-off-the-public-service-definition:
+  en: 98ff065596d283ea
+  zh: cd6c3c3c5a532531
+/agent-note-delegation-refuses-images-a-child-cannot-take-before-any-side-effect/decision/team-s-route-check-delegates-to-the-subagent-owned-gate:
+  en: d03d839ac8d3c1d9
+  zh: e3cf21233859b824
+/agent-note-delegation-refuses-images-a-child-cannot-take-before-any-side-effect/decision/team-admission-strips-offloaded-keeps-originaldimensions:
+  en: 0ed1af9260fb790b
+  zh: 1528af4e33aecb07
+/agent-note-delegation-refuses-images-a-child-cannot-take-before-any-side-effect/alternatives-considered:
+  en: 2e54cf1273989ed7
+  zh: 14d791d6e7c5bec6
+/agent-note-delegation-refuses-images-a-child-cannot-take-before-any-side-effect/consequences:
+  en: bca0d9597e11ade4
+  zh: ff541ed60cb85835
+/agent-note-delegation-refuses-images-a-child-cannot-take-before-any-side-effect/testing:
+  en: f78006fe4401e070
+  zh: bceeb7d977ba416c
