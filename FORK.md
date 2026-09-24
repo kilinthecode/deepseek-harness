@@ -87,7 +87,7 @@ Files whose *content* is fork brand material. No seam exists for these, so they 
 | `apps/web/public/manifest.webmanifest` | PWA name `Portal Harness`, short name `Portal`. | 2026-09-19 |
 | `apps/web/public/favicon{,-dark}.svg` | Portal tesseract icon. `favicon.svg` is the light-scheme mark and `favicon-dark.svg` inverts its three colours; upstream's media-qualified `<link>` tags in `index.html` choose between them. Regenerate the dark file from the light one after any edit. | 2026-09-21 |
 | `apps/web/tests/pwa-manifest.e2e.ts` | Asserts the fork's manifest values and the light/dark favicon palette pair. | 2026-09-21 |
-| `apps/desktop/resources/icon*.{png,svg}` | Portal app icons (macOS, Windows, generic). The Windows plate keeps `rx=44`; upstream moved its own to `rx=192` (1566f3f5ad). Edit the SVG and re-export the PNG together. | 2026-09-19 |
+| `apps/desktop/resources/icon*.{png,svg}` | Portal app icons (macOS, Windows, generic). The Windows plate keeps `rx=44`; upstream moved its own to `rx=192`. Edit the SVG and re-export the PNG together. | 2026-09-19 |
 | `apps/desktop/src/locale.ts` | Desktop dictionary says "Portal Harness", including upstream's Hide/Quit, welcome, and update keys; the model-provider text and the `DSH` acronym are unchanged. | 2026-09-21 |
 | `apps/desktop/src/main.ts` | About-panel application name; development Dock icon. The window reveal is upstream's (see Known open decisions). | 2026-09-21 |
 | `apps/desktop/tests/expected/*` | Expected About panel, application menu, welcome, and fatal-dialog copy. | 2026-09-21 |
@@ -143,14 +143,14 @@ Regenerate after every sync. Listed so a conflict here is not mistaken for a rea
   `packages/client/portal-brand/src/client/HarnessNameplate.tsx` extracting the badge geometry upstream still
   carries inline in `BrandWordmark`. The two `scripts/gen-tool-catalog.ts` clones were removed on 2026-09-23 by
   sharing one Team catalog helper. See the Agent Note of 2026-09-21.
-- **Desktop boot brand visibility — open as of 2026-09-23.** Upstream's welcome window (753eff67b1) keeps the
+- **Desktop boot brand visibility — open as of 2026-09-23.** Upstream's welcome window keeps the
   main window hidden until the Host is ready and the welcome-or-workspace choice is made, and upstream's
   `main-startup.spec.ts` pins it. The 2026-09-23 sync kept that reveal and dropped the fork's ready-to-show
   reveal and 15 s first-paint deadline, so on desktop the boot brand sequence mostly plays while the window is
   hidden; `dsh web` is unaffected. Restoring it means revealing on ready-to-show when neither the welcome window
   nor recovery is active, re-adding the deadline, and changing those upstream tests.
-- **Browser task controls — follows upstream as of 2026-09-23.** Upstream made the Team panel read-only
-  (843e1b97af, 253fb5e66d, 1dc518f217). The room section keeps the floor, decision, and escalation actions, but
+- **Browser task controls — follows upstream as of 2026-09-23.** Upstream made the Team panel read-only and
+  projection-driven. The room section keeps the floor, decision, and escalation actions, but
   the browser no longer creates, edits, submits, or verifies tasks.
 - **Remaining upstream brand strings.** `apps/desktop/renderer/assets/welcome-brand.svg` is upstream's DeepSeek
   artwork (its alt text says Portal Harness); `apps/desktop/installer/strings.nsh`, `installer/extract-report.h`,

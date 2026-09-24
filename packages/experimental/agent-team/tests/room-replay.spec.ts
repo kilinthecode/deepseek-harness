@@ -27,7 +27,7 @@ function recordedLog(): { readonly rootId: SessionId; readonly events: SessionEv
   const records = readFileSync(RECORDING, 'utf8')
     .split('\n')
     .filter(line => line.trim() !== '')
-    .map((line): RecordedLine => JSON.parse(line))
+    .map(line => JSON.parse(line) as RecordedLine)
   const header = records.find(record => record.type === 'session')
   if (header?.type !== 'session') throw new Error('room recording is missing its Session header')
   return {

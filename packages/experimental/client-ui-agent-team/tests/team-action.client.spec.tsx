@@ -727,7 +727,7 @@ describe('TeamAction room', () => {
     expect((await screen.findByRole('alert')).textContent).toBe('room namespace is not mounted')
     view.unmount()
 
-    const opaque = bench({ injected: { loadRoom: vi.fn(() => Promise.reject('socket closed')) } })
+    const opaque = bench({ injected: { loadRoom: vi.fn<TeamActionInjected['loadRoom']>().mockRejectedValue('socket closed') } })
     render(<TeamAction {...opaque.props} />)
     openPanel()
     expect((await screen.findByRole('alert')).textContent).toBe('socket closed')
