@@ -551,6 +551,9 @@ describe('dsh-tool-team', () => {
       task_id: created.id, expected_revision: claimed.revision, action: 'submit',
     }))) as { revision: number; status: string }
     expect(submitted.status).toBe('verifying')
+    // The Lead finds work awaiting a verdict by the status the view reports.
+    expect(JSON.parse(text(await execute(ctx, lead, 'team_task_list', { status: 'verifying' }))))
+      .toMatchObject({ tasks: [{ id: created.id, status: 'verifying' }] })
 
     // Only another member's verdict, with its reason, completes submitted work.
     const verified = await execute(ctx, lead, 'team_task_update', {

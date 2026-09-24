@@ -2209,6 +2209,7 @@ List shared tasks, including readiness, owner, revision, blockers, and write-sco
       "enum": [
         "pending",
         "in_progress",
+        "verifying",
         "completed"
       ]
     },

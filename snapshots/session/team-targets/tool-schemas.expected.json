@@ -437,6 +437,7 @@
             "enum": [
               "pending",
               "in_progress",
+              "verifying",
               "completed"
             ]
           },
