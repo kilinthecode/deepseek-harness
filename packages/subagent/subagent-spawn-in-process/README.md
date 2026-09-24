@@ -55,7 +55,7 @@ One tool call starts one child and waits for its result: the child works in its 
 
 ### Image prompts
 
-This backend declares `imageInput: true`: the child runs in this process and reads the same attachment store, so an image block in its prompt stays a valid durable reference. The subagent service therefore admits an image prompt for this provider, and the resolved child route decides: the shared in-process driver checks a one-shot start before it creates the child, and the subagent service checks a continuable creation before any child write. A route whose declared input modalities omit `image` rejects with `MODEL_DOES_NOT_SUPPORT_IMAGES` and leaves no child; a route that never disclosed its modalities proceeds.
+This backend declares `imageInput: true`: the child runs in this process and reads the same attachment store, so an image block in its prompt stays a valid durable reference. The subagent service therefore admits an image prompt for this provider, and the resolved child route decides: the shared in-process driver checks a one-shot start before it creates the child, and the subagent service checks a continuable creation before any child write. A route whose declared input modalities omit `image` rejects with `MODEL_DOES_NOT_SUPPORT_IMAGES` and leaves no child; a route that never disclosed its modalities proceeds. A delegation tool's optional `images` parameter, such as the `subagent` tool's, resolves attachment ids already shown in the calling conversation and appends their image blocks to the prompt after the task text.
 
 -----
 

@@ -55,7 +55,7 @@ kind: "package-reference"
 
 ### 图片提示词
 
-本后端声明 `imageInput: true`：子 agent 在本进程内运行并读取同一个附件存储，因此其提示词中的图片块仍是有效的持久引用。subagent 服务因此会为本提供方放行图片提示词，由解析出的子级路由决定：共享的进程内驱动器在创建子 agent 之前检查一次性启动，subagent 服务在任何子级写入之前检查可继续创建。声明的输入模态省略 `image` 的路由会以 `MODEL_DOES_NOT_SUPPORT_IMAGES` 拒绝，且不留下子 agent；从未披露其模态的路由则放行。
+本后端声明 `imageInput: true`：子 agent 在本进程内运行并读取同一个附件存储，因此其提示词中的图片块仍是有效的持久引用。subagent 服务因此会为本提供方放行图片提示词，由解析出的子级路由决定：共享的进程内驱动器在创建子 agent 之前检查一次性启动，subagent 服务在任何子级写入之前检查可继续创建。声明的输入模态省略 `image` 的路由会以 `MODEL_DOES_NOT_SUPPORT_IMAGES` 拒绝，且不留下子 agent；从未披露其模态的路由则放行。委派工具的可选 `images` 参数（例如 `subagent` 工具的该参数）会解析调用方对话中已展示过的附件 id，并把对应的图片块追加到提示词的任务文本之后。
 
 -----
 
