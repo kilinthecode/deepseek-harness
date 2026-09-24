@@ -736,15 +736,15 @@ describe('dsh-tool-team', () => {
     })
     expect(flash.isError).toBe(false)
     expect(pro.isError).toBe(false)
-    const flashChild = await waitRunning(ctx, spawnedChildId(flash))
-    const proChild = await waitRunning(ctx, spawnedChildId(pro))
+    const flashChild = await waitRunning(ctx, spawnedChildId(ctx, lead, flash))
+    const proChild = await waitRunning(ctx, spawnedChildId(ctx, lead, pro))
     expect(flashChild.options).toMatchObject({ provider: 'mock', model: 'mock-flash' })
     expect(proChild.options).toMatchObject({ provider: 'mock', model: 'mock-pro' })
     // A teammate without a named route keeps inheriting the Lead's own.
     const inherited = await execute(ctx, lead, 'spawn_teammate', {
       name: 'inherited-worker', description: 'inherited worker', prompt: 'wait',
     })
-    const inheritedChild = await waitRunning(ctx, spawnedChildId(inherited))
+    const inheritedChild = await waitRunning(ctx, spawnedChildId(ctx, lead, inherited))
     expect(inheritedChild.options).toMatchObject({ provider: 'mock', model: 'mock' })
     await execute(ctx, lead, 'interrupt_agent', { target: 'flash-worker' })
     await execute(ctx, lead, 'interrupt_agent', { target: 'pro-worker' })

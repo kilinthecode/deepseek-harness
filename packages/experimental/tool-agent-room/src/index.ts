@@ -66,7 +66,7 @@ const PARTICIPANT_VIEW_SCHEMA = {
   additionalProperties: false,
   properties: {
     name: { type: 'string', required: true },
-    status: { type: 'string', required: true, enum: ['running', 'idle', 'inactive', 'provisioning', 'failed'] },
+    status: { type: 'string', required: true, enum: ['running', 'inactive', 'provisioning', 'failed'] },
     model: { type: 'string' },
   },
 } as const

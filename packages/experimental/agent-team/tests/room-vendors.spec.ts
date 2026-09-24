@@ -1,6 +1,6 @@
 /**
  * Keyless multi-vendor room certification: one room, three vendor routes — the
- * native DeepSeek adapter speaking chat-completions, an anthropic-messages route,
+ * native DeepSeek adapter speaking Anthropic Messages, an anthropic-messages route,
  * and an openai-completions route served by pi-ai. Each vendor's local stand-in
  * records what it received, and each peer records its standing through the
  * shipped room tools, so the room's attribution and quorum are proven across
@@ -145,11 +145,11 @@ function seat(name: string, provider: string, model: string) {
 describe('room across vendor routes', () => {
   it('deliberates one decision with three vendor adapters attributed', async () => {
     vi.stubEnv('PI_VENDOR_KEY', 'test-key')
-    // DeepSeek speaks chat-completions here so one wire script serves both it and
-    // the openai route; claude speaks anthropic-messages.
+    // DeepSeek and claude speak Anthropic Messages; the openai route speaks
+    // chat-completions.
     const deepseek = await mockServer([
-      { events: chatReply('deepseek route answered') },
-      { events: chatReply('deepseek route answered') },
+      { body: anthropicReply('deepseek route answered'), headers: { 'content-type': 'text/event-stream' } },
+      { body: anthropicReply('deepseek route answered'), headers: { 'content-type': 'text/event-stream' } },
     ])
     const openai = await mockServer([
       { events: chatReply('openai route spoke') },
@@ -176,7 +176,6 @@ describe('room across vendor routes', () => {
     await ctx.plugin(SubagentService)
     await ctx.plugin(LocalCredentialProvider, { watch: false })
     await ctx.plugin(LlmDeepSeek, {
-      protocol: 'chat-completions',
       apiKeyEnv: 'PI_VENDOR_KEY',
       baseURL: deepseek.url,
       thinking: 'disabled',

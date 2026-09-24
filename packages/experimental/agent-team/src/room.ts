@@ -15,8 +15,8 @@ import type { TeamMailbox } from './mailbox.ts'
 import type { TeamState } from './projection.ts'
 import type { RoomTally } from './room-quorum.ts'
 import { tallyProposal } from './room-quorum.ts'
-import type { TeamMembership } from './roster.ts'
-import type { TeamRoster } from './roster.ts'
+import { availability } from './roster.ts'
+import type { TeamMembership, TeamRoster } from './roster.ts'
 import { RoomMessageId, RoomProposalId, TeamId } from './types.ts'
 import type {
   EscalateRoomDecisionRequest,
@@ -667,16 +667,15 @@ export class TeamRoom {
   private participantView(rootId: SessionId, participant: RoomParticipant): RoomParticipantView {
     const live = participant.id === rootId ? this.ctx.agents.get(rootId) : this.ctx.agents.get(participant.id)
     const model = participant.agentModel ?? live?.options.model
-    const status = live?.status ?? 'inactive'
     // The same window the stall sweep uses, so a board that shows a quiet
-    // participant is showing exactly the reviewer the room is waiting on.
+    // participant is showing exactly the loaded reviewer the room is waiting on.
     const seen = this.activity.get(participant.id)
     return {
       id: participant.id,
       name: participant.name,
-      status,
+      status: availability(live),
       quiet: seen !== undefined
-        && status !== 'inactive'
+        && live !== undefined
         && Date.now() - seen >= this.config.reviewGraceMs,
       ...model === undefined ? {} : { model },
     }

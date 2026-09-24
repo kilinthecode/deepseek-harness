@@ -15,7 +15,7 @@ import type {
   TeamTaskView,
   UpdateTeamTaskRequest,
 } from './types.ts'
-import { projectTaskView, taskReady } from './task-view.ts'
+import { awaitingVerification, projectTaskView, taskReady } from './task-view.ts'
 import { requiredText, writeScope } from './validation.ts'
 
 const TASK_GRAPH_ERROR_CODES: Record<TeamTaskGraphViolation, string> = {
@@ -142,7 +142,7 @@ export class TeamTaskBoard {
           break
         case 'edit':
           authorizeOwner()
-          if (this.awaitingVerification(current)) {
+          if (awaitingVerification(current)) {
             throw new TeamError(
               `team task "${current.id}" is awaiting verification; wait for its verdict`,
               'TEAM_TASK_INVALID_TRANSITION',
@@ -162,7 +162,7 @@ export class TeamTaskBoard {
           break
         case 'set_dependencies':
           authorizeOwner()
-          if (this.awaitingVerification(current)) {
+          if (awaitingVerification(current)) {
             throw new TeamError(
               `team task "${current.id}" is awaiting verification; wait for its verdict`,
               'TEAM_TASK_INVALID_TRANSITION',
@@ -187,7 +187,7 @@ export class TeamTaskBoard {
           }
           break
         case 'verify': {
-          if (!this.awaitingVerification(current) || current.verification === undefined) {
+          if (!awaitingVerification(current) || current.verification === undefined) {
             throw new TeamError('only a submitted task can be verified', 'TEAM_TASK_INVALID_TRANSITION')
           }
           if (owner) {
@@ -299,11 +299,6 @@ export class TeamTaskBoard {
   private withoutOwner(task: TeamTaskSnapshot): TeamTaskSnapshot {
     const { ownerId: _ownerId, ...without } = task
     return without
-  }
-
-  /** Whether one task is submitted and still waiting for a verdict. */
-  private awaitingVerification(task: TeamTaskSnapshot): boolean {
-    return task.verification !== undefined && task.verification.verdict === undefined
   }
 
   /** Drop a consumed verification so a reopened task starts unverified. */

@@ -563,7 +563,7 @@ describe('Agent Teams projection events', () => {
       }, SessionSeq(2)))
       expect(failed).not.toBe(valid)
       expect(valid.failure).toBeUndefined()
-      expect(failed.failure).toMatch(/unsupported Agent Teams event version 1/)
+      expect(failed.failure).toMatch(/unsupported Agent Teams team\/task event version 1/)
       expect(failed.members).toBe(valid.members)
       expect(failed.tasks).toBe(valid.tasks)
       expect(teamProjectionDefinition.apply(failed, queuedEvent)).toBe(failed)
@@ -628,7 +628,7 @@ describe('Agent Teams projection events', () => {
         version: 1 as 2, teamId: TEAM, task: task(),
       }, SessionSeq(2))])
       const view = teamProjectionView(state)
-      expect(view.failure).toMatch(/unsupported Agent Teams event version 1/)
+      expect(view.failure).toMatch(/unsupported Agent Teams team\/task event version 1/)
       expect(view.members).toHaveLength(2)
       expect(view.tasks).toHaveLength(1)
       expect(teamProjectionDefinition.wire.viewSchema.parse(view)).toEqual(view)

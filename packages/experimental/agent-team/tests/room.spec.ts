@@ -319,7 +319,7 @@ describe('room transcript', () => {
     await vi.waitFor(() => { expect(quietNow()).toBe(true) }, { timeout: 5_000 })
     ctx.agents.get(alice)?.steer(createUserMessage({
       content: [{ type: 'text', text: 'keep going' }],
-      source: { kind: 'plugin', plugin: 'room-quiet-test' },
+      source: { kind: 'user' },
     }))
     await vi.waitFor(() => { expect(quietNow()).toBe(false) }, { timeout: 5_000 })
   }, 15_000)

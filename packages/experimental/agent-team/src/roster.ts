@@ -548,8 +548,12 @@ export class TeamRoster {
   }
 }
 
-/** Turn availability is independent of whether the Agent is loaded. */
-function availability(agent: Agent | undefined): 'running' | 'inactive' {
+/**
+ * Turn availability, independent of whether the Agent is loaded.
+ * @param agent - live Agent, or undefined when none is registered.
+ * @returns `running` during a turn, otherwise `inactive`.
+ */
+export function availability(agent: Agent | undefined): 'running' | 'inactive' {
   return agent?.status === 'running' ? 'running' : 'inactive'
 }
 

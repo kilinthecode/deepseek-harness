@@ -378,7 +378,7 @@ describe('dsh-tool-room', () => {
   it('reports a participant that runs no model of its own', async () => {
     const { ctx, lead } = await setup([HANG], { leadModel: false })
     const view = parsed(await execute(ctx, lead, 'room_view', {}))
-    expect(view.participants).toEqual([{ name: 'lead', status: 'idle' }])
+    expect(view.participants).toEqual([{ name: 'lead', status: 'inactive' }])
   })
 
   it('bounds the transcript by configured tool capacity rather than a model-supplied value', async () => {
