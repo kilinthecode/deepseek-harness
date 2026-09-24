@@ -144,3 +144,24 @@ export async function assertContinuableChildAcceptsImages(
   const continuations = runtime['requireContinuations']()
   await continuations.assertChildAcceptsImages(parent, childId, signal)
 }
+
+/**
+ * Resolve the exact model route for one continuable direct child: the live
+ * Activation route, or else the persisted descriptor route, each taken whole,
+ * falling back to the parent's current delegation route only when that source
+ * names neither provider nor model, so a source naming one field returns a
+ * route with the other absent.
+ * @param runtime - subagent runtime owning continuation residency.
+ * @param parent - exact live delegating parent whose route is the fallback when the child's source names no route field.
+ * @param childId - durable direct-child session id.
+ * @param signal - caller cancellation for the route resolution.
+ * @returns the resolved provider and model, when known.
+ */
+export function resolveContinuableChildRoute(
+  runtime: SubagentRuntime,
+  parent: Agent,
+  childId: SessionId,
+  signal: AbortSignal,
+): Promise<{ provider?: string; model?: string }> {
+  return runtime['requireContinuations']().resolveChildRoute(parent, childId, signal)
+}

@@ -2015,7 +2015,7 @@ The five read-only tools hide provider cursors and authorize every result from t
 
 ### `list_subagent_models`
 
-Discover LLM routes for subagents without changing the current Agent. Call with no arguments to list registered providers, with `provider` to list its advertised models, or with `provider` and `model` to inspect that exact model and its reasoning efforts. Catalog membership is advisory: an adapter may accept an unlisted model id. Use the returned ids with a delegation tool's `provider`, `model`, and `reasoning_effort` fields.
+Discover LLM routes for subagents without changing the current Agent. Call with no arguments to list registered providers, with `provider` to list its advertised models, or with `provider` and `model` to inspect that exact model and its reasoning efforts. Model entries include image-input support. Catalog membership is advisory: an adapter may accept an unlisted model id. Use the returned ids with a delegation tool's `provider`, `model`, and `reasoning_effort` fields.
 
 ```json
 {
@@ -2256,7 +2256,7 @@ Source: [`packages/experimental/tool-agent-team/src/index.ts`](../packages/exper
 
 ### `list_agents`
 
-List the Lead and every durable teammate with an addressable target and current availability. inactive means no turn is executing, not a task result. provisioning and failed describe member creation.
+List the Lead and every durable teammate with an addressable target, current availability, and image-input support. inactive means no turn is executing, not a task result. provisioning and failed describe member creation.
 
 ```json
 {

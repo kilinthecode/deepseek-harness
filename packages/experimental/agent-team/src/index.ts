@@ -3,7 +3,11 @@
 import { Context, Service } from '@deepseek-ai/cordis'
 import z from '@deepseek-ai/schemastery'
 import type { Agent } from '@deepseek-ai/dsh-agent'
+import { imageInputSupport } from '@deepseek-ai/dsh-llm'
+import type { ImageInputSupport } from '@deepseek-ai/dsh-llm'
 import type {} from '@deepseek-ai/dsh-session-persistence'
+import { parentAgentOptionsForDelegation } from '@deepseek-ai/dsh-subagent'
+import { resolveContinuableChildRoute } from '@deepseek-ai/dsh-subagent/internal'
 import { TeamActivity } from './activity.ts'
 import { errorMessage, TeamError } from './error.ts'
 import { TeamJournal } from './journal.ts'
@@ -142,6 +146,34 @@ export class TeamService extends Service {
   }
 
   /**
+   * Resolve each roster member's image-input support from its live LLM route.
+   * The Lead uses the root's current delegation route; a teammate uses the
+   * continuable-child probe against that same root so a teammate caller cannot
+   * fail the probe. A member whose route or model info cannot be resolved has
+   * its map entry omitted.
+   * @param caller - exact live Team member requesting the listing.
+   * @param signal - caller cancellation for route and model-info resolution.
+   * @returns member ids mapped to `'supported'`, `'unsupported'`, or `'undeclared'`.
+   */
+  async resolveMemberImageSupport(
+    caller: Agent,
+    signal: AbortSignal,
+  ): Promise<ReadonlyMap<TeamMemberView['id'], ImageInputSupport>> {
+    const membership = this.roster.membership(caller)
+    const root = membership.root
+    const support = new Map<TeamMemberView['id'], ImageInputSupport>()
+    await Promise.all(this.roster.list(membership).map(async (member) => {
+      try {
+        support.set(member.id, await this.memberImageSupport(root, member, signal))
+      } catch (_error: unknown) {
+        // A thrown route or model-info lookup omits this member's map entry
+        // rather than failing the listing.
+      }
+    }))
+    return support
+  }
+
+  /**
    * Create one named, continuable direct child of the Team Lead. When the
    * first prompt has an image, the inherited child route (the Lead's current
    * delegation route; spawn requests no per-child override) is checked before
@@ -242,6 +274,29 @@ export class TeamService extends Service {
    */
   tryMembership(agent: Agent): TeamMembership | undefined {
     return this.roster.tryMembership(agent)
+  }
+
+  /**
+   * Resolve one member's image-input support from its live LLM route.
+   * @param root - exact live Team Lead used as the probe parent.
+   * @param member - roster row to resolve.
+   * @param signal - caller cancellation for route and model-info resolution.
+   * @returns the mapped image-input support.
+   * @throws when the route, `llm` service, or model info cannot be resolved.
+   */
+  private async memberImageSupport(
+    root: Agent,
+    member: TeamMemberView,
+    signal: AbortSignal,
+  ): Promise<ImageInputSupport> {
+    const route = member.role === 'lead'
+      ? parentAgentOptionsForDelegation(root)
+      : await resolveContinuableChildRoute(this.ctx.subagents, root, member.id, signal)
+    const llm = this.ctx.get('llm')
+    if (llm === undefined || route.provider === undefined || route.model === undefined) {
+      throw new Error('member image-input support is unresolved')
+    }
+    return imageInputSupport(await llm.resolveModelInfo(route.provider, route.model, signal))
   }
 
   /** Queue one contained recovery pass after publication has unwound. */

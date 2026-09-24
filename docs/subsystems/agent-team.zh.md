@@ -23,6 +23,8 @@ interface TeamMemberSnapshot {
 
 每个 member 都从 `provisioning` 开始，并且只到达一个终态 roster phase：`active` 或 `failed`。roster 的 `running`／`inactive` 状态单独派生，绝不会重写该记录。面向模型的 `spawn_teammate` 适配器接受可选的 `images` 列表（调用方会话中已展示图片的附件 id），对照调用方的派生历史解析，并把这些图片块追加在初始任务文本之后；未知 id 会在写入 provisioning 的 `team/member` 记录之前使调用失败。
 
+图像输入支持不是持久 roster 字段。`resolveMemberImageSupport()` 在列出时读取每个成员的实时 LLM 路由，解析失败时省略该成员的 map 条目；`list_agents` 仍返回该行，但不含 `acceptsImages`。
+
 ## 持久 mailbox
 
 Lead Session 首先存储完整 queued message。只有 target 的 pending inbox 条目或已记录用户消息完成持久化，才会写入独立 acknowledgement event，queued-minus-delivered 因而构成恢复 mailbox。面向模型的 `send_message` 适配器接受可选的 `images` 列表（调用方会话中已展示图片的附件 id），对照调用方的派生历史解析，并把这些图片块追加在文本之后；未知 id 会在任何持久 mailbox 记录之前使调用失败。
@@ -154,6 +156,18 @@ membership(agent: Agent): TeamMembership
 listMembers(agent: Agent): TeamMemberView[]
 
 /**
+ * Resolve each roster member's image-input support from its live LLM route.
+ * The Lead uses the root's current delegation route; a teammate uses the
+ * continuable-child probe against that same root so a teammate caller cannot
+ * fail the probe. A member whose route or model info cannot be resolved has
+ * its map entry omitted.
+ * @param caller - exact live Team member requesting the listing.
+ * @param signal - caller cancellation for route and model-info resolution.
+ * @returns member ids mapped to `'supported'`, `'unsupported'`, or `'undeclared'`.
+ */
+async resolveMemberImageSupport( caller: Agent, signal: AbortSignal, ): Promise<ReadonlyMap<TeamMemberView['id'], ImageInputSupport>>
+
+/**
  * Create one named, continuable direct child of the Team Lead. When the
  * first prompt has an image, the inherited child route (the Lead's current
  * delegation route; spawn requests no per-child override) is checked before
@@ -238,7 +252,7 @@ interrupt(caller: Agent, targetName: string): { previousStatus: 'running' | 'ina
 tryMembership(agent: Agent): TeamMembership | undefined
 ```
 
-Types: [Agent](core.zh.md)
+Types: [Agent](core.zh.md) · [ImageInputSupport](llm-streaming.zh.md)
 
 Source: [`packages/experimental/agent-team/src/index.ts`](../../packages/experimental/agent-team/src/index.ts)
 <!-- END GENERATED cordis-surface -->

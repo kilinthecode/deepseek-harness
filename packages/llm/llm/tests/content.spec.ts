@@ -12,6 +12,7 @@ import {
   imageInputSupport,
   projectFilesToText,
   offloadedImageText,
+  textOnlyImageText,
   projectImagesForTextModel,
   projectOffloadedImages,
   projectToolUpdates,
@@ -73,7 +74,7 @@ describe('projectOffloadedImages', () => {
       { role: 'user', content: [{ type: 'text', text: OMITTED }] },
     ])
     expect(projectImagesForTextModel([input])).toEqual([
-      { role: 'user', content: [{ type: 'text', text: '[image omitted because this model accepts text only; attachment sha256:aaaaaaaa]' }] },
+      { role: 'user', content: [{ type: 'text', text: '[image omitted because this model accepts text only; sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.]' }] },
     ])
     expect(input.content).toEqual([image(3, true)])
   })
@@ -270,6 +271,35 @@ describe('model-facing image access', () => {
   })
 })
 
+describe('textOnlyImageText', () => {
+  const ref = {
+    attachmentId: AttachmentId(`sha256:${'a'.repeat(64)}`),
+    mediaType: 'image/png' as const,
+    bytes: 3,
+    width: 1,
+    height: 1,
+  }
+
+  it('names the full attachment identity without a local path', () => {
+    expect(textOnlyImageText(ref)).toBe(
+      `[image omitted because this model accepts text only; ${ref.attachmentId}.]`,
+    )
+    expect(textOnlyImageText({ ...ref, name: 'photo.png' })).toBe(
+      `[image omitted because this model accepts text only; "photo.png" (${ref.attachmentId}).]`,
+    )
+  })
+
+  it('appends the same normalized access text the offload placeholder uses', () => {
+    const access = { readonlyPath: '/path/to.png' }
+    expect(textOnlyImageText(ref, access)).toBe(
+      `[image omitted because this model accepts text only; ${ref.attachmentId}.`
+      + ' Normalized copy (read-only; may be resized or re-encoded): "/path/to.png" (1x1px, image/png).'
+      + ' Source dimensions, format, and byte size may differ.'
+      + ' Copy to a writable path ending in .png before editing.]',
+    )
+  })
+})
+
 describe('projectImagesForTextModel', () => {
   it('returns image-free history unchanged', () => {
     const messages = [createUserMessage({ content: [{ type: 'text', text: 'plain' }], source })]
@@ -280,6 +310,13 @@ describe('projectImagesForTextModel', () => {
       isError: false,
     })]
     expect(projectImagesForTextModel(results)).toBe(results)
+    expect(projectImagesForTextModel(
+      [createUserMessage({ content: [image(3)], source })],
+      () => undefined,
+    )[0]?.content).toEqual([{
+      type: 'text',
+      text: `[image omitted because this model accepts text only; sha256:${'a'.repeat(64)}.]`,
+    }])
   })
 
   it('replaces direct images while retaining unaffected messages', () => {
@@ -303,16 +340,16 @@ describe('projectImagesForTextModel', () => {
       isError: false,
     })
 
-    const projected = projectImagesForTextModel([plain, visual, unchangedTool, visualTool])
+    const projected = projectImagesForTextModel([plain, visual, unchangedTool, visualTool], () => ({ readonlyPath: '/path/to.png' }))
     expect(projected[0]).toBe(plain)
     expect(projected[1]?.content).toEqual([
       { type: 'text', text: 'lead' },
-      { type: 'text', text: '[image omitted because this model accepts text only; attachment sha256:aaaaaaaa]' },
+      { type: 'text', text: '[image omitted because this model accepts text only; sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa. Normalized copy (read-only; may be resized or re-encoded): "/path/to.png" (1x1px, image/png). Source dimensions, format, and byte size may differ. Copy to a writable path ending in .png before editing.]' },
     ])
     expect(projected[2]).toBe(unchangedTool)
     expect(projected[3]?.content).toEqual([
       { type: 'text', text: 'before' },
-      { type: 'text', text: '[image omitted because this model accepts text only; attachment sha256:aaaaaaaa]' },
+      { type: 'text', text: '[image omitted because this model accepts text only; sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa. Normalized copy (read-only; may be resized or re-encoded): "/path/to.png" (1x1px, image/png). Source dimensions, format, and byte size may differ. Copy to a writable path ending in .png before editing.]' },
       { type: 'text', text: 'after' },
     ])
   })

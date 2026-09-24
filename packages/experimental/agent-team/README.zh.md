@@ -130,6 +130,8 @@ Lead 可以停止 teammate 的当前轮次，而不会删除其排队的消息�
 
 当首条提示词包含图片时，`spawnTeammate()` 会先对照 teammate 继承的路由（由于 spawn 请求不携带按 child 的覆盖，即 Lead 当前的委派路由）进行检查，然后才追加 `provisioning` 成员记录，因此被拒绝时名字与成员名额仍可用于重试。
 
+`resolveMemberImageSupport()` 把每个成员的实时 LLM 路由——Lead 当前的委派路由，或 teammate 相对 Team Lead 的 continuable-child 探测——映射为 `'supported'`、`'unsupported'` 或 `'undeclared'`，并在解析失败时省略该成员的 map 条目。`listMembers()` 保持同步。
+
 ### 持久 mailbox
 
 `sendMessage()` 校验 peer 成员关系，追加 `team/message/queued` 并在尝试投递前 flush。目标消息以 `Team message <id> from <name>:` 开头，并在 `TeamMessageSource` 中保留同一 id 与发送者。只有目标会话在 pending inbox 或已记录历史中持久持有消息身份后，才会以 `team/message/delivered` 确认投递。即时准入按目标与持久队列顺序串行化；恢复按同一顺序重新投递 queued-minus-delivered 记录。重试前会同时折叠 live 与持久目标 inbox／历史状态，因此 inbox 已接受但模型尚未 claim 时发生崩溃不会复制消息。该保证是进程内重试加 target 会话去重，而不是跨进程 exactly-once 投递。

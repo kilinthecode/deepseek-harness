@@ -153,7 +153,10 @@ describe('list_subagent_models', () => {
     ctx.llm.registerAdapter(['alpha'], new CatalogAdapter())
     const result = await call(ctx, { provider: 'alpha' })
     expect(result.isError).toBe(false)
-    expect(text(result)).toBe('alpha/fast — Fast: Focused work.\nalpha/plain — Plain')
+    expect(text(result)).toBe(
+      'alpha/fast — Fast: Focused work.\nImage input: undeclared\n'
+      + 'alpha/plain — Plain\nImage input: undeclared',
+    )
   })
 
   it('intersects provider and model discovery with the Session allowlist', async () => {
@@ -161,7 +164,9 @@ describe('list_subagent_models', () => {
     ctx.llm.registerAdapter(['alpha', 'beta'], new CatalogAdapter())
 
     expect(text(await call(ctx, {}))).toBe('alpha — ALPHA API')
-    expect(text(await call(ctx, { provider: 'alpha' }))).toBe('alpha/fast — Fast: Focused work.')
+    expect(text(await call(ctx, { provider: 'alpha' }))).toBe(
+      'alpha/fast — Fast: Focused work.\nImage input: undeclared',
+    )
     expect(text(await call(ctx, { provider: 'alpha', model: 'unlisted' })))
       .toContain('alpha/unlisted — Fast')
 
@@ -197,8 +202,40 @@ describe('list_subagent_models', () => {
     const result = await call(ctx, { provider: 'alpha', model: 'fast' })
     expect(result.isError).toBe(false)
     expect(text(result)).toBe(
-      'alpha/fast — Fast: Focused work.\nReasoning efforts:\n'
+      'alpha/fast — Fast: Focused work.\nImage input: undeclared\nReasoning efforts:\n'
       + 'low — Low\nhigh (default) — High: Quality first.',
+    )
+  })
+
+  it('annotates advertised and exact models with declared image-input support', async () => {
+    class VisionCatalog extends CatalogAdapter {
+      override listModels(provider: string): Promise<readonly LlmModelInfo[]> {
+        return Promise.resolve([
+          { provider, id: 'fast', name: 'Fast', inputModalities: ['text', 'image'] },
+          { provider, id: 'plain', name: 'Plain', inputModalities: ['text'] },
+        ])
+      }
+
+      override resolveModel(provider: string, model: string): Promise<LlmResolvedModelInfo> {
+        return Promise.resolve({
+          provider,
+          id: model,
+          name: model === 'plain' ? 'Plain' : 'Fast',
+          inputModalities: ['text', 'image'],
+        })
+      }
+    }
+    const ctx = await setupListTool()
+    ctx.llm.registerAdapter(['alpha'], new VisionCatalog())
+    expect(text(await call(ctx, { provider: 'alpha' }))).toBe(
+      'alpha/fast — Fast\nImage input: supported\n'
+      + 'alpha/plain — Plain\nImage input: unsupported',
+    )
+    expect(text(await call(ctx, { provider: 'alpha', model: 'fast' }))).toBe(
+      'alpha/fast — Fast\nImage input: supported\nReasoning efforts:\n(no advertised reasoning efforts)',
+    )
+    expect(text(await call(ctx, { provider: 'alpha', model: 'plain' }))).toBe(
+      'alpha/plain — Plain\nImage input: supported\nReasoning efforts:\n(no advertised reasoning efforts)',
     )
   })
 
@@ -207,7 +244,9 @@ describe('list_subagent_models', () => {
     ctx.llm.registerAdapter(['alpha'], new CatalogAdapter())
     const result = await call(ctx, { provider: 'alpha', model: 'plain' })
     expect(result.isError).toBe(false)
-    expect(text(result)).toBe('alpha/plain — Plain\nReasoning efforts:\n(no advertised reasoning efforts)')
+    expect(text(result)).toBe(
+      'alpha/plain — Plain\nImage input: undeclared\nReasoning efforts:\n(no advertised reasoning efforts)',
+    )
   })
 
   it.each([

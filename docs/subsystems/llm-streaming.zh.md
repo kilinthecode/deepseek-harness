@@ -33,7 +33,7 @@ interface ContentBlockMap {
 
 各块接口（完整字段见源码）：`TextBlock`（`text`）、`ReasoningBlock`（thinking，区别于可见文本）、`ImageBlock`（一个持久的[图片附件](attachment.zh.md)）、`FileBlock`（一个持久的原样[文件附件](attachment.zh.md)，请求组装对每条路由都把它投影为 handle 文本）和 `ToolCallBlock`（`id: ToolCallId`、`name`、原始 JSON `arguments`）。工具结果是一等 `ToolResultMessage`，含有 `toolCallId`、结果 `content` 与可选的 `isError`；它不是内容块。`ContentBlock = ContentBlockMap[ContentBlockType]`。仅当适配器、UI、压缩（compaction）和持久回放路径均支持某种新模态时，才将其纳入可合并扩展的 map。 Developer 工具变更块按已解析路由的能力投影。
 
-图片访问方式属于请求序列化，不属于持久附件或确定性请求图片版本。`resolveImageAttachmentAccess()` 把附件提供方可选的宿主对象路径，与消费方为当前工具执行文件系统提供的映射组合起来。结果只适用于本次请求，不参与 `variantId`。
+图片访问方式属于请求序列化，不属于持久附件或确定性请求图片版本。`resolveImageAttachmentAccess()` 把附件提供方可选的宿主对象路径，与消费方为当前工具执行文件系统提供的映射组合起来。结果只适用于本次请求，不参与 `variantId`。纯文本路由会收到确定性的逐图片占位符，包含完整图片身份以及（在可解析时）其只读执行世界路径；它与基于限额的卸载占位文本共享这些内容，但原因子句不同，且没有重新附加的句子，因此模型仍可用文件工具读取这些字节或把它们委派出去。
 
 源码：[`packages/llm/llm/src/content.ts`](../../packages/llm/llm/src/content.ts)
 
