@@ -1,4 +1,9 @@
-/** Content-block structure helpers. @module @deepseek-ai/dsh-llm/content */
+/**
+ * Model content helpers:
+ * - content-block walks, and the text projections and handle text that stand in for image and file blocks;
+ * - image-input support mapped from a resolved model's declared input modalities.
+ * @module @deepseek-ai/dsh-llm/content
+ */
 
 import type { ContentBlock, ImageBlock, LlmImageRequestBudget, LlmModelInfo } from './types.ts'
 import type { RequestMessage } from './types.ts'
