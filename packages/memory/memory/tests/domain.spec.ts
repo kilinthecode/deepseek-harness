@@ -4,9 +4,10 @@ import { join } from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
 import {
   MEMORY_DESCRIPTION_MAX_CHARS,
+  MEMORY_PROJECT_ROOT_MAX_CHARS,
   findProjectRoot,
   memoryDomainSpec,
-  memoryRecord,
+  memoryRecordSchema,
   projectMemoryKey,
   projectSlug,
 } from '@deepseek-ai/dsh-memory'
@@ -34,6 +35,9 @@ const valid = {
   updatedAt: '2026-09-19T00:00:00.000Z',
 }
 
+/** The record schema of a store whose content cap is 64 UTF-8 bytes. */
+const memoryRecord = memoryRecordSchema(64)
+
 describe('memory record schema', () => {
   it('accepts a global record and a project record with its root', () => {
     expect(memoryRecord.safeParse(valid).success).toBe(true)
@@ -53,14 +57,36 @@ describe('memory record schema', () => {
     expect(memoryRecord.safeParse({ ...valid, content: '' }).success).toBe(false)
   })
 
+  it('bounds stored content by the store byte cap, counting multibyte characters as bytes', () => {
+    expect(memoryRecord.safeParse({ ...valid, content: 'x'.repeat(64) }).success).toBe(true)
+    expect(memoryRecord.safeParse({ ...valid, content: 'x'.repeat(65) }).success).toBe(false)
+    // 21 three-byte characters are 63 bytes; one more crosses the 64-byte cap.
+    expect(memoryRecord.safeParse({ ...valid, content: '记'.repeat(21) }).success).toBe(true)
+    expect(memoryRecord.safeParse({ ...valid, content: '记'.repeat(22) }).success).toBe(false)
+    const oversize = memoryRecord.safeParse({ ...valid, content: 'x'.repeat(65) })
+    expect(oversize.error?.issues.map(issue => issue.message)).toEqual(['content is 65 UTF-8 bytes; the cap is 64'])
+  })
+
+  it('bounds the stored project root and requires ISO date-time timestamps', () => {
+    const project = { ...valid, scope: 'project' }
+    const longest = `/${'r'.repeat(MEMORY_PROJECT_ROOT_MAX_CHARS - 1)}`
+    expect(memoryRecord.safeParse({ ...project, projectRoot: longest }).success).toBe(true)
+    expect(memoryRecord.safeParse({ ...project, projectRoot: `${longest}r` }).success).toBe(false)
+    expect(memoryRecord.safeParse({ ...valid, createdAt: 'yesterday' }).success).toBe(false)
+    expect(memoryRecord.safeParse({ ...valid, updatedAt: `${valid.updatedAt}${' '.repeat(4096)}` }).success).toBe(false)
+  })
+
   it('declares a per-record domain with backup-and-skip over two tables', () => {
-    expect(memoryDomainSpec).toMatchObject({
+    const spec = memoryDomainSpec(64)
+    expect(spec).toMatchObject({
       name: 'memory',
       version: 1,
       layout: 'per-record',
       invalidRecords: 'backup-and-skip',
     })
-    expect(Object.keys(memoryDomainSpec.tables)).toEqual(['global', 'project'])
+    expect(Object.keys(spec.tables)).toEqual(['global', 'project'])
+    expect(spec.tables.global.valueSchema.safeParse({ ...valid, content: 'x'.repeat(65) }).success).toBe(false)
+    expect(spec.tables.project.valueSchema.safeParse({ ...valid, scope: 'project', projectRoot: '/repo' }).success).toBe(true)
   })
 })
 

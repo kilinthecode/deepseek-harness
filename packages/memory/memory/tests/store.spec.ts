@@ -50,6 +50,13 @@ async function project(root: string, name: string): Promise<{ root: string; cwd:
   return { root: projectRoot, cwd }
 }
 
+/** Create and return a working directory 24 levels below `cwd`. */
+async function deepCwd(cwd: string): Promise<string> {
+  const deep = join(cwd, ...Array.from({ length: 24 }, (_, level) => `d${level}`))
+  await mkdir(deep, { recursive: true })
+  return deep
+}
+
 function write(over: Partial<MemoryWriteRequest> = {}): MemoryWriteRequest {
   return {
     name: 'prefers-pnpm',
@@ -69,6 +76,12 @@ async function code(promise: Promise<unknown>): Promise<string> {
     throw error
   }
   throw new Error('expected a MemoryError')
+}
+
+/** The `MemoryError` code of one rejected settlement. */
+function rejectedCode(result: PromiseSettledResult<unknown> | undefined): string {
+  if (result?.status !== 'rejected' || !(result.reason instanceof MemoryError)) throw new Error('expected a MemoryError rejection')
+  return result.reason.code
 }
 
 describe('MemoryStore over the json backend', () => {
@@ -162,7 +175,7 @@ describe('MemoryStore over the json backend', () => {
     expect(outside.global).toHaveLength(1)
   })
 
-  it('fails project-scoped operations loudly without a cwd or without a root above it', async () => {
+  it('fails project-scoped writes and forgets loudly without a root, while recall falls back to global records', async () => {
     const root = await freshRoot()
     const ctx = await open(root)
     expect(await code(ctx.memory.write(write({ scope: 'project' })))).toBe('project-root-unavailable')
@@ -170,6 +183,72 @@ describe('MemoryStore over the json backend', () => {
     expect(await code(ctx.memory.forget({ name: 'x', scope: 'project', cwd: root }))).toBe('project-root-unavailable')
     await expect(ctx.memory.write(write({ scope: 'project', cwd: root })))
       .rejects.toThrow('no .git above it); use scope "global"')
+    await ctx.memory.write(write())
+    expect((await ctx.memory.recall({ limit: 8, cwd: root })).map(record => record.scope)).toEqual(['global'])
+    expect((await ctx.memory.recall({ limit: 8 })).map(record => record.scope)).toEqual(['global'])
+  })
+
+  it('refuses one of two overlapping new-name writes at the cap, in the global scope and in a project', async () => {
+    const root = await freshRoot()
+    const ctx = await open(root, { maxRecords: 1 })
+    const global = await Promise.allSettled([
+      ctx.memory.write(write({ name: 'one' })),
+      ctx.memory.write(write({ name: 'two' })),
+    ])
+    expect(global.map(result => result.status)).toEqual(['fulfilled', 'rejected'])
+    expect(rejectedCode(global[1])).toBe('over-cap')
+    expect(await readdir(join(root, 'memory', 'global'))).toEqual(['one.json'])
+
+    // The earlier call's root lookup walks many more levels, so it finishes last; call order must still win.
+    const alpha = await project(root, 'alpha')
+    const inProject = await Promise.allSettled([
+      ctx.memory.write(write({ name: 'one', scope: 'project', cwd: await deepCwd(alpha.cwd) })),
+      ctx.memory.write(write({ name: 'two', scope: 'project', cwd: alpha.root })),
+    ])
+    expect(inProject.map(result => result.status)).toEqual(['fulfilled', 'rejected'])
+    expect(rejectedCode(inProject[1])).toBe('over-cap')
+    expect(await readdir(join(root, 'memory', 'project'))).toEqual([`${projectSlug(alpha.root)}__one.json`])
+  })
+
+  it('runs an overlapping project forget and rewrite of one name in call order', async () => {
+    const root = await freshRoot()
+    const ctx = await open(root)
+    const alpha = await project(root, 'alpha')
+    await ctx.memory.write(write({ scope: 'project', cwd: alpha.cwd, content: 'old' }))
+    // The forget's root lookup walks many more levels than the rewrite's; call order must still win.
+    const [forgot, rewritten] = await Promise.all([
+      ctx.memory.forget({ name: 'prefers-pnpm', scope: 'project', cwd: await deepCwd(alpha.cwd) }),
+      ctx.memory.write(write({ scope: 'project', cwd: alpha.root, content: 'new' })),
+    ])
+    expect(forgot).toBeUndefined()
+    expect(rewritten.outcome).toBe('created')
+    expect((await ctx.memory.visible(alpha.cwd)).project?.records.map(record => record.content)).toEqual(['new'])
+  })
+
+  it('reports created once and keeps the first createdAt when two writes of one name overlap', async () => {
+    const root = await freshRoot()
+    const ctx = await open(root)
+    const first = ctx.memory.write(write({ content: 'first' }))
+    vi.setSystemTime(BASE + 1000)
+    const second = ctx.memory.write(write({ content: 'second' }))
+    const [created, updated] = await Promise.all([first, second])
+    expect(created.outcome).toBe('created')
+    expect(updated.outcome).toBe('updated')
+    expect(updated.record.createdAt).toBe(created.record.createdAt)
+    const document = JSON.parse(await readFile(join(root, 'memory', 'global', 'prefers-pnpm.json'), 'utf8')) as { record: unknown }
+    expect(document.record).toEqual(updated.record)
+  })
+
+  it('reports not-found for the second of two overlapping forgets of one record', async () => {
+    const root = await freshRoot()
+    const ctx = await open(root)
+    await ctx.memory.write(write())
+    const results = await Promise.allSettled([
+      ctx.memory.forget({ name: 'prefers-pnpm', scope: 'global' }),
+      ctx.memory.forget({ name: 'prefers-pnpm', scope: 'global' }),
+    ])
+    expect(results.map(result => result.status)).toEqual(['fulfilled', 'rejected'])
+    expect(rejectedCode(results[1])).toBe('not-found')
   })
 
   it('recalls by case-insensitive substring across visible scopes, newest first, capped by limit', async () => {
@@ -204,14 +283,31 @@ describe('MemoryStore over the json backend', () => {
     expect((await ctx.memory.recall({ limit: 8 })).map(record => record.name)).toEqual(['alpha', 'zeta'])
   })
 
-  it('keeps both records when one name exists in each scope at the same instant', async () => {
+  it('lists the global record before the project record when one name exists in each scope at the same instant', async () => {
     const root = await freshRoot()
     const ctx = await open(root)
     const alpha = await project(root, 'alpha')
-    await ctx.memory.write(write({ name: 'build' }))
     await ctx.memory.write(write({ name: 'build', scope: 'project', cwd: alpha.cwd, content: 'pnpm run build' }))
+    await ctx.memory.write(write({ name: 'build' }))
     const recalled = await ctx.memory.recall({ limit: 8, cwd: alpha.cwd })
-    expect(recalled.map(record => record.scope).sort()).toEqual(['global', 'project'])
+    expect(recalled.map(record => record.scope)).toEqual(['global', 'project'])
+  })
+
+  it('orders same-instant names by code unit even where the host collation disagrees', async () => {
+    const root = await freshRoot()
+    const ctx = await open(root)
+    // Thai collation ignores punctuation, so it sorts `ab` before `a-c`; code-unit order puts `-` first.
+    const thai = new Intl.Collator('th')
+    const collate = vi.spyOn(String.prototype, 'localeCompare')
+      .mockImplementation(function (this: string, that: string) { return thai.compare(this, that) })
+    try {
+      await ctx.memory.write(write({ name: 'ab' }))
+      await ctx.memory.write(write({ name: 'a-c' }))
+      expect(['ab', 'a-c'].sort((left, right) => left.localeCompare(right))).toEqual(['ab', 'a-c'])
+      expect((await ctx.memory.recall({ limit: 8 })).map(record => record.name)).toEqual(['a-c', 'ab'])
+    } finally {
+      collate.mockRestore()
+    }
   })
 
   it('forgets a record durably and reports a missing one', async () => {
@@ -262,6 +358,46 @@ describe('MemoryStore over the json backend', () => {
     expect(files).toContain('fine.json')
     expect(files.some(file => /^broken\.json\.bak\./.test(file))).toBe(true)
     expect(files).not.toContain('broken.json')
+  })
+
+  it('backs up and skips a stored record whose content exceeds the configured byte cap', async () => {
+    const root = await freshRoot()
+    const dir = join(root, 'memory', 'global')
+    await mkdir(dir, { recursive: true })
+    const stored = (name: string, content: string) => JSON.stringify({
+      version: 1,
+      record: {
+        name,
+        type: 'user',
+        scope: 'global',
+        description: 'hand written',
+        content,
+        createdAt: '2026-09-18T00:00:00.000Z',
+        updatedAt: '2026-09-18T00:00:00.000Z',
+      },
+    })
+    await writeFile(join(dir, 'at-cap.json'), stored('at-cap', 'x'.repeat(64)))
+    await writeFile(join(dir, 'over-cap.json'), stored('over-cap', 'x'.repeat(65)))
+    const ctx = await open(root)
+    expect((await ctx.memory.visible(undefined)).global.map(record => record.name)).toEqual(['at-cap'])
+    expect((await readdir(dir)).some(file => /^over-cap\.json\.bak\./.test(file))).toBe(true)
+  })
+
+  it('closes the memory domain with its fiber, so a later store opens it again in the same process', async () => {
+    const root = await freshRoot()
+    const ctx = new Context()
+    contexts.push(ctx)
+    await ctx.plugin(Storage)
+    await ctx.plugin(StorageJson, { root })
+    await ctx.plugin(StorageDomain, { backend: 'json' })
+    const fiber = await ctx.plugin(MemoryStore, { maxRecords: 3, maxRecordBytes: 64 })
+    const facility = ctx.get('storageDomain')
+    expect(facility?.get('memory')).toBeDefined()
+    await fiber.dispose()
+    expect(facility?.get('memory')).toBeUndefined()
+
+    await ctx.plugin(MemoryStore, { maxRecords: 3, maxRecordBytes: 64 })
+    expect((await ctx.memory.write(write())).outcome).toBe('created')
   })
 
   it('lets two stores over one root each publish their own record files', async () => {

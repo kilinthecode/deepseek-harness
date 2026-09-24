@@ -59,15 +59,15 @@ The generated [configuration catalog](../../../docs/config-catalog.md#deepseek-a
 
 ### Where memories live
 
-With the JSON backend, every memory is one file: `<root>/memory/global/<name>.json` for global records and `<root>/memory/project/<slug>__<name>.json` for project records, where `<slug>` is the project directory's sanitized basename plus eight hex characters of the root path's hash. Each file holds `{ "version": 1, "record": { … } }` and is safe to read or edit by hand. A file that no longer parses is moved aside as `<name>.json.bak.<timestamp>` when the store opens, and the other memories stay available.
+With the JSON backend, every memory is one file: `<root>/memory/global/<name>.json` for global records and `<root>/memory/project/<slug>__<name>.json` for project records, where `<slug>` is the project directory's sanitized basename plus eight hex characters of the root path's hash. Each file holds `{ "version": 1, "record": { … } }` and is safe to read or edit by hand. When the store opens, a file that no longer parses or breaks a field bound is moved aside as `<name>.json.bak.<timestamp>`, and the other memories stay available. The bounds cover every field: the name pattern, the 256-character description, content within the current `maxRecordBytes` (so lowering the cap moves larger records aside), a project root of at most 32,767 characters, and ISO-8601 UTC timestamps.
 
 ### Scopes and the project root
 
-A `global` memory is visible in every session under the same harness home. A `project` memory is visible only in sessions whose working directory lies inside the same project root, found by walking upward from the session's `cwd` to the first directory that contains one of `projectRootMarkers`. When a session has no working directory or no marker above it, project-scoped writes, recalls, and forgets fail with `project-root-unavailable`, and the visible set holds global records only. The store never guesses a root.
+A `global` memory is visible in every session under the same harness home. A `project` memory is visible only in sessions whose working directory lies inside the same project root, found by walking upward from the session's `cwd` to the first directory that contains one of `projectRootMarkers`. When a session has no working directory or no marker above it, project-scoped writes and forgets fail with `project-root-unavailable`, while `recall` and `visible` return global records only. The store never guesses a root.
 
 ### What each operation does
 
-`write` validates the name (lowercase kebab-case, 1 to 64 characters), trims the description (at most 256 characters) and content (at most `maxRecordBytes`), enforces the scope's cap, and inserts or replaces the record durably before returning whether it was `created` or `updated`. `recall` matches a case-insensitive substring against name, description, and content across the visible records and returns the newest first, capped by the caller's limit. `forget` deletes one record and fails with `not-found` when there is none. `visible` returns every global record plus the current project's records. Every rejection is a `MemoryError` with a stable `code` and a message written for the model.
+`write` validates the name (lowercase kebab-case, 1 to 64 characters), trims the description (at most 256 characters) and content (at most `maxRecordBytes`), enforces the scope's cap over the records this process has loaded or written, and inserts or replaces the record durably before returning whether it was `created` or `updated`. `recall` matches a case-insensitive substring against name, description, and content across the visible records and returns the newest first, then by name, then global before project, capped by the caller's limit. `forget` deletes one record and fails with `not-found` when there is none. `visible` returns every global record plus the current project's records. Every rejection is a `MemoryError` with a stable `code` and a message written for the model.
 
 -----
 
@@ -91,7 +91,7 @@ This section explains the design decisions behind the store and points at the co
 | File | Role |
 |---|---|
 | [`src/index.ts`](src/index.ts) | `MemoryStore` service (`ctx.memory`), `Config`, request and result types, `MemoryError` |
-| [`src/domain.ts`](src/domain.ts) | The zod record schema, branded name and key types, and the `memory` domain spec |
+| [`src/domain.ts`](src/domain.ts) | The per-store builders of the zod record schema and the `memory` domain spec, and the branded name and key types |
 | [`src/project.ts`](src/project.ts) | Project-root discovery and the path-safe project key |
 
 ### Lifecycle
@@ -100,7 +100,7 @@ The service opens the `memory` domain during its init, so a consumer that inject
 
 ### Concurrency
 
-Distinct records are distinct files, so two processes writing different memories never collide. Two processes writing the same record resolve by last complete publication, never a torn file. Writes inside one process serialize on the domain's write chain and return only after durability. A process loads the store once at open; memories written by another process become visible when the domain reopens.
+Distinct records are distinct files, so two processes writing different memories never collide. Two processes writing the same record resolve by last complete publication, never a torn file. Inside one process, every `write` and `forget` of the store runs, in call order, in one serialized section that holds the project-root lookup, the existence check, the cap check, and the durable put or delete, so overlapping calls from parallel tool calls or several agents never exceed `maxRecords`, a same-name overlap reports `created` for the earlier call and keeps its `createdAt`, and two overlapping forgets of one record report `not-found` for the second. A process loads the store once at open; memories written by another process become visible, and count toward the cap, only when the domain reopens, so two processes writing new names at once can together exceed `maxRecords`.
 
 ### No invariant companion
 
@@ -137,7 +137,7 @@ No direct invalidation; the named consumer owns any request-prefix changes.
 
 These limits define when the store is a poor fit. They are current package constraints, not a task backlog.
 
-- **Cross-process writes appear on reopen** — a process reads the store once when the domain opens, so memories written by another process (a headless run beside a long-lived Web host) become visible only after the domain reopens, and the same record written from two processes resolves by last complete publication.
+- **Cross-process writes appear on reopen** — a process reads the store once when the domain opens, so memories written by another process (a headless run beside a long-lived Web host) become visible, and count toward `maxRecords`, only after the domain reopens; the same record written from two processes resolves by last complete publication.
 - **Substring recall only** — `recall` is a case-insensitive substring match; there is no ranking, no synonym handling, and no semantic search.
 - **No in-repository store** — project memories live under the harness home keyed by the project root, so they are not committed with the repository or shared through git.
 - **Project identity is the absolute root path** — a project record stores its root and is keyed by a slug derived from it, so moving or renaming the repository directory orphans its project memories; sessions inside the new path see none of them until they are written again.

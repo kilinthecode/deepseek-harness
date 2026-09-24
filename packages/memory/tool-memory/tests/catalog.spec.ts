@@ -94,6 +94,25 @@ describe('renderCatalog', () => {
     )
   })
 
+  it('orders same-type names by code unit even where the host collation disagrees', () => {
+    // Thai collation ignores punctuation, so it sorts `ab` before `a-c`; code-unit order puts `-` first.
+    const thai = new Intl.Collator('th')
+    const collate = vi.spyOn(String.prototype, 'localeCompare')
+      .mockImplementation(function (this: string, that: string) { return thai.compare(this, that) })
+    try {
+      const visible: MemoryVisible = { global: [record('ab', 'user', 'global', 'two'), record('a-c', 'user', 'global', 'one')] }
+      expect(['ab', 'a-c'].sort((left, right) => left.localeCompare(right))).toEqual(['ab', 'a-c'])
+      expect(renderCatalog(visible, 2048)).toBe([
+        'Saved memories (catalog; call memory_recall to read one):',
+        'Global:',
+        '- [user] a-c — one',
+        '- [user] ab — two',
+      ].join('\n'))
+    } finally {
+      collate.mockRestore()
+    }
+  })
+
   it('still names the omitted count when even one entry cannot fit', () => {
     const visible: MemoryVisible = { global: [record('a', 'user', 'global', 'x'.repeat(200))] }
     expect(renderCatalog(visible, 10)).toBe(
@@ -111,8 +130,8 @@ async function mount(config: tool.Config = { injectMaxBytes: 2048, maxRecallResu
   await ctx.plugin(SystemPrompt)
   await ctx.plugin(ToolRuntime)
   await mountStore(ctx, root)
-  await ctx.plugin(tool, config)
-  return { ctx, root }
+  const fiber = await ctx.plugin(tool, config)
+  return { ctx, root, fiber }
 }
 
 function sessionAt(cwd: string | undefined, id = 'session'): Session {
@@ -279,6 +298,22 @@ describe('catalog injection', () => {
     await fire(ctx, sessionAgent(session), 1, 1)
     expect(catalogs(session)).toEqual([])
     expect(ctx.sessionProjections.stateOf(session, 'memoryCatalog')).toEqual({ lastCatalog: null })
+  })
+
+  it('unregisters the catalog projection and the pre-step listener with its fiber', async () => {
+    const { ctx, fiber } = await mount()
+    await ctx.memory.write({ ...WRITE, name: 'prefers-pnpm' })
+    const before = sessionAt(undefined, 'before')
+    await fire(ctx, sessionAgent(before), 1, 1)
+    expect(catalogs(before)).toHaveLength(1)
+    expect(ctx.sessionProjections.stateOf(before, 'memoryCatalog')).toEqual({ lastCatalog: catalogs(before)[0] })
+
+    await fiber.dispose()
+    const after = sessionAt(undefined, 'after')
+    await fire(ctx, sessionAgent(after), 1, 1)
+    expect(catalogs(after)).toEqual([])
+    expect(ctx.sessionProjections.stateOf(after, 'memoryCatalog')).toBeUndefined()
+    expect(ctx.sessionProjections.stateOf(before, 'memoryCatalog')).toBeUndefined()
   })
 
   it('folds only its own catalog messages and leaves an already-clear state untouched by compaction', async () => {

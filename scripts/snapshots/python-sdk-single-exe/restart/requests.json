@@ -23,6 +23,9 @@
       "job_kill",
       "job_list",
       "job_output",
+      "memory_forget",
+      "memory_recall",
+      "memory_write",
       "run_code",
       "subagent",
       "workflow"
@@ -52,6 +55,9 @@
       "job_kill",
       "job_list",
       "job_output",
+      "memory_forget",
+      "memory_recall",
+      "memory_write",
       "run_code",
       "subagent",
       "workflow"

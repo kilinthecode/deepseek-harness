@@ -5,7 +5,7 @@ description: Use when changing @deepseek-ai/dsh-memory or @deepseek-ai/dsh-tool-
 
 # DSH durable memory
 
-Work on first-party durable memory touches two packages, every shipped profile's recorded system prompt and tool schemas, and one keyless store fixture. This skill orders that work; the contracts stay in their owners.
+Work on first-party durable memory touches two packages, the recorded system prompt and tool schemas of every composition that mounts the tools, and the keyless store fixtures. This skill orders that work; the contracts stay in their owners.
 
 ## Read the owners first
 
@@ -23,13 +23,15 @@ Work on first-party durable memory touches two packages, every shipped profile's
 | Tools, catalog injection, prompt section | `packages/memory/tool-memory/src/` |
 | Base bundle rows `memory` and `tool-memory` | `packages/bundle/base/cordis.patch.yml`; Web disables the host-plane tools in `packages/bundle/web-app/cordis.patch.yml` and the `standard`, `ptc`, and `cordis` presets mount them |
 | Prompt position | `TOOL_MEMORY` in `packages/core/system-prompt/src/index.ts` |
-| Keyless recorded scenarios | `snapshots/session/memory-catalog-recall/` (seeded global store, recall, write; owns the composition and header sidecars) and `snapshots/session/memory-project-forget/` (project-scope write, catalog with a `Project:` section, forget; shares that composition) |
+| Keyless recorded scenarios | `snapshots/session/memory-catalog-recall/` (seeded global store, recall, write; owns the composition and header sidecars), `snapshots/session/memory-project-forget/` (project-scope write, catalog with a `Project:` section, forget; shares that composition), and `snapshots/sdk/memory-catalog-refresh/` (two SDK turns: the catalog refreshes at the second turn after a write, and the `memory-catalog-compaction` fixture plugin in `packages/test-support/session-snapshot/tests/fixtures/` compacts it away after `memory_recall` so the next step re-injects it; borrows the `compaction-recovery` header sidecars) |
 | Keyless two-process suites | `packages/memory/tool-memory/tests/cross-session.e2e.ts`, `packages/memory/memory/tests/publish.two-process.e2e.ts` |
 | Real-model suite | `packages/memory/tool-memory/tests/real-model.e2e.ts` |
 
 ## Freeze model-visible text before anything else
 
-The prompt section, the three tool descriptions and parameter descriptions, the catalog header, the omission line, and the empty-catalog line are quoted by every recorded scenario's `system-prompt*.expected.md` and `tool-schemas*.expected.json` under `snapshots/session`, `snapshots/sdk`, `snapshots/acp`, and `snapshots/web`, and verbatim by the tool-memory README pair. Settle the wording, update the README pair, then refresh the corpus once; a second wording edit costs a second refresh of about a hundred files.
+The prompt section, the three tool descriptions and parameter descriptions, the catalog header, the omission line, and the empty-catalog line are quoted by the `system-prompt*.expected.md` and `tool-schemas*.expected.json` sidecars of every recorded composition that mounts `tool-memory` under `snapshots/session`, `snapshots/sdk`, `snapshots/acp`, and `snapshots/web`, and verbatim by the tool-memory README pair. The tool names alone are also pinned by the Python SDK projection under `scripts/snapshots/python-sdk-single-exe/`. Settle the wording, update the README pair, then refresh the corpus once; a second wording edit costs a second refresh of about a hundred files.
+
+Two pinned sets stay out of a refresh on purpose: `snapshots/web/cordis-tool-round` declares `retired-tools` coverage, so its fixture and sidecars are a frozen historical composition, and `snapshots/web/minimal-preset` composes the `minimal` preset, which has no memory tools.
 
 ## Run the lanes in this order
 
@@ -39,10 +41,10 @@ The prompt section, the three tool descriptions and parameter descriptions, the 
 pnpm exec vitest run packages/memory --coverage.enabled=true --coverage.include='packages/memory/*/src/**' --coverage.reporter=text
 ```
 
-2. Rebuild the host libraries; the snapshot and e2e lanes below load the built `lib/`, not the source:
+2. Run the full build; the snapshot and e2e lanes below load the built `lib/`, not the source:
 
 ```sh
-pnpm run build:lib:host
+pnpm run build
 ```
 
 3. Refresh the recorded corpus once, then replay it:
@@ -52,17 +54,29 @@ DSH_EXAMPLE_MODE=lib DSH_SNAPSHOT=refresh pnpm run test:snapshot
 DSH_EXAMPLE_MODE=lib pnpm run test:snapshot
 ```
 
-Refresh also rewrites the stream timestamps inside a few `writer.expected.jsonl` files; revert those files unless the scenario's behavior changed. A scenario that hand-picks its tools, such as `snapshots/sdk/persistent-tools/cordis.yml`, carries its own `tool-memory` disable row; a new memory tool needs no change there, a renamed one does.
+Refresh also rewrites the stream timestamps inside a few `writer.expected.jsonl` files; revert those files unless the scenario's behavior changed. A scenario that hand-picks its tools, such as `snapshots/sdk/persistent-tools/cordis.yml`, carries its own `tool-memory` disable row; a new memory tool needs no change there, a renamed one does. The `platform: pwsh` pair `snapshots/session/pwsh-tool-turn` and `persistent-pwsh-tool-turn` refreshes only on a host with `pwsh`; elsewhere give their sidecars the same paragraph and schema entries the refreshed sidecars gained.
 
-4. Keyless process suites, which need the rebuilt libraries:
+4. Refresh the pinned Web sidecars of `fresh-round-trip` and `ptc-round` through their owning Web suites against a fresh Web build, then replay them:
+
+```sh
+pnpm run build:web
+DSH_SNAPSHOT=refresh pnpm exec vitest run --config vitest.web.config.ts apps/web/tests/replay-round-trip.e2e.ts apps/web/tests/ptc-round.e2e.ts
+DSH_SNAPSHOT=replay pnpm exec vitest run --config vitest.web.config.ts apps/web/tests/replay-round-trip.e2e.ts apps/web/tests/ptc-round.e2e.ts
+```
+
+`snapshots/web/schedule-catalog` is an authored session that `apps/web/tests/schedule-after.e2e.ts` seeds under the `standard` preset without comparing its sidecars, so give them the same paragraph and schema entries by hand.
+
+5. A change to the memory tool set updates the Python SDK projection: the sorted `toolNames` in `scripts/snapshots/python-sdk-single-exe/restart/requests.json` and the `request/header` tool lists in the `advanced` and `restart` session logs and `advanced/result.json`. `scripts/smoke-python-runtime.py --scenario sdk-restart --update-snapshots` (and `sdk-snapshot`) rewrites them, but it needs the packaged single executable that Python-runtime CI builds; without one, edit those lists the way the smoke script renders them.
+
+6. Keyless process suites, which need the rebuilt libraries:
 
 ```sh
 DSH_EXAMPLE_MODE=lib pnpm run test:e2e packages/memory
 ```
 
-5. The real-model suite self-skips without `DEEPSEEK_API_KEY`; run it with a key before claiming the feature works end to end, and never print the key.
+7. The real-model suite self-skips without `DEEPSEEK_API_KEY`; run it with a key before claiming the feature works end to end, and never print the key.
 
-6. Documentation gates after README, guide, or Agent Note edits: re-record each edited pair with `pnpm run verify-translation-pairing --write <pair>`, then `pnpm run doc-sync`. Regenerate `pnpm run gen-tool-catalog`, `pnpm run gen-config-catalog`, `pnpm run gen-cordis-catalog`, and `pnpm run gen-doc-graphs` when schemas, config fields, or service JSDoc changed.
+8. Documentation gates after README, guide, or Agent Note edits: re-record each edited pair with `pnpm run verify-translation-pairing --write <pair>`, then `pnpm run doc-sync`. Regenerate `pnpm run gen-tool-catalog`, `pnpm run gen-config-catalog`, `pnpm run gen-cordis-catalog`, and `pnpm run gen-doc-graphs` when schemas, config fields, or service JSDoc changed.
 
 ## Seed a store for a recorded scenario
 

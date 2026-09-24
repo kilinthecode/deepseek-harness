@@ -6,7 +6,7 @@ DeepSeek Harness keeps durable memories for the agent: who you are and how you l
 
 ## How the agent uses memory
 
-At the start of a session the model receives a catalog of the saved memories it can see: one line per memory with its type, name, and one-line description. The catalog is refreshed at the start of a later turn when the saved memories changed, and again after context compaction. The model reads a memory's full content with `memory_recall`, saves or replaces one with `memory_write`, and deletes one with `memory_forget`.
+When the agent can see saved memories, the model receives a catalog of them: one line per memory with its type, name, and one-line description. A session that starts with saved memories gets the catalog before its first model request; one that starts with none gets it right after the first memory is saved. When the saved memories change after that, a new catalog arrives at the start of the next turn, and the catalog is sent again after context compaction. The model reads a memory's full content with `memory_recall`, saves or replaces one with `memory_write`, and deletes one with `memory_forget`.
 
 You can drive it directly:
 
@@ -33,7 +33,7 @@ Every memory is one readable JSON file under the harness home (`~/.dsh`, or the 
 ~/.dsh/storages/memory/project/<slug>__<name>.json
 ```
 
-The project `<slug>` is the project directory's name followed by eight hex characters derived from its full path. Edit a file with any editor or delete it to forget the memory; a running process sees the change the next time it opens the store, so restart a long-running `dsh web` host after editing by hand. A file that no longer parses is moved aside as `<name>.json.bak.<timestamp>` when the store opens, and the other memories stay available. The [store package README](../../../packages/memory/memory/README.md) documents the record fields.
+The project `<slug>` is the project directory's name followed by eight hex characters derived from its full path. Edit a file with any editor or delete it to forget the memory. A file that no longer parses is moved aside as `<name>.json.bak.<timestamp>` when the store opens, and the other memories stay available. The [store package README](../../../packages/memory/memory/README.md) documents the record fields.
 
 ## Configure or turn it off
 
@@ -60,7 +60,7 @@ On Web, the tools belong to the agent preset; pick the `minimal` preset for a se
 ## Limitations
 
 - Moving or renaming a project directory orphans its project memories, because a project memory is keyed by the full path of its root; write them again from the new location.
-- A long-running `dsh web` host reads the store when it starts, so memories written by another process, such as a headless run beside it, appear only after a restart.
+- A long-running `dsh web` host reads the store when it starts, so hand edits and memories written by another process, such as a headless run beside it, appear only after a restart.
 - Recall matches one case-insensitive phrase against a memory's name, description, and content; there is no ranking or semantic search.
 - Calls to the memory tools appear as generic tool rows in the Web UI; there is no memory panel yet.
 

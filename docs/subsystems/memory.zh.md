@@ -6,7 +6,7 @@
 
 ## 记录
 
-一条记忆就是一条记录：匹配 `^[a-z0-9][a-z0-9-]{0,63}$` 的 `name`，取值为 `user`、`feedback`、`project` 或 `reference` 的 `type`，取值为 `global` 或 `project` 的 `scope`，最多 256 个字符的 `description`，`content`，仅当作用域为 `project` 时存在的 `projectRoot`，以及绝不会到达模型的 ISO-8601 `createdAt` 与 `updatedAt` 字符串。`MemoryName`（全局表的键）与 `ProjectMemoryKey`（`<project slug>__<name>`）是[品牌化 id](core.zh.md#branded-ids)。`memory` 存储 domain 以逐记录布局声明 `global` 与 `project` 两张表，对未通过 zod schema 的记录采用 `backup-and-skip`；在 JSON 后端上，每条记录是保存 `{ "version": 1, "record": … }` 的 `<root>/memory/<table>/<key>.json`。
+一条记忆就是一条记录：匹配 `^[a-z0-9][a-z0-9-]{0,63}$` 的 `name`，取值为 `user`、`feedback`、`project` 或 `reference` 的 `type`，取值为 `global` 或 `project` 的 `scope`，最多 256 个字符的 `description`，不超过存储 `maxRecordBytes` 的 `content`，仅当作用域为 `project` 时存在、至多 32,767 个字符的 `projectRoot`，以及绝不会到达模型的 ISO-8601 UTC `createdAt` 与 `updatedAt` 日期时间。`MemoryName`（全局表的键）与 `ProjectMemoryKey`（`<project slug>__<name>`）是[品牌化 id](core.zh.md#branded-ids)。每个存储根据自己的 `maxRecordBytes` 构建 `memory` 存储 domain 规范；该 domain 以逐记录布局声明 `global` 与 `project` 两张表，对未通过 zod schema 的记录采用 `backup-and-skip`；在 JSON 后端上，每条记录是保存 `{ "version": 1, "record": … }` 的 `<root>/memory/<table>/<key>.json`。
 
 ## 请求与结果
 
@@ -86,7 +86,7 @@ type MemoryErrorCode =
 
 ## 目录投影
 
-`dsh-tool-memory` 注册 `memoryCatalog` 会话投影，其状态为 `{ lastCatalog: string | null }`：本插件最近一次注入的目录文本，由其自身 `snapshot` 形式的 `user/message` 事件折叠而来，并在 `compaction/summary` 时重置为 `null`。`agent/pre-step` 监听器在投影值为 `null`、或某轮第一步渲染出与之不同的目录时注入；在目录已送达模型之后被清空的存储渲染为显式的空目录 `EMPTY_CATALOG_TEXT`，因此每个注入决定都可以从日志回放。
+`dsh-tool-memory` 注册 `memoryCatalog` 会话投影，其状态为 `{ lastCatalog: string | null }`：本插件最近一次注入的目录文本，由其自身 `snapshot` 形式的 `user/message` 事件折叠而来，并在 `compaction/summary` 时重置为 `null`。`agent/pre-step` 监听器在投影值为 `null` 且存储有可见记录时，或某轮第一步渲染出与之不同的目录时注入；在目录已送达模型之后被清空的存储渲染为显式的空目录 `EMPTY_CATALOG_TEXT`。该决定读取投影以及存储当前的可见记录；每份注入的目录都是一条已记录的 `user/message`，因此回放可以从日志重建每个模型请求。
 
 <!-- BEGIN GENERATED cordis-surface (gen-cordis-catalog.ts) — do not edit between markers -->
 
@@ -119,7 +119,11 @@ async resolveProjectRoot(cwd: string | undefined): Promise<string | undefined>
 async visible(cwd: string | undefined): Promise<MemoryVisible>
 
 /**
- * Insert or replace one record durably.
+ * Insert or replace one record durably. Writes and forgets of one store run
+ * one at a time in call order, from the project-root lookup to the durable
+ * put, so overlapping calls never exceed the cap and a same-name overlap
+ * reports `created` for the earlier call and keeps its `createdAt`. The cap
+ * counts the records this process has loaded or written.
  * @param request - the memory to store.
  * @returns whether the record was created or updated, and the stored record.
  * @throws {@link MemoryError} for an invalid name, description, or content, a
@@ -128,14 +132,16 @@ async visible(cwd: string | undefined): Promise<MemoryVisible>
 async write(request: MemoryWriteRequest): Promise<MemoryWriteResult>
 
 /**
- * Find visible records by substring, newest first.
+ * Find visible records by substring, newest first, then by name, then with
+ * `global` before `project`. A request without a resolvable project root
+ * searches the global records only.
  * @param request - query, result cap, and working directory.
  * @returns at most `limit` matching records.
  */
 async recall(request: MemoryRecallRequest): Promise<MemoryRecord[]>
 
 /**
- * Delete one record durably.
+ * Delete one record durably, in the same one-at-a-time call order as writes.
  * @param request - name, scope, and working directory.
  * @throws {@link MemoryError} when the name is invalid, the project root is
  * unavailable, or no such record exists in the scope.

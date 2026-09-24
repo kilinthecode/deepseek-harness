@@ -1738,10 +1738,15 @@ export interface ReconnectConfig {
 export interface Config {
   /**
    * Cap on records in the global scope and, separately, in each project. A
-   * write that would exceed it fails so the agent curates with `forget`.
+   * write that would exceed it fails so the agent curates with `forget`. The
+   * count covers the records this process has loaded or written.
    */
   maxRecords: number
-  /** UTF-8 byte cap on one record's `content`. */
+  /**
+   * UTF-8 byte cap on one record's `content`, checked on every write and on
+   * every stored record when the store opens; a stored record over the cap is
+   * backed up and skipped.
+   */
   maxRecordBytes: number
   /**
    * Directory entries that identify a project root while walking upward from
@@ -1752,7 +1757,7 @@ export interface Config {
 }
 ```
 
-来源：[`packages/memory/memory/src/index.ts:44`](../packages/memory/memory/src/index.ts)
+来源：[`packages/memory/memory/src/index.ts:46`](../packages/memory/memory/src/index.ts)
 
 <a id="deepseek-aidsh-message-feedback"></a>
 

@@ -1,15 +1,20 @@
 /**
  * Real two-process publication over one storage root: two child Node
- * processes running the built packages write distinct records and rewrite one
- * shared record at the same time. Afterwards every file is one complete
- * publication, nothing is quarantined, and the shared record holds the last
- * complete publication of one writer. Keyless.
+ * processes running the built packages open the store, wait at a barrier,
+ * then write distinct records and rewrite one shared record at the same
+ * time. The test asserts that their write windows overlapped, that every
+ * file is one complete publication with nothing quarantined, and that the
+ * shared record holds the last complete publication of one writer. Keyless.
  */
 
 import { spawn } from 'node:child_process'
+import type { ChildProcessByStdio } from 'node:child_process'
+import { once } from 'node:events'
 import { mkdtemp, readdir, readFile, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+import { createInterface } from 'node:readline'
+import type { Readable, Writable } from 'node:stream'
 import { fileURLToPath } from 'node:url'
 import { afterEach, describe, expect, it } from 'vitest'
 import { Context } from '@deepseek-ai/cordis'
@@ -21,25 +26,64 @@ import MemoryStore from '@deepseek-ai/dsh-memory'
 const WRITER = fileURLToPath(new URL('./fixtures/concurrent-writer.mjs', import.meta.url))
 const COUNT = 25
 
+type WriterProcess = ChildProcessByStdio<Writable, Readable, null>
+
+/** Wall-clock window of one writer's write loop, in epoch milliseconds. */
+interface WriteWindow {
+  readonly start: number
+  readonly end: number
+}
+
+interface Writer {
+  readonly child: WriterProcess
+  /** Resolves once the writer has opened the store and waits for `go`. */
+  readonly ready: Promise<void>
+  /** Resolves with the write window after a clean exit. */
+  readonly finished: Promise<WriteWindow>
+}
+
 const dirs: string[] = []
 const contexts: Context[] = []
+const children = new Set<WriterProcess>()
 
 afterEach(async () => {
+  // A writer that hangs or outlives a failed assertion is killed here, so no
+  // child survives the case.
+  await Promise.all([...children].map(async (child) => {
+    if (child.exitCode !== null || child.signalCode !== null) return
+    const exited = once(child, 'exit')
+    child.kill('SIGKILL')
+    await exited
+  }))
+  children.clear()
   for (const ctx of contexts.splice(0)) await ctx.fiber.dispose()
   for (const dir of dirs.splice(0)) await rm(dir, { recursive: true, force: true })
 })
 
-function runWriter(root: string, prefix: string): Promise<void> {
-  return new Promise((resolve, reject) => {
-    const child = spawn(process.execPath, [WRITER, root, prefix, String(COUNT)], { stdio: ['ignore', 'pipe', 'inherit'] })
-    let stdout = ''
-    child.stdout.on('data', (chunk: Buffer) => { stdout += chunk.toString() })
+function startWriter(root: string, prefix: string): Writer {
+  const child = spawn(process.execPath, [WRITER, root, prefix, String(COUNT)], { stdio: ['pipe', 'pipe', 'inherit'] })
+  children.add(child)
+  const lines: string[] = []
+  const ready = new Promise<void>((resolve, reject) => {
+    createInterface({ input: child.stdout }).on('line', (line) => {
+      lines.push(line)
+      if (line === 'ready') resolve()
+    })
+    child.once('close', (code) => { reject(new Error(`${prefix} writer exited with ${code} before ready`)) })
+  })
+  const finished = new Promise<WriteWindow>((resolve, reject) => {
     child.once('error', reject)
-    child.once('exit', (code) => {
-      if (code === 0 && stdout.includes('done')) resolve()
-      else reject(new Error(`${prefix} writer exited with ${code}: ${stdout}`))
+    // `close` fires after stdout ends, so every line has been read.
+    child.once('close', (code) => {
+      const last = lines.at(-1)
+      if (code === 0 && last !== undefined && last.startsWith('{')) resolve(JSON.parse(last) as WriteWindow)
+      else reject(new Error(`${prefix} writer exited with ${code}: ${lines.join('\n')}`))
     })
   })
+  // The case awaits `finished` only after the barrier; this handler keeps an
+  // earlier failure from surfacing as an unhandled rejection.
+  finished.catch(() => {})
+  return { child, ready, finished }
 }
 
 describe('two-process publication (built lib)', () => {
@@ -47,7 +91,14 @@ describe('two-process publication (built lib)', () => {
     const root = await mkdtemp(join(tmpdir(), 'dsh-memory-2proc-'))
     dirs.push(root)
 
-    await Promise.all([runWriter(root, 'alpha'), runWriter(root, 'beta')])
+    const alpha = startWriter(root, 'alpha')
+    const beta = startWriter(root, 'beta')
+    await Promise.all([alpha.ready, beta.ready])
+    alpha.child.stdin.end('go\n')
+    beta.child.stdin.end('go\n')
+    const [alphaWindow, betaWindow] = await Promise.all([alpha.finished, beta.finished])
+    // The write loops overlapped in time, so the publications below raced.
+    expect(Math.max(alphaWindow.start, betaWindow.start)).toBeLessThan(Math.min(alphaWindow.end, betaWindow.end))
 
     const dir = join(root, 'memory', 'global')
     const names = (await readdir(dir)).sort()

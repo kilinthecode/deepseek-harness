@@ -9,7 +9,7 @@ English | [中文](README.zh.md)
 
 ## Summary
 
-`dsh-tool-memory` lets the agent remember across sessions. It gives the model three tools over [`dsh-memory`](../memory/README.md): `memory_write` saves or replaces one memory, `memory_recall` reads matching memories, and `memory_forget` deletes one. At the start of every session the model receives a catalog, one line per saved memory with its type, name, and description, refreshed at the next turn when the store changed and again after compaction. A short prompt section says when to save and when not to. Two configuration values bound the catalog bytes and the recall count.
+`dsh-tool-memory` lets the agent remember across sessions. It gives the model three tools over [`dsh-memory`](../memory/README.md): `memory_write` saves or replaces one memory, `memory_recall` reads matching memories, and `memory_forget` deletes one. Once a session has saved memories to show, the model receives a catalog, one line per memory with its type, name, and description; a changed store sends a new catalog at the next turn, and compaction sends it again. A short prompt section says when to save and when not to. Two configuration values bound the catalog bytes and the recall count.
 
 ## Table of Contents
 
@@ -55,7 +55,7 @@ The generated [configuration catalog](../../../docs/config-catalog.md#deepseek-a
 
 ### The catalog
 
-The catalog is a durable user-role message from this plugin. It lists global memories, then the current project's memories; within a section, entries sort by type (`user`, `feedback`, `project`, `reference`) then name. When the budget cuts entries, a final line says how many were omitted and points at `memory_recall`. The model sees it at the first step of a session, again at the first step of a later turn when the store's visible contents changed, and again after compaction shadowed the previous catalog. A store that was empty all along injects nothing; a store emptied after a catalog reached the model injects, at the next turn, a catalog whose only entry line is `No saved memories.`, so the model stops relying on forgotten entries.
+The catalog is a durable user-role message from this plugin. It lists global memories, then the current project's memories; within a section, entries sort by type (`user`, `feedback`, `project`, `reference`) then name. When the budget cuts entries, a final line says how many were omitted and points at `memory_recall`. The model sees it at the first step that has visible memories (the first step of a session whose store already holds some, otherwise the first step after one is saved), again at the first step of a later turn when the store's visible contents changed, and again at the next step after compaction shadowed the previous catalog. A store that was empty all along injects nothing; a store emptied after a catalog reached the model injects, at the next turn, a catalog whose only entry line is `No saved memories.`, so the model stops relying on forgotten entries.
 
 -----
 
@@ -123,7 +123,7 @@ One static section at the `TOOL_MEMORY` position of the system prompt.
 ##### Verbatim text for this field
 
 ```markdown
-You have durable memory that persists across sessions. A catalog of saved memories (type, name, one-line description) is added at the start of the session and refreshed at the start of a later turn when it has changed; call memory_recall to read a memory's content before relying on it. Save a memory with memory_write when you learn something worth keeping beyond this session: who the user is and how they like to work (type user), feedback or corrections on how to do the work (type feedback), a durable fact or constraint about the current project (type project), or a pointer to an external resource such as a URL, ticket, or dashboard (type reference). Use scope project for facts about the current repository and scope global for everything else. Do not save task progress, transient state, secrets, or anything the repository already records. Writing an existing name in the same scope replaces it; remove a memory that turned out wrong with memory_forget.
+You have durable memory that persists across sessions. When saved memories exist, a catalog of them (type, name, one-line description) is added to the conversation; the most recent catalog is current, and changes appear in a new catalog at the start of a later turn. Call memory_recall to read a memory's content before relying on it. Save a memory with memory_write when you learn something worth keeping beyond this session: who the user is and how they like to work (type user), feedback or corrections on how to do the work (type feedback), a durable fact or constraint about the current project (type project), or a pointer to an external resource such as a URL, ticket, or dashboard (type reference). Use scope project for facts about the current repository and scope global for everything else. Do not save task progress, transient state, secrets, or anything the repository already records. Writing an existing name in the same scope replaces it; remove a memory that turned out wrong with memory_forget.
 ```
 
 #### Token effect
@@ -167,7 +167,7 @@ Project:
 
 #### Token effect
 
-Capped by `injectMaxBytes`; added at the first step of a session, at the first step of a turn whose visible memories changed, and after compaction. A store that was always empty adds nothing; one emptied after a catalog adds the two-line empty catalog once.
+Capped by `injectMaxBytes`; added at the first step with visible memories, at the first step of a turn whose visible memories changed, and at the next step after compaction. A store that was always empty adds nothing; one emptied after a catalog adds the two-line empty catalog once.
 
 #### KV Cache effect
 

@@ -1,9 +1,11 @@
 /**
  * The memory catalog: one line per visible memory, injected as durable
- * user-role context when a session starts, when the store changed or emptied
- * by the next turn, and after compaction shadowed the previous catalog. The
- * gate is a projection over the session log, so replay reproduces every
- * injection decision without reading the store.
+ * user-role context at the first step that has memories to show, at a later
+ * turn's first step when the rendered catalog changed or the store emptied,
+ * and at the next step after compaction shadowed the previous catalog. Whether
+ * a step injects depends on the `memoryCatalog` projection of the session log
+ * and on the store's current visible records; each injected catalog is an
+ * ordinary logged message, so replay rebuilds every model request from the log.
  * @module @deepseek-ai/dsh-tool-memory/src/catalog
  */
 

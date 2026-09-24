@@ -7,9 +7,10 @@
 
 /** Section text registered at the `TOOL_MEMORY` position. */
 export const MEMORY_SECTION_TEXT =
-  'You have durable memory that persists across sessions. A catalog of saved memories (type, name, '
-  + 'one-line description) is added at the start of the session and refreshed at the start of a later turn when it has changed; call '
-  + 'memory_recall to read a memory\'s content before relying on it. Save a memory with memory_write '
+  'You have durable memory that persists across sessions. When saved memories exist, a catalog of them '
+  + '(type, name, one-line description) is added to the conversation; the most recent catalog is current, '
+  + 'and changes appear in a new catalog at the start of a later turn. Call memory_recall to read a '
+  + 'memory\'s content before relying on it. Save a memory with memory_write '
   + 'when you learn something worth keeping beyond this session: who the user is and how they like to '
   + 'work (type user), feedback or corrections on how to do the work (type feedback), a durable fact or '
   + 'constraint about the current project (type project), or a pointer to an external resource such as '

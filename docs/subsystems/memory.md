@@ -6,7 +6,7 @@ Types shared by the durable memory store [`@deepseek-ai/dsh-memory`](../../packa
 
 ## Records
 
-One memory is one record: a `name` matching `^[a-z0-9][a-z0-9-]{0,63}$`, a `type` of `user`, `feedback`, `project`, or `reference`, a `scope` of `global` or `project`, a `description` of at most 256 characters, the `content`, a `projectRoot` present exactly when the scope is `project`, and ISO-8601 `createdAt` and `updatedAt` strings that never reach the model. `MemoryName` (the global-table key) and `ProjectMemoryKey` (`<project slug>__<name>`) are [branded ids](core.md#branded-ids). The `memory` storage domain declares a `global` and a `project` table in the per-record layout with `backup-and-skip` for records that fail the zod schema; on the JSON backend each record is `<root>/memory/<table>/<key>.json` holding `{ "version": 1, "record": … }`.
+One memory is one record: a `name` matching `^[a-z0-9][a-z0-9-]{0,63}$`, a `type` of `user`, `feedback`, `project`, or `reference`, a `scope` of `global` or `project`, a `description` of at most 256 characters, the `content` within the store's `maxRecordBytes`, a `projectRoot` of at most 32,767 characters present exactly when the scope is `project`, and ISO-8601 UTC `createdAt` and `updatedAt` date-times that never reach the model. `MemoryName` (the global-table key) and `ProjectMemoryKey` (`<project slug>__<name>`) are [branded ids](core.md#branded-ids). Each store builds its `memory` storage domain spec from its `maxRecordBytes`; the domain declares a `global` and a `project` table in the per-record layout with `backup-and-skip` for records that fail the zod schema; on the JSON backend each record is `<root>/memory/<table>/<key>.json` holding `{ "version": 1, "record": … }`.
 
 ## Requests and results
 
@@ -86,7 +86,7 @@ type MemoryErrorCode =
 
 ## Catalog projection
 
-`dsh-tool-memory` registers the `memoryCatalog` session projection, whose state is `{ lastCatalog: string | null }`: the text of this plugin's latest injected catalog, folded from its own `snapshot`-form `user/message` events, and reset to `null` by `compaction/summary`. The `agent/pre-step` listener injects when the projected value is `null` or when a turn's first step renders a catalog that differs from it; a store emptied after a catalog reached the model renders as the explicit empty catalog `EMPTY_CATALOG_TEXT`, so every injection decision replays from the log.
+`dsh-tool-memory` registers the `memoryCatalog` session projection, whose state is `{ lastCatalog: string | null }`: the text of this plugin's latest injected catalog, folded from its own `snapshot`-form `user/message` events, and reset to `null` by `compaction/summary`. The `agent/pre-step` listener injects when the projected value is `null` and the store has visible records, or when a turn's first step renders a catalog that differs from it; a store emptied after a catalog reached the model renders as the explicit empty catalog `EMPTY_CATALOG_TEXT`. The decision reads the projection and the store's current visible records; every injected catalog is a logged `user/message`, so replay rebuilds each model request from the log.
 
 <!-- BEGIN GENERATED cordis-surface (gen-cordis-catalog.ts) — do not edit between markers -->
 
@@ -119,7 +119,11 @@ async resolveProjectRoot(cwd: string | undefined): Promise<string | undefined>
 async visible(cwd: string | undefined): Promise<MemoryVisible>
 
 /**
- * Insert or replace one record durably.
+ * Insert or replace one record durably. Writes and forgets of one store run
+ * one at a time in call order, from the project-root lookup to the durable
+ * put, so overlapping calls never exceed the cap and a same-name overlap
+ * reports `created` for the earlier call and keeps its `createdAt`. The cap
+ * counts the records this process has loaded or written.
  * @param request - the memory to store.
  * @returns whether the record was created or updated, and the stored record.
  * @throws {@link MemoryError} for an invalid name, description, or content, a
@@ -128,14 +132,16 @@ async visible(cwd: string | undefined): Promise<MemoryVisible>
 async write(request: MemoryWriteRequest): Promise<MemoryWriteResult>
 
 /**
- * Find visible records by substring, newest first.
+ * Find visible records by substring, newest first, then by name, then with
+ * `global` before `project`. A request without a resolvable project root
+ * searches the global records only.
  * @param request - query, result cap, and working directory.
  * @returns at most `limit` matching records.
  */
 async recall(request: MemoryRecallRequest): Promise<MemoryRecord[]>
 
 /**
- * Delete one record durably.
+ * Delete one record durably, in the same one-at-a-time call order as writes.
  * @param request - name, scope, and working directory.
  * @throws {@link MemoryError} when the name is invalid, the project root is
  * unavailable, or no such record exists in the scope.

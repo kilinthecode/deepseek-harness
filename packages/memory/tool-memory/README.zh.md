@@ -9,7 +9,7 @@ kind: "package-reference"
 
 ## 概述
 
-`dsh-tool-memory` 让 agent（智能体）跨会话记忆。它基于 [`dsh-memory`](../memory/README.zh.md) 为模型提供三个工具：`memory_write` 保存或替换一条记忆，`memory_recall` 读取匹配的记忆，`memory_forget` 删除一条。每个会话开始时模型会收到一份目录，每条已保存记忆占一行，列出类型、名称和描述；当存储发生变化时在下一轮刷新，压缩之后再次注入。一段简短的提示词段落说明何时该保存、何时不该。两个配置值分别限制目录字节数与回忆条数。
+`dsh-tool-memory` 让 agent（智能体）跨会话记忆。它基于 [`dsh-memory`](../memory/README.zh.md) 为模型提供三个工具：`memory_write` 保存或替换一条记忆，`memory_recall` 读取匹配的记忆，`memory_forget` 删除一条。会话一旦有可展示的已保存记忆，模型就会收到一份目录，每条记忆占一行，列出类型、名称和描述；存储发生变化时在下一轮发送新目录，压缩之后再次发送。一段简短的提示词段落说明何时该保存、何时不该。两个配置值分别限制目录字节数与回忆条数。
 
 ## 目录
 
@@ -55,7 +55,7 @@ kind: "package-reference"
 
 ### 目录
 
-目录是本插件产生的一条持久的用户角色消息。它先列出全局记忆，再列出当前项目的记忆；每个分节内的条目按类型（`user`、`feedback`、`project`、`reference`）再按名称排序。当预算截断条目时，最后一行说明省略了多少条并指向 `memory_recall`。模型在会话的第一步看到它，在后续某轮的第一步、当存储的可见内容发生变化时再次看到，在压缩遮蔽了之前的目录后又会再次看到。一直为空的存储不注入任何内容；在目录已送达模型之后被清空的存储会在下一轮注入一份唯一条目行为 `No saved memories.` 的目录，让模型不再依赖已被遗忘的条目。
+目录是本插件产生的一条持久的用户角色消息。它先列出全局记忆，再列出当前项目的记忆；每个分节内的条目按类型（`user`、`feedback`、`project`、`reference`）再按名称排序。当预算截断条目时，最后一行说明省略了多少条并指向 `memory_recall`。模型在第一个有可见记忆的步骤看到它（存储已有记忆时是会话的第一步，否则是有记忆保存之后的第一个步骤），在后续某轮的第一步、当存储的可见内容发生变化时再次看到，在压缩遮蔽了之前的目录后的下一步又会再次看到。一直为空的存储不注入任何内容；在目录已送达模型之后被清空的存储会在下一轮注入一份唯一条目行为 `No saved memories.` 的目录，让模型不再依赖已被遗忘的条目。
 
 -----
 
@@ -123,7 +123,7 @@ kind: "package-reference"
 ##### 该字段的逐字文本
 
 ```markdown
-You have durable memory that persists across sessions. A catalog of saved memories (type, name, one-line description) is added at the start of the session and refreshed at the start of a later turn when it has changed; call memory_recall to read a memory's content before relying on it. Save a memory with memory_write when you learn something worth keeping beyond this session: who the user is and how they like to work (type user), feedback or corrections on how to do the work (type feedback), a durable fact or constraint about the current project (type project), or a pointer to an external resource such as a URL, ticket, or dashboard (type reference). Use scope project for facts about the current repository and scope global for everything else. Do not save task progress, transient state, secrets, or anything the repository already records. Writing an existing name in the same scope replaces it; remove a memory that turned out wrong with memory_forget.
+You have durable memory that persists across sessions. When saved memories exist, a catalog of them (type, name, one-line description) is added to the conversation; the most recent catalog is current, and changes appear in a new catalog at the start of a later turn. Call memory_recall to read a memory's content before relying on it. Save a memory with memory_write when you learn something worth keeping beyond this session: who the user is and how they like to work (type user), feedback or corrections on how to do the work (type feedback), a durable fact or constraint about the current project (type project), or a pointer to an external resource such as a URL, ticket, or dashboard (type reference). Use scope project for facts about the current repository and scope global for everything else. Do not save task progress, transient state, secrets, or anything the repository already records. Writing an existing name in the same scope replaces it; remove a memory that turned out wrong with memory_forget.
 ```
 
 #### Token 影响
@@ -167,7 +167,7 @@ Project:
 
 #### Token 影响
 
-受 `injectMaxBytes` 限制；在会话的第一步、可见记忆发生变化的某轮的第一步，以及压缩之后添加。一直为空的存储不添加任何内容；在目录之后被清空的存储只添加一次两行的空目录。
+受 `injectMaxBytes` 限制；在第一个有可见记忆的步骤、可见记忆发生变化的某轮的第一步，以及压缩之后的下一步添加。一直为空的存储不添加任何内容；在目录之后被清空的存储只添加一次两行的空目录。
 
 #### KV Cache 影响
 

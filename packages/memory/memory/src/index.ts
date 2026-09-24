@@ -13,6 +13,7 @@ import type { Domain, KvTable } from '@deepseek-ai/dsh-storage-domain'
 import {
   MEMORY_DESCRIPTION_MAX_CHARS,
   MEMORY_NAME_RE,
+  MEMORY_SCOPES,
   compareStoredText,
   memoryDomainSpec,
 } from './domain.ts'
@@ -22,11 +23,12 @@ import { findProjectRoot, projectMemoryKey } from './project.ts'
 export {
   MEMORY_DESCRIPTION_MAX_CHARS,
   MEMORY_NAME_RE,
+  MEMORY_PROJECT_ROOT_MAX_CHARS,
   MEMORY_SCOPES,
   MEMORY_TYPES,
   compareStoredText,
   memoryDomainSpec,
-  memoryRecord,
+  memoryRecordSchema,
 } from './domain.ts'
 export type { MemoryDomainSpec, MemoryName, MemoryRecord, MemoryScope, MemoryType, ProjectMemoryKey } from './domain.ts'
 export { findProjectRoot, projectMemoryKey, projectSlug } from './project.ts'
@@ -44,10 +46,15 @@ const DEFAULT_PROJECT_ROOT_MARKERS = ['.git'] as const
 export interface Config {
   /**
    * Cap on records in the global scope and, separately, in each project. A
-   * write that would exceed it fails so the agent curates with `forget`.
+   * write that would exceed it fails so the agent curates with `forget`. The
+   * count covers the records this process has loaded or written.
    */
   maxRecords: number
-  /** UTF-8 byte cap on one record's `content`. */
+  /**
+   * UTF-8 byte cap on one record's `content`, checked on every write and on
+   * every stored record when the store opens; a stored record over the cap is
+   * backed up and skipped.
+   */
   maxRecordBytes: number
   /**
    * Directory entries that identify a project root while walking upward from
@@ -136,10 +143,19 @@ export interface MemoryVisible {
   }
 }
 
-/** Sort key for recall results: newest first, then name. */
+const SCOPE_RANK = Object.fromEntries(MEMORY_SCOPES.map((scope, index) => [scope, index])) as Record<MemoryScope, number>
+
+/**
+ * Total order of recall results: newest first, then name, then scope
+ * (`global` before `project`), each compared by code unit.
+ */
 function newestFirst(left: MemoryRecord, right: MemoryRecord): number {
-  return compareStoredText(right.updatedAt, left.updatedAt) || compareStoredText(left.name, right.name)
+  return compareStoredText(right.updatedAt, left.updatedAt)
+    || compareStoredText(left.name, right.name)
+    || SCOPE_RANK[left.scope] - SCOPE_RANK[right.scope]
 }
+
+const noop = (): void => {}
 
 /**
  * The memory store. Opening the domain happens during service init, so every
@@ -154,6 +170,8 @@ export class MemoryStore extends Service {
   private readonly maxRecords: number
   private readonly maxRecordBytes: number
   private readonly markers: readonly string[]
+  /** Tail of the store's single writer section; every link settles, so one rejected write never blocks the next. */
+  private writes: Promise<void> = Promise.resolve()
 
   /**
    * @param ctx - owning context; the domain handle closes with it.
@@ -167,9 +185,21 @@ export class MemoryStore extends Service {
   }
 
   protected async [Service.init](): Promise<void> {
-    const domain = await this.ctx.storageDomain.open(memoryDomainSpec)
+    const domain = await this.ctx.storageDomain.open(memoryDomainSpec(this.maxRecordBytes))
     this.ctx.effect(() => () => domain.close(), 'memory.domainClose')
     this.domain = domain
+  }
+
+  /**
+   * Run one mutation after every earlier write and forget of this store has
+   * settled, so mutations run in call order and each one's project-root
+   * lookup, existence check, and capacity check see the committed results of
+   * the earlier calls.
+   */
+  private serialized<T>(mutation: () => Promise<T>): Promise<T> {
+    const result = this.writes.then(mutation)
+    this.writes = result.then(noop, noop)
+    return result
   }
 
   private requireDomain(): Domain<MemoryDomainSpec> {
@@ -228,7 +258,11 @@ export class MemoryStore extends Service {
   }
 
   /**
-   * Insert or replace one record durably.
+   * Insert or replace one record durably. Writes and forgets of one store run
+   * one at a time in call order, from the project-root lookup to the durable
+   * put, so overlapping calls never exceed the cap and a same-name overlap
+   * reports `created` for the earlier call and keeps its `createdAt`. The cap
+   * counts the records this process has loaded or written.
    * @param request - the memory to store.
    * @returns whether the record was created or updated, and the stored record.
    * @throws {@link MemoryError} for an invalid name, description, or content, a
@@ -249,31 +283,36 @@ export class MemoryStore extends Service {
     if (bytes > this.maxRecordBytes) {
       throw new MemoryError('invalid-content', `content is ${bytes} UTF-8 bytes; the cap is ${this.maxRecordBytes}`)
     }
-    const now = new Date().toISOString()
     switch (request.scope) {
       case 'global': {
         const table = this.globalTable()
-        const existing = table.get(name)
-        this.assertCapacity(existing, table.size, 'global')
-        const record: MemoryRecord = {
-          name, type: request.type, scope: 'global', description, content,
-          createdAt: existing?.createdAt ?? now, updatedAt: now,
-        }
-        await table.put(name, record)
-        return { outcome: existing === undefined ? 'created' : 'updated', record }
+        return this.serialized(async () => {
+          const existing = table.get(name)
+          this.assertCapacity(existing, table.size, 'global')
+          const now = new Date().toISOString()
+          const record: MemoryRecord = {
+            name, type: request.type, scope: 'global', description, content,
+            createdAt: existing?.createdAt ?? now, updatedAt: now,
+          }
+          await table.put(name, record)
+          return { outcome: existing === undefined ? 'created' : 'updated', record }
+        })
       }
       case 'project': {
-        const root = await this.requireProjectRoot(request.cwd)
         const table = this.projectTable()
-        const key = projectMemoryKey(root, name)
-        const existing = table.get(key)
-        this.assertCapacity(existing, this.projectRecords(root).length, `project ${root}`)
-        const record: MemoryRecord = {
-          name, type: request.type, scope: 'project', description, content, projectRoot: root,
-          createdAt: existing?.createdAt ?? now, updatedAt: now,
-        }
-        await table.put(key, record)
-        return { outcome: existing === undefined ? 'created' : 'updated', record }
+        return this.serialized(async () => {
+          const root = await this.requireProjectRoot(request.cwd)
+          const key = projectMemoryKey(root, name)
+          const existing = table.get(key)
+          this.assertCapacity(existing, this.projectRecords(root).length, `project ${root}`)
+          const now = new Date().toISOString()
+          const record: MemoryRecord = {
+            name, type: request.type, scope: 'project', description, content, projectRoot: root,
+            createdAt: existing?.createdAt ?? now, updatedAt: now,
+          }
+          await table.put(key, record)
+          return { outcome: existing === undefined ? 'created' : 'updated', record }
+        })
       }
       /* v8 ignore next 2 -- MemoryScope is closed; the tool schema enum rejects other scopes */
       default:
@@ -291,7 +330,9 @@ export class MemoryStore extends Service {
   }
 
   /**
-   * Find visible records by substring, newest first.
+   * Find visible records by substring, newest first, then by name, then with
+   * `global` before `project`. A request without a resolvable project root
+   * searches the global records only.
    * @param request - query, result cap, and working directory.
    * @returns at most `limit` matching records.
    */
@@ -309,7 +350,7 @@ export class MemoryStore extends Service {
   }
 
   /**
-   * Delete one record durably.
+   * Delete one record durably, in the same one-at-a-time call order as writes.
    * @param request - name, scope, and working directory.
    * @throws {@link MemoryError} when the name is invalid, the project root is
    * unavailable, or no such record exists in the scope.
@@ -319,17 +360,16 @@ export class MemoryStore extends Service {
     switch (request.scope) {
       case 'global': {
         const table = this.globalTable()
-        if (table.get(name) === undefined) throw notFound(name, 'global')
-        await table.delete(name)
-        return
+        return this.serialized(async () => {
+          if (!await table.delete(name)) throw notFound(name, 'global')
+        })
       }
       case 'project': {
-        const root = await this.requireProjectRoot(request.cwd)
         const table = this.projectTable()
-        const key = projectMemoryKey(root, name)
-        if (table.get(key) === undefined) throw notFound(name, 'project')
-        await table.delete(key)
-        return
+        return this.serialized(async () => {
+          const root = await this.requireProjectRoot(request.cwd)
+          if (!await table.delete(projectMemoryKey(root, name))) throw notFound(name, 'project')
+        })
       }
       /* v8 ignore next 2 -- MemoryScope is closed; the tool schema enum rejects other scopes */
       default:

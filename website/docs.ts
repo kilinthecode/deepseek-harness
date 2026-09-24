@@ -141,7 +141,7 @@ const homeAndGuide = pairedPages([
   {
     source: 'docs/user/guide/memory.md',
     route: 'guide/memory.md',
-    label: { root: '跨会话记忆', en: 'Durable memory' },
+    label: { root: '持久记忆', en: 'Durable memory' },
     sidebar: { root: 'zh-guide', en: 'en-guide' },
     section: { root: '入门', en: 'Guide' },
     order: 4,
