@@ -216,6 +216,90 @@
       }
     },
     {
+      "name": "memory_forget",
+      "description": "Delete one saved memory by name and scope. Use it when a memory is wrong or no longer applies.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": "string",
+            "description": "Name of the memory to delete."
+          },
+          "scope": {
+            "type": "string",
+            "description": "Scope the memory lives in.",
+            "enum": [
+              "global",
+              "project"
+            ]
+          }
+        },
+        "required": [
+          "name",
+          "scope"
+        ]
+      }
+    },
+    {
+      "name": "memory_recall",
+      "description": "Read saved memories. Matches the query as a case-insensitive substring of a memory's name, description, or content across global memories and the current project's memories; omit the query to list the newest ones. Use it to read the content behind a catalog entry.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "query": {
+            "type": "string",
+            "description": "Case-insensitive substring matched against name, description, and content. Omit to list the newest memories."
+          }
+        }
+      }
+    },
+    {
+      "name": "memory_write",
+      "description": "Save one durable memory for future sessions, or replace the memory of the same name and scope. Use it for user preferences and working style, feedback on how to do the work, durable project facts and constraints, and pointers to external resources. Never save task progress, transient state, or secrets.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": "string",
+            "description": "Stable lowercase kebab-case identifier (1 to 64 characters), e.g. \"prefers-pnpm\". Writing an existing name in the same scope replaces that memory."
+          },
+          "type": {
+            "type": "string",
+            "description": "user (who the user is, preferences) | feedback (how to do the work, corrections) | project (facts and constraints of this project) | reference (pointer to an external resource).",
+            "enum": [
+              "user",
+              "feedback",
+              "project",
+              "reference"
+            ]
+          },
+          "scope": {
+            "type": "string",
+            "description": "global (visible in every session) | project (visible in sessions inside the current project root).",
+            "enum": [
+              "global",
+              "project"
+            ]
+          },
+          "description": {
+            "type": "string",
+            "description": "One line (at most 256 characters) shown in the memory catalog; make it specific enough to decide whether to recall the memory."
+          },
+          "content": {
+            "type": "string",
+            "description": "The memory itself: the fact, why it matters, and how to apply it."
+          }
+        },
+        "required": [
+          "name",
+          "type",
+          "scope",
+          "description",
+          "content"
+        ]
+      }
+    },
+    {
       "name": "read",
       "description": "Read a UTF-8 text file and return line-numbered content.",
       "parameters": {
