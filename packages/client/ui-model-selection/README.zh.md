@@ -37,7 +37,7 @@ Web GUI 允许用户通过 `/model` 弹窗或 composer 模型控件切换既有�
 
 ### 支持图片的路由
 
-目录 `inputModalities` 含 `'image'` 的每一行都会在名称旁显示 `图片` 标注，该标注同时作为该选项的无障碍描述（无障碍名称仍为模型名）；省略该字段或仅列出 `'text'` 的行不显示标注。该插件还会向 `ctx.conversation.routeImage` 发布每个会话的路由图片建议值，做法与 composer block 一致：已列出的当前选择为纯文本模型时为 `false`，已列出且支持图片、或已列出但省略该字段时为 `true`（能力未知时仍允许），尚未完成首次加载或当前选择未列出时为 `null`。composer 据此拒绝新增图片附件，并在 rail 中仍有图片时拒绝发送消息或携带附件的命令；无论建议值如何，Host 的 prompt 准入都会拒绝 Session 已解析模型不接受的带图片 prompt，而命令携带的图片只依赖 composer 的拒绝（[限制](../ui-conversation/README.zh.md#known-limitations-and-deferred-work)）。
+目录 `inputModalities` 含 `'image'` 的每一行都会在名称下方显示 `图片` 标注，该标注同时作为该选项的无障碍描述（无障碍名称仍为模型名）；省略该字段或仅列出 `'text'` 的行不显示标注。该插件还会向 `ctx.conversation.routeImage` 发布每个会话的路由图片建议值，做法与 composer block 一致：已列出的当前选择为纯文本模型时为 `false`，已列出且支持图片、或已列出但省略该字段时为 `true`（能力未知时仍允许），尚未完成首次加载或当前选择未列出时为 `null`。composer 据此拒绝新增图片附件，并在 rail 中仍有图片时拒绝发送消息或携带附件的命令；无论建议值如何，Host 的 prompt 准入都会拒绝 Session 已解析模型不接受的带图片 prompt，而命令携带的图片只依赖 composer 的拒绝（[限制](../ui-conversation/README.zh.md#known-limitations-and-deferred-work)）。
 
 ### 不可路由的会话
 

@@ -230,7 +230,7 @@
   white-space: nowrap;
 }
 
-/* Image-capable caption beside the model name; same caption tone as the
+/* Image-capable caption beneath the model name; same caption tone as the
    trigger's effort value and chevron. */
 .optionCaption {
   overflow: hidden;
