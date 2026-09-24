@@ -117,7 +117,7 @@ describe('BootPage', () => {
     vi.stubGlobal('matchMedia', () => ({ matches: true }))
     const { el, page } = mount()
     expect(el.firstElementChild?.classList.contains(css.static!)).toBe(true)
-    page.dispose()
+    page.leave()
     expect(el.childNodes).toHaveLength(0)
     expect(vi.getTimerCount()).toBe(0)
   })
@@ -135,7 +135,7 @@ describe('BootPage', () => {
 
   it('never shows the spinner when the handoff already started', () => {
     const { el, page } = mount()
-    page.dispose()
+    page.leave()
     vi.advanceTimersByTime(STATUS_MS)
     expect(el.querySelector('[data-dsh-boot-spinner]')).toBeNull()
     expect(el.textContent).not.toContain('Loading plugins…')
@@ -180,7 +180,7 @@ describe('BootPage', () => {
 
   it('holds the brand moment through disposal, then detaches after the leave fade', async () => {
     const { el, page } = mount()
-    page.dispose()
+    page.leave()
     await vi.advanceTimersByTimeAsync(FALLBACK_HOLD_MS - 1)
     expect(el.firstElementChild?.classList.contains(css.leaving!)).toBe(false)
     await vi.advanceTimersByTimeAsync(1)
@@ -194,7 +194,7 @@ describe('BootPage', () => {
   it('waits for the brand animations to finish before it starts to leave', async () => {
     const { el, page } = mount()
     const brand = stubBrandAnimation(el)
-    page.dispose()
+    page.leave()
     // Well past the fixed hold: an unfinished sequence keeps the page up.
     await vi.advanceTimersByTimeAsync(FALLBACK_HOLD_MS + LEAVE_MS)
     expect(el.firstElementChild?.classList.contains(css.leaving!)).toBe(false)
@@ -210,7 +210,7 @@ describe('BootPage', () => {
   it('treats a cancelled brand animation as settled', async () => {
     const { el, page } = mount()
     stubBrandAnimation(el).cancel()
-    page.dispose()
+    page.leave()
     await vi.advanceTimersByTimeAsync(SETTLE_REST_MS)
     expect(el.firstElementChild?.classList.contains(css.leaving!)).toBe(true)
   })
@@ -218,7 +218,7 @@ describe('BootPage', () => {
   it('leaves after the settle limit when the brand animations never finish', async () => {
     const { el, page } = mount()
     stubBrandAnimation(el)
-    page.dispose()
+    page.leave()
     await vi.advanceTimersByTimeAsync(MAX_SETTLE_MS + SETTLE_REST_MS - 1)
     expect(el.firstElementChild?.classList.contains(css.leaving!)).toBe(false)
     await vi.advanceTimersByTimeAsync(1)
@@ -227,10 +227,29 @@ describe('BootPage', () => {
     expect(el.childNodes).toHaveLength(0)
   })
 
+  it('removes the page at once when disposed during the handoff', async () => {
+    const { el, page } = mount()
+    const root = el.firstElementChild!
+    const brand = stubBrandAnimation(el)
+    page.leave()
+    await vi.advanceTimersByTimeAsync(1000)
+    page.dispose()
+    expect(el.childNodes).toHaveLength(0)
+    expect(vi.getTimerCount()).toBe(0)
+    // The interrupted hold schedules nothing and never fades the removed page.
+    brand.finish()
+    await vi.advanceTimersByTimeAsync(0)
+    expect(vi.getTimerCount()).toBe(0)
+    await vi.advanceTimersByTimeAsync(MAX_SETTLE_MS + SETTLE_REST_MS + LEAVE_MS)
+    expect(root.classList.contains(css.leaving!)).toBe(false)
+    page.leave()
+    expect(vi.getTimerCount()).toBe(0)
+  })
+
   it('releases every pending timer once it detaches', async () => {
     const { el, page } = mount()
     stubBrandAnimation(el).finish()
-    page.dispose()
+    page.leave()
     await vi.advanceTimersByTimeAsync(SETTLE_REST_MS + LEAVE_MS)
     expect(el.childNodes).toHaveLength(0)
     // The unused settle-limit and status timers go with the page.

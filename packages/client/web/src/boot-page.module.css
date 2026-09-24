@@ -10,11 +10,13 @@
   /* One easing for every arrival: a long, soft settle into place. */
   --dsh-boot-ease-out: cubic-bezier(0.16, 1, 0.3, 1);
 
-  height: 100%;
   /* Fixed overlay: the mounted application arrives beneath this page while
-     the brand moment runs, and the leave fade reveals it. */
+     the brand moment runs, and the leave fade reveals it. It starts below the
+     Windows desktop caption strip, so that strip's Application and Edit menus
+     (1100) stay reachable during boot and after a carrier-owned boot failure.
+     Elsewhere the strip height is unset and the overlay covers the window. */
   position: fixed;
-  inset: 0;
+  inset: var(--dsh-windows-titlebar-height, 0) 0 0;
   /* Above every application layer (menus, toasts, and tooltips use 1100) for
      the page's lifetime (~3s at boot), and below the WebWorker preview's
      pre-boot source chooser (1200), which must stay usable over this page. */

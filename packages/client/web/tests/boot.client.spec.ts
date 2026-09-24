@@ -265,6 +265,45 @@ describe('plugin activation', () => {
     expect(container.textContent).toBe('mounted')
     await entry.dispose()
   })
+
+  it('holds the boot page over the mounted application until disposal removes it at once', async () => {
+    const container = document.createElement('div')
+    document.body.append(container)
+    const target = installFacade()
+    const entries: WebBootEntry[] = [
+      { id: MODULES_ID, url: '/modules.js', rev: '1' },
+      { id: 'renderer', url: '/renderer.js', rev: '1' },
+    ]
+    win.__DSH_BOOT__ = {
+      rev: 'graph',
+      entries,
+      batches: [{ phase: 'application', url: '/application.js', rev: 'batch', entries: entries.map(row => row.id) }],
+    }
+    const renderer: ClientBundleRegistration = {
+      id: 'renderer',
+      factory: () => ({
+        apply: (ctx: Context) => {
+          ctx.reflect.provide('uiRenderer', {
+            mount: (element: HTMLElement) => {
+              const app = document.createElement('main')
+              element.append(app)
+              return () => { app.remove() }
+            },
+          })
+        },
+      }),
+    }
+    const entry = new AppWebEntry(container, {
+      loadBundle: async () => { target.load(renderer) },
+    })
+
+    await entry.run()
+    // The handoff keeps the brand over the application while it settles.
+    expect(container.querySelector('main')).not.toBeNull()
+    expect(container.querySelector('[data-dsh-boot]')).not.toBeNull()
+    await entry.dispose()
+    expect(container.querySelector('[data-dsh-boot]')).toBeNull()
+  })
 })
 
 it('draws the shared boot page before Host injections and resumes without replacing the document', async () => {

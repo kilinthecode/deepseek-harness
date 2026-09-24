@@ -51,8 +51,8 @@ const PLATE = 'HARNESS'
  * Brand schedule in ms from the first animation frame. Every step is a CSS
  * animation with an inline delay, so the compositor runs the whole sequence
  * and plugin loading on the main thread cannot delay or bunch its steps.
- * The lead-in keeps the first frames still while a hidden desktop window
- * finishes appearing; the four mark stages then open outward from the centre
+ * The lead-in keeps the first frames still while the document finishes its
+ * first paint; the four mark stages then open outward from the centre
  * (spokes, inner cell, lifts, outer cell).
  */
 const STAGE_DELAY_MS = [240, 350, 460, 570] as const
@@ -127,11 +127,6 @@ function points(vertices: ReadonlyArray<readonly [number, number]>): string {
   return vertices.map(([x, y]) => `${String(x)},${String(y)}`).join(' ')
 }
 
-/** Resolve after `ms`, registering the timer so disposal can release it. */
-function delay(timers: ReturnType<typeof setTimeout>[], ms: number): Promise<void> {
-  return new Promise((resolve) => { timers.push(setTimeout(resolve, ms)) })
-}
-
 /** Kernel-owned page mounted below the application's root element. */
 export class BootPage {
   private readonly root: HTMLDivElement
@@ -147,7 +142,10 @@ export class BootPage {
   private failure: string | undefined
   /** Whether the progress spinner and hint belong in the card yet. */
   private statusShown = false
-  private disposed = false
+  /** Whether the hold-and-fade handoff has started. */
+  private leaving = false
+  /** Whether the page left the document and released its timers. */
+  private detached = false
   private readonly reduced = prefersReducedMotion()
   private readonly mountedAt = Date.now()
 
@@ -208,21 +206,26 @@ export class BootPage {
   }
 
   /**
-   * Detach the page once the UI renderer takes the mount point. The page stays
-   * on top until every brand animation has finished, rests briefly, then
-   * dissolves to reveal the ready application. Reduced motion detaches at once.
+   * Hand the mount point to the UI renderer. The page stays on top until every
+   * brand animation has finished, rests briefly, then dissolves to reveal the
+   * ready application. Reduced motion detaches at once.
    */
-  dispose(): void {
-    if (this.disposed) return
-    this.disposed = true
+  leave(): void {
+    if (this.leaving) return
+    this.leaving = true
     if (this.reduced) {
       this.detach()
       return
     }
     void this.settled().then(() => {
-      this.root.classList.add(klass('leaving'))
-      return delay(this.timers, LEAVE_MS)
+      if (!this.detached) this.root.classList.add(klass('leaving'))
+      return this.wait(LEAVE_MS)
     }).then(() => { this.detach() })
+  }
+
+  /** Remove the page at once, cutting short a handoff in progress, and release every timer. */
+  dispose(): void {
+    this.detach()
   }
 
   /**
@@ -233,19 +236,31 @@ export class BootPage {
    */
   private async settled(): Promise<void> {
     if (typeof this.brand.getAnimations !== 'function') {
-      await delay(this.timers, Math.max(0, this.mountedAt + FALLBACK_HOLD_MS - Date.now()))
+      await this.wait(Math.max(0, this.mountedAt + FALLBACK_HOLD_MS - Date.now()))
       return
     }
     const finishing = this.brand.getAnimations({ subtree: true })
       .map(animation => animation.finished.then(() => undefined, (_cancelled: unknown) => {
         // A cancelled animation has stopped moving, which is all the hold waits for.
       }))
-    await Promise.race([Promise.all(finishing), delay(this.timers, MAX_SETTLE_MS)])
-    await delay(this.timers, SETTLE_REST_MS)
+    await Promise.race([Promise.all(finishing), this.wait(MAX_SETTLE_MS)])
+    await this.wait(SETTLE_REST_MS)
+  }
+
+  /**
+   * Resolve after `ms`, registering the timer so detaching can release it.
+   * A detached page schedules nothing and resolves at once, so a handoff cut
+   * short by {@link dispose} ends without touching the document again.
+   */
+  private wait(ms: number): Promise<void> {
+    if (this.detached) return Promise.resolve()
+    return new Promise((resolve) => { this.timers.push(setTimeout(resolve, ms)) })
   }
 
   /** Remove the page and release every pending timer. */
   private detach(): void {
+    if (this.detached) return
+    this.detached = true
     this.root.remove()
     for (const timer of this.timers) clearTimeout(timer)
     this.timers.length = 0
@@ -352,7 +367,7 @@ export class BootPage {
 
   /** Admit the progress spinner and hint, unless the handoff already started. */
   private revealStatus(): void {
-    if (this.disposed || this.statusShown) return
+    if (this.leaving || this.statusShown) return
     this.statusShown = true
     this.render()
   }
