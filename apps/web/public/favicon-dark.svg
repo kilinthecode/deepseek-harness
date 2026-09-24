@@ -1,0 +1,37 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" width="64" height="64">
+  <defs>
+    <radialGradient id="lift" cx="0.5" cy="0.47" r="0.62">
+      <stop offset="0" stop-color="#f7f8fa"/>
+      <stop offset="1" stop-color="#e9ebf1"/>
+    </radialGradient>
+  </defs>
+  <rect x="0" y="0" width="64" height="64" rx="14.4" fill="url(#lift)"/>
+  <g stroke="#191c23" fill="none" stroke-linecap="round" stroke-linejoin="round">
+    <g stroke-width="2.6" opacity="0.68">
+      <line x1="32" y1="10.75" x2="32" y2="23.075"/>
+      <line x1="50.4" y1="21.375" x2="39.73" y2="27.54"/>
+      <line x1="50.4" y1="42.625" x2="39.73" y2="36.46"/>
+      <line x1="32" y1="53.25" x2="32" y2="40.925"/>
+      <line x1="13.6" y1="42.625" x2="24.27" y2="36.46"/>
+      <line x1="13.6" y1="21.375" x2="24.27" y2="27.54"/>
+    </g>
+    <g stroke-width="3.4" opacity="0.92">
+      <polygon points="32,23.075 39.73,27.54 39.73,36.46 32,40.925 24.27,36.46 24.27,27.54"/>
+      <line x1="32" y1="32" x2="32" y2="23.075"/>
+      <line x1="32" y1="32" x2="39.73" y2="27.54"/>
+      <line x1="32" y1="32" x2="39.73" y2="36.46"/>
+      <line x1="32" y1="32" x2="32" y2="40.925"/>
+      <line x1="32" y1="32" x2="24.27" y2="36.46"/>
+      <line x1="32" y1="32" x2="24.27" y2="27.54"/>
+    </g>
+    <g stroke-width="4.2">
+      <polygon points="32,10.75 50.4,21.375 50.4,42.625 32,53.25 13.6,42.625 13.6,21.375"/>
+      <line x1="32" y1="32" x2="50.4" y2="21.375"/>
+      <line x1="32" y1="32" x2="13.6" y2="21.375"/>
+      <line x1="32" y1="32" x2="32" y2="53.25"/>
+      <line x1="32" y1="32" x2="32" y2="10.75"/>
+      <line x1="32" y1="32" x2="50.4" y2="42.625"/>
+      <line x1="32" y1="32" x2="13.6" y2="42.625"/>
+    </g>
+  </g>
+</svg>

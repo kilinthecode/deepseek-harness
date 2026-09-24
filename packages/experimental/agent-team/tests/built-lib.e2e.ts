@@ -1,4 +1,4 @@
-/** Plain-Node smoke for the built Agent Teams service and Remote contribution. */
+/** Plain-Node smoke for the built Agent Teams service and its room Remote contribution. */
 
 import { execFile } from 'node:child_process'
 import { existsSync } from 'node:fs'
@@ -17,7 +17,7 @@ const requiredArtifacts = [
 ].every(path => existsSync(artifact(path)))
 
 describe.skipIf(!requiredArtifacts)('Agent Teams built LIB service', () => {
-  it('loads the Host service and its generated browser contribution under plain Node', async () => {
+  it('loads the Host service and its generated room Remote contribution under plain Node', async () => {
     const urls = {
       host: artifactUrl('packages/experimental/agent-team/lib/index.js'),
       remote: artifactUrl('packages/experimental/agent-team/lib/typert.remote-client.js'),
@@ -40,14 +40,11 @@ describe.skipIf(!requiredArtifacts)('Agent Teams built LIB service', () => {
     expect(output).toEqual({
       className: 'TeamService',
       methods: [
-        '@deepseek-ai/dsh-experimental-agent-team#agentTeams/createTask',
         '@deepseek-ai/dsh-experimental-agent-team#agentTeams/room',
         '@deepseek-ai/dsh-experimental-agent-team#agentTeams/roomEscalate',
         '@deepseek-ai/dsh-experimental-agent-team#agentTeams/roomPrompt',
         '@deepseek-ai/dsh-experimental-agent-team#agentTeams/roomPropose',
         '@deepseek-ai/dsh-experimental-agent-team#agentTeams/roomStream',
-        '@deepseek-ai/dsh-experimental-agent-team#agentTeams/updateTask',
-        '@deepseek-ai/dsh-experimental-agent-team#agentTeams/view',
       ],
     })
   })

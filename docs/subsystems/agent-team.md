@@ -2,7 +2,7 @@
 
 English | [中文](agent-team.zh.md)
 
-Types shared by the experimental implicit-root Team domain, model tools, and host adapters. The [Agent Teams Agent Note](../../.agents/notes/implemented/feature/2026-08-05-agent-teams.md) owns identity, mailbox, task, and shared-checkout decisions; this page records the literal durable forms from [`packages/experimental/agent-team/src/types.ts`](../../packages/experimental/agent-team/src/types.ts).
+Types shared by the experimental implicit-root Team domain, model tools, and host adapters. The [Agent Teams Agent Note](../../.agents/notes/implemented/feature/2026-08-05-agent-teams.md) owns identity, mailbox, task, and shared-checkout decisions; this page records the durable and client-visible forms from [`packages/experimental/agent-team/src/types.ts`](../../packages/experimental/agent-team/src/types.ts).
 
 ## Identity and roster
 
@@ -30,7 +30,7 @@ interface TeamMemberSnapshot {
 }
 ```
 
-Every member starts in `provisioning` and reaches exactly one terminal roster phase, `active` or `failed`. Runtime `running`/`idle`/`inactive` status is derived separately and never rewrites this record. `agentProvider` and `agentModel` record the teammate's resolved route, so a roster row or room participant still reports the model it was seated on while that teammate's Agent is not live.
+Every member starts in `provisioning` and reaches exactly one terminal roster phase, `active` or `failed`. Roster `running`/`inactive` status is derived separately and never rewrites this record. `agentProvider` and `agentModel` record the teammate's resolved route, so a roster row or room participant still reports the model it was seated on while that teammate's Agent is not live.
 
 ## Durable mailbox
 
@@ -47,7 +47,7 @@ interface TeamMessageSnapshot {
 }
 ```
 
-Every message attempts Steer delivery. A running target receives it at the nearest step boundary, an idle target starts a turn, and an inactive teammate cold-resumes. Scheduling is not stored in the durable record because callers cannot select another mode.
+Every message attempts Steer delivery. A running target receives it at the nearest step boundary; an inactive target starts a turn if loaded or cold-resumes otherwise. Scheduling is not stored in the durable record because callers cannot select another mode.
 
 The target Session keeps message identity and sender attribution on both the pending inbox item and the eventual user message. Folding that source across inbox and history is the target-side de-duplication key; the model-visible framing repeats the id and sender.
 
@@ -83,6 +83,57 @@ interface TeamTaskSnapshot {
 ```
 
 `pending` is unstarted or released, `in_progress` carries an owner, `completed` satisfies blockers, and `deleted` is a retained tombstone. Views add owner name, readiness, and write-scope overlap warnings without changing the durable snapshot.
+
+<a id="web-projection"></a>
+
+## Web projection
+
+The Lead Session publishes `SessionProjectionMap.agentTeam` with durable roster rows and non-deleted task views. `failure` reports a rejected persisted record beside the last valid state. Member activity comes from Session status; model labels come from each member's `modelSelection` projection. A task view reports `verifying` for a submitted revision that awaits its verdict, and `verification` names the verifier, verdict, and reason once a peer records them.
+
+```ts type-equiv
+/** One durable roster row published through the `agentTeam` Session projection. */
+interface TeamMemberProjection {
+  readonly id: SessionId
+  readonly name: string
+  readonly role: 'lead' | 'teammate'
+  /** Durable lifecycle; the Lead row is always `active`. Turn activity comes from Session status. */
+  readonly phase: TeamMemberPhase
+  readonly error?: string
+}
+```
+
+```ts type-equiv
+/** Runtime-enriched task view returned to tools and hosts. */
+interface TeamTaskView {
+  readonly id: TeamTaskId
+  readonly revision: number
+  readonly subject: string
+  readonly description: string
+  readonly status: TeamTaskViewStatus
+  readonly blockedBy: TeamTaskId[]
+  readonly writeScopes: string[]
+  readonly ownerName?: string
+  readonly ready: boolean
+  readonly writeScopeWarnings: string[]
+  /** Submission and peer verdict, present once the task leaves its owner's hands. */
+  readonly verification?: TeamTaskVerificationView
+}
+```
+
+```ts type-equiv
+/**
+ * Durable Team state published to browser clients through the Lead Session's
+ * `agentTeam` projection. `failure` names the first rejected persisted Team
+ * record; members and tasks then stay at the last valid state.
+ */
+interface TeamProjection {
+  readonly members: TeamMemberProjection[]
+  readonly tasks: TeamTaskView[]
+  readonly failure?: string
+}
+```
+
+The projection carries no room state. Room views depend on live participant status, configured quorum arithmetic, and streamed text, so the panel reads them through the room Remote methods listed below.
 
 <a id="shared-room"></a>
 ## Shared room
@@ -139,7 +190,7 @@ Acceptance requires every eligible reviewer to have voted, at least `roomApprova
 
 ## Replay
 
-`foldTeam()` replays one root Session into the roster, task board, and queued-minus-delivered mailbox that every Team operation reads. It selects records by `TeamId`, so events inherited by an ordinary fork retain the ancestor id and never enter the new root's state. Session event `seq` and `time` remain the ordering and timing record; Team snapshots do not duplicate them. Roster and task reads reach callers as views; pending mail stays internal to delivery and recovery. The package [README](../../packages/experimental/agent-team/README.md) owns operation, authorization, recovery, and limit behavior.
+The `agentTeam` Session projection replays one root Session into the roster, task board, queued-minus-delivered mailbox, and room transcript and decisions that every Team operation reads. It selects records by `TeamId`, so events inherited by an ordinary fork retain the ancestor id and never enter the new root's state. Session event `seq` and `time` remain the ordering and timing record; Team snapshots do not duplicate them. Roster and task reads reach callers as views; pending mail stays internal to delivery and recovery. The package [README](../../packages/experimental/agent-team/README.md) owns operation, authorization, recovery, and limit behavior.
 
 <!-- BEGIN GENERATED cordis-surface (gen-cordis-catalog.ts) — do not edit between markers -->
 
@@ -232,7 +283,7 @@ async waitForChange(caller: Agent, timeoutMs: number, signal: AbortSignal): Prom
  * @param targetName - durable teammate name.
  * @returns the target status sampled before cancellation.
  */
-interrupt(caller: Agent, targetName: string): { previousStatus: 'running' | 'idle' | 'inactive' }
+interrupt(caller: Agent, targetName: string): { previousStatus: 'running' | 'inactive' }
 
 /**
  * Resolve a caller without throwing, used by scoped-tool installation and observers.
@@ -281,13 +332,6 @@ async roomEscalate(caller: Agent, request: EscalateRoomDecisionRequest): Promise
 roomView(caller: Agent): RoomView
 
 /**
- * Read the current roster and non-deleted task board through the generated Remote API.
- * @param agent - exact live Team member used as the authority credential.
- * @returns detached current roster and task views.
- */
-@Remote('view') remoteView(agent: Agent): TeamView
-
-/**
  * Read the current room through the generated Remote API.
  * @param agent - exact live Team member used as the authority credential.
  * @returns the room roster, rendered transcript, and decision board.
@@ -326,22 +370,6 @@ roomView(caller: Agent): RoomView
  * @returns the escalated decision with its recorded votes.
  */
 @Remote('roomEscalate') remoteRoomEscalate(agent: Agent, request: PanelEscalateRoomDecisionRequest): Promise<RoomProposalView>
-
-/**
- * Create one shared task through the generated Remote API.
- * @param agent - exact live Team member creating the task.
- * @param request - task text, blockers, and advisory write scopes.
- * @returns the revision-one task or a typed Team rejection.
- */
-@Remote('createTask') remoteCreateTask(agent: Agent, request: CreateTeamTaskRequest): Promise<TeamTaskMutationResult>
-
-/**
- * Apply one task mutation and preserve Team rejections as business results.
- * @param agent - exact live Team member authorizing the mutation.
- * @param request - task identity, expected revision, action, and action fields.
- * @returns the committed task or a typed Team rejection.
- */
-@Remote('updateTask') remoteUpdateTask(agent: Agent, request: UpdateTeamTaskRequest): Promise<TeamTaskMutationResult>
 ```
 
 Types: [Agent](core.md)

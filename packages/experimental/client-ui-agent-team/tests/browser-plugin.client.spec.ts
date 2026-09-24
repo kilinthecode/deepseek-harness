@@ -1,10 +1,10 @@
 import { Context, Service } from '@deepseek-ai/cordis'
 import { describe, expect, it, vi } from 'vitest'
 import type { SessionId } from '@deepseek-ai/dsh-session/types'
+import type { RoomFollowFrame, RoomProposalView } from '@deepseek-ai/dsh-experimental-agent-team/client'
+import type {} from '@deepseek-ai/dsh-experimental-agent-team/remote'
 import { LocaleRuntime } from '@deepseek-ai/dsh-client-locale/client'
 import { SlotRegistry } from '@deepseek-ai/dsh-client-ui-renderer/client'
-import type { TeamMemberView as TeamRosterMember, TeamTaskId } from '@deepseek-ai/dsh-experimental-agent-team/client'
-import type {} from '@deepseek-ai/dsh-experimental-agent-team/remote'
 import { RemoteError } from '@deepseek-ai/dsh-client-test-runtime'
 import type { TypertRemoteContribution } from '@deepseek-ai/dsh-typert-protocol'
 import { TeamAction, type TeamActionInjected } from '../src/client/TeamAction.tsx'
@@ -13,29 +13,33 @@ import { apply as nodeApply } from '../src/index.ts'
 
 const SESSION = 'team-session' as SessionId
 const CHILD = 'team-child' as SessionId
-const TASK_ID = 'task-1' as TeamTaskId
+const PROPOSAL = 'proposal-1' as RoomProposalView['id']
 const REMOTE: TypertRemoteContribution = {
   package: '@deepseek-ai/dsh-experimental-agent-team',
   descriptors: [],
 }
+const ROOM = { enabled: true, participants: [], chair: 'lead', messages: [], proposals: [] }
+
+/** Read one injected callback from the registered header action. */
+function injectedAction<K extends keyof TeamActionInjected>(
+  injected: Record<string, unknown>,
+  key: K,
+): TeamActionInjected[K] {
+  const action = injected[key]
+  if (typeof action !== 'function') throw new Error(`Team header action lacks its injected ${key} callback`)
+  return action as TeamActionInjected[K]
+}
 
 async function bench(options: {
   addressed?: boolean
-  conflict?: boolean
   registrationFailure?: boolean
-  remoteFailure?: 'view' | 'update' | 'room'
-  refreshGate?: Promise<void>
+  roomFailure?: boolean
 } = {}) {
   const ctx = new Context()
   const calls: { method: string; args: unknown[] }[] = []
   const answer = <T>(method: string, value: T) => (...args: unknown[]) => {
     calls.push({ method, args })
     return Promise.resolve({ ok: true as const, value })
-  }
-  const task = {
-    id: 'task-1',
-    revision: 1, subject: 'Task', description: 'Description', status: 'pending' as const,
-    blockedBy: [], writeScopes: [], ready: true, writeScopeWarnings: [],
   }
   class RemoteService extends Service {
     readonly disposeMount = vi.fn(() => Promise.resolve())
@@ -54,41 +58,20 @@ async function bench(options: {
     ok: false as const,
     error: new RemoteError('gateway/internal', 'offline', {}),
   }
-  const view = {
-    members: [{
-      id: SESSION, name: 'lead', role: 'lead' as const, status: 'idle' as const, diagnostics: [],
-    }], tasks: [task],
-  }
   ctx.provide('remote.agentTeams', {
     room: (...args: unknown[]) => {
       calls.push({ method: 'agentTeams/room', args })
-      return Promise.resolve(options.remoteFailure === 'room'
-        ? failure
-        : { ok: true as const, value: { enabled: true, participants: [], chair: 'lead', messages: [], proposals: [] } })
+      return Promise.resolve(options.roomFailure === true ? failure : { ok: true as const, value: ROOM })
     },
-    view: (...args: unknown[]) => {
-      calls.push({ method: 'agentTeams/view', args })
-      return Promise.resolve(options.remoteFailure === 'view'
-        ? failure
-        : { ok: true as const, value: view })
+    roomStream: (...args: unknown[]) => {
+      calls.push({ method: 'agentTeams/roomStream', args })
+      return (async function* (): AsyncGenerator<RoomFollowFrame> {
+        yield { type: 'stream', participant: 'worker', delta: 'thinking' }
+      })()
     },
-    createTask: answer('agentTeams/createTask', task),
-    updateTask: (...args: unknown[]) => {
-      calls.push({ method: 'agentTeams/updateTask', args })
-      if (options.remoteFailure === 'update') return Promise.resolve(failure)
-      return Promise.resolve(options.conflict
-        ? {
-          ok: true as const,
-          value: {
-            ok: false as const,
-            error: {
-              code: 'team-task-conflict' as const,
-              message: 'stale',
-            },
-          },
-        }
-        : { ok: true as const, value: { ok: true as const, value: { ...task, revision: 2 } } })
-    },
+    roomPrompt: answer('agentTeams/roomPrompt', { messageId: 'message-1', status: 'accepted' as const }),
+    roomPropose: answer('agentTeams/roomPropose', { id: PROPOSAL }),
+    roomEscalate: answer('agentTeams/roomEscalate', { id: PROPOSAL }),
   })
   const navigation: unknown[] = []
   let mainSessionId = options.addressed === true ? CHILD : SESSION
@@ -104,9 +87,9 @@ async function bench(options: {
         },
       }) } }
       : undefined,
-    refreshSubagents: (id: SessionId) => {
+    refreshProjections: (id: SessionId) => {
       navigation.push(['refresh', id])
-      return options.refreshGate ?? Promise.resolve()
+      return Promise.resolve()
     },
     retainInfo: (id: SessionId) => ({
       getSnapshot: () => ({
@@ -142,6 +125,17 @@ async function bench(options: {
   }
   const entry = () => ctx.slots.entries('conversation.session.header.actions')
     .find(candidate => candidate.component === TeamAction)
+  const actions = (): TeamActionInjected => {
+    const injected = entry()!.inject!()
+    return {
+      openTeammate: injectedAction(injected, 'openTeammate'),
+      loadRoom: injectedAction(injected, 'loadRoom'),
+      followRoom: injectedAction(injected, 'followRoom'),
+      promptParticipant: injectedAction(injected, 'promptParticipant'),
+      proposeDecision: injectedAction(injected, 'proposeDecision'),
+      escalateDecision: injectedAction(injected, 'escalateDecision'),
+    }
+  }
   return {
     ctx,
     fiber,
@@ -150,50 +144,32 @@ async function bench(options: {
     navigation,
     remote,
     entry,
+    actions,
     collapseHeader,
     select: (sessionId: SessionId) => { mainSessionId = sessionId },
   }
 }
 
 describe('ui-team browser plugin', () => {
-  it('registers one disposable header action with RPC-backed task operations', async () => {
+  it('registers one disposable header action and mounts the room Remote contribution', async () => {
     const b = await bench()
     expect(inject).toEqual(['sessions', 'uiWorkspace', 'remote', 'slots', 'locale'])
     expect(b.entry()).toMatchObject({
-      options: { id: 'agent-team', order: 20 },
+      options: { id: 'agent-team', order: -20 },
       locale: 'agent-team',
     })
     expect(b.remote.mount).toHaveBeenCalledOnce()
     expect(b.remote.mount).toHaveBeenCalledWith(REMOTE)
-    const actions = (b.entry()!.inject as unknown as () => TeamActionInjected)()
-    expect((await actions.load(SESSION)).ok).toBe(true)
-    expect((await actions.loadRoom(SESSION)).ok).toBe(true)
-    expect((await actions.createTask(SESSION, {
-      subject: 'Task', description: 'Description', blockedBy: [], writeScopes: [],
-    })).ok).toBe(true)
-    expect((await actions.updateTask(SESSION, {
-      taskId: TASK_ID, expectedRevision: 1, action: 'submit',
-    })).ok).toBe(true)
-    expect((await actions.updateTask(SESSION, {
-      taskId: TASK_ID, expectedRevision: 2, action: 'reassign', owner: 'worker',
-    })).ok).toBe(true)
-    expect(b.calls.map(call => call.method)).toEqual([
-      'agentTeams/view', 'agentTeams/room', 'agentTeams/createTask', 'agentTeams/updateTask', 'agentTeams/updateTask',
-    ])
-    expect(b.calls.at(-1)?.args[1]).toMatchObject({ owner: 'worker' })
+    const t = b.ctx.locale.bind('agent-team')
+    expect(t('trigger')).toBe('Agent Team')
 
-    await actions.openTeammate(SESSION, {
-      id: SESSION,
-      name: 'lead',
-      role: 'lead',
-      status: 'idle',
-      diagnostics: [],
-    })
     expect(b.navigation).toEqual([])
+    expect(b.calls).toEqual([])
 
     await b.fiber.dispose()
     expect(b.entry()).toBeUndefined()
     expect(b.remote.disposeMount).toHaveBeenCalledOnce()
+    expect(t('empty')).toBe('empty')
   })
 
   it('unmounts the Remote contribution when later Client registration fails', async () => {
@@ -203,97 +179,61 @@ describe('ui-team browser plugin', () => {
     expect(b.remote.disposeMount).toHaveBeenCalledOnce()
   })
 
-  it('returns the generated task business result without a Client transport wrapper', async () => {
-    const b = await bench({ conflict: true })
-    const actions = (b.entry()!.inject as unknown as () => TeamActionInjected)()
-    await expect(actions.updateTask(SESSION, {
-      taskId: TASK_ID, expectedRevision: 1, action: 'delete',
-    })).resolves.toEqual({
-      ok: true,
-      value: {
-        ok: false,
-        error: { code: 'team-task-conflict', message: 'stale' },
-      },
-    })
-  })
-
-  it('returns Remote carrier failures unchanged', async () => {
-    const view = await bench({ remoteFailure: 'view' })
-    const viewActions = (view.entry()!.inject as unknown as () => TeamActionInjected)()
-    await expect(viewActions.load(SESSION)).resolves.toMatchObject({
-      ok: false,
-      error: { code: 'gateway/internal', message: 'offline' },
-    })
-
-    const update = await bench({ remoteFailure: 'update' })
-    const updateActions = (update.entry()!.inject as unknown as () => TeamActionInjected)()
-    await expect(updateActions.updateTask(SESSION, {
-      taskId: TASK_ID, expectedRevision: 1, action: 'delete',
-    })).resolves.toMatchObject({
-      ok: false,
-      error: { code: 'gateway/internal', message: 'offline' },
-    })
-  })
-
-  it('refreshes the descriptor catalog before opening a continuable teammate address', async () => {
-    const b = await bench()
-    const actions = (b.entry()!.inject as unknown as () => TeamActionInjected)()
-    const member: TeamRosterMember = {
-      id: CHILD,
-      name: 'worker',
-      role: 'teammate',
-      status: 'inactive',
-      diagnostics: [],
-    }
-    await actions.openTeammate(SESSION, member)
-    expect(b.navigation).toEqual([
-      ['refresh', SESSION],
-      ['open', {
-        parentSessionId: SESSION,
-        childSessionId: CHILD,
-        mode: 'continuable',
-      }],
-    ])
-  })
-
-  it('routes Team actions from an addressed teammate conversation back through its Lead', async () => {
+  it('routes every room action from an addressed teammate conversation through its Lead', async () => {
     const b = await bench({ addressed: true })
-    const actions = (b.entry()!.inject as unknown as () => TeamActionInjected)()
-    await actions.load(CHILD)
-    await actions.openTeammate(CHILD, {
-      id: CHILD,
-      name: 'worker',
-      role: 'teammate',
-      status: 'inactive',
-      diagnostics: [],
-    })
-    expect(b.calls[0]).toEqual({ method: 'agentTeams/view', args: [SESSION] })
-    expect(b.navigation).toEqual([
-      ['refresh', SESSION],
-      ['open', {
-        parentSessionId: SESSION,
-        childSessionId: CHILD,
-        mode: 'continuable',
-      }],
+    const actions = b.actions()
+    expect(await actions.loadRoom(CHILD)).toEqual({ ok: true, value: ROOM })
+    const controller = new AbortController()
+    const frames: RoomFollowFrame[] = []
+    await actions.followRoom(CHILD, controller.signal, (frame) => { frames.push(frame) })
+    expect(frames).toEqual([{ type: 'stream', participant: 'worker', delta: 'thinking' }])
+    expect((await actions.promptParticipant(CHILD, { target: 'worker', instruction: 'Review the diff' })).ok).toBe(true)
+    expect((await actions.proposeDecision(CHILD, { statement: 'Adopt the cache' })).ok).toBe(true)
+    expect((await actions.escalateDecision(CHILD, { proposalId: PROPOSAL, reason: 'No quorum' })).ok).toBe(true)
+    expect(b.calls).toEqual([
+      { method: 'agentTeams/room', args: [SESSION] },
+      { method: 'agentTeams/roomStream', args: [SESSION, controller.signal] },
+      { method: 'agentTeams/roomPrompt', args: [SESSION, { target: 'worker', instruction: 'Review the diff' }] },
+      { method: 'agentTeams/roomPropose', args: [SESSION, { statement: 'Adopt the cache' }] },
+      { method: 'agentTeams/roomEscalate', args: [SESSION, { proposalId: PROPOSAL, reason: 'No quorum' }] },
     ])
   })
 
-  it('does not open a teammate after navigation switches during catalog refresh', async () => {
-    const refresh = Promise.withResolvers<undefined>()
-    const b = await bench({ refreshGate: refresh.promise })
-    const actions = (b.entry()!.inject as unknown as () => TeamActionInjected)()
-    const opening = actions.openTeammate(SESSION, {
-      id: CHILD,
-      name: 'worker',
-      role: 'teammate',
-      status: 'inactive',
-      diagnostics: [],
+  it('returns room Remote carrier failures unchanged', async () => {
+    const b = await bench({ roomFailure: true })
+    await expect(b.actions().loadRoom(SESSION)).resolves.toMatchObject({
+      ok: false,
+      error: { code: 'gateway/internal', message: 'offline' },
     })
-    expect(b.navigation).toEqual([['refresh', SESSION]])
+  })
+
+  it('opens a continuable teammate address without touching the parent catalog', async () => {
+    const b = await bench()
+    b.actions().openTeammate(SESSION, CHILD)
+    expect(b.navigation).toEqual([
+      ['open', { parentSessionId: SESSION, childSessionId: CHILD, mode: 'continuable' }],
+    ])
+  })
+
+  it('routes teammate navigation from an addressed teammate conversation back through its Lead', async () => {
+    const b = await bench({ addressed: true })
+    b.actions().openTeammate(CHILD, CHILD)
+    expect(b.navigation).toEqual([
+      ['open', { parentSessionId: SESSION, childSessionId: CHILD, mode: 'continuable' }],
+    ])
+  })
+
+  it('opens the Lead from an addressed teammate conversation', async () => {
+    const b = await bench({ addressed: true })
+    b.actions().openTeammate(CHILD, SESSION)
+    expect(b.navigation).toEqual([['open', SESSION]])
+  })
+
+  it('does not open a teammate from a conversation outside the main view', async () => {
+    const b = await bench()
     b.select('other-session' as SessionId)
-    refresh.resolve(undefined)
-    await opening
-    expect(b.navigation).toEqual([['refresh', SESSION]])
+    b.actions().openTeammate(SESSION, CHILD)
+    expect(b.navigation).toEqual([])
   })
 
   it('re-registers after the conversation header slot is collapsed and declared again', async () => {

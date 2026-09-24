@@ -1,22 +1,22 @@
-/** Client-safe Agent Teams request, result, and view vocabulary. */
+/** Client-safe Agent Teams roster and task views, the `agentTeam` projection vocabulary, and the room Remote vocabulary. */
 
 export type {
-  CreateTeamTaskRequest,
   PanelEscalateRoomDecisionRequest,
   PanelProposeRoomDecisionRequest,
   PanelRoomPromptRequest,
-  RoomPromptResult,
   RoomFollowFrame,
   RoomParticipantView,
+  RoomPromptResult,
   RoomProposalView,
   RoomRemoteView,
   RoomTranscriptEntry,
+  TeamMemberPhase,
+  TeamMemberProjection,
   TeamMemberView,
-  TeamTaskAction,
+  TeamProjection,
   TeamTaskId,
-  TeamTaskMutationResult,
   TeamTaskStatus,
+  TeamTaskVerificationView,
   TeamTaskView,
-  TeamView,
-  UpdateTeamTaskRequest,
+  TeamTaskViewStatus,
 } from './types.ts'

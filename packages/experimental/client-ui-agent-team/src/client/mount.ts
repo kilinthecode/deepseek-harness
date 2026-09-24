@@ -1,10 +1,6 @@
-/** Source-safe Agent Teams browser registration and Remote mount lifecycle. */
+/** Source-safe Agent Teams browser registration and room Remote mount lifecycle. */
 
-import type {
-  RoomRemoteView,
-  TeamMemberView as TeamRosterMember,
-  TeamView,
-} from '@deepseek-ai/dsh-experimental-agent-team/client'
+import type { RoomRemoteView } from '@deepseek-ai/dsh-experimental-agent-team/client'
 import type {} from '@deepseek-ai/dsh-experimental-agent-team/remote'
 import type { Context as ClientContext } from '@deepseek-ai/cordis'
 import type {} from '@deepseek-ai/dsh-api-remotes/client'
@@ -15,22 +11,26 @@ import type {} from '@deepseek-ai/dsh-client-locale/client'
 import type {} from '@deepseek-ai/dsh-client-ui-renderer/client'
 import type {} from '@deepseek-ai/dsh-client-ui-workspace/client'
 import type { TypertRemoteContribution } from '@deepseek-ai/dsh-typert-protocol'
-import {
-  TeamAction, type TeamActionInjected, type TeamActionResult, type TeamTaskActionResult,
-} from './TeamAction.tsx'
+import { TeamAction, type TeamActionInjected, type TeamActionResult } from './TeamAction.tsx'
 import { en, NS, zh, type TeamKey } from './locales.ts'
 
 declare module '@deepseek-ai/dsh-client-ui-slots' {
   interface LocaleNamespaceMap {
-    /** Agent Teams roster and task-board copy. */
+    /** Agent Teams roster, room, and task-board copy. */
     'agent-team': TeamKey
   }
 }
 
-/** Required browser services for RPC, navigation, slots, and localized copy. */
+/** Required browser services for room RPC, navigation, slots, and localized copy. */
 export const inject = ['sessions', 'uiWorkspace', 'remote', 'slots', 'locale']
 
-function registerUi(ctx: ClientContext): void {
+/**
+ * Register the Team locale dictionaries and the conversation-header action.
+ * The panel reads the Lead Session's `agentTeam` projection from the shared
+ * Session store; only its room section calls the mounted `agentTeams` Remote namespace.
+ * @param ctx - Client Context carrying the injected navigation, locale, slot, Session, and room Remote services.
+ */
+export function registerAgentTeamUi(ctx: ClientContext): void {
   ctx.effect(() => ctx.locale.register(NS, { zh, en }), 'client-ui-agent-team: dictionaries')
   const sessions = ctx.sessions
   const leadSessionId = (sessionId: SessionId): SessionId => {
@@ -39,8 +39,18 @@ function registerUi(ctx: ClientContext): void {
   }
 
   const actions: TeamActionInjected = {
-    async load(sessionId): Promise<TeamActionResult<TeamView>> {
-      return await ctx.remote.agentTeams.view(leadSessionId(sessionId))
+    openTeammate(sessionId: SessionId, childSessionId: SessionId): void {
+      const parentSessionId = leadSessionId(sessionId)
+      if ((sessions.retainInfo(sessionId).getSnapshot().retainedBy.mainView ?? 0) === 0) return
+      if (childSessionId === parentSessionId) {
+        ctx.uiWorkspace.openSession(parentSessionId)
+        return
+      }
+      ctx.uiWorkspace.openSession({
+        parentSessionId,
+        childSessionId,
+        mode: 'continuable',
+      })
     },
     async loadRoom(sessionId): Promise<TeamActionResult<RoomRemoteView>> {
       return await ctx.remote.agentTeams.room(leadSessionId(sessionId))
@@ -57,27 +67,6 @@ function registerUi(ctx: ClientContext): void {
     async escalateDecision(sessionId, input) {
       return await ctx.remote.agentTeams.roomEscalate(leadSessionId(sessionId), input)
     },
-    async createTask(sessionId, input): Promise<TeamTaskActionResult> {
-      return await ctx.remote.agentTeams.createTask(leadSessionId(sessionId), input)
-    },
-    async updateTask(sessionId, input) {
-      const { owner, ...rest } = input
-      return await ctx.remote.agentTeams.updateTask(leadSessionId(sessionId), {
-        ...rest,
-        ...owner === undefined ? {} : { owner },
-      })
-    },
-    async openTeammate(sessionId: SessionId, member: TeamRosterMember): Promise<void> {
-      if (member.role !== 'teammate') return
-      const parentSessionId = leadSessionId(sessionId)
-      await sessions.refreshSubagents(parentSessionId)
-      if ((sessions.retainInfo(sessionId).getSnapshot().retainedBy.mainView ?? 0) === 0) return
-      ctx.uiWorkspace.openSession({
-        parentSessionId,
-        childSessionId: member.id,
-        mode: 'continuable',
-      })
-    },
   }
 
   ctx.slots.inject(
@@ -85,7 +74,7 @@ function registerUi(ctx: ClientContext): void {
     () => ctx.slots.register({
       name: 'conversation.session.header.actions',
       id: 'agent-team',
-      order: 20,
+      order: -20,
       locale: NS,
       inject: () => actions,
     }, TeamAction),
@@ -93,17 +82,17 @@ function registerUi(ctx: ClientContext): void {
 }
 
 /**
- * Mount one generated Team Remote contribution, then register its browser UI.
- * @param ctx - Client Context carrying navigation, locale, slot, and Remote services.
+ * Mount the generated room Remote contribution, then register the browser UI.
+ * @param ctx - Client Context carrying navigation, locale, slot, Session, and Remote services.
  * @param contribution - generated Team descriptors selected by the browser entry.
- * @returns disposer for both the UI registrations and Remote namespace.
+ * @returns disposer for both the UI registrations and the Remote namespace.
  */
 export async function mountAgentTeamUi(
   ctx: ClientContext,
   contribution: TypertRemoteContribution,
 ): Promise<() => Promise<void>> {
   const disposeRemote = await ctx.remote.$mount(contribution)
-  const ui = ctx.inject(['sessions', 'uiWorkspace', 'remote.agentTeams', 'slots', 'locale'], registerUi)
+  const ui = ctx.inject(['sessions', 'uiWorkspace', 'remote.agentTeams', 'slots', 'locale'], registerAgentTeamUi)
   try {
     await ui
   } catch (error) {
