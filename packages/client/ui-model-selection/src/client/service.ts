@@ -59,16 +59,11 @@ export class ModelDirectoryResolver extends Service {
   private readonly live: LiveState = { directories: new WeakMapWithValues() }
   private readonly catalog: ModelCatalogDirectory
 
-  /** Localized composer-block copy; this plugin owns the string it raises. */
-  private readonly blockReason: () => string
-
   /**
    * @param ctx - owning root context (the service registers itself as `models`).
-   * @param config - the bound translator for this plugin's own dictionary.
    */
-  constructor(ctx: Context, config: { blockReason: () => string }) {
+  constructor(ctx: Context) {
     super(ctx, 'modelDirectories')
-    this.blockReason = config.blockReason
     this.catalog = new ModelCatalogDirectory(ctx)
     void this.catalog.load().catch(() => { /* selectors expose the shared error */ })
     ctx.on('connection/reset', () => {
@@ -77,6 +72,7 @@ export class ModelDirectoryResolver extends Service {
     })
     ctx.remote.$on('llm/adapters-updated', () => { this.catalog.refresh() })
     ctx.remote.$on('settings/document-updated', () => { this.catalog.refresh() })
+    ctx.remote.$on('credentials/record-updated', () => { this.catalog.refresh() })
     ctx.remote.$on('credentials/reference-updated', () => { this.catalog.refresh() })
   }
 
@@ -104,22 +100,14 @@ export class ModelDirectoryResolver extends Service {
     )
     live.directories.set(binding, directory)
     // The composer cannot read this plugin (the dependency runs one way), so
-    // the block and the route-image advisory are both pushed from the same
-    // directory snapshot. The block follows Host routability: only a
-    // definite `false` makes the input inert. `null` — before the first
-    // load, or after one failed — must not, or a slow or unreachable Host
-    // would lock a working composer. The route-image advisory follows the
-    // current selection's catalog `inputModalities`: only a definite `false`
-    // refuses image intake.
+    // the route-image advisory is pushed from the directory snapshot. Only a
+    // definite `false` refuses image intake; `null` leaves the decision to
+    // Host prompt admission.
     const conversation = this.ctx.get('conversation')
     if (conversation !== undefined) {
       const publish = (): void => {
         if (sessions.binding(sessionId) !== binding) return
-        const snapshot = directory.store.getSnapshot()
-        conversation.blocks.set(sessionId, snapshot.routable === false
-          ? { reason: this.blockReason() }
-          : undefined)
-        conversation.routeImage.set(sessionId, routeImageOf(snapshot))
+        conversation.routeImage.set(sessionId, routeImageOf(directory.store.getSnapshot()))
       }
       publish()
       actx.effect(() => {
@@ -128,10 +116,9 @@ export class ModelDirectoryResolver extends Service {
           stop()
           const current = sessions.binding(sessionId)
           if (current !== undefined && current !== binding && live.directories.get(current) !== undefined) return
-          conversation.blocks.set(sessionId, undefined)
           conversation.routeImage.set(sessionId, null)
         }
-      }, 'ui-model-selection: conversation publish')
+      }, 'ui-model-selection: route-image publish')
     }
     actx.effect(() => () => {
       directory.dispose()
