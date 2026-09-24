@@ -394,7 +394,7 @@ interface SubagentRun {
 
 ## 提供方约定：`SubagentProvider`
 
-每个提供方都是一个具名的子 agent 传输层，多个提供方可以共存。服务在 `start()` 之前校验请求的启动时能力，并拒绝在没有 `prepareContinuable` 的提供方上发起可继续 start。`inheritsParentContext` 仅描述对话种子注入（`fork`：true；`spawn` 和 `acp`：false），使消费方能生成准确的面向模型措辞，而不暗示继承了工具、服务或权限。如果某个提供方的一次性路由拥有静态的提供方自有默认值，它会公开可选且不可变的 `agentRouteDefaults`，使 Consumer 能够在预检前以正确基线合并模型与工具覆盖。
+每个提供方都是一个具名的子 agent 传输层，多个提供方可以共存。服务在 `start()` 之前校验请求的启动时能力，并拒绝在没有 `prepareContinuable` 的提供方上发起可继续 start。`inheritsParentContext` 仅描述对话种子注入（`fork`：true；`spawn` 和 `acp`：false），使消费方能生成准确的面向模型措辞，而不暗示继承了工具、服务或权限。`imageInput` 表示 child 的请求内容上限，而不是调用方主动选用的 `SubagentStartRequest` 选项（`spawn` 与 `fork`：true，同进程且共享附件存储；`acp`、`claude-code`、`codex` 与 DSH SDK 提供方：false）；服务会在 `start()` 之前针对一次性图片提示词检查它。如果某个提供方的一次性路由拥有静态的提供方自有默认值，它会公开可选且不可变的 `agentRouteDefaults`，使 Consumer 能够在预检前以正确基线合并模型与工具覆盖。
 
 ```ts type-equiv
 /**
@@ -416,6 +416,15 @@ interface SubagentProvider {
    * It says nothing about tool registration, injected services, or authority inheritance.
    */
   readonly inheritsParentContext: boolean
+  /**
+   * Whether a published child of this provider can receive image content in
+   * its prompt. Checked by the service before `start` for a one-shot child
+   * whose prompt has an image, so an incapable transport refuses before any
+   * process or Agent it cannot serve. Distinct from {@link SubagentCapabilities}:
+   * it names the child's request-content ceiling rather than a
+   * {@link SubagentStartRequest} option the caller opts into.
+   */
+  readonly imageInput: boolean
   /**
    * Optional static provider-owned provider/model route for one-shot Agent
    * options. Consumers merge tool/model overrides over these values before

@@ -27,6 +27,7 @@ const provider = (name: string): SubagentProvider => ({
   name,
   capabilities: { agentOptions: false, outputSchema: false, depthLimit: false, toolFilter: false, persona: false },
   inheritsParentContext: false,
+  imageInput: false,
   start: async () => { throw new Error('not used') },
 })
 

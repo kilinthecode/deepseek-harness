@@ -128,11 +128,15 @@ Lead 可以停止 teammate 的当前轮次，而不会删除其排队的消息�
 
 每个普通运行时 root 都是一个隐式 Team 的 Lead，其 `TeamId` 等于 `SessionId`；不存在创建事件，持久状态从第一条成员、消息或任务记录开始。`spawnTeammate()` 先追加并 flush 一条 `provisioning` 成员记录，再要求配置的提供方创建预留 child；提供方失败会追加一条持久的 `failed` 成员。fresh child 不携带 Lead 历史；fork child 只捕获一次 Lead 的已完成 turn 前缀。恢复把未终结的 provisioning 记录对照 child 独立持久化的会话进行对账：直接 parent 与 continuable descriptor 匹配、且初始用户消息已记录则产生 `active`，其他任何情况都产生 `failed`。如果恢复在同进程竞争中先完成，creator 会接受终态，或报告 `TEAM_PROVISIONING_CONFLICT` 并 drain 该 child。名字由第一条 provisioning 记录保留，且永不复用。
 
+当首条提示词包含图片时，`spawnTeammate()` 会先对照 teammate 继承的路由（由于 spawn 请求不携带按 child 的覆盖，即 Lead 当前的委派路由）进行检查，然后才追加 `provisioning` 成员记录，因此被拒绝时名字与成员名额仍可用于重试。
+
 ### 持久 mailbox
 
 `sendMessage()` 校验 peer 成员关系，追加 `team/message/queued` 并在尝试投递前 flush。目标消息以 `Team message <id> from <name>:` 开头，并在 `TeamMessageSource` 中保留同一 id 与发送者。只有目标会话在 pending inbox 或已记录历史中持久持有消息身份后，才会以 `team/message/delivered` 确认投递。即时准入按目标与持久队列顺序串行化；恢复按同一顺序重新投递 queued-minus-delivered 记录。重试前会同时折叠 live 与持久目标 inbox／历史状态，因此 inbox 已接受但模型尚未 claim 时发生崩溃不会复制消息。该保证是进程内重试加 target 会话去重，而不是跨进程 exactly-once 投递。
 
 投递给 Lead 时直接调用 `Agent.steer()`。投递给 teammate 时使用 continuation owner 的 host-only Steer 路径；该路径会保留 Team 发送者 source，同时授权 Lead-to-child edge 并冷恢复 inactive target。sibling 消息绝不会通过公开的相邻 Agent 消息操作伪装成 Lead。
+
+当内容包含图片时，`sendMessage()` 会在追加 `team/message/queued` 之前、且在日志事务之外，检查解析出的目标路由——Lead 用的是在线 root Agent 当前的委派路由，teammate 用的是 `dsh-subagent` 的 continuable-child 探测——因此 LLM 路由查询不会占用日志锁。Lead 当前的委派路由跟随其最新记录的请求，与 teammate 自身创建时继承的来源相同，因此一个在创建后切换过模型的 Lead 会按其当前模型而非最初模型接受检查。被拒绝时从不入队：不会追加任何记录，且后续发往同一目标的消息不受影响。准入还会在内容进入 mailbox 或 spawn 提示词之前，剥离发送者或重放副本上每个图片块的 `offloaded` 标记，因为 offload 是接收方对自身请求历史做出的按目标压缩决策。
 
 ### 共享任务板
 
@@ -208,6 +212,9 @@ Peer 消息追加在 target 可复用历史前缀之后。冷恢复会先复用�
 - **扁平且不可变的 roster**——只有 Lead 可以创建直接 teammate；不支持嵌套 Team、重命名、删除或名字复用。
 - **不会自动释放 owner**——成员不活动、interrupt、进程退出与工作失败都不会释放任务 owner。
 - **mailbox 不保证跨进程 exactly-once**——不支持多个 harness 进程并发操作同一 Team。
+- **teammate 继承 Lead 的委派路由**——`spawnTeammate()` 不请求按 child 的 `agentOptions`，因此带图片的初始提示词或 peer 消息只能到达继承路由接受图片的 teammate；为单个 teammate 选择不同模型属于本包之外的模型选择特性。
+- **以 Lead 为目标的路由检查可能落后于尚未生效的模型切换**——mailbox 的 Lead 目标网关与 `sendToParent` 读取 `parentAgentOptionsForDelegation`，即 Lead 最近一次已记录请求的路由：切换到支持图片的模型如果尚未记录，仍可能拒绝发给 Lead 的 teammate 图片，直到 Lead 下一次请求记录新路由；切换到纯文本模型若尚未记录则会放行该图片，之后运行时会把它投影为占位文本。
+- **图片路由检查先于持久追加，而 Lead 的路由可能在检查之后改变**——`sendMessage()` 与 `spawnTeammate()` 在其 Team 事务之前检查路由，事务不会重复该检查，因为它需要 await 一次模型信息读取。Lead 以不同模型记录一次请求时，其路由就会改变，而检查之后发生的这种改变有两个失败方向。若 Lead 目标的路由变为纯文本，已入队的图片仍会通过不施加任何图片网关的 `Agent.steer()` 投递，Lead 的模型看到的是占位文本而非图片。若 spawn 继承的路由变为纯文本，subagent 服务自身的创建检查会在 `provisioning` 记录之后拒绝该 child，于是 Team 记录一个 `failed` 成员，该名字与一个成员名额被用掉。改为支持图片的模型只会产生调用方可以重试的拒绝。
 
 <a id="dev-note"></a>
 ### 开发备注

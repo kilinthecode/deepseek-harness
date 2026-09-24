@@ -1214,6 +1214,7 @@ describe('out-of-process delegation boundary', () => {
       name: 'remote-boundary',
       capabilities: NO_START_CAPABILITIES,
       inheritsParentContext: false,
+      imageInput: false,
       async start(request) {
         timeline.push('provider:start')
         providerRequest = request

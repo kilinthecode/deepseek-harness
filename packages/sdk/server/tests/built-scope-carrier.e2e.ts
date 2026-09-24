@@ -72,6 +72,7 @@ try {
     name: "built-local",
     capabilities: { agentOptions: false, outputSchema: false, depthLimit: false, toolFilter: false, persona: false },
     inheritsParentContext: false,
+    imageInput: true,
     start() {
       return Promise.resolve({
         id: child.agent.id,

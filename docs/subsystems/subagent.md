@@ -390,7 +390,7 @@ A local one-shot run MUST publish an ordinary child agent/session before `start(
 
 ## The provider contract: `SubagentProvider`
 
-Each provider is a named child-agent transport, and multiple providers may coexist. The service validates requested start-time capabilities before `start()`, and rejects a continuable start on a provider without `prepareContinuable`. `inheritsParentContext` describes only conversation seeding (`fork`: true; `spawn` and `acp`: false), allowing consumers to generate accurate model-facing wording without implying inherited tools, services, or authority. A provider whose one-shot route has static provider-owned defaults publishes optional immutable `agentRouteDefaults`, allowing a Consumer to merge model/tool overrides against the correct baseline before preflight.
+Each provider is a named child-agent transport, and multiple providers may coexist. The service validates requested start-time capabilities before `start()`, and rejects a continuable start on a provider without `prepareContinuable`. `inheritsParentContext` describes only conversation seeding (`fork`: true; `spawn` and `acp`: false), allowing consumers to generate accurate model-facing wording without implying inherited tools, services, or authority. `imageInput` names the child's request-content ceiling rather than a `SubagentStartRequest` option the caller opts into (`spawn` and `fork`: true, same process and attachment store; `acp`, `claude-code`, `codex`, and the DSH SDK provider: false); the service checks it before `start()` for a one-shot image prompt. A provider whose one-shot route has static provider-owned defaults publishes optional immutable `agentRouteDefaults`, allowing a Consumer to merge model/tool overrides against the correct baseline before preflight.
 
 ```ts type-equiv
 /**
@@ -412,6 +412,15 @@ interface SubagentProvider {
    * It says nothing about tool registration, injected services, or authority inheritance.
    */
   readonly inheritsParentContext: boolean
+  /**
+   * Whether a published child of this provider can receive image content in
+   * its prompt. Checked by the service before `start` for a one-shot child
+   * whose prompt has an image, so an incapable transport refuses before any
+   * process or Agent it cannot serve. Distinct from {@link SubagentCapabilities}:
+   * it names the child's request-content ceiling rather than a
+   * {@link SubagentStartRequest} option the caller opts into.
+   */
+  readonly imageInput: boolean
   /**
    * Optional static provider-owned provider/model route for one-shot Agent
    * options. Consumers merge tool/model overrides over these values before

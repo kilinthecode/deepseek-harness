@@ -54,6 +54,7 @@ class StubProvider implements SubagentProvider {
   readonly name = 'fresh'
   readonly capabilities: SubagentCapabilities
   readonly inheritsParentContext: boolean
+  readonly imageInput = false
 
   constructor(options?: { outputSchema?: boolean; inheritsParentContext?: boolean }) {
     this.capabilities = {

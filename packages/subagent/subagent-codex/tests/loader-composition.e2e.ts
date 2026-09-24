@@ -53,6 +53,7 @@ describe('Codex provider public Loader composition', () => {
             persona: false,
           },
           inheritsParentContext: false,
+          imageInput: false,
         },
         {
           name: 'codex-primary',
@@ -64,6 +65,7 @@ describe('Codex provider public Loader composition', () => {
             persona: false,
           },
           inheritsParentContext: false,
+          imageInput: false,
         },
         {
           name: 'codex-secondary',
@@ -75,6 +77,7 @@ describe('Codex provider public Loader composition', () => {
             persona: false,
           },
           inheritsParentContext: false,
+          imageInput: false,
         },
       ],
       tools: [

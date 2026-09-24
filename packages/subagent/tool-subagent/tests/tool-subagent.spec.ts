@@ -223,6 +223,7 @@ describe('dsh-tool-subagent', () => {
       name: 'weird',
       capabilities: { agentOptions: false, outputSchema: false, depthLimit: false, toolFilter: false, persona: false },
       inheritsParentContext: false,
+      imageInput: false,
       start: async () => ({
         id: SessionId('weird-child'),
         localAgent: undefined,
@@ -312,6 +313,7 @@ describe('dsh-tool-subagent', () => {
       name: 'bare',
       capabilities: { agentOptions: false, outputSchema: false, depthLimit: false, toolFilter: false, persona: false },
       inheritsParentContext: false,
+      imageInput: false,
       start: async (request) => {
         seen = request
         return {
@@ -402,6 +404,7 @@ describe('dsh-tool-subagent', () => {
       name: 'continuable',
       capabilities: { agentOptions: false, outputSchema: false, depthLimit: false, toolFilter: false, persona: false },
       inheritsParentContext: false,
+      imageInput: false,
       start: async () => { throw new Error('lifecycle test does not start a child') },
       prepareContinuable: async () => ({}),
     })
@@ -475,6 +478,7 @@ describe('dsh-tool-subagent', () => {
       name: 'spy',
       capabilities: { agentOptions: false, outputSchema: false, depthLimit: false, toolFilter: false, persona: false },
       inheritsParentContext: false,
+      imageInput: false,
       start: async () => ({
         id: SessionId('spy-child'),
         localAgent: undefined,
@@ -498,6 +502,7 @@ describe('dsh-tool-subagent', () => {
       name: 'spy',
       capabilities: { agentOptions: false, outputSchema: false, depthLimit: false, toolFilter: false, persona: false },
       inheritsParentContext: false,
+      imageInput: false,
       start: async () => ({
         id: SessionId('spy-child'),
         localAgent: undefined,
@@ -522,6 +527,7 @@ describe('dsh-tool-subagent', () => {
       name: 'spy',
       capabilities: { agentOptions: false, outputSchema: false, depthLimit: false, toolFilter: false, persona: false },
       inheritsParentContext: false,
+      imageInput: false,
       start: async () => ({
         id: SessionId('spy-child'),
         localAgent: undefined,
@@ -550,6 +556,7 @@ describe('dsh-tool-subagent', () => {
       name: 'spy',
       capabilities: { agentOptions: false, outputSchema: false, depthLimit: false, toolFilter: false, persona: false },
       inheritsParentContext: false,
+      imageInput: false,
       start: async () => ({
         id: SessionId('spy-child'),
         localAgent: undefined,
@@ -577,6 +584,7 @@ describe('dsh-tool-subagent', () => {
       name: 'spy',
       capabilities: { agentOptions: false, outputSchema: false, depthLimit: false, toolFilter: false, persona: false },
       inheritsParentContext: false,
+      imageInput: false,
       start: async (request) => {
         if (request.signal.aborted) throw new Error('start aborted')
         let resolveResult: (r: { output: never[]; stopReason: 'aborted' }) => void
@@ -616,6 +624,7 @@ describe('dsh-tool-subagent', () => {
       name: 'spy',
       capabilities: { agentOptions: false, outputSchema: false, depthLimit: false, toolFilter: false, persona: false },
       inheritsParentContext: false,
+      imageInput: false,
       start: async (request) => {
         if (request.signal.aborted) sawAborted()
         throw new Error('start aborted')
@@ -680,6 +689,7 @@ describe('dsh-tool-subagent', () => {
       name: 'capture2',
       capabilities: { agentOptions: false, outputSchema: false, depthLimit: true, toolFilter: true, persona: true },
       inheritsParentContext: false,
+      imageInput: false,
       start: async (request) => {
         seen = request
         return {
@@ -737,6 +747,7 @@ describe('dsh-tool-subagent', () => {
       name: 'capture3',
       capabilities: { agentOptions: false, outputSchema: false, depthLimit: false, toolFilter: true, persona: false },
       inheritsParentContext: false,
+      imageInput: false,
       start: async (request) => {
         seen = request
         return {
@@ -767,6 +778,7 @@ describe('dsh-tool-subagent', () => {
       name: 'capture4',
       capabilities: { agentOptions: false, outputSchema: false, depthLimit: false, toolFilter: false, persona: false },
       inheritsParentContext: false,
+      imageInput: false,
       start: async (request) => {
         seen = request
         return {
@@ -792,6 +804,7 @@ describe('dsh-tool-subagent', () => {
       name: 'p',
       capabilities: { agentOptions: false, outputSchema: false, depthLimit: false, toolFilter: true, persona: false },
       inheritsParentContext: false,
+      imageInput: false,
       start: () => { throw new Error('unreachable') },
     })
     const fiber = ctx.plugin(tool, { provider: 'p', toolFilter: {} })
@@ -831,6 +844,7 @@ describe('dsh-tool-subagent background mode', () => {
       name: 'resumable',
       capabilities: { agentOptions: false, outputSchema: false, depthLimit: false, toolFilter: false, persona: false },
       inheritsParentContext: false,
+      imageInput: false,
       start: async request => ({
         id: SessionId('one-shot-child'),
         localAgent: undefined,
@@ -1007,6 +1021,7 @@ describe('dsh-tool-subagent background mode', () => {
       name: 'mock',
       capabilities: { agentOptions: true, outputSchema: false, depthLimit: false, toolFilter: false, persona: false },
       inheritsParentContext: false,
+      imageInput: false,
       agentRouteDefaults: { provider: 'beta', model: 'replacement-model' },
       start: replacementStart,
     })
@@ -1026,6 +1041,7 @@ describe('dsh-tool-subagent background mode', () => {
       name: 'broken-start',
       capabilities: { agentOptions: false, outputSchema: false, depthLimit: false, toolFilter: false, persona: false },
       inheritsParentContext: false,
+      imageInput: false,
       start: async () => { throw new Error('setup failed') },
     })
     tool.apply(ctx, { maxDepth: 'provider-managed', provider: 'broken-start', toolName: 'subagent_broken' })
@@ -1055,6 +1071,7 @@ describe('dsh-tool-subagent background mode', () => {
       name: 'pending-start',
       capabilities: { agentOptions: false, outputSchema: false, depthLimit: false, toolFilter: false, persona: false },
       inheritsParentContext: false,
+      imageInput: false,
       start: request => new Promise((_resolve, reject) => {
         request.signal.addEventListener('abort', () => { reject(new Error('startup aborted')) }, { once: true })
       }),
@@ -1093,6 +1110,7 @@ describe('dsh-tool-subagent background mode', () => {
       name: 'broken-start-rollback',
       capabilities: { agentOptions: false, outputSchema: false, depthLimit: false, toolFilter: false, persona: false },
       inheritsParentContext: false,
+      imageInput: false,
       start: request => new Promise((_resolve, reject) => {
         request.signal.addEventListener('abort', () => {
           reject(new AggregateError(
@@ -1138,6 +1156,7 @@ describe('dsh-tool-subagent background mode', () => {
       name: 'hanging',
       capabilities: { agentOptions: false, outputSchema: false, depthLimit: false, toolFilter: false, persona: false },
       inheritsParentContext: false,
+      imageInput: false,
       start: async (request) => {
         let settle!: (value: { output: { type: 'text'; text: string }[]; stopReason: 'aborted' }) => void
         const id = SessionId(`hang-${++starts}`)
@@ -1286,6 +1305,7 @@ describe('dsh-tool-subagent continuable background mode', () => {
       name: 'gated',
       capabilities: { agentOptions: false, outputSchema: true, depthLimit: true, toolFilter: true, persona: true },
       inheritsParentContext: false,
+      imageInput: false,
       start: async () => { throw new Error('continuable policy must not start a one-shot child') },
       prepareContinuable: async (request) => {
         preparationCount += 1
@@ -1361,6 +1381,7 @@ describe('background preflight failure (no orphaned child, by construction)', ()
       name: 'probe',
       capabilities: { agentOptions: false, outputSchema: false, depthLimit: false, toolFilter: false, persona: false },
       inheritsParentContext: false,
+      imageInput: false,
       start: async () => {
         starts += 1
         return {
@@ -1399,6 +1420,7 @@ describe('depth budget configuration', () => {
       name: 'capture',
       capabilities: { agentOptions: false, outputSchema: true, depthLimit: true, toolFilter: true, persona: true },
       inheritsParentContext: false,
+      imageInput: false,
       start: async (request) => {
         requests.push(request)
         return {
@@ -1437,6 +1459,7 @@ describe('depth budget configuration', () => {
       name: 'no-depth',
       capabilities: { agentOptions: false, outputSchema: false, depthLimit: false, toolFilter: false, persona: false },
       inheritsParentContext: false,
+      imageInput: false,
       start: async () => { throw new Error('unreachable') },
     })
     await expect(ctx.plugin(tool, { provider: 'no-depth' }))
@@ -1453,6 +1476,7 @@ describe('depth budget configuration', () => {
       name: 'external',
       capabilities: { agentOptions: false, outputSchema: false, depthLimit: false, toolFilter: false, persona: false },
       inheritsParentContext: false,
+      imageInput: false,
       start: async (request) => {
         requests.push(request)
         return {

@@ -18,7 +18,7 @@ import { foldConsumedWork } from '@deepseek-ai/dsh-agent'
 import type { Agent, AgentHandle } from '@deepseek-ai/dsh-agent'
 import { SessionLogOffset } from '@deepseek-ai/dsh-session'
 import type { SessionEvent, SessionId, SessionLogOffset as SessionLogOffsetType, TurnEndReason } from '@deepseek-ai/dsh-session'
-import { createUserMessage, type ContentBlock } from '@deepseek-ai/dsh-llm'
+import { contentHasImage, createUserMessage, type ContentBlock } from '@deepseek-ai/dsh-llm'
 import {
   appendDelegatedPolicyOverrides,
   applyChildComposition,
@@ -36,6 +36,14 @@ import type {
   SubagentRun,
   SubagentStopReason,
 } from '@deepseek-ai/dsh-subagent'
+// The shared subagent-owned image-capability gate, reached through the
+// unbundled `/internal` subpath: this package is a separate published unit
+// from `@deepseek-ai/dsh-subagent`'s bundled runtime entry, so a refusal
+// constructed here is a different `SubagentError` class identity than one
+// constructed inside that bundle. No caller of `startInProcessRun` matches
+// this refusal by `instanceof SubagentError`; `SubagentRuntime.start()` lets
+// it propagate unchanged.
+import { assertImageCapableRoute } from '@deepseek-ai/dsh-subagent/internal'
 import {
   attachStructuredRuntime,
   type StructuredAttachment,
@@ -96,10 +104,14 @@ function attachDescriptorAppend(childCtx: Context, descriptor: SubagentDescripto
  * and disposal work through the returned run. Rejection means the agent
  * factory's unpublished creation transaction reached quiescence without
  * publishing a child. Every start appends its resolved descriptor inside the
- * child's initial turn.
+ * child's initial turn. An image-bearing prompt is checked against the
+ * resolved child route right after the synchronous delegated-policy capture
+ * and before `ctx.agents.create()`, so a refusal never creates a child.
  * @param request - the trusted typed start request, including its required signal.
  * @param options - the optional fork seed.
  * @returns a published holder-owned run.
+ * @throws {SubagentError} `MODEL_DOES_NOT_SUPPORT_IMAGES` when the prompt has
+ *   an image block and the resolved child route declares non-image input modalities.
  */
 export async function startInProcessRun(
   request: ResolvedSubagentStartRequest,
@@ -117,6 +129,20 @@ export async function startInProcessRun(
   // Capture before the first await: a later parent switch belongs to the
   // parent's future.
   const inherited = captureDelegatedPolicyOverrides(parent)
+  // Resolved once, synchronously, right after that capture: the image-route
+  // check below and `ctx.agents.create()` further down both read this same
+  // value, so the model the check approves is the model the child actually
+  // gets.
+  const agentOptions = resolveChildAgentOptions(parent, request.agentOptions, childDepth)
+  // `SubagentRuntime.start()` already refused an incapable transport
+  // synchronously before calling this provider; this is the resolved-route
+  // check for a capable in-process transport. It runs here, after the
+  // synchronous capture above and before any child write, instead of in
+  // `start()`, so its await cannot land between that capture and this
+  // driver's own first await.
+  if (contentHasImage(request.prompt)) {
+    await assertImageCapableRoute(parent.ctx, agentOptions.provider, agentOptions.model, request.signal)
+  }
 
   let structured: StructuredAttachment | undefined
   const setup = (childCtx: Context, child: Agent): void => {
@@ -137,7 +163,7 @@ export async function startInProcessRun(
     meta: childSessionMeta(parent, childDepth, seed !== undefined),
     ...seed !== undefined ? { seed } : {},
     ...seed === undefined ? {} : { inheritedEventCount: activationBoundary },
-    agentOptions: resolveChildAgentOptions(parent, request.agentOptions, childDepth),
+    agentOptions,
     signal: request.signal,
     setup,
   })

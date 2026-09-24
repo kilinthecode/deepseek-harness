@@ -624,6 +624,7 @@ describe('dsh-tool-workflow', () => {
         name: 'spawn',
         capabilities: { agentOptions: true, outputSchema: true, depthLimit: true, toolFilter: true, persona: true },
         inheritsParentContext: false,
+        imageInput: false,
         start: () => Promise.reject(new Error('the parked-script fixture must not start a child')),
       })
       await mountWorkflowRuntime(ctx)
@@ -659,6 +660,7 @@ describe('dsh-tool-workflow', () => {
         name: 'spawn',
         capabilities: { agentOptions: true, outputSchema: true, depthLimit: true, toolFilter: true, persona: true },
         inheritsParentContext: false,
+        imageInput: false,
         start: () => Promise.reject(new Error('the scriptonly fixture must not start a child')),
       })
       await mountWorkflowRuntime(ctx)

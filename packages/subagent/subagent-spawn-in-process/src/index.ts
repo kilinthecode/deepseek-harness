@@ -48,6 +48,8 @@ class SpawnInProcessProvider implements SubagentProvider {
   }
   // Context contract: a spawned child starts fresh — it never sees the parent conversation.
   readonly inheritsParentContext = false
+  // Same process, same attachment store: a fresh child's durable image references stay valid.
+  readonly imageInput = true
 
   constructor(readonly name: string) {}
 

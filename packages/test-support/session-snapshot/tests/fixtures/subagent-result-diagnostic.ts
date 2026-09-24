@@ -38,6 +38,7 @@ class DiagnosticProvider implements SubagentProvider {
   readonly name = 'snapshot-diagnostic'
   readonly capabilities = NO_START_CAPABILITIES
   readonly inheritsParentContext = false
+  readonly imageInput = false
   private starts = 0
 
   async start(request: ResolvedSubagentStartRequest) {
