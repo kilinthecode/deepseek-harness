@@ -728,7 +728,7 @@ Source: [`packages/credentials/deepseek-account-platform/src/index.ts:23`](../pa
 
 ## `@deepseek-ai/dsh-experimental-agent-team`
 
-Requires: `agents` · `sessions` · `sessionPersistence` · `sessionProjections` · `subagents`
+Requires: `agents` · `sessions` · `sessionPersistence` · `sessionProjections` · `subagents` · `llm`
 
 ```ts config-catalog
 /** Team-service deployment limits. */
@@ -743,10 +743,35 @@ export interface Config {
   readonly maxMessageBytes?: number
   /** Maximum milliseconds allowed for Team-owned runtime disposal. */
   readonly disposalTimeoutMs?: number
+  /**
+   * Whether participant utterances enter a shared transcript and collective
+   * decisions are authorized by quorum. When false the Team records no room
+   * events and the room operations refuse.
+   */
+  readonly roomEnabled?: boolean
+  /** Maximum transcript entries replayed with one room prompt. */
+  readonly roomTranscriptWindow?: number
+  /** Approvals required for acceptance, as a fraction of eligible reviewers in (0, 1]. */
+  readonly roomApprovalRatio?: number
+  /** Maximum revisions one collective decision may reach before it escalates. */
+  readonly roomMaxProposalRevisions?: number
+  /**
+   * Milliseconds of a reviewer's own work that a standing request waits for.
+   * Activity is a durable event from that participant's own turn or a live
+   * stream frame, so a model still streaming an answer is never counted silent;
+   * room and mailbox records, which the Lead Session holds for every actor, are
+   * not activity.
+   */
+  readonly roomReviewGraceMs?: number
+  /**
+   * Reminders per revision before the decision escalates. A reminder restarts
+   * the window of the reviewer it reaches.
+   */
+  readonly roomReviewReminders?: number
 }
 ```
 
-Source: [`packages/experimental/agent-team/src/types.ts:152`](../packages/experimental/agent-team/src/types.ts)
+Source: [`packages/experimental/agent-team/src/types.ts:428`](../packages/experimental/agent-team/src/types.ts)
 
 <a id="deepseek-aidsh-experimental-api-speech-to-text"></a>
 
@@ -1072,6 +1097,22 @@ export interface Config {
 
 Source: [`packages/experimental/speech-to-text-sensevoice/src/config.ts:6`](../packages/experimental/speech-to-text-sensevoice/src/config.ts)
 
+<a id="deepseek-aidsh-experimental-tool-agent-room"></a>
+
+## `@deepseek-ai/dsh-experimental-tool-agent-room`
+
+Requires: `agents` · `agentTeams` · `tools` · `systemPrompt`
+
+```ts config-catalog
+/** Room tool deployment choices. */
+export interface Config {
+  /** Maximum transcript entries one `room_view` result returns. */
+  readonly maxTranscriptEntries?: number
+}
+```
+
+Source: [`packages/experimental/tool-agent-room/src/index.ts:17`](../packages/experimental/tool-agent-room/src/index.ts)
+
 <a id="deepseek-aidsh-experimental-tool-agent-team"></a>
 
 ## `@deepseek-ai/dsh-experimental-tool-agent-team`
@@ -1088,7 +1129,7 @@ export interface Config {
 }
 ```
 
-Source: [`packages/experimental/tool-agent-team/src/index.ts:17`](../packages/experimental/tool-agent-team/src/index.ts)
+Source: [`packages/experimental/tool-agent-team/src/index.ts:18`](../packages/experimental/tool-agent-team/src/index.ts)
 
 <a id="deepseek-aidsh-file-reference-local"></a>
 
@@ -3172,7 +3213,7 @@ Source: [`packages/subagent/subagent-spawn-in-process/src/index.ts:25`](../packa
 ```ts config-catalog
 /** Plugin config: the deployment-authored fragment of the system prompt (see {@link Config.personaPrefix} for its contract). */
 export interface Config {
-  /** Include the fixed DeepSeek Harness identity before the deployment persona (default true). */
+  /** Include the fixed Portal Harness identity before the deployment persona (default true). */
   includeHarnessIdentity?: boolean
   /** Include dynamic runtime-context snapshots in model history (default true). */
   includeRuntimeContext?: boolean
@@ -4121,6 +4162,7 @@ These load from a `cordis.yml` entry with no `config:` block; they declare no co
 - `@deepseek-ai/dsh-client-file-upload` — requires `agents` · `attachments` · `commands` · `connection` ([`packages/client/file-upload/src/index.ts`](../packages/client/file-upload/src/index.ts))
 - `@deepseek-ai/dsh-client-locale` ([`packages/client/locale/src/index.ts`](../packages/client/locale/src/index.ts))
 - `@deepseek-ai/dsh-client-modules` — requires `loader` ([`packages/client/modules/src/index.ts`](../packages/client/modules/src/index.ts))
+- `@deepseek-ai/dsh-client-portal-brand` ([`packages/client/portal-brand/src/index.ts`](../packages/client/portal-brand/src/index.ts))
 - `@deepseek-ai/dsh-client-resources` ([`packages/client/resources/src/index.ts`](../packages/client/resources/src/index.ts))
 - `@deepseek-ai/dsh-client-ui-agent-preset` ([`packages/client/ui-agent-preset/src/index.ts`](../packages/client/ui-agent-preset/src/index.ts))
 - `@deepseek-ai/dsh-client-ui-approval` ([`packages/client/ui-approval/src/index.ts`](../packages/client/ui-approval/src/index.ts))
@@ -4249,6 +4291,7 @@ Imported as libraries by other packages; a `cordis.yml` cannot load them.
 - `@deepseek-ai/dsh-client-web` ([`packages/client/web/src/index.ts`](../packages/client/web/src/index.ts))
 - `@deepseek-ai/dsh-cmdline` ([`packages/boot/cmdline/src/index.ts`](../packages/boot/cmdline/src/index.ts))
 - `@deepseek-ai/dsh-deque` ([`packages/util/deque/src/index.ts`](../packages/util/deque/src/index.ts))
+- `@deepseek-ai/dsh-experimental-agent-room-profile` ([`packages/experimental/agent-room-profile/src/index.ts`](../packages/experimental/agent-room-profile/src/index.ts))
 - `@deepseek-ai/dsh-experimental-agent-team-profile` ([`packages/experimental/agent-team-profile/src/index.ts`](../packages/experimental/agent-team-profile/src/index.ts))
 - `@deepseek-ai/dsh-experimental-browser-use-runtime` ([`packages/experimental/browser-use-runtime/src/index.ts`](../packages/experimental/browser-use-runtime/src/index.ts))
 - `@deepseek-ai/dsh-experimental-voice-input-bundle` ([`packages/experimental/voice-input-bundle/src/index.ts`](../packages/experimental/voice-input-bundle/src/index.ts))

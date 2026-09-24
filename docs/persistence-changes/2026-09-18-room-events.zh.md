@@ -28,7 +28,7 @@ baseline: false
 changes:
   - root: "event:room/message"
     previous: null
-    after: "507825910ef63ae620604d12af532191151e72d15c3b48ae45965f04d40c980b"
+    after: "f59d8e06c228d0781707d7cad2e056247bb26096a943f1cf41ee7aa363d10fe3"
     decision: same-version
   - root: "event:room/proposal"
     previous: null
