@@ -117,13 +117,15 @@ export function offloadedImageText(
 }
 
 /**
- * True when typed model content contains an image block. This is the one image
+ * True when a content-block list contains an image block. This is the one image
  * walk shared by every image policy (capability gating, text-only
  * serialization, compaction survey), so a consumer cannot silently diverge.
- * @param content - typed model content blocks.
+ * It reads only each block's `type` tag, so it also accepts wire block lists
+ * whose images still await admission, such as SDK prompt input.
+ * @param content - typed model content blocks, or any `type`-tagged block list.
  * @returns whether any block is an image.
  */
-export function contentHasImage(content: readonly ContentBlock[]): boolean {
+export function contentHasImage(content: readonly { readonly type: string }[]): boolean {
   return content.some(block => block.type === 'image')
 }
 

@@ -13,6 +13,9 @@ import type {
   ResumeAgentOptions,
 } from '@deepseek-ai/dsh-agent'
 import AgentDefaultModelConfig from '@deepseek-ai/dsh-agent-default-model'
+import { AttachmentId, AttachmentStore } from '@deepseek-ai/dsh-attachment'
+import type { ImageAttachmentLimits, ImageAttachmentRef, SaveImageAttachment } from '@deepseek-ai/dsh-attachment'
+import { FsError } from '@deepseek-ai/dsh-fs'
 import { LlmAttemptId, ToolCallId, createAssistantMessage, createToolResultMessage, type MessageId, type StreamChunk } from '@deepseek-ai/dsh-llm'
 import SessionStore from '@deepseek-ai/dsh-session'
 import SessionProjectionRegistry from '@deepseek-ai/dsh-session-projection'
@@ -68,8 +71,12 @@ interface BenchOptions {
   imageFiles?: Record<string, Uint8Array | 'directory'>
   /** Model registry mock for the image route gate; `'omit'` leaves the service unmounted. */
   llm?: 'omit' | { resolveModelInfo(provider: string, model: string): Promise<{ inputModalities?: string[] }> }
-  /** Attachment store mock for image admission; `'omit'` leaves the service unmounted. */
-  attachments?: 'omit' | {
+  /**
+   * Attachment store for image admission: a mock object, a real
+   * {@link AttachmentStore} subclass mounted as a plugin, or `'omit'` to leave
+   * the service unmounted.
+   */
+  attachments?: 'omit' | (new (ctx: Context) => AttachmentStore) | {
     saveImages(inputs: readonly { data: Uint8Array; mediaType: string; name?: string }[]): Promise<readonly unknown[]>
     imageLimits: {
       maxImageBytes: number
@@ -145,25 +152,36 @@ function selectPreset(session: Session, agentPreset: string): void {
 async function bench(script: Script, options: BenchOptions = {}): Promise<{
   ctx: Context
   output(): { out: string; err: string; order: string[] }
+  /** Every in-memory filesystem call as `<operation>:<path>` (reads add `:<maxBytes>`), in call order. */
+  fsCalls(): string[]
   run(): Promise<{ code: number; out: string; err: string; order: string[] }>
 }> {
   const ctx = new Context()
+  const fsCalls: string[] = []
   if (options.imageFiles !== undefined) {
     const files = options.imageFiles
     const cwd = options.filesystemCwd ?? process.cwd()
     ctx.provide('fs', {
-      resolve: async (path: string) => ({ targetKey: path, displayPath: path }),
+      resolve: async (path: string) => {
+        fsCalls.push(`resolve:${path}`)
+        return { targetKey: path, displayPath: path }
+      },
       processPath: () => cwd,
       stat: async (target: { targetKey: string }) => {
+        fsCalls.push(`stat:${target.targetKey}`)
         const entry = files[target.targetKey]
         if (entry === undefined) return undefined
         if (entry === 'directory') return { version: 'v1' as never, type: 'directory' as const }
         return { version: 'v1' as never, type: 'file' as const, size: entry.byteLength }
       },
-      readBytes: async (target: { targetKey: string }, _signal: unknown, maxBytes: number) => {
+      readBytes: async (target: { targetKey: string; displayPath: string }, _signal: unknown, maxBytes: number) => {
+        fsCalls.push(`readBytes:${target.targetKey}:${String(maxBytes)}`)
         const entry = files[target.targetKey]
         if (entry === undefined || entry === 'directory') throw new Error(`unexpected read of ${target.targetKey}`)
-        if (entry.byteLength > maxBytes) throw new Error(`${target.targetKey} exceeds the byte cap`)
+        // The local provider's refusal for a file above the caller's cap.
+        if (entry.byteLength > maxBytes) {
+          throw new FsError(`cannot read "${target.displayPath}": ${String(entry.byteLength)} bytes exceeds the ${String(maxBytes)}-byte limit`, 'FS_TOO_LARGE')
+        }
         return entry
       },
     } as never)
@@ -177,7 +195,9 @@ async function bench(script: Script, options: BenchOptions = {}): Promise<{
   if (options.llm !== undefined && options.llm !== 'omit') {
     ctx.provide('llm', options.llm as never)
   }
-  if (options.attachments !== undefined && options.attachments !== 'omit') {
+  if (typeof options.attachments === 'function') {
+    await ctx.plugin(options.attachments)
+  } else if (options.attachments !== undefined && options.attachments !== 'omit') {
     ctx.provide('attachments', options.attachments as never)
   }
   let out = ''
@@ -247,6 +267,7 @@ async function bench(script: Script, options: BenchOptions = {}): Promise<{
   return {
     ctx,
     output: () => ({ out, err, order: [...order] }),
+    fsCalls: () => [...fsCalls],
     run: async () => {
       ctx.on('session/flush', () => { order.push('flush') })
       internals.stdout = { write: (chunk: string) => { out += chunk; return true } }
@@ -1102,7 +1123,7 @@ describe('headless runner', () => {
 
   describe('--image', () => {
     /** Deployment image limits generous enough that only a test's own override refuses a batch. */
-    const IMAGE_LIMITS = {
+    const IMAGE_LIMITS: ImageAttachmentLimits = {
       maxImageBytes: 1_000_000,
       maxImagesPerMessage: 10,
       maxMessageImageBytes: 1_000_000,
@@ -1126,6 +1147,28 @@ describe('headless runner', () => {
       })))) {
       return { saveImages, imageLimits: IMAGE_LIMITS }
     }
+
+    /**
+     * A real attachment store whose inherited `saveImages` batch validation
+     * runs unmodified; per-image decoding always passes, and each committed
+     * image's name is recorded in `saved`.
+     */
+    function batchStore(limits: Partial<ImageAttachmentLimits>, saved: string[]): new (ctx: Context) => AttachmentStore {
+      return class extends AttachmentStore {
+        readonly imageLimits: ImageAttachmentLimits = { ...IMAGE_LIMITS, ...limits }
+        validateImage(): Promise<void> { return Promise.resolve() }
+        saveImage(input: SaveImageAttachment): Promise<ImageAttachmentRef> {
+          saved.push(input.name ?? '')
+          return Promise.resolve({
+            attachmentId: AttachmentId(`sha256:${input.name ?? ''}`), mediaType: input.mediaType, bytes: input.data.byteLength, width: 1, height: 1,
+          })
+        }
+        readImage(): Promise<never> { return Promise.reject(new Error('unused')) }
+      }
+    }
+
+    /** JPEG file-signature bytes. */
+    const JPEG_SIGNATURE = Uint8Array.of(0xff, 0xd8, 0xff, 0xe0, 0, 0)
 
     it('attaches image content blocks after the task text, in invocation order', async () => {
       const attachments = savingAttachments()
@@ -1296,33 +1339,101 @@ describe('headless runner', () => {
       await test.ctx.fiber.dispose()
     })
 
-    it('names the path when neither the extension nor the content is a supported image', async () => {
+    it('refuses an unsupported extension before reading any file, even when the bytes are a valid image', async () => {
       const attachments = savingAttachments()
       const test = await bench({ afterPrompt: () => { throw new Error('must not run') } }, {
-        images: ['notes.txt'],
-        imageFiles: { 'notes.txt': new TextEncoder().encode('plain text') },
+        images: ['a.png', 'report.txt'],
+        imageFiles: { 'a.png': PNG_BYTES, 'report.txt': JPEG_SIGNATURE },
         llm: IMAGE_CAPABLE_LLM,
         attachments,
       })
       const result = await test.run()
       expect(result.code).toBe(1)
-      expect(result.err).toContain('notes.txt')
-      expect(result.err).toContain('not a supported image')
+      expect(result.err).toBe('dsh: cannot attach "report.txt": the .txt extension does not declare a supported image format; --image accepts PNG/JPEG/WebP/GIF files, including extension-less files in those formats\n')
+      // Only the working-directory resolution every run performs touched the filesystem.
+      expect(test.fsCalls()).toEqual(['resolve:.'])
       expect(attachments.saveImages).not.toHaveBeenCalled()
       await test.ctx.fiber.dispose()
     })
 
-    it('propagates a whole-batch refusal from the attachment store', async () => {
-      const saveImages = vi.fn(() => Promise.reject(new Error('Image batch exceeds the configured image-count limit.')))
+    it('names the path of an extension-less file whose content is not a supported image', async () => {
+      const attachments = savingAttachments()
       const test = await bench({ afterPrompt: () => { throw new Error('must not run') } }, {
-        images: ['a.png', 'b.png'],
-        imageFiles: { 'a.png': PNG_BYTES, 'b.png': PNG_BYTES },
+        images: ['notes'],
+        imageFiles: { notes: new TextEncoder().encode('plain text') },
         llm: IMAGE_CAPABLE_LLM,
-        attachments: savingAttachments(saveImages),
+        attachments,
       })
       const result = await test.run()
       expect(result.code).toBe(1)
-      expect(result.err).toContain('Image batch exceeds the configured image-count limit.')
+      expect(result.err).toBe('dsh: cannot attach "notes": the file content is not a supported image format; --image accepts PNG/JPEG/WebP/GIF\n')
+      expect(attachments.saveImages).not.toHaveBeenCalled()
+      await test.ctx.fiber.dispose()
+    })
+
+    it.each([
+      { bound: 'per-image', limits: { maxImageBytes: 5, maxMessageImageBytes: 8 } },
+      { bound: 'per-message', limits: { maxImageBytes: 8, maxMessageImageBytes: 5 } },
+    ])('refuses a file above the $bound byte limit through the filesystem read cap', async ({ limits }) => {
+      const saved: string[] = []
+      const test = await bench({ afterPrompt: () => { throw new Error('must not run') } }, {
+        images: ['a.png'],
+        imageFiles: { 'a.png': Uint8Array.of(1, 2, 3, 4, 5, 6) },
+        llm: IMAGE_CAPABLE_LLM,
+        attachments: batchStore(limits, saved),
+      })
+      const result = await test.run()
+      expect(result.code).toBe(1)
+      expect(result.err).toBe('dsh: cannot read "a.png": 6 bytes exceeds the 5-byte limit\n')
+      expect(test.fsCalls()).toContain('readBytes:a.png:5')
+      expect(saved).toEqual([])
+      await test.ctx.fiber.dispose()
+    })
+
+    it.each([
+      {
+        refusal: 'the image-count limit',
+        limits: { maxImagesPerMessage: 1 },
+        message: 'Image batch exceeds the configured image-count limit.',
+      },
+      {
+        refusal: 'the aggregate byte limit',
+        limits: { maxMessageImageBytes: 5 },
+        message: 'Image batch exceeds the configured aggregate image-byte limit.',
+      },
+      {
+        refusal: 'the deployment media types',
+        limits: { mediaTypes: ['image/jpeg'] as const },
+        message: 'Image type image/png is not accepted by this deployment.',
+      },
+    ])('refuses a batch over $refusal through the attachment store before any image is stored', async ({ limits, message }) => {
+      const saved: string[] = []
+      const test = await bench({ afterPrompt: () => { throw new Error('must not run: no agent should have been created') } }, {
+        images: ['a.png', 'b.png'],
+        imageFiles: { 'a.png': PNG_BYTES, 'b.png': PNG_BYTES },
+        llm: IMAGE_CAPABLE_LLM,
+        attachments: batchStore(limits, saved),
+      })
+      const result = await test.run()
+      expect(result.code).toBe(1)
+      expect(result.err).toBe(`dsh: ${message}\n`)
+      expect(saved).toEqual([])
+      expect(test.ctx.agents.list()).toEqual([])
+      await test.ctx.fiber.dispose()
+    })
+
+    it('commits a batch within every limit through the attachment store', async () => {
+      const saved: string[] = []
+      const test = await bench({
+        afterPrompt(session, message) { appendTurn(session, 1, message, 'described', true) },
+      }, {
+        images: ['a.png', 'b.png'],
+        imageFiles: { 'a.png': PNG_BYTES, 'b.png': PNG_BYTES },
+        llm: IMAGE_CAPABLE_LLM,
+        attachments: batchStore({ maxImagesPerMessage: 2, maxMessageImageBytes: 6 }, saved),
+      })
+      expect(await test.run()).toMatchObject({ code: 0, out: 'described\n' })
+      expect(saved).toEqual(['a.png', 'b.png'])
       await test.ctx.fiber.dispose()
     })
 

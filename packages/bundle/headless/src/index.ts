@@ -10,7 +10,7 @@
  * @module @deepseek-ai/dsh-headless
  */
 
-import { basename } from 'node:path'
+import { basename, extname } from 'node:path'
 import { randomUUID } from 'node:crypto'
 import type { Context } from '@deepseek-ai/cordis'
 import z from '@deepseek-ai/schemastery'
@@ -19,7 +19,7 @@ import { installModelSelection } from '@deepseek-ai/dsh-agent'
 import type { Agent, ModelSelection, ModelSelectionRef } from '@deepseek-ai/dsh-agent'
 import type {} from '@deepseek-ai/dsh-agent-default-model'
 import { imageMediaTypeForPath, sniffImageMediaType } from '@deepseek-ai/dsh-attachment'
-import type { SaveImageAttachment } from '@deepseek-ai/dsh-attachment'
+import type { ImageMediaType, SaveImageAttachment } from '@deepseek-ai/dsh-attachment'
 import type {} from '@deepseek-ai/dsh-fs'
 import { createUserMessage, imageInputSupport } from '@deepseek-ai/dsh-llm'
 import type { ContentBlock } from '@deepseek-ai/dsh-llm'
@@ -308,10 +308,30 @@ function fail(io: HeadlessIo, error: unknown, json: boolean): void {
 }
 
 /**
+ * The media type one raw `--image` path declares by its extension, matching
+ * `read_image`: a supported image extension selects its type, and an
+ * extension-less path yields undefined so its file signature decides.
+ * @param path - the raw `--image` path, before filesystem resolution.
+ * @returns the declared media type, or undefined for an extension-less path.
+ * @throws when the path carries any other extension, whatever the file holds.
+ */
+function declaredImageMediaType(path: string): ImageMediaType | undefined {
+  const declared = imageMediaTypeForPath(path)
+  const extension = extname(path).toLowerCase()
+  if (declared === undefined && extension !== '') {
+    throw new Error(`cannot attach "${path}": the ${extension} extension does not declare a supported image format; --image accepts PNG/JPEG/WebP/GIF files, including extension-less files in those formats`)
+  }
+  return declared
+}
+
+/**
  * Resolve `--image` paths into durable image content blocks for one task.
- * Refuses before any file I/O when the selected route declares no image
- * input or a required service is unmounted, so a refusal never creates a
- * session or agent. Called only when `images` is non-empty.
+ * The route, service, and per-path extension checks run before any file I/O;
+ * the file reads and the attachment store's batch validation follow. The
+ * caller runs this before it creates or resumes the Agent, so an image
+ * refusal creates no Session and stores no image, while a later failure of
+ * that Agent step leaves the stored images referenced by no Session. Called
+ * only when `images` is non-empty.
  * @param ctx - plugin context carrying the optional `llm`, `attachments`, and `fs` services.
  * @param images - non-blank image paths in invocation order.
  * @param selection - the run's selected provider/model route.
@@ -328,18 +348,19 @@ async function resolveImageContent(ctx: Context, images: readonly string[], sele
   if (attachments === undefined) throw new Error('headless --image requires an attachment store')
   const fs = ctx.get('fs')
   if (fs === undefined) throw new Error('headless --image requires a filesystem service')
+  const declared = images.map(path => ({ path, mediaType: declaredImageMediaType(path) }))
 
   const byteCap = Math.min(attachments.imageLimits.maxImageBytes, attachments.imageLimits.maxMessageImageBytes)
   const inputs: SaveImageAttachment[] = []
-  for (const path of images) {
+  for (const { path, mediaType: declaredType } of declared) {
     const target = await fs.resolve(path)
     const stat = await fs.stat(target)
     if (stat === undefined) throw new Error(`cannot attach "${target.displayPath}": not found`)
     if (stat.type !== 'file') throw new Error(`cannot attach "${target.displayPath}": not a regular file`)
     const data = await fs.readBytes(target, undefined, byteCap)
-    const mediaType = imageMediaTypeForPath(target.displayPath) ?? sniffImageMediaType(data)
+    const mediaType = declaredType ?? sniffImageMediaType(data)
     if (mediaType === undefined) {
-      throw new Error(`cannot attach "${target.displayPath}": the file is not a supported image; --image accepts PNG/JPEG/WebP/GIF`)
+      throw new Error(`cannot attach "${target.displayPath}": the file content is not a supported image format; --image accepts PNG/JPEG/WebP/GIF`)
     }
     inputs.push({ data, mediaType, name: basename(target.displayPath) })
   }

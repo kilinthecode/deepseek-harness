@@ -20,15 +20,15 @@ Status: implemented
 
 ### 提示入口的门控是宽松的
 
-SDK 服务器的 `session/prompt` 与 headless 的 `--image` 选项只拒绝 `'unsupported'`。SDK 的检查在 Session 创建或附件存储之前运行；headless 的检查在任何文件被读取以及 Agent 创建之前运行。只拒绝显式的纯文本列表，与 `LlmRuntime` 将图像投影为文本的条件以及 `packages/api/session-controller/src/commands.ts` 中 Web 提示准入的条件一致，因此这些门控放行的提示永远不会被静默降级。`read_image`、MCP 桥接和 ACP 中的门控仍会拒绝 `'undeclared'`。
+SDK 服务器的 `session/prompt` 与 headless 的 `--image` 选项只拒绝 `'unsupported'`。SDK 的检查在 Session 创建或附件存储之前运行；headless 的检查在任何文件被读取以及 Agent 创建之前运行。`'unsupported'` 正是 `LlmRuntime` 用占位文本替换每张图像的条件，也是 `packages/api/session-controller/src/commands.ts` 中 Web 提示准入拒绝的条件，因此这些门控会拒绝运行时将静默降级的每一个提示。`'undeclared'` 路由会被放行，其图像原样到达适配器：能够发送图像的适配器会发送，不能发送的适配器会在 Session 与附件已经存在之后以 `UNSUPPORTED_CONTENT` 使该轮次失败。`read_image`、MCP 桥接和 ACP 中的门控也会拒绝 `'undeclared'`，因此在未声明模态的路由上，提示中的图像会被放行，而 `read_image` 会拒绝。
 
 ### headless 通过 flag 附加图像
 
-`dsh --profile headless --image <path>` 可以重复使用。运行器通过已挂载的文件系统 provider 解析每个路径，根据扩展名检测媒体类型，对于无扩展名的路径则根据文件签名检测，用 `attachments.saveImages` 存储整批图像，并发送一条包含任务文本、其后按调用顺序排列图像的用户消息。
+`dsh --profile headless --image <path>` 可以重复使用。运行器通过已挂载的文件系统 provider 解析每个路径，并以与 `read_image` 相同的方式确定媒体类型：受支持的扩展名决定媒体类型，无扩展名的路径根据文件签名识别，其他任何扩展名无论文件内容如何都会在读取任何文件之前失败。它用 `attachments.saveImages` 存储整批图像，并发送一条包含任务文本、其后按调用顺序排列图像的用户消息。存储在 Agent 创建或沿用之前进行，因此每一种图像拒绝（包括附件存储的批次与解码拒绝）都不会创建 Session，也不会存储任何图像；而 Agent 步骤本身的失败（例如不可用的 `--session-id`）会留下没有任何 Session 引用的已存储图像。若在 Agent 步骤之后再存储，这些拒绝就会推迟到 Session 创建之后。
 
 ### 随附的默认值接受图像
 
-ACP 随附的条目、TypeScript 和 Python SDK 客户端以及 `dsh-subagent-dsh-sdk` 默认使用 `deepseek-flash`，即声明支持图像输入的随附目录条目，因此以默认选项发送的图像能够到达模型，ACP 也会宣告支持图像提示。
+ACP 随附的条目、TypeScript 和 Python SDK 客户端以及 `dsh-subagent-dsh-sdk` 默认使用 `deepseek-flash`，即声明支持图像输入的随附目录条目，因此以默认选项发送的图像能够到达模型，ACP 也会宣告支持图像提示。辅助的 `dsh-web-search-deepseek` provider 保留自己的 `deepseek-v4-flash` 默认值：它把纯文本的搜索请求直接发送到 DeepSeek 的 Anthropic 兼容端点，不经 `ctx.llm` 解析模型，因此路由图像能力与它无关。
 
 ## 考虑过的替代方案
 

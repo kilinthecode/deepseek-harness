@@ -10,7 +10,7 @@ import { resolve } from 'node:path'
 import { brandString } from '@deepseek-ai/dsh-brand'
 import type { Agent, AgentHandle } from '@deepseek-ai/dsh-agent'
 import { admitEncodedImages, type EncodedImageAttachment, type ImageAttachmentRef } from '@deepseek-ai/dsh-attachment'
-import { createUserMessage, imageInputSupport, ReasoningEffortId, type ContentBlock, type LlmRuntime } from '@deepseek-ai/dsh-llm'
+import { contentHasImage, createUserMessage, imageInputSupport, ReasoningEffortId, type ContentBlock, type LlmRuntime } from '@deepseek-ai/dsh-llm'
 import { carrierKeyOf, type Scoped } from '@deepseek-ai/dsh-scope'
 import type { SessionId } from '@deepseek-ai/dsh-session'
 import type SubagentRuntime from '@deepseek-ai/dsh-subagent'
@@ -36,19 +36,15 @@ function encodedImage(block: SessionPromptParams['contentBlocks'][number]): bloc
   return block.type === 'image' && 'data' in block
 }
 
-/** Whether any top-level block is an image, encoded or already durable. */
-function hasImageBlock(blocks: SessionPromptParams['contentBlocks']): boolean {
-  return blocks.some(block => block.type === 'image')
-}
-
 /**
  * Refuse one prompt's image content before any session or attachment side
- * effect when the initialized route does not declare image input. An
- * undeclared route is permitted: it matches the runtime's own text-only
- * placeholder projection (`LlmRuntime.stream`), so a route this permissive
- * gate admits never silently degrades once dispatched. `initialize` requires
- * the model registry, so an unmounted registry leaves the decision to the
- * runtime projection.
+ * effect when the initialized route declares input modalities that omit
+ * `image`, the condition under which `LlmRuntime.stream` replaces each image
+ * with placeholder text. A route that declares no modalities is admitted and
+ * its images reach the adapter unchanged; an adapter that cannot send them
+ * fails the turn with `UNSUPPORTED_CONTENT` after the Session and attachments
+ * exist. `initialize` requires the model registry, so an unmounted registry
+ * leaves the decision to the runtime projection.
  * @param ctx - server-owned context used to resolve the optional `llm` service.
  * @param provider - the initialized SDK route's provider.
  * @param model - the initialized SDK route's model.
@@ -204,7 +200,7 @@ export class HarnessSdkJsonRpcServer {
    */
   async prompt(params: SessionPromptParams): Promise<SessionPromptResult> {
     if (!this.initialized) throw new Error('SDK server is not initialized')
-    if (hasImageBlock(params.contentBlocks)) {
+    if (contentHasImage(params.contentBlocks)) {
       await assertImageRouteSupported(this.ctx, this.provider, this.model)
     }
     const rec = await this.getOrCreateSession(params.sessionId)
