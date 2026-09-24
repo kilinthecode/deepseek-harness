@@ -1,7 +1,10 @@
 /**
  * Model content helpers:
+ * - attachment access mapping from an attachment provider's host path into the tool execution world;
  * - content-block walks, and the text projections and handle text that stand in for image and file blocks;
- * - image-input support mapped from a resolved model's declared input modalities.
+ * - image-input support mapped from a resolved model's declared input modalities;
+ * - the count of image occurrences a route's image budget still requires offloading;
+ * - tool-update projection of one route's provider declarations and developer messages.
  * @module @deepseek-ai/dsh-llm/content
  */
 
