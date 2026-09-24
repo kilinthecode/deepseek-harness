@@ -2,5 +2,5 @@
 # side as of the last confirmed-consistent state. Both languages carry equal authority;
 # after editing either side, bring the other along and re-record with:
 #   pnpm run verify-translation-pairing --write docs/persistence-changes/2026-09-18-room-events.md
-2026-09-18-room-events.md: 9d82903da3f6eb0c02a7934dfd45c1409074459f
-2026-09-18-room-events.zh.md: 2015244381e181ecc1965a4bd2c2dfa03374e820
+2026-09-18-room-events.md: d86b96590a2e350457505d6c512077df0041dd84
+2026-09-18-room-events.zh.md: 22e626cc3dd0059202bc3571ac5e9aea0eb6965b

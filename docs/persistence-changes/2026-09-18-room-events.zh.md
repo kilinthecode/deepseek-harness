@@ -47,7 +47,7 @@ changes:
 <a id="compatibility"></a>
 ## 兼容性
 
-这些都是新增的 event root：已有日志仍然有效，也没有读取方依赖它们。它们是 log-only，因此回放绝不会把它们送进模型请求；未声明它们的构建会拒绝该日志，除非 envelope 将其标记为 ignorable。Session 格式版本不变，已有 payload 与 header 字段的含义也没有改变。
+这些都是新增的 event root：不含它们的日志仍然有效，也没有读取方依赖它们。它们是 log-only，因此回放绝不会把它们送进模型请求；未声明它们的构建会拒绝该日志，除非 envelope 将其标记为 ignorable。2026-09-23 上游同步之前的 fork 构建以 Session 格式 3 写入且含 room event 的 Lead Session 无法升级：已发布的 V3 到 V4 迁移只接受其封闭的 V3 event 类型列表，而 fork 不扩展该列表，因此这类 Session 不再能打开。格式 4 的日志把这些 event 作为已声明类型携带。Session 格式版本不变，已有 payload 与 header 字段的含义也没有改变。
 
 <a id="verification"></a>
 ## 验证

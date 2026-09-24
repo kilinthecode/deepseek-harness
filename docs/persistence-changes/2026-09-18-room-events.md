@@ -47,7 +47,7 @@ changes:
 <a id="compatibility"></a>
 ## Compatibility
 
-These are additive event roots: existing logs stay valid and no reader requires them. They are log-only, so replay never feeds them to a model request, and a build that does not declare them refuses the log unless the envelope marks them ignorable. No Session format version changes, and no existing payload or header field changes meaning.
+These are additive event roots: logs without them stay valid and no reader requires them. They are log-only, so replay never feeds them to a model request, and a build that does not declare them refuses the log unless the envelope marks them ignorable. A Lead Session that a fork build before the 2026-09-23 upstream sync wrote at Session format 3 with room events cannot be upgraded: the released V3-to-V4 migration accepts only its closed list of V3 event types, which the fork does not extend, so such a Session no longer opens. Format-4 logs carry the events as declared types. No Session format version changes, and no existing payload or header field changes meaning.
 
 <a id="verification"></a>
 ## Verification

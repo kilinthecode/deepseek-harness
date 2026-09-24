@@ -7,23 +7,35 @@
  * Replaying it through the projection proves the room's durable state — roster,
  * attributed transcript, decision, and the objection itself — reconstructs from
  * the committed log alone, without a provider, a timer, or a live Session.
+ *
+ * The recording is a Session format 3 log, and the fold reads its events
+ * directly rather than through the Session format reader: the released V3-to-V4
+ * migration refuses room events, so the reader cannot open this log
+ * (docs/persistence-changes/2026-09-18-room-events.md).
  */
 
 import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { describe, expect, it } from 'vitest'
 import type { SessionEvent } from '@deepseek-ai/dsh-session'
-import { SESSION_FORMAT_VERSION, SessionId } from '@deepseek-ai/dsh-session'
+import { SessionId } from '@deepseek-ai/dsh-session'
 import { teamProjectionDefinition } from '../src/projection.ts'
 import type { TeamProjectionState, TeamState } from '../src/projection.ts'
 
 const RECORDING = join(import.meta.dirname, 'fixtures', 'room-deliberation.jsonl')
 
 /** One JSONL line of the recording: the Session header or a committed event. */
-type RecordedLine = SessionEvent | { readonly type: 'session'; readonly id: string }
+type RecordedLine = SessionEvent | { readonly type: 'session'; readonly id: string; readonly version: number }
+
+/** The recorded log: its header fields and every committed event. */
+interface RecordedLog {
+  readonly rootId: SessionId
+  readonly version: number
+  readonly events: readonly SessionEvent[]
+}
 
 /** The recorded log, split into its header and every committed event. */
-function recordedLog(): { readonly rootId: SessionId; readonly events: SessionEvent[] } {
+function recordedLog(): RecordedLog {
   const records = readFileSync(RECORDING, 'utf8')
     .split('\n')
     .filter(line => line.trim() !== '')
@@ -32,14 +44,15 @@ function recordedLog(): { readonly rootId: SessionId; readonly events: SessionEv
   if (header?.type !== 'session') throw new Error('room recording is missing its Session header')
   return {
     rootId: SessionId(header.id),
+    version: header.version,
     events: records.filter((record): record is SessionEvent => record.type !== 'session'),
   }
 }
 
-/** Fold one recorded log into room state. */
-function replay(rootId: SessionId, events: readonly SessionEvent[]): TeamProjectionState {
+/** Fold one recorded log into room state under its recorded header. */
+function replay({ rootId, version, events }: RecordedLog): TeamProjectionState {
   let state = teamProjectionDefinition.init({
-    version: SESSION_FORMAT_VERSION,
+    version,
     id: rootId,
     createdAt: 0,
     isSeeded: false,
@@ -55,8 +68,9 @@ function teamState(projected: TeamProjectionState): TeamState {
 
 describe('room durable replay', () => {
   it('reconstructs the deliberation from the recorded Lead Session alone', () => {
-    const { rootId, events } = recordedLog()
-    const projected = replay(rootId, events)
+    const log = recordedLog()
+    const { rootId } = log
+    const projected = replay(log)
     expect(projected.failure).toBeUndefined()
     const state = teamState(projected)
 
@@ -84,7 +98,7 @@ describe('room durable replay', () => {
   })
 
   it('folds the same recording to the same state every time', () => {
-    const { rootId, events } = recordedLog()
-    expect(replay(rootId, events)).toEqual(replay(rootId, events))
+    const log = recordedLog()
+    expect(replay(log)).toEqual(replay(log))
   })
 })
