@@ -15,8 +15,10 @@
      the brand moment runs, and the leave fade reveals it. */
   position: fixed;
   inset: 0;
-  /* Above every application layer for the page's lifetime (~3s at boot). */
-  z-index: 2147483647;
+  /* Above every application layer (menus, toasts, and tooltips use 1100) for
+     the page's lifetime (~3s at boot), and below the WebWorker preview's
+     pre-boot source chooser (1200), which must stay usable over this page. */
+  z-index: 1150;
   display: grid;
   place-items: center;
   background: var(--dsw-alias-bg-base, var(--dsh-boot-bg, Canvas));

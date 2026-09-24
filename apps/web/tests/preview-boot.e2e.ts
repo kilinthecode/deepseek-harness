@@ -304,7 +304,9 @@ async function bootPreview(origin: string, browser: Browser): Promise<void> {
       SNAPSHOT_MODE,
     )
     await page.getByRole('button', { name: 'Start Preview' }).click()
-    await page.getByText('Loading plugins…', { exact: true }).waitFor({ timeout: 10_000 })
+    // The boot page's progress hint appears only when boot outlasts its brand
+    // moment, so the page itself marks that the chosen source started booting.
+    await page.locator('[data-dsh-boot]').waitFor({ timeout: 10_000 })
     const bootLine = await within(treeActive, BOOT_TIMEOUT_MS, `preview boot: the worker never reported "${TREE_ACTIVE}"`)
     // The activated tree ran bodies lowered against the contract this
     // checkout's packer emits; a dist built before a contract change would
