@@ -63,7 +63,7 @@ kind: "package-reference"
 
 #### 模型看到什么
 
-每位参与者的 schema 中都会出现五个工具：`room_view`、`room_prompt`、`room_propose`、`room_review` 与 `room_escalate`。每个工具都按其声明的 schema 返回紧凑 JSON：一个 decision view 携带其 id、revision、proposer、statement、phase、所需批准数、三个投票列表、每条已记录立场及其理由，以及在决策仍未结清时立场缺失的参与者名单。一个 system-prompt section 陈述策略。
+每位参与者的 schema 中都会出现五个工具：`room_view`、`room_prompt`、`room_propose`、`room_review` 与 `room_escalate`。每个工具都按其声明的 schema 返回紧凑 JSON：一个 decision view 携带其 id、revision、proposer、statement、phase、所需批准数、三个投票列表、每条已记录立场及其理由，以及在决策仍未结清时立场缺失的参与者名单。一个 system-prompt section 陈述参与者何时可以发言以及 quorum 规则；每个工具的说明与参数承载各自的使用规则，而自我评审、已结清的决策或 revision 上限等拒绝会在调用结果中返回。
 
 #### Token 影响
 

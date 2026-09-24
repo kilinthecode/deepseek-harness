@@ -2324,7 +2324,7 @@ lsp 工具将提供方选择和语言服务器子进程置于 ctx.lsp 之后，�
     },
     "model": {
       "type": "string",
-      "description": "Model id for this teammate. Defaults to your own model."
+      "description": "Model id for this teammate; pick one that fits its responsibility, since teammates on different models disagree more usefully than copies of one model. Defaults to your own model."
     },
     "reasoning_effort": {
       "type": "string",
@@ -2574,7 +2574,7 @@ lsp 工具将提供方选择和语言服务器子进程置于 ctx.lsp 之后，�
 
 ### `room_prompt`
 
-把发言权交给某位参与者，并附上自包含的 instruction。目标会收到它尚未见过的 transcript，因此请明确说明你想要什么。
+当下一步需要某位参与者而不是你的判断时，把发言权交给它。目标会收到它尚未见过的 transcript。
 
 ```json
 {
@@ -2586,7 +2586,7 @@ lsp 工具将提供方选择和语言服务器子进程置于 ctx.lsp 之后，�
     },
     "instruction": {
       "type": "string",
-      "description": "What you want that participant to do or answer."
+      "description": "Self-contained statement of exactly what you want that participant to do or answer."
     }
   },
   "required": [
@@ -2600,7 +2600,7 @@ lsp 工具将提供方选择和语言服务器子进程置于 ctx.lsp 之后，�
 
 ### `room_propose`
 
-把一个 statement 提交给 room 做集体决策。你之外的每位参与者都会成为 reviewer，必须记录立场。在 quorum 批准且没有成立中的反对之前，什么都不会被接受。
+把一个 statement 作为待评审的决策提交给 room。
 
 ```json
 {
@@ -2625,7 +2625,7 @@ lsp 工具将提供方选择和语言服务器子进程置于 ctx.lsp 之后，�
 
 ### `room_review`
 
-记录你对某个决策 revision 的立场。只在你愿意亲自为该决策辩护时 approve；reject 时给出具体问题，以便 proposer 采取行动。proposer 不能 review 自己的决策。
+记录你对某个决策 revision 的立场。
 
 ```json
 {
@@ -2641,7 +2641,7 @@ lsp 工具将提供方选择和语言服务器子进程置于 ctx.lsp 之后，�
     },
     "verdict": {
       "type": "string",
-      "description": "Your standing.",
+      "description": "approve only when you would defend the decision yourself, reject when you found a specific problem, abstain when you have no basis to judge.",
       "enum": [
         "approve",
         "reject",
@@ -2650,7 +2650,7 @@ lsp 工具将提供方选择和语言服务器子进程置于 ctx.lsp 之后，�
     },
     "reason": {
       "type": "string",
-      "description": "Why you chose this standing; the proposer and the human read it."
+      "description": "Why you chose this standing; a rejection names the problem so the proposer can act on it. The proposer and the human read it."
     }
   },
   "required": [

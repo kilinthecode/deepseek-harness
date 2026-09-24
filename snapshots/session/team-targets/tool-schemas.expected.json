@@ -360,7 +360,7 @@
           },
           "model": {
             "type": "string",
-            "description": "Model id for this teammate. Defaults to your own model."
+            "description": "Model id for this teammate; pick one that fits its responsibility, since teammates on different models disagree more usefully than copies of one model. Defaults to your own model."
           },
           "reasoning_effort": {
             "type": "string",

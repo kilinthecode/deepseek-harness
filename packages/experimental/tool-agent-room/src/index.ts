@@ -27,9 +27,7 @@ export const Config: z<Config> = z.object({
 /** Model-facing co-accountability policy shared by every room participant. */
 const POLICY = `This session is a room: several participants reason about one question together, each running its own model. You speak only when another participant or the human gives you the floor; do not assume a turn you were not given.
 
-A decision settles only by quorum, never by one participant. room_propose puts a statement to the room. Every participant other than the proposer is a reviewer and must record a standing with room_review: approve, reject, or abstain, each with a reason. Approve only when you would defend the decision yourself. Reject when you found a specific problem, and state the problem in the reason so the proposer can act on it. Abstain when you have no basis to judge either way. A decision is accepted only when every reviewer has voted, enough of them approved, and no rejection stands, so a silent reviewer delays the room and an unexplained rejection blocks it.
-
-A proposer cannot review its own decision. A decision that has settled is final. When reviewers reject, the proposer may carry a revised statement back with room_propose and supersedes; after the configured revision limit the decision must go to the human. Use room_escalate when the room cannot converge or the choice belongs to the human. Use room_prompt when the next useful step is another participant's judgement rather than your own, and say exactly what you want from it. Use room_view to read what the room has said and where each decision stands; re-read it after you are woken instead of relying on memory.`
+A decision settles only by quorum, never by one participant. Every participant other than the proposer reviews it, and it is accepted only when every reviewer has recorded a standing, enough of them approved, and no rejection stands, so a silent reviewer delays the room and an unexplained rejection blocks it.`
 
 const DECISION_VIEW_SCHEMA = {
   type: 'object',
@@ -198,10 +196,10 @@ function install(agent: Agent, ctx: Context, config: Required<Config>): () => vo
 
     register(scoped.tools.register(defineTool({
       name: 'room_prompt',
-      description: 'Give one participant the floor with a self-contained instruction. The target receives the transcript it has not yet seen, so say exactly what you want from it.',
+      description: 'Give one participant the floor when the next step needs its judgement rather than yours. The target receives the transcript it has not yet seen.',
       parameters: {
         target: { type: 'string', required: true, description: 'Participant name, or lead.' },
-        instruction: { type: 'string', required: true, description: 'What you want that participant to do or answer.' },
+        instruction: { type: 'string', required: true, description: 'Self-contained statement of exactly what you want that participant to do or answer.' },
       },
       output: jsonOutput(PROMPT_VALUE_SCHEMA),
       execute(args, exec) {
@@ -215,7 +213,7 @@ function install(agent: Agent, ctx: Context, config: Required<Config>): () => vo
 
     register(scoped.tools.register(defineTool({
       name: 'room_propose',
-      description: 'Put one statement to the room for a collective decision. Every participant other than you becomes a reviewer and must record a standing. Nothing is accepted until quorum approves without a standing rejection.',
+      description: 'Put one statement to the room as a decision for review.',
       parameters: {
         statement: { type: 'string', required: true, description: 'The exact decision the room is asked to accept or reject.' },
         supersedes: {
@@ -236,12 +234,12 @@ function install(agent: Agent, ctx: Context, config: Required<Config>): () => vo
 
     register(scoped.tools.register(defineTool({
       name: 'room_review',
-      description: 'Record your standing on one decision revision. Approve only when you would defend the decision yourself; reject with the specific problem so the proposer can act on it. A proposer cannot review its own decision.',
+      description: 'Record your standing on one decision revision.',
       parameters: {
         proposal_id: { type: 'string', required: true, description: 'Decision id from room_propose or room_view.' },
         revision: { type: 'integer', required: true, description: 'Revision you are judging, exactly as room_view reports it.' },
-        verdict: { type: 'string', required: true, enum: ['approve', 'reject', 'abstain'], description: 'Your standing.' },
-        reason: { type: 'string', required: true, description: 'Why you chose this standing; the proposer and the human read it.' },
+        verdict: { type: 'string', required: true, enum: ['approve', 'reject', 'abstain'], description: 'approve only when you would defend the decision yourself, reject when you found a specific problem, abstain when you have no basis to judge.' },
+        reason: { type: 'string', required: true, description: 'Why you chose this standing; a rejection names the problem so the proposer can act on it. The proposer and the human read it.' },
       },
       output: jsonOutput(DECISION_VIEW_SCHEMA),
       async execute(args, exec) {

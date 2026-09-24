@@ -2314,7 +2314,7 @@ Create one named, durable teammate. Only the Team Lead may call this tool.
     },
     "model": {
       "type": "string",
-      "description": "Model id for this teammate. Defaults to your own model."
+      "description": "Model id for this teammate; pick one that fits its responsibility, since teammates on different models disagree more usefully than copies of one model. Defaults to your own model."
     },
     "reasoning_effort": {
       "type": "string",
@@ -2564,7 +2564,7 @@ Source: [`packages/experimental/tool-agent-room/src/index.ts`](../packages/exper
 
 ### `room_prompt`
 
-Give one participant the floor with a self-contained instruction. The target receives the transcript it has not yet seen, so say exactly what you want from it.
+Give one participant the floor when the next step needs its judgement rather than yours. The target receives the transcript it has not yet seen.
 
 ```json
 {
@@ -2576,7 +2576,7 @@ Give one participant the floor with a self-contained instruction. The target rec
     },
     "instruction": {
       "type": "string",
-      "description": "What you want that participant to do or answer."
+      "description": "Self-contained statement of exactly what you want that participant to do or answer."
     }
   },
   "required": [
@@ -2590,7 +2590,7 @@ Source: [`packages/experimental/tool-agent-room/src/index.ts`](../packages/exper
 
 ### `room_propose`
 
-Put one statement to the room for a collective decision. Every participant other than you becomes a reviewer and must record a standing. Nothing is accepted until quorum approves without a standing rejection.
+Put one statement to the room as a decision for review.
 
 ```json
 {
@@ -2615,7 +2615,7 @@ Source: [`packages/experimental/tool-agent-room/src/index.ts`](../packages/exper
 
 ### `room_review`
 
-Record your standing on one decision revision. Approve only when you would defend the decision yourself; reject with the specific problem so the proposer can act on it. A proposer cannot review its own decision.
+Record your standing on one decision revision.
 
 ```json
 {
@@ -2631,7 +2631,7 @@ Record your standing on one decision revision. Approve only when you would defen
     },
     "verdict": {
       "type": "string",
-      "description": "Your standing.",
+      "description": "approve only when you would defend the decision yourself, reject when you found a specific problem, abstain when you have no basis to judge.",
       "enum": [
         "approve",
         "reject",
@@ -2640,7 +2640,7 @@ Record your standing on one decision revision. Approve only when you would defen
     },
     "reason": {
       "type": "string",
-      "description": "Why you chose this standing; the proposer and the human read it."
+      "description": "Why you chose this standing; a rejection names the problem so the proposer can act on it. The proposer and the human read it."
     }
   },
   "required": [

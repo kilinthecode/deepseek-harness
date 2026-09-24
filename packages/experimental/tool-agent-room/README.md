@@ -63,7 +63,7 @@ Each tool wraps one `ctx.agentTeams` operation and renders its result as compact
 
 #### What the model sees
 
-Five tools appear in every participant's schema: `room_view`, `room_prompt`, `room_propose`, `room_review`, and `room_escalate`. Each returns compact JSON against a declared schema: a decision view carries its id, revision, proposer, statement, phase, required approvals, the three vote lists, every recorded standing with its reason, and, while the decision is still open, the names whose standing is missing. One system-prompt section states the policy.
+Five tools appear in every participant's schema: `room_view`, `room_prompt`, `room_propose`, `room_review`, and `room_escalate`. Each returns compact JSON against a declared schema: a decision view carries its id, revision, proposer, statement, phase, required approvals, the three vote lists, every recorded standing with its reason, and, while the decision is still open, the names whose standing is missing. One system-prompt section states when a participant may speak and the quorum rule; each tool's description and parameters carry its own usage rules, and refusals such as self-review, a settled decision, or the revision limit arrive in the call result.
 
 #### Token effect
 
