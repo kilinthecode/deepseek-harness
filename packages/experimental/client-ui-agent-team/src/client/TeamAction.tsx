@@ -69,15 +69,18 @@ export type TeamActionProps =
 
 /**
  * Participants with more committed utterances in `next` than in `previous`.
- * @param previous - view the panel rendered before, if any.
- * @param next - view a committed room change republished.
+ * @param previous - transcript the panel rendered before.
+ * @param next - transcript a committed room change republished.
  * @returns names whose transcript entry count grew.
  */
-function committedAuthors(previous: RoomRemoteView | null, next: RoomRemoteView): Set<string> {
+function committedAuthors(
+  previous: RoomRemoteView['messages'],
+  next: RoomRemoteView['messages'],
+): Set<string> {
   const before = new Map<string, number>()
-  for (const message of previous?.messages ?? []) before.set(message.author, (before.get(message.author) ?? 0) + 1)
+  for (const message of previous) before.set(message.author, (before.get(message.author) ?? 0) + 1)
   const after = new Map<string, number>()
-  for (const message of next.messages) after.set(message.author, (after.get(message.author) ?? 0) + 1)
+  for (const message of next) after.set(message.author, (after.get(message.author) ?? 0) + 1)
   return new Set([...after].filter(([author, count]) => count > (before.get(author) ?? 0)).map(([author]) => author))
 }
 
@@ -296,8 +299,8 @@ function RoomSection({
   const [escalating, setEscalating] = useState<string | null>(null)
   const [escalateReason, setEscalateReason] = useState('')
   const generation = useRef(0)
-  /** Latest view the panel rendered, read when the next view frame arrives. */
-  const shown = useRef<RoomRemoteView | null>(null)
+  /** Transcript of the latest view the panel rendered, read when the next view frame arrives. */
+  const shown = useRef<RoomRemoteView['messages']>([])
 
   const refresh = useCallback(async (): Promise<void> => {
     const current = ++generation.current
@@ -305,7 +308,7 @@ function RoomSection({
       const result = await loadRoom(sessionId)
       if (generation.current !== current) return
       if (result.ok) {
-        shown.current = result.value
+        shown.current = result.value.messages
         setRoom(result.value)
       }
       else setError(failureText(result.error))
@@ -329,8 +332,8 @@ function RoomSection({
     // text survives a view that records someone else's message or a review.
     followRoom(sessionId, controller.signal, (frame) => {
       if (frame.type === 'view') {
-        const committed = committedAuthors(shown.current, frame.view)
-        shown.current = frame.view
+        const committed = committedAuthors(shown.current, frame.view.messages)
+        shown.current = frame.view.messages
         setRoom(frame.view)
         if (committed.size > 0) {
           setStreaming(previous => Object.fromEntries(
