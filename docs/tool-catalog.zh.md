@@ -2523,7 +2523,7 @@ lsp 工具将提供方选择和语言服务器子进程置于 ctx.lsp 之后，�
 
 ### `memory_forget`
 
-按名称和作用域删除一条已保存的记忆。当某条记忆有误或不再适用时使用。
+按名称和作用域删除一条已保存的记忆。
 
 ```json
 {
@@ -2553,7 +2553,7 @@ lsp 工具将提供方选择和语言服务器子进程置于 ctx.lsp 之后，�
 
 ### `memory_recall`
 
-读取已保存的记忆。在全局记忆和当前项目记忆的名称、描述或内容上，把查询作为不区分大小写的子串进行匹配；省略查询则列出最新的记忆。用它读取目录条目背后的内容。
+读取已保存的全局记忆和当前项目的记忆。
 
 ```json
 {
@@ -2571,7 +2571,7 @@ lsp 工具将提供方选择和语言服务器子进程置于 ctx.lsp 之后，�
 
 ### `memory_write`
 
-为未来的会话保存一条持久记忆，或替换同名同作用域的记忆。用于用户偏好与工作方式、关于如何做事的反馈、持久的项目事实与约束，以及指向外部资源的指针。绝不要保存任务进度、临时状态或机密。
+为未来的会话保存一条持久记忆。
 
 ```json
 {
@@ -2583,7 +2583,7 @@ lsp 工具将提供方选择和语言服务器子进程置于 ctx.lsp 之后，�
     },
     "type": {
       "type": "string",
-      "description": "user (who the user is, preferences) | feedback (how to do the work, corrections) | project (facts and constraints of this project) | reference (pointer to an external resource).",
+      "description": "user (who the user is and how they like to work) | feedback (feedback or corrections on how to do the work) | project (a durable fact or constraint about the current project) | reference (a pointer to an external resource such as a URL, ticket, or dashboard).",
       "enum": [
         "user",
         "feedback",
@@ -2593,7 +2593,7 @@ lsp 工具将提供方选择和语言服务器子进程置于 ctx.lsp 之后，�
     },
     "scope": {
       "type": "string",
-      "description": "global (visible in every session) | project (visible in sessions inside the current project root).",
+      "description": "project for facts about the current repository (visible in sessions inside its project root) | global for everything else (visible in every session).",
       "enum": [
         "global",
         "project"

@@ -123,7 +123,7 @@ kind: "package-reference"
 ##### 该字段的逐字文本
 
 ```markdown
-You have durable memory that persists across sessions. When saved memories exist, a catalog of them (type, name, one-line description) is added to the conversation; the most recent catalog is current, and changes appear in a new catalog at the start of a later turn. Call memory_recall to read a memory's content before relying on it. Save a memory with memory_write when you learn something worth keeping beyond this session: who the user is and how they like to work (type user), feedback or corrections on how to do the work (type feedback), a durable fact or constraint about the current project (type project), or a pointer to an external resource such as a URL, ticket, or dashboard (type reference). Use scope project for facts about the current repository and scope global for everything else. Do not save task progress, transient state, secrets, or anything the repository already records. Writing an existing name in the same scope replaces it; remove a memory that turned out wrong with memory_forget.
+You have durable memory that persists across sessions. When saved memories exist, a catalog of them (type, name, one-line description) is added to the conversation; the most recent catalog is current, and changes appear in a new catalog at the start of a later turn. Call memory_recall to read a memory's content before relying on it. Save a memory with memory_write when you learn something worth keeping beyond this session; do not save task progress, transient state, secrets, or anything the repository already records. Remove a memory that is wrong or no longer applies with memory_forget.
 ```
 
 #### Token 影响

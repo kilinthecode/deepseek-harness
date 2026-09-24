@@ -2512,7 +2512,7 @@ All nine tools are scoped to implicit Team Leads and durable teammates. The ship
 
 ### `memory_forget`
 
-Delete one saved memory by name and scope. Use it when a memory is wrong or no longer applies.
+Delete one saved memory by name and scope.
 
 ```json
 {
@@ -2542,7 +2542,7 @@ Source: [`packages/memory/tool-memory/src/tools.ts`](../packages/memory/tool-mem
 
 ### `memory_recall`
 
-Read saved memories. Matches the query as a case-insensitive substring of a memory's name, description, or content across global memories and the current project's memories; omit the query to list the newest ones. Use it to read the content behind a catalog entry.
+Read saved global memories and the current project's memories.
 
 ```json
 {
@@ -2560,7 +2560,7 @@ Source: [`packages/memory/tool-memory/src/tools.ts`](../packages/memory/tool-mem
 
 ### `memory_write`
 
-Save one durable memory for future sessions, or replace the memory of the same name and scope. Use it for user preferences and working style, feedback on how to do the work, durable project facts and constraints, and pointers to external resources. Never save task progress, transient state, or secrets.
+Save one durable memory for future sessions.
 
 ```json
 {
@@ -2572,7 +2572,7 @@ Save one durable memory for future sessions, or replace the memory of the same n
     },
     "type": {
       "type": "string",
-      "description": "user (who the user is, preferences) | feedback (how to do the work, corrections) | project (facts and constraints of this project) | reference (pointer to an external resource).",
+      "description": "user (who the user is and how they like to work) | feedback (feedback or corrections on how to do the work) | project (a durable fact or constraint about the current project) | reference (a pointer to an external resource such as a URL, ticket, or dashboard).",
       "enum": [
         "user",
         "feedback",
@@ -2582,7 +2582,7 @@ Save one durable memory for future sessions, or replace the memory of the same n
     },
     "scope": {
       "type": "string",
-      "description": "global (visible in every session) | project (visible in sessions inside the current project root).",
+      "description": "project for facts about the current repository (visible in sessions inside its project root) | global for everything else (visible in every session).",
       "enum": [
         "global",
         "project"

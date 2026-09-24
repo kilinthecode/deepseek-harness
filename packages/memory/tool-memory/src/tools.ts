@@ -13,19 +13,11 @@ import type { MemoryRecord, MemoryScope, MemoryType } from '@deepseek-ai/dsh-mem
 import { defineTool } from '@deepseek-ai/dsh-tools'
 import type { GenericCallView, ToolExecution } from '@deepseek-ai/dsh-tools'
 
-const WRITE_DESCRIPTION =
-  'Save one durable memory for future sessions, or replace the memory of the same name and scope. '
-  + 'Use it for user preferences and working style, feedback on how to do the work, durable project '
-  + 'facts and constraints, and pointers to external resources. Never save task progress, transient '
-  + 'state, or secrets.'
+const WRITE_DESCRIPTION = 'Save one durable memory for future sessions.'
 
-const RECALL_DESCRIPTION =
-  'Read saved memories. Matches the query as a case-insensitive substring of a memory\'s name, '
-  + 'description, or content across global memories and the current project\'s memories; omit the '
-  + 'query to list the newest ones. Use it to read the content behind a catalog entry.'
+const RECALL_DESCRIPTION = 'Read saved global memories and the current project\'s memories.'
 
-const FORGET_DESCRIPTION =
-  'Delete one saved memory by name and scope. Use it when a memory is wrong or no longer applies.'
+const FORGET_DESCRIPTION = 'Delete one saved memory by name and scope.'
 
 /** Model-facing view of one record: the stored fields without timestamps. */
 interface MemoryView {
@@ -94,13 +86,13 @@ export function registerMemoryTools(ctx: Context, maxRecallResults: number): voi
         type: 'string',
         required: true,
         enum: [...MEMORY_TYPES],
-        description: 'user (who the user is, preferences) | feedback (how to do the work, corrections) | project (facts and constraints of this project) | reference (pointer to an external resource).',
+        description: 'user (who the user is and how they like to work) | feedback (feedback or corrections on how to do the work) | project (a durable fact or constraint about the current project) | reference (a pointer to an external resource such as a URL, ticket, or dashboard).',
       },
       scope: {
         type: 'string',
         required: true,
         enum: [...MEMORY_SCOPES],
-        description: 'global (visible in every session) | project (visible in sessions inside the current project root).',
+        description: 'project for facts about the current repository (visible in sessions inside its project root) | global for everything else (visible in every session).',
       },
       description: {
         type: 'string',
