@@ -352,7 +352,7 @@ function parseCurrentTeamEvent(event: TeamSessionEvent): TeamSessionEvent {
  * no longer produce it because only an approving verdict reaches `completed`.
  * @param task - candidate task revision from one committed Team event.
  */
-function assertTaskVerification(task: TeamTaskSnapshot): void {
+export function assertTaskVerification(task: TeamTaskSnapshot): void {
   const verification = task.verification
   if (verification === undefined) return
   if (verification.verdict !== undefined && verification.verifierId === undefined) {

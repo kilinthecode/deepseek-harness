@@ -878,6 +878,85 @@ describe('Team shared task DAG', () => {
     })
   })
 
+  it('keeps submitted work with its owner and clears a verdict when the owner changes', async () => {
+    const { ctx, lead } = await setup(['hang', 'hang'])
+    const ownerStarted = await spawn(ctx, lead, 'owner')
+    const owner = await waitRunning(ctx, ownerStarted.member.id)
+    const verifierStarted = await spawn(ctx, lead, 'verifier')
+    const verifier = await waitRunning(ctx, verifierStarted.member.id)
+    const handOver = async (subject: string) => {
+      const task = await ctx.agentTeams.createTask(lead, { subject, description: subject })
+      const claimed = await ctx.agentTeams.updateTask(owner, {
+        taskId: task.id, expectedRevision: task.revision, action: 'claim',
+      })
+      return ctx.agentTeams.updateTask(owner, {
+        taskId: task.id, expectedRevision: claimed.revision, action: 'submit',
+      })
+    }
+
+    // Work a peer is judging cannot be released, reassigned, or deleted underneath it.
+    const reassigned = await handOver('reassigned')
+    await expect(ctx.agentTeams.updateTask(owner, {
+      taskId: reassigned.id, expectedRevision: reassigned.revision, action: 'release',
+    })).rejects.toThrow('is awaiting verification; wait for its verdict')
+    await expect(ctx.agentTeams.updateTask(lead, {
+      taskId: reassigned.id, expectedRevision: reassigned.revision, action: 'reassign', owner: 'verifier',
+    })).rejects.toThrow('is awaiting verification; wait for its verdict')
+    await expect(ctx.agentTeams.updateTask(lead, {
+      taskId: reassigned.id, expectedRevision: reassigned.revision, action: 'delete',
+    })).rejects.toThrow('is awaiting verification; wait for its verdict')
+
+    // A verdict judged the previous owner's submission, so the rejecting peer
+    // can take the work over and a later submission needs a fresh verdict.
+    const rejected = await ctx.agentTeams.updateTask(verifier, {
+      taskId: reassigned.id, expectedRevision: reassigned.revision, action: 'verify',
+      verdict: 'rejected', reason: 'the retry loop never stops',
+    })
+    const takenOver = await ctx.agentTeams.updateTask(lead, {
+      taskId: reassigned.id, expectedRevision: rejected.revision, action: 'reassign', owner: 'verifier',
+    })
+    expect(takenOver).toMatchObject({ status: 'in_progress', ownerName: 'verifier' })
+    expect(takenOver.verification).toBeUndefined()
+
+    const released = await handOver('released')
+    const returned = await ctx.agentTeams.updateTask(verifier, {
+      taskId: released.id, expectedRevision: released.revision, action: 'verify',
+      verdict: 'rejected', reason: 'the cache never evicts',
+    })
+    const pending = await ctx.agentTeams.updateTask(owner, {
+      taskId: released.id, expectedRevision: returned.revision, action: 'release',
+    })
+    expect(pending.verification).toBeUndefined()
+    const claimed = await ctx.agentTeams.updateTask(verifier, {
+      taskId: released.id, expectedRevision: pending.revision, action: 'claim',
+    })
+    expect(claimed).toMatchObject({ status: 'in_progress', ownerName: 'verifier' })
+
+    // A released task that kept its verdict in an older log still passes to the peer that judged it.
+    const kept = TeamTaskId('task-99')
+    lead.session.append('team/task', {
+      version: 2,
+      teamId: TeamId(lead.id),
+      task: {
+        id: kept,
+        revision: 1,
+        subject: 'kept verdict',
+        description: 'released with its rejection',
+        status: 'pending',
+        blockedBy: [],
+        writeScopes: [],
+        verification: { submittedRevision: 1, verifierId: verifier.id, verdict: 'rejected', reason: 'unbounded' },
+      },
+    })
+    await ctx.sessions.flush(lead.session)
+    const inherited = await ctx.agentTeams.updateTask(verifier, { taskId: kept, expectedRevision: 1, action: 'claim' })
+    expect(inherited.verification).toBeUndefined()
+
+    // Every committed revision stays readable by the durable projection.
+    expect(durable(lead).tasks.map(task => task.ownerId)).toEqual([verifier.id, verifier.id, verifier.id])
+    expect(ctx.agentTeams.listTasks(lead)).toHaveLength(3)
+  })
+
   it('asks the Lead for a verifier when a teammate submits finished work', async () => {
     const { ctx, lead } = await setup(['hang', textResponse('lead noted the submission')])
     const ownerStarted = await spawn(ctx, lead, 'owner')
