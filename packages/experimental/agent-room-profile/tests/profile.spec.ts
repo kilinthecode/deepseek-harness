@@ -49,6 +49,8 @@ describe('Agent room profile bundle', () => {
       roomTranscriptWindow: 20,
       roomApprovalRatio: 0.5,
       roomMaxProposalRevisions: 4,
+      roomReviewGraceMs: 120000,
+      roomReviewReminders: 1,
     })
     // A room needs participants, so the layer keeps the Team delegation tools.
     expect(inserted.find(row => row.id === 'tool-agent-team')?.name)

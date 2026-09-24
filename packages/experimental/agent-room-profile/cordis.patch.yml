@@ -19,6 +19,8 @@
         roomTranscriptWindow: 20
         roomApprovalRatio: 0.5
         roomMaxProposalRevisions: 4
+        roomReviewGraceMs: 120000
+        roomReviewReminders: 1
 
     - id: tool-agent-team
       name: '@deepseek-ai/dsh-experimental-tool-agent-team'
