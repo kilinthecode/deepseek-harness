@@ -201,7 +201,7 @@ function install(agent: Agent, ctx: Context, config: Required<Config>): () => vo
         },
         model: {
           type: 'string',
-          description: 'Model id for this teammate. Set it to seat participants on different models in one Team or room.',
+          description: 'Model id for this teammate. Defaults to your own model.',
         },
         reasoning_effort: {
           type: 'string',

@@ -2123,7 +2123,7 @@ lsp 工具将提供方选择和语言服务器子进程置于 ctx.lsp 之后，�
     },
     "model": {
       "type": "string",
-      "description": "Model id for this teammate. Set it to seat participants on different models in one Team or room."
+      "description": "Model id for this teammate. Defaults to your own model."
     },
     "reasoning_effort": {
       "type": "string",
