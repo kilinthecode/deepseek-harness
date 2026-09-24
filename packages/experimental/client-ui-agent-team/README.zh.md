@@ -9,7 +9,7 @@ kind: "package-reference"
 
 ## 概述
 
-本包向 Web 会话页头添加 Agent Teams action，让用户检查当前 roster、查看共享任务板、在组合拥有 room 时跟随并引导该 Team 的 room，并导航到 teammate 会话。它从共享 Session store 读取 Lead Session 的 `agentTeam` 投影，Host 投影 frame 使其保持最新而无需刷新控件；它通过生成式 `agentTeams/room*` Remote method 读取 room，并让普通 child history 导航继续使用稳定的 addressed-subagent 路径。通过公开发布的实验性 Agent Teams bundle 选择本包。这个浏览器面板不扩展稳定 API Proxy、不存储 Team 状态，也不注册面向模型的输入。
+本包向 Web 会话页头添加 Agent Teams action，让用户检查 roster 与共享任务板、在启用 room 时跟随并引导该 Team 的 room，并打开 teammate 会话。它从 Session store 读取 Lead Session 的 `agentTeam` 投影，Host 投影 frame 使其保持最新；它通过生成式 `agentTeams/room*` Remote method 读取 room，并让 child history 导航继续使用稳定的 addressed-subagent 路径。通过实验性的 Agent Teams 或 room bundle 选择本包。这个面板不扩展稳定 API Proxy、不存储 Team 状态，也不注册面向模型的输入。
 
 ## 目录
 

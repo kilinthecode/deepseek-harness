@@ -9,7 +9,7 @@ English | [中文](README.zh.md)
 
 ## Summary
 
-This package adds an Agent Teams action to the Web conversation header, where a user can inspect the current roster, inspect the shared task board, follow and steer the Team's room when the composition has one, and navigate into a teammate's conversation. It reads the Lead Session's `agentTeam` projection from the shared Session store, where Host projection frames keep it current without a refresh control, reads the room through the generated `agentTeams/room*` Remote methods, and keeps ordinary child-history navigation on the stable addressed-subagent path. Choose it through the published experimental Agent Teams bundle. The browser panel does not extend the stable API Proxy, store Team state, or register model-facing input.
+This package adds an Agent Teams action to the Web conversation header, where a user can inspect the roster and shared task board, follow and steer the Team's room when one is enabled, and open teammate conversations. It reads the Lead Session's `agentTeam` projection from the Session store, which Host projection frames keep current, reads the room through the generated `agentTeams/room*` Remote methods, and keeps child-history navigation on the stable addressed-subagent path. Choose it through an experimental Agent Teams or room bundle. The panel does not extend the stable API Proxy, store Team state, or register model-facing input.
 
 ## Table of Contents
 
