@@ -39,25 +39,32 @@ export type GenericToolCardProps = ToolCallOwnerProps & {
 export function GenericToolCard({
   toolName, block, cwd, home, openFile, inspect, useDisclosure, t, renderResultImages,
 }: GenericToolCardProps) {
-  const model = toolRowModel(toolName, block, cwd, home, { claimImages: renderResultImages !== undefined })
-  const autoReview = model.autoReviewDenial === null
-    ? null
-    : localizeAutoReviewDenial(model.autoReviewDenial, t)
   const terminal = terminalCardModel(block, cwd)
   const read = readCardModel(block, cwd, home)
   const diff = diffCardModel(block)
   const search = searchCardModel(block)
   const web = webCardModel(block)
+  // ToolRow renders the claimed gallery only with its IN/OUT text sections,
+  // which any card replaces, so images are claimed only while every card model
+  // is null.
+  const renderGallery = renderResultImages !== undefined && [terminal, read, diff, search, web].every(card => card === null)
+    ? renderResultImages
+    : undefined
+  const model = toolRowModel(toolName, block, cwd, home, { claimImages: renderGallery !== undefined })
+  const autoReview = model.autoReviewDenial === null
+    ? null
+    : localizeAutoReviewDenial(model.autoReviewDenial, t)
   // A failing exit status is the terminal card's own error signal (the call
   // itself settles isError:false), surfaced through the row's error summary.
   const state = model.state === 'ok' && terminal !== null && terminalFailed(terminal)
     ? 'error'
     : model.state
   const singleFile = model.filePath !== undefined
-  // The claimed gallery survives every card branch above (terminal/read/diff/
-  // search/web): none of those variants match an arbitrary image-bearing
-  // result, so the generic IN/OUT fallback is what actually renders it.
-  const resultImages = model.resultImages === null ? null : model.resultImages.map(attachment => ({ attachment }))
+  const resultImages = model.resultImages === null || renderGallery === undefined ? null : {
+    images: model.resultImages.images.map(attachment => ({ attachment })),
+    text: model.resultImages.text,
+    render: renderGallery,
+  }
   return (
     <ToolRow
       useDisclosure={useDisclosure}
@@ -79,8 +86,6 @@ export function GenericToolCard({
       search={search}
       web={web}
       resultImages={resultImages}
-      resultImagesText={model.resultImagesText}
-      renderResultImages={renderResultImages}
       state={state}
       filePath={model.filePath}
       onOpenFile={singleFile ? openFile : undefined}

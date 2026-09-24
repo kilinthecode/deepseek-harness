@@ -45,14 +45,19 @@ declare module '@deepseek-ai/dsh-client-ui-slots' {
      */
     'tool.call.images': { kind: 'single'; scope: 'session'; owner: ToolImagesOwnerProps }
     /**
-     * Durable images of a settled result the GENERIC row renders: a call whose
-     * result content carries one or more well-formed image blocks and whose
-     * tool name claims no keyed `tool.call.toolview` entry of its own (a
-     * `read_image` result keeps rendering through `tool.call.images` above,
-     * untouched by this child). Declared by the Tool call tree itself, not a
-     * toolview, because `GenericToolCard` is the render-site fallback shared by
-     * every unclaimed tool name, so no single toolview registration could own
-     * this child the way `readImageToolview` owns `tool.call.images`.
+     * Durable images of a settled result that the generic Tool row renders.
+     * `GenericToolCard` renders every call whose tool name no keyed
+     * `tool.call.toolview` entry claims, and every Auto-review-denied call
+     * regardless of its keyed entry. It fills this child only when no
+     * terminal, read, diff, search, or web card replaces its IN/OUT text
+     * sections and the result content carries one or more image blocks, all
+     * well-formed.
+     * Keyed rows never render this child; the `read_image` card renders its
+     * gallery through `tool.call.images` above. Declared by the Tool call tree
+     * itself, not a toolview, because `GenericToolCard` is the render-site
+     * fallback shared by every unclaimed tool name, so no single toolview
+     * registration could own this child the way `readImageToolview` owns
+     * `tool.call.images`.
      *
      * `imageReferences` (models/image-card-model.ts) derives the references
      * from the result's own content and declines — no gallery, ordinary JSON

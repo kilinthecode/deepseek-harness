@@ -10,7 +10,7 @@ import { localizeAutoReviewDenial, normalizeAutoReviewReason } from '../src/clie
 import {
   classifyTool, formatToolBody, resultText, toolRowModel,
 } from '../src/client/tool/models/tool-call-model.ts'
-import { ToolRow } from '../src/client/tool/components/ToolRow.tsx'
+import { ToolRow, type ToolRowResultImages } from '../src/client/tool/components/ToolRow.tsx'
 import { GenericToolCard, type GenericToolCardProps } from '../src/client/tool/toolviews/GenericToolCard.tsx'
 import { zh } from '@deepseek-ai/dsh-client-ui-conversation/src/client/locales.ts'
 
@@ -223,9 +223,11 @@ describe('tool-call-model', () => {
     const withImage = toolRowModel('mcp_screenshot', result({
       content: [{ type: 'text', text: 'took a screenshot' }, { type: 'image', attachment: sampleImage } as never],
     }), undefined, undefined, claim)
-    expect(withImage.resultImages).toEqual([sampleImage])
+    expect(withImage.resultImages).toEqual({
+      images: [sampleImage],
+      text: JSON.stringify({ type: 'image', attachment: sampleImage }, null, 2),
+    })
     expect(withImage.output).toBe('took a screenshot')
-    expect(withImage.resultImagesText).toBe(JSON.stringify({ type: 'image', attachment: sampleImage }, null, 2))
 
     // A malformed image block (missing attachmentId) declines the gallery
     // entirely and keeps the ordinary JSON flattening — no information loss.
@@ -233,7 +235,6 @@ describe('tool-call-model', () => {
       content: [{ type: 'text', text: 'took a screenshot' }, { type: 'image', attachment: { ...sampleImage, attachmentId: '' } } as never],
     }), undefined, undefined, claim)
     expect(malformed.resultImages).toBeNull()
-    expect(malformed.resultImagesText).toBeNull()
     expect(malformed.output).toBe(`took a screenshot\n${JSON.stringify({ type: 'image', attachment: { ...sampleImage, attachmentId: '' } }, null, 2)}`)
 
     // No image block at all: same null gallery, unaffected text output.
@@ -245,7 +246,7 @@ describe('tool-call-model', () => {
       isError: true,
       content: [{ type: 'text', text: 'capture failed' }, { type: 'image', attachment: sampleImage } as never],
     }), undefined, undefined, claim)
-    expect(errored.resultImages).toEqual([sampleImage])
+    expect(errored.resultImages?.images).toEqual([sampleImage])
     expect(errored.errorSummary).toBe('capture failed')
   })
 
@@ -271,7 +272,6 @@ describe('tool-call-model', () => {
           content: [{ type: 'text', text: 'two shots' }, ...images] as never,
         }), undefined, undefined, { claimImages: true })
         expect(model.resultImages).toBeNull()
-        expect(model.resultImagesText).toBeNull()
         expect(model.output).toBe(['two shots', ...images.map(block => JSON.stringify(block, null, 2))].join('\n'))
       }
     }
@@ -288,7 +288,7 @@ describe('tool-call-model', () => {
     const model = toolRowModel('mcp_screenshot', result({
       content: [{ type: 'text', text: 'noted' }, 'stray-string', { type: 'image', attachment: sampleImage }] as never,
     }), undefined, undefined, { claimImages: true })
-    expect(model.resultImages).toEqual([sampleImage])
+    expect(model.resultImages?.images).toEqual([sampleImage])
     expect(model.output).toBe('noted\n"stray-string"')
   })
 
@@ -299,7 +299,6 @@ describe('tool-call-model', () => {
     const content = [{ type: 'text', text: 'caption' }, { type: 'image', attachment: sampleImage }] as never
     const model = toolRowModel('read_image', result({ content }))
     expect(model.resultImages).toBeNull()
-    expect(model.resultImagesText).toBeNull()
     expect(model.output).toBe(`caption\n${JSON.stringify({ type: 'image', attachment: sampleImage }, null, 2)}`)
   })
 
@@ -599,6 +598,10 @@ describe('ToolRow', () => {
   })
 
   const sampleImage = { attachment: { attachmentId: 'sha256:g1', mediaType: 'image/png', bytes: 1, width: 1, height: 1 } }
+  const claimed = (
+    renderImages: ToolRowResultImages['render'],
+    images: readonly unknown[] = [sampleImage],
+  ): ToolRowResultImages => ({ images: images as never, text: '{"type": "image"}', render: renderImages })
 
   it('renders the generic-row gallery below the output text inside the IO card', () => {
     const renderResultImages = vi.fn((owner: { images: readonly unknown[]; align: 'start' | 'end' }) => (
@@ -609,8 +612,7 @@ describe('ToolRow', () => {
         {...rowProps}
         bodyRaw={null}
         output="took a screenshot"
-        resultImages={[sampleImage] as never}
-        renderResultImages={renderResultImages}
+        resultImages={claimed(renderResultImages)}
       />,
     )
     expect(view.queryByTestId('gallery')).toBeNull()
@@ -633,8 +635,7 @@ describe('ToolRow', () => {
         {...rowProps}
         bodyRaw={null}
         output={null}
-        resultImages={[sampleImage] as never}
-        renderResultImages={renderResultImages}
+        resultImages={claimed(renderResultImages)}
       />,
     )
     expect(view.container.querySelector('[aria-expanded]')).not.toBeNull()
@@ -648,9 +649,7 @@ describe('ToolRow', () => {
         {...rowProps}
         bodyRaw={null}
         output="took a screenshot"
-        resultImages={[sampleImage] as never}
-        resultImagesText='{"type": "image"}'
-        renderResultImages={(_owner, fallback) => fallback}
+        resultImages={claimed((_owner, fallback) => fallback)}
       />,
     )
     fireEvent.click(view.getByRole('button'))
@@ -658,16 +657,25 @@ describe('ToolRow', () => {
     expect(view.getByText('{"type": "image"}')).toBeTruthy()
   })
 
-  it('an empty or absent resultImages, or a missing renderResultImages, renders no gallery', () => {
+  it('an empty, null, or absent resultImages renders no gallery', () => {
     const renderResultImages = vi.fn(() => <div data-testid="gallery" />)
-    const empty = render(<ToolRow {...rowProps} resultImages={[]} renderResultImages={renderResultImages} />)
-    fireEvent.click(empty.getByRole('button'))
-    expect(empty.queryByTestId('gallery')).toBeNull()
+    for (const resultImages of [claimed(renderResultImages, []), null, undefined]) {
+      const view = render(<ToolRow {...rowProps} resultImages={resultImages} />)
+      fireEvent.click(view.getByRole('button'))
+      expect(view.queryByTestId('gallery')).toBeNull()
+      cleanup()
+    }
     expect(renderResultImages).not.toHaveBeenCalled()
-    cleanup()
-    const noRenderer = render(<ToolRow {...rowProps} resultImages={[sampleImage] as never} />)
-    fireEvent.click(noRenderer.getByRole('button'))
-    expect(noRenderer.queryByTestId('gallery')).toBeNull()
+  })
+
+  it('accepts a claimed gallery only with its fallback text and dispatcher (compile-time; body never runs)', () => {
+    const negatives = (renderImages: ToolRowResultImages['render']) => [
+      // @ts-expect-error without its text, an unfilled slot would show nothing for images `output` omitted
+      <ToolRow key="text" {...rowProps} resultImages={{ images: [], render: renderImages }} />,
+      // @ts-expect-error without its dispatcher, the images `output` omitted would render nowhere
+      <ToolRow key="render" {...rowProps} resultImages={{ images: [], text: '' }} />,
+    ]
+    expect(negatives).toBeTypeOf('function')
   })
 })
 

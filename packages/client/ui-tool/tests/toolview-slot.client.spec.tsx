@@ -312,6 +312,28 @@ describe('keyed toolview hole through the real machinery', () => {
     expect(b.slots.entries('tool.call.images')).toHaveLength(0)
     await b.runtime.dispose()
   })
+
+  it('shows the claimed image JSON in the gallery position when no attachment plugin fills resultImages', async () => {
+    const image = {
+      type: 'image',
+      attachment: { attachmentId: 'sha256:unfilled-gallery', mediaType: 'image/png', bytes: 1, width: 1, height: 1 },
+    }
+    const b = await bench([
+      toolResult(3, 'shot-2', 'mcp_screenshot', '{}', {
+        content: [{ type: 'text', text: 'took a screenshot' }, image] as never,
+      }),
+    ])
+    expect(b.slots.entries('tool.call.resultImages')).toHaveLength(0)
+    const view = b.runtime.renderRoot()
+    fireEvent.click(view.container.querySelector('[data-expandable]')!)
+    expect(view.getByText('took a screenshot')).toBeTruthy()
+    // One copy: the output text omits the claimed block, and the unfilled
+    // slot renders its JSON in the gallery position.
+    const gallery = view.container.querySelector('[class*="resultImages"]')
+    expect(gallery?.textContent).toBe(JSON.stringify(image, null, 2))
+    expect(view.container.textContent?.split('sha256:unfilled-gallery')).toHaveLength(2)
+    await b.runtime.dispose()
+  })
 })
 
 describe('registrant declaration injection', () => {

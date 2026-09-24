@@ -28,6 +28,23 @@ import { AskQuestionCard } from './AskQuestionCard.tsx'
 import { ToolDetails, type ToolDetailsModel } from './ToolDetails.tsx'
 import css from './ToolRow.module.css'
 
+/**
+ * The generic row's claimed image gallery. The fields are required together:
+ * `output` already omits these images, so the gallery, or `text` in its place,
+ * is their only rendering.
+ */
+export interface ToolRowResultImages {
+  /** Claimed durable images in result order. */
+  images: readonly MessageImageSource[]
+  /**
+   * The JSON text `output` omitted for `images`; shown in the gallery's place
+   * when no attachment presentation plugin fills its slot.
+   */
+  text: string
+  /** Dispatch through the Tool-tree-owned `tool.call.resultImages` slot. */
+  render: RenderResultImages
+}
+
 export interface ToolRowProps {
   /** Subscribe here, where the row owns its expanded body. */
   useDisclosure: UseDisclosure
@@ -77,25 +94,14 @@ export interface ToolRowProps {
    * Durable images a settled GENERIC (non-`read_image`) result's content
    * returned, claimed by `imageReferences`: every image block in the content
    * is well-formed and at least one is present. Rendered below the output
-   * text inside the IN/OUT card through `renderResultImages`; independent of
-   * `image` above, which stays the dedicated `read_image` card's own field.
-   * null/absent = no claimed gallery (a malformed image block, or no image
-   * block at all, keeps that block inside `output` as ordinary JSON instead).
+   * text inside the IN/OUT card; every card field replaces those text
+   * sections and this gallery with them, so a caller passes this only with
+   * every card field null. Independent of `image` above, which stays the
+   * dedicated `read_image` card's own field.
+   * null/absent or no images = no gallery (a malformed image block, or no
+   * image block at all, keeps that block inside `output` as ordinary JSON).
    */
-  resultImages?: readonly MessageImageSource[] | null | undefined
-  /**
-   * Dispatch the generic-row gallery. Supplied by the Tool call tree itself,
-   * not a toolview: `GenericToolCard` is the render-site fallback shared by
-   * every unclaimed tool name, so no single toolview registration could own
-   * this the way `readImageToolview` owns `renderSlot`/`tool.call.images`
-   * above. Absent = no gallery, even when `resultImages` is present.
-   */
-  renderResultImages?: RenderResultImages | undefined
-  /**
-   * The JSON text `output` omitted for the claimed images; shown in the
-   * gallery's place when no attachment presentation plugin fills its slot.
-   */
-  resultImagesText?: string | null | undefined
+  resultImages?: ToolRowResultImages | null | undefined
   search?: SearchCardModel | null | undefined
   web?: WebCardModelProps | null | undefined
   /** Read-only fields/list card derived from a successful recorded result. */
@@ -153,8 +159,6 @@ export const ToolRow = memo(function ToolRow({
   renderSlot,
   loadImage,
   resultImages,
-  renderResultImages,
-  resultImagesText,
   search,
   web,
   details,
@@ -179,8 +183,7 @@ export const ToolRow = memo(function ToolRow({
   const imageBody = image !== undefined && image !== null && renderSlot !== undefined && loadImage !== undefined
     ? image
     : null
-  const resultImagesBody = resultImages !== undefined && resultImages !== null && resultImages.length > 0
-    && renderResultImages !== undefined
+  const resultImagesBody = resultImages !== undefined && resultImages !== null && resultImages.images.length > 0
     ? resultImages
     : null
   const searchBody = search ?? null
@@ -190,9 +193,8 @@ export const ToolRow = memo(function ToolRow({
   const inputRaw = bodyRaw ?? null
   const outputText = output ?? null
   const card = askQuestionBody ?? terminalBody ?? diffBody ?? readBody ?? imageBody ?? searchBody ?? webBody ?? detailsBody
-  // Image-only generic results (an MCP screenshot tool with no text block)
-  // must still expand: without this, resultImagesBody would be non-null with
-  // nothing on the row to open it.
+  // An image-only generic result (an MCP screenshot tool with no text block)
+  // stays expandable: its gallery is the only expanded content.
   const expandable = state !== 'preparing'
     && (inputRaw !== null || outputText !== null || card !== null || resultImagesBody !== null)
   const open = expanded && expandable
@@ -356,11 +358,11 @@ export const ToolRow = memo(function ToolRow({
                                   ToolRowModel.resultImages), below the output text so
                                   the flattened text stays the primary record and the
                                   gallery is the visual complement. */}
-                              {resultImagesBody !== null && renderResultImages !== undefined && (
+                              {resultImagesBody !== null && (
                                 <div className={css.resultImages}>
-                                  {renderResultImages(
-                                    { images: resultImagesBody, align: 'start' },
-                                    <span className={css.ioText}>{resultImagesText}</span>,
+                                  {resultImagesBody.render(
+                                    { images: resultImagesBody.images, align: 'start' },
+                                    <span className={css.ioText}>{resultImagesBody.text}</span>,
                                   )}
                                 </div>
                               )}
@@ -381,8 +383,8 @@ export const ToolRow = memo(function ToolRow({
     </div>
   ) : undefined, [
     open, detailsBody, askQuestionBody, terminalBody, terminalLabels, diffBody, diffLabels, readBody, readLabels,
-    imageBody, renderSlot, loadImage, resultImagesBody, renderResultImages, resultImagesText, searchBody, searchLabels, webBody,
-    webLabels, inspect, t, onOpenFile, variant, bodyText, cardBody, outputText, state,
+    imageBody, renderSlot, loadImage, resultImagesBody, searchBody, searchLabels, webBody, webLabels, inspect, t,
+    onOpenFile, variant, bodyText, cardBody, outputText, state,
   ])
   return (
     <div className={css.root} data-variant={variant} data-tool={toolName} data-state={state}>

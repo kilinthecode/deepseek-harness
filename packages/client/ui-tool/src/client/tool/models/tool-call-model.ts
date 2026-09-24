@@ -139,6 +139,21 @@ export function toolTitleKey(toolName: string): ToolTitleKey {
   return TOOL_TITLE_KEYS[toolName] ?? VARIANT_TITLE_KEYS[classifyTool(toolName)]
 }
 
+/**
+ * Result images claimed for the generic row's gallery, paired with the text
+ * `output` omitted for them so the claim never travels without its fallback.
+ */
+export interface ClaimedResultImages {
+  /** Well-formed durable references in result order; at least one. */
+  readonly images: readonly ImageAttachmentRef[]
+  /**
+   * The omitted image blocks as pretty JSON, joined by newlines exactly as
+   * {@link resultText} would have flattened them; the gallery renders it when
+   * no attachment presentation plugin fills its slot.
+   */
+  readonly text: string
+}
+
 /** Everything ToolRow needs, derived once from the frozen slice. */
 export interface ToolRowModel {
   variant: ToolRowVariant
@@ -165,14 +180,7 @@ export interface ToolRowModel {
    * flattening every non-text block (including any image block) as JSON.
    * Null while running.
    */
-  resultImages: readonly ImageAttachmentRef[] | null
-  /**
-   * The JSON text `output` omitted for the claimed image blocks, joined by
-   * newlines exactly as {@link resultText} would have flattened them; the
-   * gallery renders it when no attachment presentation plugin fills its slot.
-   * Null whenever {@link resultImages} is null.
-   */
-  resultImagesText: string | null
+  resultImages: ClaimedResultImages | null
   /** First line of the result text on an error row; null for every other state. */
   errorSummary: string | null
   /** Structured Auto-review denial identity; null for every ordinary result. */
@@ -303,8 +311,9 @@ export function formatToolBody(variant: ToolRowVariant, argsRaw: string): string
 export interface ToolRowModelOptions {
   /**
    * Claim well-formed result images for a gallery the caller renders. Only a
-   * caller that renders {@link ToolRowModel.resultImages} may set this; every
-   * other row keeps image blocks in its flattened `output`.
+   * caller that renders {@link ToolRowModel.resultImages} wherever it would
+   * render `output` may set this; every other row keeps image blocks in its
+   * flattened `output`.
    */
   claimImages?: boolean
 }
@@ -339,11 +348,14 @@ export function toolRowModel(
   // The gallery claim: non-null only for a caller that renders the gallery,
   // and only when every image block in the content is well-formed and at
   // least one is present, in which case `output` skips those blocks.
-  const resultImages = done && options?.claimImages === true ? imageReferences(block.content) : null
-  const resultImagesText = !done || resultImages === null ? null : block.content
-    .filter(content => content.type === 'image')
-    .map(content => JSON.stringify(content, null, 2))
-    .join('\n')
+  const claimed = done && options?.claimImages === true ? imageReferences(block.content) : null
+  const resultImages: ClaimedResultImages | null = !done || claimed === null ? null : {
+    images: claimed,
+    text: block.content
+      .filter(content => content.type === 'image')
+      .map(content => JSON.stringify(content, null, 2))
+      .join('\n'),
+  }
   // The empty string is "no text" for both derived result fields: a settled
   // call with blank content has nothing to expand, and a blank first line
   // would erase the collapsed error row's summary slot.
@@ -358,7 +370,6 @@ export function toolRowModel(
     bodyRaw,
     output,
     resultImages,
-    resultImagesText,
     errorSummary,
     autoReviewDenial: deriveAutoReviewDenial(block),
     state,

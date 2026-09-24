@@ -3821,8 +3821,8 @@ export const CLIENT_SLOT_API: readonly ClientSlotEntry[] = [
     key: 'tool.call.resultImages',
     kind: 'single',
     scope: 'session',
-    summary: 'Durable images of a settled result the GENERIC row renders: a call whose result content carries one or more well-formed image blocks and whose tool name claims no keyed `tool.call.toolview` entry of its own (a `read_image` result keeps rendering through `tool.call.images` above, untouched by this child).',
-    doc: 'Durable images of a settled result the GENERIC row renders: a call whose\nresult content carries one or more well-formed image blocks and whose\ntool name claims no keyed `tool.call.toolview` entry of its own (a\n`read_image` result keeps rendering through `tool.call.images` above,\nuntouched by this child). Declared by the Tool call tree itself, not a\ntoolview, because `GenericToolCard` is the render-site fallback shared by\nevery unclaimed tool name, so no single toolview registration could own\nthis child the way `readImageToolview` owns `tool.call.images`.\n\n`imageReferences` (models/image-card-model.ts) derives the references\nfrom the result\'s own content and declines — no gallery, ordinary JSON\ntext instead — when any image block in the content is malformed, so a\npartial gallery never hides a block the text would otherwise show.',
+    summary: 'Durable images of a settled result that the generic Tool row renders.',
+    doc: 'Durable images of a settled result that the generic Tool row renders.\n`GenericToolCard` renders every call whose tool name no keyed\n`tool.call.toolview` entry claims, and every Auto-review-denied call\nregardless of its keyed entry. It fills this child only when no\nterminal, read, diff, search, or web card replaces its IN/OUT text\nsections and the result content carries one or more image blocks, all\nwell-formed.\nKeyed rows never render this child; the `read_image` card renders its\ngallery through `tool.call.images` above. Declared by the Tool call tree\nitself, not a toolview, because `GenericToolCard` is the render-site\nfallback shared by every unclaimed tool name, so no single toolview\nregistration could own this child the way `readImageToolview` owns\n`tool.call.images`.\n\n`imageReferences` (models/image-card-model.ts) derives the references\nfrom the result\'s own content and declines — no gallery, ordinary JSON\ntext instead — when any image block in the content is malformed, so a\npartial gallery never hides a block the text would otherwise show.',
     registerOptions: [],
     ownerProps: [
       '/** Owner currency of the Tool image gallery slot: references plus the loader. */\nexport interface ToolImagesOwnerProps {\n  /** Durable references or submission-echo previews in result order. */\n  images: readonly MessageImageSource[]\n  /** Session-authorized image URL loader for the durable arm. */\n  loadImage: MessageImageLoader\n  /** Horizontal placement inside the owning record. */\n  align: \'start\' | \'end\'\n}',
@@ -3857,7 +3857,7 @@ export const CLIENT_SLOT_API: readonly ClientSlotEntry[] = [
     ],
     replaceRisk: 'shadows-shipped-ui',
     example: 'return {\n  inject: [\'slots\'],\n  apply(ctx) {\n    ctx.slots.inject(\'tool.call.resultImages\', () => ctx.slots.register(\n      { name: \'tool.call.resultImages\' },\n      () => React.createElement(\'div\', null, \'hello\'),\n    ))\n  },\n}',
-    source: 'packages/client/ui-tool/src/client/contract/slots.ts:62',
+    source: 'packages/client/ui-tool/src/client/contract/slots.ts:67',
   },
   {
     key: 'tool.call.toolview',

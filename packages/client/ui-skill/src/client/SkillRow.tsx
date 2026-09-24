@@ -46,13 +46,13 @@ function skillName(argsRaw: string, callId: string): string {
  * pretty JSON.
  *
  * ui-tool's `models/tool-call-model.ts` `resultText` skips an image block
- * only when the generic Tool row's own gallery has independently claimed it
- * (every image block in the content is well-formed and at least one is
- * present). This row owns no image gallery slot, so it never skips one: an
+ * only when the generic Tool row's own gallery claims it. This row owns no
+ * image gallery slot, so it never skips one: an
  * unrendered image block would otherwise disappear from the row with no
  * gallery to show it in its place.
  * @param block - active or settled tool-call block.
- * @returns the flattened text, or null while running.
+ * @returns the flattened text, or null while running or when the settled
+ *   result flattens to the empty string.
  */
 function resultText(block: StartedToolCallViewProps['block']): string | null {
   if (!('kind' in block)) return null
