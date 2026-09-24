@@ -10,15 +10,19 @@
  * @module @deepseek-ai/dsh-headless
  */
 
+import { basename, extname } from 'node:path'
 import { randomUUID } from 'node:crypto'
 import type { Context } from '@deepseek-ai/cordis'
 import z from '@deepseek-ai/schemastery'
 import { brandString } from '@deepseek-ai/dsh-brand'
 import { installModelSelection } from '@deepseek-ai/dsh-agent'
-import type { Agent, ModelSelectionRef } from '@deepseek-ai/dsh-agent'
+import type { Agent, ModelSelection, ModelSelectionRef } from '@deepseek-ai/dsh-agent'
 import type {} from '@deepseek-ai/dsh-agent-default-model'
+import { imageMediaTypeForPath, sniffImageMediaType } from '@deepseek-ai/dsh-attachment'
+import type { ImageMediaType, SaveImageAttachment } from '@deepseek-ai/dsh-attachment'
 import type {} from '@deepseek-ai/dsh-fs'
-import { createUserMessage } from '@deepseek-ai/dsh-llm'
+import { createUserMessage, imageInputSupport } from '@deepseek-ai/dsh-llm'
+import type { ContentBlock } from '@deepseek-ai/dsh-llm'
 import { assertNever } from '@deepseek-ai/dsh-util-values'
 import { SessionSeq } from '@deepseek-ai/dsh-session'
 import type { Session, SessionEvent, SessionId, SessionLogOffset } from '@deepseek-ai/dsh-session'
@@ -46,12 +50,15 @@ export interface Config {
   sessionId?: string
   /** Whether stdout carries the machine-readable event stream instead of final text. */
   json?: boolean
+  /** Image file paths to attach to the task, in invocation order; absent or empty attaches none. */
+  images?: string[]
 }
 
 export const Config: z<Config> = z.object({
   task: z.string(),
   sessionId: z.string(),
   json: z.boolean(),
+  images: z.array(z.string()).default([]),
 })
 
 /** Outcome of one owned run interval. */
@@ -301,6 +308,67 @@ function fail(io: HeadlessIo, error: unknown, json: boolean): void {
 }
 
 /**
+ * The media type one raw `--image` path declares by its extension, matching
+ * `read_image`: a supported image extension selects its type, and an
+ * extension-less path yields undefined so its file signature decides.
+ * @param path - the raw `--image` path, before filesystem resolution.
+ * @returns the declared media type, or undefined for an extension-less path.
+ * @throws when the path carries any other extension, whatever the file holds.
+ */
+function declaredImageMediaType(path: string): ImageMediaType | undefined {
+  const declared = imageMediaTypeForPath(path)
+  const extension = extname(path).toLowerCase()
+  if (declared === undefined && extension !== '') {
+    throw new Error(`cannot attach "${path}": the ${extension} extension does not declare a supported image format; --image accepts PNG/JPEG/WebP/GIF files, including extension-less files in those formats`)
+  }
+  return declared
+}
+
+/**
+ * Resolve `--image` paths into durable image content blocks for one task.
+ * The route, service, and per-path extension checks run before any file I/O;
+ * the file reads and the attachment store's batch validation follow. The
+ * caller runs this before it creates or resumes the Agent, so an image
+ * refusal creates no Session and stores no image, while a later failure of
+ * that Agent step leaves the stored images referenced by no Session. Called
+ * only when `images` is non-empty.
+ * @param ctx - plugin context carrying the optional `llm`, `attachments`, and `fs` services.
+ * @param images - non-blank image paths in invocation order.
+ * @param selection - the run's selected provider/model route.
+ * @returns image content blocks in the same order as `images`.
+ */
+async function resolveImageContent(ctx: Context, images: readonly string[], selection: ModelSelection): Promise<ContentBlock[]> {
+  const llm = ctx.get('llm')
+  if (llm === undefined) throw new Error('headless --image requires the model registry')
+  const info = await llm.resolveModelInfo(selection.provider, selection.model)
+  if (imageInputSupport(info) === 'unsupported') {
+    throw new Error(`model "${selection.model}" does not support image input; select a model that accepts images to use --image`)
+  }
+  const attachments = ctx.get('attachments')
+  if (attachments === undefined) throw new Error('headless --image requires an attachment store')
+  const fs = ctx.get('fs')
+  if (fs === undefined) throw new Error('headless --image requires a filesystem service')
+  const declared = images.map(path => ({ path, mediaType: declaredImageMediaType(path) }))
+
+  const byteCap = Math.min(attachments.imageLimits.maxImageBytes, attachments.imageLimits.maxMessageImageBytes)
+  const inputs: SaveImageAttachment[] = []
+  for (const { path, mediaType: declaredType } of declared) {
+    const target = await fs.resolve(path)
+    const stat = await fs.stat(target)
+    if (stat === undefined) throw new Error(`cannot attach "${target.displayPath}": not found`)
+    if (stat.type !== 'file') throw new Error(`cannot attach "${target.displayPath}": not a regular file`)
+    const data = await fs.readBytes(target, undefined, byteCap)
+    const mediaType = declaredType ?? sniffImageMediaType(data)
+    if (mediaType === undefined) {
+      throw new Error(`cannot attach "${target.displayPath}": the file content is not a supported image format; --image accepts PNG/JPEG/WebP/GIF`)
+    }
+    inputs.push({ data, mediaType, name: basename(target.displayPath) })
+  }
+  const refs = await attachments.saveImages(inputs)
+  return refs.map((attachment): ContentBlock => ({ type: 'image', attachment }))
+}
+
+/**
  * Run one task through one Agent and request process exit.
  * @param ctx - plugin context carrying the Agent, default model, Session, and launcher IO services.
  * @param config - task, optional exact Session identity, and output mode.
@@ -320,6 +388,10 @@ async function run(ctx: Context, config: Config, io: HeadlessIo): Promise<void> 
   // the same public setting must fail here rather than become a blank identity.
   if (config.sessionId !== undefined && config.sessionId.trim() === '') {
     throw new Error('headless-runner: sessionId must not be blank')
+  }
+  const images = config.images ?? []
+  if (images.some(path => path.trim() === '')) {
+    throw new Error('headless-runner: images must not contain a blank path')
   }
 
   const task = config.task === undefined || config.task === '-'
@@ -342,6 +414,7 @@ async function run(ctx: Context, config: Config, io: HeadlessIo): Promise<void> 
   const sessionId = brandString<SessionId>(config.sessionId ?? `session-${randomUUID()}`)
   const fs = ctx.get('fs')
   const cwd = fs === undefined ? process.cwd() : fs.processPath(await fs.resolve('.'))
+  const imageBlocks = images.length === 0 ? [] : await resolveImageContent(ctx, images, selection)
   const agent = config.sessionId === undefined
     ? (await agents.create({
       sessionId,
@@ -363,7 +436,7 @@ async function run(ctx: Context, config: Config, io: HeadlessIo): Promise<void> 
   try {
     try {
       agent.followup(createUserMessage({
-        content: [{ type: 'text', text: task }],
+        content: [{ type: 'text', text: task }, ...imageBlocks],
         source: { kind: 'user' },
       }))
       await agent.whenIdle()

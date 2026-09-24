@@ -46,12 +46,21 @@ The task and run options are supplied through three settings:
 | `task` | stdin | The task text; stdin supplies it when omitted or `-` |
 | `sessionId` | `session-<uuid>` | Exact Session identity to adopt; an unknown id fails |
 | `json` | `false` | Project the run as newline-delimited events on stdout |
+| `images` | `[]` | Image file paths to attach, in invocation order |
 
 The generated [configuration catalog](../../../docs/config-catalog.md#deepseek-aidsh-headless) is the exhaustive source for every accepted field and its JSDoc.
 
 ### Choosing the session identity
 
 Every invocation defaults to a fresh `session-<uuid>` identity, which `--json` reports in its opening `session` event. Pass `--session-id <id>` to continue that conversation: the runner adopts the persisted Session with that id, and an id with no stored Session fails before the task runs rather than quietly opening an empty history. Adoption requires the composed `sessionPersistence` and `sessionQuery` services, so a profile that omits either fails loudly instead of returning an id whose history dies with the process. An Agent already live under the requested id in this process is refused: another owner may still drive it, so the runner cannot claim an exclusive run interval over it. The identity is opaque, so the exact string is used, whitespace included. The working directory is resolved through the mounted filesystem provider (`fs.resolve('.')` and `fs.processPath()`), or the process cwd when no filesystem service is mounted; new Sessions record that directory. Adoption compares the recorded cwd with the same provider-resolved directory and refuses a Session that is a subagent or forked session, that recorded no working directory, that runs under an agent preset this profile does not compose, or whose preset record is malformed — the check reads the preset the Session log currently records, so a Session that switched preset while blank is rejected too. A supervisor therefore cannot silently drive someone else's conversation under a different composition; any mismatch fails before the task runs.
+
+### Attaching images
+
+Repeat `--image <path>` to attach one or more images to the task; each occurrence names one file, resolved through the mounted filesystem provider, and images enter the message in invocation order after the task text. Before any file is read, the runner refuses when the selected route's resolved model declares input modalities that omit `image`, requires the composed `attachments` and `fs` services, and checks every path's extension: `.png`, `.jpg`, `.jpeg`, `.webp`, and `.gif` select their media type, an extension-less path is identified from its file signature, and any other extension fails even when the file holds a supported image, matching `read_image`. A route that discloses no modalities is admitted and its images reach the adapter unchanged; an adapter that cannot send them fails the turn with `UNSUPPORTED_CONTENT`. An extension-less file whose content is not a supported image, a missing file, a directory, a file above the smaller of the per-image and per-message byte limits, or a batch the attachment store refuses fails the whole invocation before the Agent is created or resumed, naming the offending path where applicable.
+
+```sh
+dsh --profile headless --image ./before.png --image ./after.png "what changed between these two screenshots?"
+```
 
 ### Machine-readable output
 
@@ -77,22 +86,22 @@ The runner is a direct driver over the core API carrier: it resolves the Agent i
 
 ### Run flow
 
-The runner awaits the complete application (`ctx.get('loader')?.await()`) so the composed tools and adapters are not half-mounted, reads the shared [`agentDefaultModel`](../../core/agent-default-model/README.md) selection, resolves the task from config or stdin, then resolves the Agent identity: a fresh `session-<uuid>` by default, or the persisted Session `--session-id` names, which it adopts through [`sessionQuery`](../../session-query/session-query/README.md) and refuses when no log exists. It submits the task as an ordinary user message. Without `--json` it streams that Agent's non-empty reasoning deltas to stderr; with `--json` it projects the run instead. It waits for quiescence, then flushes the Session and folds the owned interval (`firstSeq` onward) into the last non-empty `assistant/message` text and final `turn/end` reason. It writes the final text to stdout (or the `final` event) and requests exit.
+The runner awaits the complete application (`ctx.get('loader')?.await()`) so the composed tools and adapters are not half-mounted, reads the shared [`agentDefaultModel`](../../core/agent-default-model/README.md) selection, resolves the task from config or stdin, resolves and stores any `--image` files, then resolves the Agent identity: a fresh `session-<uuid>` by default, or the persisted Session `--session-id` names, which it adopts through [`sessionQuery`](../../session-query/session-query/README.md) and refuses when no log exists. It submits the task as an ordinary user message. Without `--json` it streams that Agent's non-empty reasoning deltas to stderr; with `--json` it projects the run instead. It waits for quiescence, then flushes the Session and folds the owned interval (`firstSeq` onward) into the last non-empty `assistant/message` text and final `turn/end` reason. It writes the final text to stdout (or the `final` event) and requests exit.
 
 ### Patch surface over base
 
-The patch rides over `dsh-base`: it inherits the projection cache and shared PTC runtime, sets the coding persona prefix and separate cwd suffix on the base `system-prompt` row, keeps the same temporary process-wide PTC mode opt-in (`DSH_TOOLS_MODE`) as the Web surface, disables the shared HMR row, and mounts the startup provider and the runner. The cache checkpoints each persisted one-shot session for later consumers; its durability barrier flushes each covered log prefix before publishing the cache row and may split otherwise coalesced JSONL runs. The startup provider ([`src/startup.ts`](src/startup.ts)) injects `ctx.cmdlineArgs` ([`dsh-cmdline`](../../boot/cmdline/README.md)), reads the positional argument and the `--session-id`/`--json` options, prints the app's `--help`, and provides `headlessStartup`; the runner injects that service and reads its task and run options from lazy config.
+The patch rides over `dsh-base`: it inherits the projection cache and shared PTC runtime, sets the coding persona prefix and separate cwd suffix on the base `system-prompt` row, keeps the same temporary process-wide PTC mode opt-in (`DSH_TOOLS_MODE`) as the Web surface, disables the shared HMR row, and mounts the startup provider and the runner. The cache checkpoints each persisted one-shot session for later consumers; its durability barrier flushes each covered log prefix before publishing the cache row and may split otherwise coalesced JSONL runs. The startup provider ([`src/startup.ts`](src/startup.ts)) injects `ctx.cmdlineArgs` ([`dsh-cmdline`](../../boot/cmdline/README.md)), reads the positional argument and the `--session-id`/`--json`/`--image` options, prints the app's `--help`, and provides `headlessStartup`; the runner injects that service and reads its task and run options from lazy config.
 
 ### Exit mapping
 
-A completed final `turn/end` exits 0; any other outcome — aborted, error, or no turn in the owned interval — exits 1. An `error` reason also writes `dsh: <code>: <message>` to stderr. A direct driver failure (for example, Agent creation or an unusable `--session-id`) writes `dsh: <message>` to stderr and exits 1, and in `--json` mode also emits an `error` event.
+A completed final `turn/end` exits 0; any other outcome — aborted, error, or no turn in the owned interval — exits 1. An `error` reason also writes `dsh: <code>: <message>` to stderr. A direct driver failure (for example, Agent creation, an unusable `--session-id`, or a refused `--image`) writes `dsh: <message>` to stderr and exits 1, and in `--json` mode also emits an `error` event.
 
 ### Source map
 
 | File | Role |
 |---|---|
 | [`src/index.ts`](src/index.ts) | The `headless-runner` plugin: run flow, session resolution, output contract, exit mapping |
-| [`src/startup.ts`](src/startup.ts) | The `headless-startup` provider: task positional, `--session-id`, `--json`, and `--help` |
+| [`src/startup.ts`](src/startup.ts) | The `headless-startup` provider: task positional, `--session-id`, `--json`, `--image`, and `--help` |
 | [`src/json-stream.ts`](src/json-stream.ts) | The `--json` projection: event vocabulary, commit-point emission, string bounding |
 | [`cordis.patch.yml`](cordis.patch.yml) | The one-shot patch over `dsh-base` |
 | — | No runtime invariant companion is published; the runner's observable contract (provider reasoning on stderr, final text on stdout, exit code by turn-end reason) is process-level and owned by the launcher e2e; it registers nothing and holds no mutable relation to audit inside the tree. |
@@ -124,11 +133,11 @@ Read these pages when you want to go deeper into the shared core, the sibling GU
 <a id="model-experience"></a>
 ## Model Experience
 
-None, as the runner submits the task as an ordinary user message and the composed base and headless rows own the prompts and tools.
+None, as the runner submits the task and any `--image` files as one ordinary user message, and the composed base and headless rows own the prompts and tools.
 
 #### KV Cache effect
 
-The runner adds nothing to the request prefix; it only drives one user message through the composed tree.
+The runner adds nothing to the request prefix; it only drives one user message, with its attached images, through the composed tree.
 
 ## Known Limitations and Deferred Work
 
@@ -143,6 +152,7 @@ These limits tell you when headless does not fit and what it needs from the `dsh
 - **Reasoning enters stderr logs** — in default mode, redirection and supervisors may retain substantially more and potentially sensitive model output; route stderr to a controlled sink when needed.
 - **Default stdout carries only the final answer** — a run without an assistant message prints an empty stdout line and exits 1; intermediate tool output is not printed unless you opt into `--json`.
 - **Adoption is cwd-, ownership-, and preset-scoped** — `--session-id` refuses a Session recorded in another working directory, one that recorded no working directory, one that is a subagent or forked session, or one that runs under an agent preset this profile does not compose or whose preset record is malformed, and requires the composed Session query and persistence services; an identity already live in the process is refused too, because the runner cannot own an exclusive run interval over it.
+- **Stored images can outlive a failed run** — `--image` files are stored before the Agent is created or resumed, so a run that fails at that step, for example with an unusable `--session-id`, exits 1 and leaves content-addressed images that no Session references.
 - **The event stream is a projection, not the log** — `--json` caps every string except the terminal `final` at 8 KiB and omits events the projection does not model, so it is not a lossless copy of the Session log.
 
 <a id="dev-note"></a>

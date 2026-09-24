@@ -17,6 +17,7 @@ import JsonlSessionPersistence from '@deepseek-ai/dsh-session-persistence-jsonl'
 import * as LlmDeepSeek from '@deepseek-ai/dsh-llm-deepseek-api-key'
 import SubagentRuntime, { type SubagentResult, type SubagentRunEndInfo } from '@deepseek-ai/dsh-subagent'
 import type { JsonRpcTransportPeer } from '@deepseek-ai/dsh-sdk-protocol'
+import { AttachmentId } from '@deepseek-ai/dsh-attachment'
 import { HarnessSdkJsonRpcServer } from '../src/index.ts'
 
 class FakeTransport implements JsonRpcTransportPeer {
@@ -276,6 +277,74 @@ describe('HarnessSdkJsonRpcServer', () => {
     })).rejects.toThrow('SDK image prompt requires an attachment store')
     expect(followup).not.toHaveBeenCalled()
     await server.shutdown()
+  })
+
+  describe('image route gate', () => {
+    // A real Context carrying only the services the gate path reads; the
+    // handshake boundary is already behind this isolated prompt.
+    function gateServer(services: Readonly<Record<string, object>>): HarnessSdkJsonRpcServer {
+      const ctx = new Context()
+      for (const [name, value] of Object.entries(services)) ctx.provide(name, value as never)
+      const server = new HarnessSdkJsonRpcServer(ctx, new FakeTransport())
+      server['initialized'] = true
+      return server
+    }
+    const textOnly = () => vi.fn(async () => ({
+      provider: 'deepseek-official', id: 'text-only', name: 'Text Only', inputModalities: ['text'],
+    }))
+    const refusal = 'Model "deepseek-official" does not support image input; initialize the SDK with a model that accepts images.'
+
+    it('refuses an encoded image on a text-only route before creating a session', async () => {
+      const resolveModelInfo = textOnly()
+      const create = vi.fn()
+      const server = gateServer({ llm: { resolveModelInfo }, agents: { create, get: () => undefined } })
+
+      await expect(server.prompt({
+        sessionId: 'text-only-route',
+        contentBlocks: [{ type: 'image', data: 'AQ==', mimeType: 'image/png' }],
+      })).rejects.toThrow(refusal)
+      expect(resolveModelInfo).toHaveBeenCalledWith('deepseek-official', 'deepseek-official')
+      expect(create).not.toHaveBeenCalled()
+      await server.shutdown()
+    })
+
+    it('refuses a durable image block on a text-only route before creating a session', async () => {
+      const create = vi.fn()
+      const server = gateServer({ llm: { resolveModelInfo: textOnly() }, agents: { create, get: () => undefined } })
+
+      await expect(server.prompt({
+        sessionId: 'durable-image-route',
+        contentBlocks: [{
+          type: 'image',
+          attachment: { attachmentId: AttachmentId('sha256:already-durable'), mediaType: 'image/png', bytes: 1, width: 1, height: 1 },
+        }],
+      })).rejects.toThrow(refusal)
+      expect(create).not.toHaveBeenCalled()
+      await server.shutdown()
+    })
+
+    it('admits an image on a route that declares no modalities', async () => {
+      const followup = vi.fn<Agent['followup']>()
+      const agent = { id: SessionId('image-undeclared'), followup }
+      const handle = { agent, dispose: vi.fn(() => Promise.resolve()) }
+      const ref = { attachmentId: AttachmentId('sha256:image'), mediaType: 'image/png', bytes: 1, width: 1, height: 1 }
+      const resolveModelInfo = vi.fn(async () => ({ provider: 'deepseek-official', id: 'deepseek-official', name: 'DeepSeek' }))
+      const server = gateServer({
+        llm: { resolveModelInfo },
+        attachments: { saveImages: vi.fn(async () => [ref]) },
+        agents: { create: vi.fn(async () => handle), get: () => agent },
+      })
+
+      await server.prompt({
+        sessionId: 'image-undeclared',
+        contentBlocks: [{ type: 'image', data: 'AQ==', mimeType: 'image/png' }],
+      })
+
+      expect(resolveModelInfo).toHaveBeenCalledOnce()
+      expect(followup).toHaveBeenCalledOnce()
+      expect(followup.mock.calls[0]?.[0].content).toEqual([{ type: 'image', attachment: ref }])
+      await server.shutdown()
+    })
   })
 
   it('rechecks agent liveness after asynchronous image admission', async () => {

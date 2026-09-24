@@ -44,7 +44,7 @@ kind: "package-reference"
 | `dshHome` | 必填 | 每个嵌套子进程的绝对隔离 Harness home |
 | `cwd` | 父会话 cwd | 子进程及其 SDK 会话的工作目录覆盖值 |
 | `provider` | `deepseek-official` | 写入子进程 `initialize` 的提供方路由 |
-| `model` | `deepseek-v4-flash` | 写入子进程 `initialize` 的模型 |
+| `model` | `deepseek-flash` | 写入子进程 `initialize` 的模型 |
 | `maxTokens` | 适配器／提供方路由默认值 | 写入子进程 `initialize` 的单次请求输出 token 上限 |
 | `env` | `{}` | 叠加在已清理凭据的父环境之上的显式子环境 |
 | `shutdownTimeoutMs` | `1000` | dispose（资源释放）期间协议 `shutdown` 交换的时限 |

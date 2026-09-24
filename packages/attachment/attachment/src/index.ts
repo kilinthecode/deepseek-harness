@@ -22,6 +22,7 @@ export { AttachmentId, ImageVariantId } from './brand.ts'
 export { AttachmentError, isAttachmentError, isImageAdmissionError } from './error.ts'
 export type { AttachmentErrorCode, ImageAdmissionErrorCode } from './error.ts'
 export { admitEncodedFile, admitEncodedImages } from './admission.ts'
+export { imageMediaTypeForPath, sniffImageMediaType } from './media-type.ts'
 export { longEdgeDimensions, requestImageDimensions } from './request-projection.ts'
 export type { ProjectedDimensions } from './request-projection.ts'
 export type {

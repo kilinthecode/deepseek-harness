@@ -8,6 +8,7 @@ import {
   createToolResultMessage,
   createUserMessage,
   fileHandleText,
+  imageInputSupport,
   projectFilesToText,
   offloadedImageText,
   projectImagesForTextModel,
@@ -311,6 +312,20 @@ describe('projectImagesForTextModel', () => {
       { type: 'text', text: '[image omitted because this model accepts text only; attachment sha256:aaaaaaaa]' },
       { type: 'text', text: 'after' },
     ])
+  })
+})
+
+describe('imageInputSupport', () => {
+  it('reports supported when the declared modalities include image', () => {
+    expect(imageInputSupport({ inputModalities: ['text', 'image'] })).toBe('supported')
+  })
+
+  it('reports unsupported when a declared list omits image', () => {
+    expect(imageInputSupport({ inputModalities: ['text'] })).toBe('unsupported')
+  })
+
+  it('reports undeclared when no modality list was disclosed', () => {
+    expect(imageInputSupport({})).toBe('undeclared')
   })
 })
 

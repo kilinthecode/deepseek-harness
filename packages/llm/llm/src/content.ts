@@ -1,6 +1,16 @@
-/** Content-block structure helpers. @module @deepseek-ai/dsh-llm/content */
+/**
+ * Model content helpers:
+ * - attachment access mapping from an attachment provider's host path into the tool execution world;
+ * - content-block walks, and the text projections and handle text that stand in for image and file blocks;
+ * - image-input support mapped from a resolved model's declared input modalities;
+ * - the count of image occurrences a route's image budget still requires offloading;
+ * - tool-update projection of one route's provider declarations and developer messages.
+ * @module @deepseek-ai/dsh-llm/content
+ */
 
-import type { ContentBlock, ImageBlock, LlmImageRequestBudget, ToolSchema, ToolUpdate, ToolHistory } from './types.ts'
+import type {
+  ContentBlock, ImageBlock, LlmImageRequestBudget, LlmModelInfo, ToolSchema, ToolUpdate, ToolHistory,
+} from './types.ts'
 import type { RequestMessage } from './types.ts'
 import type { Message } from './message.ts'
 import type {
@@ -117,14 +127,34 @@ export function offloadedImageText(
 }
 
 /**
- * True when typed model content contains an image block. This is the one image
+ * True when a content-block list contains an image block. This is the one image
  * walk shared by every image policy (capability gating, text-only
  * serialization, compaction survey), so a consumer cannot silently diverge.
- * @param content - typed model content blocks.
+ * It reads only each block's `type` tag, so it also accepts wire block lists
+ * whose images still await admission, such as SDK prompt input.
+ * @param content - typed model content blocks, or any `type`-tagged block list.
  * @returns whether any block is an image.
  */
-export function contentHasImage(content: readonly ContentBlock[]): boolean {
+export function contentHasImage(content: readonly { readonly type: string }[]): boolean {
   return content.some(block => block.type === 'image')
+}
+
+/** Three-way image-input capability read off one resolved model's declared modalities. */
+export type ImageInputSupport = 'supported' | 'unsupported' | 'undeclared'
+
+/**
+ * Map one resolved model's declared input modalities to image-input support.
+ * `inputModalities` absent means the route never disclosed its accepted
+ * modalities ({@link LlmModelInfo.inputModalities}), which is distinct from a
+ * disclosed list that omits `image`. Callers resolve the model info themselves
+ * and choose their own policy for the `'undeclared'` case.
+ * @param info - the fields of one resolved model's info the mapping reads.
+ * @returns `'supported'` when the declared modalities include `image`,
+ *   `'unsupported'` when a declared list omits it, `'undeclared'` when no list was disclosed.
+ */
+export function imageInputSupport(info: Pick<LlmModelInfo, 'inputModalities'>): ImageInputSupport {
+  if (info.inputModalities === undefined) return 'undeclared'
+  return info.inputModalities.includes('image') ? 'supported' : 'unsupported'
 }
 
 /**

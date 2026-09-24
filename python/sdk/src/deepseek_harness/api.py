@@ -20,7 +20,7 @@ class DeepSeekHarnessConfig:
     """
 
     provider: str = "deepseek-official"
-    model: str = "deepseek-v4-flash"
+    model: str = "deepseek-flash"
     reasoning_effort: str | None = None
     max_tokens: int | None = None
     cwd: str | None = None

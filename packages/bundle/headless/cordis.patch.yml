@@ -29,6 +29,7 @@
         task: !!js ctx.headlessStartup.task
         sessionId: !!js ctx.headlessStartup.sessionId
         json: !!js ctx.headlessStartup.json
+        images: !!js ctx.headlessStartup.images
 
 - id: hmr
   disabled: true
