@@ -557,7 +557,6 @@ describe('ui-model-selection route-image advisory', () => {
     ctx.reflect.provide('remote.session', sessionRemote)
     const routeImages = new Map<SessionId, boolean | null>()
     ctx.provide('conversation', {
-      blocks: { set: () => {} },
       routeImage: { set: (id: SessionId, value: boolean | null) => { routeImages.set(id, value) } },
     })
     const scopes = new Map<SessionId, Context>()
@@ -580,7 +579,7 @@ describe('ui-model-selection route-image advisory', () => {
       session: { sessionId: id, projections: { faceOf: () => projection } },
       ctx: handle.ctx,
     })
-    await ctx.plugin(ModelDirectoryResolver, { blockReason: () => 'blocked' }).await()
+    await ctx.plugin(ModelDirectoryResolver).await()
     ctx.modelDirectories.directoryFor(id)
     expect(routeImages.get(id)).toBeNull()
     await ctx.fiber.dispose()

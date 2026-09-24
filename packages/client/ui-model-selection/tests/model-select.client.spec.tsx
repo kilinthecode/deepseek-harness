@@ -632,7 +632,7 @@ describe('ModelSelect image capability', () => {
       select={vi.fn().mockResolvedValue({ ok: true, value: undefined })}
       t={translator(dictionary, common)}
     />)
-    fireEvent.click(screen.getByRole('button', { name: new RegExp(dictionary['trigger.selectAria']) }))
+    fireEvent.click(screen.getByRole('button', { name: dictionary['trigger.aria'].replace('{model}', 'DeepSeek-V4-Flash') }))
     fireEvent.click(screen.getByRole('menuitem', { name: new RegExp(`^${dictionary['menu.model']}`) }))
 
     const rows = screen.getAllByRole('menuitemradio')
