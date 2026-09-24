@@ -156,7 +156,7 @@ Mailbox 投影与 checkpoint 准入保留本地声明的校验器之外获准内
 
 ### 共享 room
 
-`TeamRoom` 读写的正是 roster 与 mailbox 使用的那个 Lead Session。它为每个参与者发言追加一条 `room/message` —— 取自该参与者自己已提交的 `assistant/message` —— 因此 transcript 自带署名、有序且可回放，无需第二个存储。`room/proposal` 与 `room/review` 保存集体决策。这三者都是 log-only event，绝不会进入派生的模型历史。
+`TeamRoom` 读写的正是 roster 与 mailbox 使用的那个 Lead Session。它为每个参与者发言追加一条 `room/message` —— 取自该参与者自己已提交的 `assistant/message` —— 因此 transcript 自带署名、有序且可回放，无需第二个存储。记录从 Team 的第一位 teammate 开始：在此之前 Lead 的发言只属于它自己的对话，因此从未组建 Team 的 Session 不写任何 room event。`room/proposal` 与 `room/review` 保存集体决策。这三者都是 log-only event，绝不会进入派生的模型历史。
 
 参与者就是尚未失败的 roster 成员，包括仍处于 provisioning 的成员；这与 roster 解析在线成员 Team 身份所用的规则一致。`roomPrompt` 通过发送目标自己上次发言之后记录的 transcript 条目把发言权交给某个参与者，条目数量受 `roomTranscriptWindow` 限制。参与者不会因他人的发言而被唤醒，因此 room 只会在有人交出发言权时推进。
 

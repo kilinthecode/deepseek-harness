@@ -107,8 +107,11 @@ interface RoomParticipant {
 export class TeamRoom {
   /** Last observed activity per participant, in epoch milliseconds. */
   private readonly activity = new Map<SessionId, number>()
-  /** One armed stall check per open decision, replaced on every re-arm. */
-  private readonly reviewTimers = new Map<RoomProposalIdType, () => void>()
+  /**
+   * One armed stall check per open decision, replaced on every re-arm. Keyed by
+   * Lead and decision: every Team numbers its decisions from `proposal-1`.
+   */
+  private readonly reviewTimers = new Map<string, () => void>()
 
   /**
    * @param ctx - Team service context with Agent, Session, and subagent services.
@@ -157,6 +160,9 @@ export class TeamRoom {
     const { root } = membership
     void this.journal.transact(root.id, async () => {
       const state = this.journal.state(root)
+      // Every root Agent is an implicit Lead, so the room opens with the first
+      // teammate: a conversation that never forms a Team records no transcript.
+      if (state.members.length === 0) return
       /* v8 ignore next -- the identity is derived from the committed event, so a reload cannot duplicate it. */
       if (state.roomMessages.some(candidate => candidate.id === message.id)) return
       await this.journal.appendAndFlush(root, 'room/message', {
@@ -289,7 +295,7 @@ export class TeamRoom {
     })
     this.published(membership.root.id)
     if (settled !== undefined) {
-      this.disarmReview(request.proposalId)
+      this.disarmReview(membership.root.id, request.proposalId)
       // The standing is already durable, so the notice is best effort.
       await this.notify(() => this.announceOutcome(membership.root.id, caller, settled.proposal, settled.tally))
     }
@@ -321,7 +327,7 @@ export class TeamRoom {
       return current
     })
     this.published(membership.root.id)
-    this.disarmReview(request.proposalId)
+    this.disarmReview(membership.root.id, request.proposalId)
     // Delivery takes its own root transaction to checkpoint the receipt, so it
     // must run after this one commits rather than nested inside it.
     if (membership.role !== 'lead') {
@@ -428,9 +434,9 @@ export class TeamRoom {
 
   /** Arm one revision's stall check at its earliest deadline, replacing any armed check. */
   private armReview(root: Agent, proposal: RoomProposalSnapshot): void {
-    this.reviewTimers.get(proposal.id)?.()
-    this.reviewTimers.delete(proposal.id)
+    this.disarmReview(root.id, proposal.id)
     if (proposal.phase !== 'open') return
+    const key = reviewTimerKey(root.id, proposal.id)
     const now = Date.now()
     const pending = this.deadlines(this.tally(this.journal.state(root), proposal).awaiting, now)
       .map(candidate => candidate.at)
@@ -439,14 +445,14 @@ export class TeamRoom {
     // already stalled is still rechecked once more rather than never.
     const delay = Math.max(0, Math.min(now + this.config.reviewGraceMs, ...pending) - now)
     const arm = this.requireTimer().timeout(() => {
-      this.reviewTimers.delete(proposal.id)
+      this.reviewTimers.delete(key)
       /* v8 ignore next 4 -- containment for an unexpected failure inside the sweep. */
       void this.sweepReview(root, proposal.id).catch((error: unknown) => {
         if (this.lifecycle.disposed) return
         this.ctx.logger.warn(`room stall check failed: ${errorMessage(error)}`)
       })
     }, delay)
-    this.reviewTimers.set(proposal.id, arm)
+    this.reviewTimers.set(key, arm)
   }
 
   /**
@@ -581,10 +587,11 @@ export class TeamRoom {
     return this.roster.membership(caller)
   }
 
-  /** Release the armed stall check for one decision. */
-  private disarmReview(id: RoomProposalIdType): void {
-    this.reviewTimers.get(id)?.()
-    this.reviewTimers.delete(id)
+  /** Release the armed stall check for one decision of one Lead. */
+  private disarmReview(rootId: SessionId, id: RoomProposalIdType): void {
+    const key = reviewTimerKey(rootId, id)
+    this.reviewTimers.get(key)?.()
+    this.reviewTimers.delete(key)
   }
 
   /** Resolve one open proposal or refuse the operation. */
@@ -841,6 +848,16 @@ function chairOf(participants: readonly RoomParticipant[], messageCount: number)
     if (position === index) chair = participant.name
   }
   return chair
+}
+
+/**
+ * Key one decision's stall check by its Lead as well as its id.
+ * @param rootId - Lead Session that owns the decision.
+ * @param id - Team-local decision identity.
+ * @returns a key no other Lead's decision shares.
+ */
+function reviewTimerKey(rootId: SessionId, id: RoomProposalIdType): string {
+  return `${rootId}\u0000${id}`
 }
 
 /** Join the text content of one message for model-facing transcript rendering. */

@@ -129,6 +129,18 @@ describe('room transcript', () => {
     expect(view.participants.slice(1).map(participant => participant.id)).toEqual([alice, bob])
   })
 
+  it('opens the transcript with the first teammate', async () => {
+    const { ctx, lead } = await setup(acks(6))
+    lead.followup(createUserMessage({ content: content('a question for the Lead alone'), source: { kind: 'user' } }))
+    await lead.whenIdle()
+    await addParticipant(ctx, lead, 'alice', 'ack')
+
+    // The Lead's answer before any teammate existed is its own conversation, not the room's.
+    expect(ctx.agentTeams.roomView(lead).messages.map(message => message.authorName)).toEqual(['alice', 'lead'])
+    const recorded = lead.session.snapshotEvents().filter(event => event.type === 'room/message')
+    expect(recorded).toHaveLength(2)
+  })
+
   it('carries only the transcript a target has not yet seen', async () => {
     const { ctx, lead } = await setup(acks(10))
     const alice = await addParticipant(ctx, lead, 'alice', 'ack')
@@ -304,6 +316,25 @@ describe('room transcript', () => {
 
     // Disposing the service finishes every open reader.
     await fiber.dispose()
+    await pump
+    expect(frames).toHaveLength(1)
+  }, 15_000)
+
+  it('ends a reader whose Lead is gone without failing the change that notified it', async () => {
+    const { ctx } = await setup(acks(2))
+    const handle = await ctx.agents.create({
+      sessionId: SessionId('replaced-lead'),
+      agentOptions: { provider: 'mock', model: 'mock' },
+    })
+    const frames: RoomFollowFrame[] = []
+    const pump = (async () => {
+      for await (const frame of ctx.agentTeams.roomStream(handle.agent, SIGNAL)) frames.push(frame)
+    })()
+    await vi.waitFor(() => { expect(frames.length).toBe(1) }, { timeout: 5_000 })
+
+    await handle.dispose()
+    // A change committed for the same Team after its Lead Agent left reaches this reader.
+    expect(() => { ctx.emit('room/updated', { teamId: TeamId(handle.agent.id) }) }).not.toThrow()
     await pump
     expect(frames).toHaveLength(1)
   }, 15_000)
@@ -956,6 +987,25 @@ describe('room collective decisions', () => {
       const revived = ctx.agentTeams.roomView(lead).proposals.find(proposal => proposal.id === open.id)
       expect(revived?.phase).toBe('escalated')
       expect(revived?.stalled).toEqual(['alice'])
+    }, { timeout: 5_000 })
+  })
+
+  it('keeps the same-numbered decisions of two Leads on their own deadlines', async () => {
+    const { ctx, lead } = await setup([HANGING, HANGING, ...acks(4)], {
+      roomReviewGraceMs: 40,
+      roomReviewReminders: 0,
+    })
+    const other = await ctx.agentLoop.create(SessionId('other-lead'), { provider: 'mock', model: 'mock' })
+    await addLiveParticipant(ctx, lead, 'alice')
+    await addLiveParticipant(ctx, other, 'bob')
+    const first = await ctx.agentTeams.roomPropose(lead, { statement: 'first room', signal: SIGNAL })
+    const second = await ctx.agentTeams.roomPropose(other, { statement: 'second room', signal: SIGNAL })
+    // Each Team numbers its own decisions, so both rooms open the same id.
+    expect(second.id).toBe(first.id)
+
+    await vi.waitFor(() => {
+      expect(ctx.agentTeams.roomView(lead).proposals[0]).toMatchObject({ phase: 'escalated', stalled: ['alice'] })
+      expect(ctx.agentTeams.roomView(other).proposals[0]).toMatchObject({ phase: 'escalated', stalled: ['bob'] })
     }, { timeout: 5_000 })
   })
 

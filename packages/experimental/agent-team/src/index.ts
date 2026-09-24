@@ -458,7 +458,18 @@ export class TeamService extends TypertRemoteService {
     this.roomReaders.add(reader)
     const offUpdated = this.ctx.on('room/updated', (payload) => {
       if (payload.teamId !== membership.id) return
-      reader.push({ type: 'view', view: this.room.remoteView(root) })
+      let view: RoomRemoteView
+      try {
+        view = this.room.remoteView(root)
+      } catch (error: unknown) {
+        // The Lead this reader authorized with is no longer a live member. The
+        // listener runs inside the committing operation's emit, so the reader
+        // ends instead of failing a change the log already recorded.
+        this.ctx.logger.debug(`room reader ended: ${errorMessage(error)}`)
+        reader.end()
+        return
+      }
+      reader.push({ type: 'view', view })
     })
     const offFrame = this.ctx.on('room/stream', (payload) => {
       if (payload.teamId !== membership.id) return

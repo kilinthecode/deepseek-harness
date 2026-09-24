@@ -156,7 +156,7 @@ Mailbox projection and checkpoint admission preserve every decoded JSON field of
 
 ### Shared room
 
-`TeamRoom` reads and writes the same Lead Session the roster and mailbox use. It appends one `room/message` per participant utterance — taken from that participant's own committed `assistant/message` — so the transcript is attributed, ordered, and replayable without a second store. `room/proposal` and `room/review` hold collective decisions. All three are log-only events, so they never enter derived model history.
+`TeamRoom` reads and writes the same Lead Session the roster and mailbox use. It appends one `room/message` per participant utterance — taken from that participant's own committed `assistant/message` — so the transcript is attributed, ordered, and replayable without a second store. Recording starts with the Team's first teammate: the Lead's utterances before then stay in its own conversation, so a Session that never forms a Team writes no room events. `room/proposal` and `room/review` hold collective decisions. All three are log-only events, so they never enter derived model history.
 
 A participant is a roster member that has not failed, including one still provisioning, which is the same rule the roster uses to resolve a live member's Team identity. `roomPrompt` gives one participant the floor by sending it the transcript entries recorded after its own last utterance, bounded by `roomTranscriptWindow`. `participants` are never woken by another participant's utterance, so a room advances only when someone grants the floor.
 
