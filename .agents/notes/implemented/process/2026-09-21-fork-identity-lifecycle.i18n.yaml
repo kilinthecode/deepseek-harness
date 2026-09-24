@@ -2,5 +2,5 @@
 # side as of the last confirmed-consistent state. Both languages carry equal authority;
 # after editing either side, bring the other along and re-record with:
 #   pnpm run verify-translation-pairing --write .agents/notes/implemented/process/2026-09-21-fork-identity-lifecycle.md
-2026-09-21-fork-identity-lifecycle.md: 929568128d4cf04446d3ef1e2d327dd68873b4a4
-2026-09-21-fork-identity-lifecycle.zh.md: 5896eea3b4ac3765f091bafeeebff01a5cf4286e
+2026-09-21-fork-identity-lifecycle.md: de940d25242606e50848e58d6205ff48c2f658c0
+2026-09-21-fork-identity-lifecycle.zh.md: a1f8707948ad315653c42977b3f820c6a794c917

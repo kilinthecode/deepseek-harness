@@ -56,13 +56,13 @@ These are upstream files the fork edits with the smallest possible change, delib
 | `packages/bundle/web-app/package.json` | Adds the `@deepseek-ai/dsh-client-portal-brand` dependency. | 2026-09-21 |
 | `packages/boot/app-boot/src/profile.ts` | Adds `@deepseek-ai/dsh-experimental-agent-room-profile` to `OPTIONAL_BUNDLES`. | 2026-09-17 |
 | `apps/cli/package.json` | Adds the `@deepseek-ai/dsh-experimental-agent-room-profile` dependency, which an `OPTIONAL_BUNDLES` entry requires the installation to ship. | 2026-09-17 |
-| `tsconfig.host.json` | Adds the `tool-agent-room` and `agent-room-profile` project references and `apps/web/tests/agent-room-panel.e2e.ts`. | 2026-09-17 |
+| `tsconfig.host.json`, `apps/web/tsconfig.json` | Add the `tool-agent-room` and `agent-room-profile` project references and `apps/web/tests/agent-room-panel.e2e.ts`. | 2026-09-17 |
 | `apps/web/tests/plugin-{manager,config}.e2e.ts`, `apps/web/tests/expected/plugin-manager/{manager,live-enabled}.expected.md`, `apps/web/tests/expected/plugin-config/official.expected.md` | Count the room bundle as a third optional bundle in the Official group. | 2026-09-23 |
 
 ## Category B — the model-visible identity (largest divergence)
 
 The model's self-description has no composition seam: the shipped base profile is what upstream's snapshot
-corpus replays, so changing it diverges 65 upstream files. This is the fork's largest intentional divergence.
+corpus replays, so changing it diverges 70 upstream files. This is the fork's largest intentional divergence.
 
 | Files | Fork divergence | Since |
 |---|---|---|
@@ -92,6 +92,7 @@ Files whose *content* is fork brand material. No seam exists for these, so they 
 | `apps/desktop/src/main.ts` | About-panel application name; development Dock icon. The window reveal is upstream's (see Known open decisions). | 2026-09-21 |
 | `apps/desktop/tests/expected/*` | Expected About panel, application menu, welcome, and fatal-dialog copy. | 2026-09-21 |
 | `apps/desktop/tests/main-startup.spec.ts` | Asserts the fork's About menu label and About dialog copy. | 2026-09-21 |
+| `apps/desktop/tests/{macos-app-update-config,macos-notarized-application,package-macos,windows-sign}.spec.ts` | Locate the packaged `Portal.app`, `MacOS/Portal`, and `Portal.exe` that `productName: 'Portal'` produces. | 2026-09-23 |
 | `apps/desktop/README.{md,zh.md,i18n.yaml}` | Documents the fork's About label, the development Dock icon, and the `~/Library/Logs/Portal` crash-report directory. | 2026-09-21 |
 | `apps/desktop/scripts/*` | `productName: 'Portal'` in `electron-builder-config.mjs`, so `package-macos.ts`, `package-target.ts`, and `smoke-packaged-runtime.ts` locate `Portal.app`, `Portal.exe`, and `MacOS/Portal`. Local ad-hoc signing path (`DSH_ADHOC_SIGN`), which in `macos-runtime.ts` bypasses upstream's signature cache. | 2026-09-19 |
 
@@ -103,13 +104,13 @@ The rooms and verification work necessarily modifies upstream-owned packages rat
 |---|---|---|
 | `packages/experimental/agent-team/**` | Room runtime: `room.ts`, `room-quorum.ts`, `types.ts`, `projection.ts`, `roster.ts`, `task-board.ts`, `task-view.ts` (the `verifying` status and named verification), `index.ts` and their tests. Upstream removed every Team Remote method; `TeamService` still extends `TypertRemoteService` for five room methods (`room`, `roomStream`, `roomPrompt`, `roomPropose`, `roomEscalate`), with the `./typert` and `./remote` exports. The projection checkpoint layout is version 5. | 2026-09-17 |
 | `packages/experimental/tool-agent-team/**`, `tool-agent-room/**`, `client-ui-agent-team/**`, `agent-room-profile/**` | The room tool surface and its panel. `client-ui-agent-team` mounts the room `./remote` contribution and renders a room section inside upstream's read-only, projection-driven panel. `agent-room-profile` carries the `ui-agent-team` row, as upstream's single Team bundle does. `tool-agent-team` declares the `dsh-llm` peer its route schema imports. | 2026-09-17 |
-| `scripts/gen-tool-catalog.ts`, `scripts/gen-cordis-catalog.ts`, `scripts/gen-doc-graphs.ts`, `scripts/type-equiv.manifest.json`, `packages/core/tools/tests/gen-tool-catalog.spec.ts`, `snapshots/AGENTS.md` | Generators and gates cover the room: the tool catalog boots `tool-agent-room` through the Team catalog helper it shares with `tool-agent-team`, the Cordis catalog links room types, the doc graphs list the room consumers of `agentTeams`, type-equiv pins the room snapshots, and the snapshot rules document child-role scenarios. | 2026-09-17 |
+| `scripts/gen-tool-catalog.ts`, `scripts/gen-cordis-catalog.ts`, `scripts/gen-doc-graphs.ts`, `scripts/type-equiv.manifest.json`, `scripts/run-gates.ts`, `packages/core/tools/tests/gen-tool-catalog.spec.ts`, `snapshots/AGENTS.md` | Generators and gates cover the room: the tool catalog boots `tool-agent-room` through the Team catalog helper it shares with `tool-agent-team`, the Cordis catalog links room types, the doc graphs list the room consumers of `agentTeams`, type-equiv pins the room snapshots, `builtBinSmokeGate` runs the `tool-agent-team` and `tool-agent-room` built-lib smokes, and the snapshot rules document child-role scenarios. | 2026-09-17 |
+| `docs/subsystems/agent-team.{md,zh.md,i18n.yaml}`, `docs/subsystems/web-client.*`, `docs/capability-seams.*` | Document the room, peer verification, the room consumers of `agentTeams`, and the boot overlay handoff. | 2026-09-17 |
 | `snapshots/session/team-targets/{system-prompt,tool-schemas}.expected.*` | Pin the fork's Team POLICY and the route and peer-verification tool fields. | 2026-09-23 |
-| `packages/core/agent-default-model/src/index.ts` | Removes the `reasoningEffort` config field, restoring the package's documented decision. | 2026-09-21 |
 | `packages/core/session/src/known-event-types.ts` | Generated: adds the four `room/*` event types. | 2026-09-17 |
-| `packages/test-support/session-snapshot/**` | Snapshot-harness support for scenarios that own child roles. | 2026-09-17 |
+| `snapshots/session/headless.snapshot.ts`, `packages/test-support/session-snapshot/README.*` | Snapshot-harness support for scenarios that own child roles: the headless runner compares each child role's recorded header. | 2026-09-17 |
 | `apps/cli/tests/profiles/headless/**` | Owner-local expectations and the scripted team fixture. | 2026-09-17 |
-| `packages/client/web/**`, `packages/client/ui-renderer/**` | Boot-page overlay, handoff, and mount-into-host. The overlay's z-index (1150) sits above application layers (1100) and below the WebWorker preview's pre-boot source chooser (1200). | 2026-09-19 |
+| `packages/client/web/**`, `packages/client/ui-renderer/**` | Boot-page overlay, handoff, and mount-into-host, with the Portal boot brand drawn under every build profile. The overlay's z-index (1150) sits above application layers (1100) and below the WebWorker preview's pre-boot source chooser (1200), and it starts below the Windows desktop caption strip so that strip's menus (1100) stay reachable. | 2026-09-19 |
 | `apps/web/tests/settings-chrome.e2e.ts`, `apps/web/tests/preview-boot.e2e.ts`, `apps/web/tests/lifecycle-chrome.e2e.ts` | Find the boot page by `[data-dsh-boot]`: the fork's overlay nests the progress hint in a status block, shows it only when boot outlasts the brand moment, and holds over the mounted application on page timers, which a test's installed clock must run out. | 2026-09-23 |
 
 ## Category E — generated (never merged by hand)
@@ -122,6 +123,7 @@ Regenerate after every sync. Listed so a conflict here is not mistaken for a rea
 `packages/extensions/tool-cordis/src/api-catalog.ts`,
 `packages/extensions/cordis-client-runtime/src/client/slot-catalog.ts`,
 `packages/extensions/cordis-client-runner/src/client/slot-catalog.ts`,
+`packages/preset/agent-preset/skills/cordis-composition-reference/references/packages.md`, `pnpm-lock.yaml`,
 `scripts/release/families.spec.ts` (hand-edited package list — expect conflicts when adding fork packages).
 
 ---
@@ -131,7 +133,7 @@ Regenerate after every sync. Listed so a conflict here is not mistaken for a rea
 - **Model-visible identity — decided 2026-09-21.** The model now says `You are an AI agent powered by Portal Harness.`
   The direct edit was taken rather than a composing profile, because `dsh web` *is* the shipped `web` template and
   the snapshot harness boots only the shipped profiles, so no composition changes the model's opener without also
-  changing the expected outputs. See Category B for the 65 diverged files.
+  changing the expected outputs. See Category B for the 70 diverged files.
 - **In-app prose** in `ui-settings-models` (welcome notice), `ui-plugin-manager` (install safety), and
   `ui-sidebar-documentpreview` (Office preview error) still says "DeepSeek Harness". The `DSH` acronym appears in
   four more client dictionaries and has no successor derivable from "Portal Harness". Undecided as of 2026-09-21.
@@ -149,15 +151,28 @@ Regenerate after every sync. Listed so a conflict here is not mistaken for a rea
   reveal and 15 s first-paint deadline, so on desktop the boot brand sequence mostly plays while the window is
   hidden; `dsh web` is unaffected. Restoring it means revealing on ready-to-show when neither the welcome window
   nor recovery is active, re-adding the deadline, and changing those upstream tests.
+- **Room events in format-3 logs — accepted as of 2026-09-24.** Fork builds before the 2026-09-23 sync wrote
+  `room/*` events into Session format 3 Lead logs. Upstream's released V3-to-V4 migration accepts only its closed
+  V3 event list (`packages/session/session-format-v3-to-v4/src/extension-identities.ts`), so such a Lead Session no
+  longer opens; Team-only format-3 logs still upgrade. The fork does not extend that historical list. The record is
+  `docs/persistence-changes/2026-09-18-room-events.md`.
+- **Optional bundle exclusivity — open as of 2026-09-24.** `agent-team-profile` and `agent-room-profile` both insert
+  the `agent-team`, `tool-agent-team`, and `ui-agent-team` rows, so enabling both lets one layer's config replace the
+  other's without a diagnostic. Only the room bundle's Plugins page description says to pick one.
+- **Packaged client profile — open as of 2026-09-24.** Desktop packaging (`apps/desktop/scripts/package-target.ts`)
+  runs `build:official`, and no script builds the `portal` profile, so `portal-brand` renders in no produced
+  artifact. The boot page draws the Portal brand under every profile, so a packaged `Portal.app` hands off from the
+  Portal boot brand to upstream's official in-app brand.
 - **Browser task controls — follows upstream as of 2026-09-23.** Upstream made the Team panel read-only and
   projection-driven. The room section keeps the floor, decision, and escalation actions, but
   the browser no longer creates, edits, submits, or verifies tasks.
 - **Remaining upstream brand strings.** `apps/desktop/renderer/assets/welcome-brand.svg` is upstream's DeepSeek
   artwork (its alt text says Portal Harness); `apps/desktop/installer/strings.nsh`, `installer/extract-report.h`,
-  the `dsh` protocol display name, and `development-app.ts`'s `CFBundleURLName` still say DeepSeek Harness,
+  the `dsh` protocol display name, the macOS `NSMicrophoneUsageDescription` in `electron-builder-config.mjs`, and
+  `development-app.ts`'s `CFBundleURLName` still say DeepSeek Harness,
   and `apps/desktop/README.md` still says the platform icons retain the whale.
 
 ## Attribution
 
-Upstream's `LICENSE` and copyright headers are retained unmodified. This fork is a derivative work; see the root
-`README.md` for the fork's own statement of derivation.
+Upstream's `LICENSE` and copyright headers are retained unmodified. This fork is a derivative work of upstream under
+its MIT license, and this ledger is its statement of derivation; the root `README.md` is upstream's unmodified.
