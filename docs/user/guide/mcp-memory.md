@@ -6,6 +6,8 @@ These three **default-off reference configurations** connect one memory system t
 
 These third-party configurations are provided as interoperability examples only. Their inclusion does not imply endorsement, recommendation, partnership, or ongoing support by DeepSeek.
 
+DSH ships its own durable memory, on by default and needing no server; [Remember across sessions](memory.md) covers it. These overlays add a third-party system beside it.
+
 ## What DSH does
 
 DSH parses the selected Cordis overlay, starts a configured stdio command or connects to a configured Streamable HTTP URL, discovers MCP tools, and exposes them as `mcp__<serverName>__<tool>`. DSH does **not** download the server, initialize its database, choose its model or embedding provider, create a cloud account, migrate vendor data, or supervise a separate HTTP service. For stdio, the generic client launches and stops the child with the DSH plugin lifecycle; for HTTP, the upstream service must already be running.

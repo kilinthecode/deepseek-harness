@@ -1,0 +1,16 @@
+# Memory catalog refresh composition, layered on the default snapshot
+# composition: `.dsh-project` is the only project-root marker, so no ancestor
+# `.git` of the scenario workspace creates a project scope, and a fixture
+# plugin compacts the surfaced catalog away after the scripted `memory_recall`
+# call.
+- id: memory
+  name: '@deepseek-ai/dsh-memory'
+  config:
+    maxRecords: 200
+    maxRecordBytes: 4096
+    projectRootMarkers:
+      - .dsh-project
+
+- insert:
+    - id: memory-catalog-compaction
+      name: '../../../packages/test-support/session-snapshot/tests/fixtures/memory-catalog-compaction.ts'

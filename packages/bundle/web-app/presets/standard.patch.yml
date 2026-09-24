@@ -134,6 +134,11 @@
             name: '@deepseek-ai/dsh-tool-todo'
             config:
               allowParallelInProgress: true
+          - id: tool-memory
+            name: '@deepseek-ai/dsh-tool-memory'
+            config:
+              injectMaxBytes: 4096
+              maxRecallResults: 8
           - id: tool-web
             name: '@deepseek-ai/dsh-tool-web'
             config:

@@ -59,6 +59,8 @@ import * as ToolLsp from '@deepseek-ai/dsh-tool-lsp'
 import * as ToolSkill from '@deepseek-ai/dsh-tool-skill'
 import * as ToolSessionQuery from '@deepseek-ai/dsh-tool-session-query'
 import * as ToolJobs from '@deepseek-ai/dsh-tool-jobs'
+import type MemoryStore from '@deepseek-ai/dsh-memory'
+import * as ToolMemory from '@deepseek-ai/dsh-tool-memory'
 import BrowserUseRegistry from '@deepseek-ai/dsh-browser-use'
 import * as StagehandBrowserTools from '@deepseek-ai/dsh-experimental-browser-use-stagehand-native'
 import type TeamService from '@deepseek-ai/dsh-experimental-agent-team'
@@ -617,6 +619,20 @@ const TOOL_PACKAGES: ToolPackage[] = [
     scope: ctx => catalogChildScopes.get(ctx) as Agent,
     note:
       'All nine tools are scoped to implicit Team Leads and durable teammates. The shipped dsh-base bundle keeps the package disabled; the documented Agent Teams profile patch enables it while disabling the legacy continuable-child control names.',
+  },
+  {
+    pkg: '@deepseek-ai/dsh-tool-memory',
+    dir: 'tool-memory',
+    source: 'packages/memory/tool-memory/src/tools.ts',
+    requires: ['ctx.tools', 'ctx.memory', 'ctx.systemPrompt', 'ctx.sessionProjections', 'owning Agent session'],
+    writes: ['tool/call', 'tool/result', 'user/message catalog at pre-step'],
+    async mount(ctx) {
+      // Schema harvest never opens the store; the tools only need the service key present.
+      ctx.provide('memory', {} as MemoryStore)
+      await ctx.plugin(ToolMemory, { injectMaxBytes: 4096, maxRecallResults: 8 })
+    },
+    note:
+      'The three tools read and write the durable memory store owned by dsh-memory; the session working directory selects the project scope. The injected catalog is a user/message with the `tool-memory` source, bounded by `injectMaxBytes`, so the catalog states the shipped budget and recall cap.',
   },
   {
     pkg: '@deepseek-ai/dsh-tool-todo',

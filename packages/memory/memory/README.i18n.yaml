@@ -1,0 +1,70 @@
+# Bilingual-pair consistency record for README.md (docs/i18n/README.md): per heading
+# section, a hash of its English and Chinese blocks outside code blocks and generated regions.
+# After editing either side, bring the other along and re-record with:
+#   pnpm run verify-translation-pairing --write packages/memory/memory/README.md
+/:
+  en: 35b160d2e2f58f5d
+  zh: d5db97aa2c6906de
+/deepseek-ai-dsh-memory:
+  en: bbf00b4347d57138
+  zh: dc66c1ce3d7fb64d
+/deepseek-ai-dsh-memory/summary:
+  en: 6ba390dfc75cefe1
+  zh: c2d38f9fc8645f47
+/deepseek-ai-dsh-memory/table-of-contents:
+  en: d152484eb41ac6b4
+  zh: 09388d293f9be9cb
+/deepseek-ai-dsh-memory/use-this-package:
+  en: 924764c95d86c9f3
+  zh: 4e7625f8b3769b57
+/deepseek-ai-dsh-memory/use-this-package/when-to-choose-it:
+  en: 3aa2fcc57710d321
+  zh: 1e1a97d7e832e504
+/deepseek-ai-dsh-memory/use-this-package/minimal-configuration:
+  en: 13924eca85d105c7
+  zh: a7718714e7e91848
+/deepseek-ai-dsh-memory/use-this-package/where-memories-live:
+  en: 38411b6d7829f4fa
+  zh: 9edb87bf541ebe77
+/deepseek-ai-dsh-memory/use-this-package/scopes-and-the-project-root:
+  en: c51d13a9406a8695
+  zh: 8cf8eda530dc2fb2
+/deepseek-ai-dsh-memory/use-this-package/what-each-operation-does:
+  en: d334f546e8ede27c
+  zh: 3dc73673ca6b0123
+/deepseek-ai-dsh-memory/understand-the-implementation:
+  en: 751d2a78ece20258
+  zh: 2f375bd6611eb58b
+/deepseek-ai-dsh-memory/understand-the-implementation/design-philosophy:
+  en: bfa637eb862e76c7
+  zh: 8eaad9095336b6f8
+/deepseek-ai-dsh-memory/understand-the-implementation/source-map:
+  en: 948f3b7e95e70b14
+  zh: 1febd4a00bcf0f06
+/deepseek-ai-dsh-memory/understand-the-implementation/lifecycle:
+  en: 7863bfe05a0980c7
+  zh: 6c18a9e1dff44614
+/deepseek-ai-dsh-memory/understand-the-implementation/concurrency:
+  en: c9d1f9a2e97a5681
+  zh: 0c8db10f2b3a5988
+/deepseek-ai-dsh-memory/understand-the-implementation/no-invariant-companion:
+  en: 9c6b2ceda64a3f4d
+  zh: d11d4c3ea90e9a18
+/deepseek-ai-dsh-memory/further-exploration:
+  en: 4997f97466e531b4
+  zh: d299b3a4d7ee27ee
+/deepseek-ai-dsh-memory/model-experience:
+  en: 5696ec4174bc3628
+  zh: 909c075220fe9533
+/deepseek-ai-dsh-memory/model-experience/kv-cache-effect:
+  en: 40294c1c31b74824
+  zh: 63e2ea2570cc4605
+/deepseek-ai-dsh-memory/known-limitations-and-deferred-work:
+  en: 9902743cdbf792eb
+  zh: 399e65996532273a
+/deepseek-ai-dsh-memory/known-limitations-and-deferred-work/dev-note:
+  en: ac1d08360a93382b
+  zh: 5202abd09f7b6e99
+/deepseek-ai-dsh-memory/known-limitations-and-deferred-work/dev-note/future-git-shared-project-memories:
+  en: 52617f445d992fa3
+  zh: 3963ae9e753fddb8

@@ -549,6 +549,9 @@
 - id: tool-todo
   disabled: true
 
+- id: tool-memory
+  disabled: true
+
 - id: tool-web
   disabled: true
 

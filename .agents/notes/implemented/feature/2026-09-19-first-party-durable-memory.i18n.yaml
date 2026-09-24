@@ -1,0 +1,25 @@
+# Bilingual-pair consistency record for 2026-09-19-first-party-durable-memory.md (docs/i18n/README.md): per heading
+# section, a hash of its English and Chinese blocks outside code blocks and generated regions.
+# After editing either side, bring the other along and re-record with:
+#   pnpm run verify-translation-pairing --write .agents/notes/implemented/feature/2026-09-19-first-party-durable-memory.md
+/agent-note-first-party-durable-memory:
+  en: 7d2798b80a386a7b
+  zh: 5d763ac645671cea
+/agent-note-first-party-durable-memory/problem:
+  en: ac071138c2bc547a
+  zh: b3e8e76ef83d1829
+/agent-note-first-party-durable-memory/decision:
+  en: 9c49bec6bc557cec
+  zh: 036f44c558328549
+/agent-note-first-party-durable-memory/storage-layout:
+  en: d5e61968c509cccc
+  zh: 1cc949e8d4529f52
+/agent-note-first-party-durable-memory/alternatives-considered:
+  en: 0652638ac31fcf95
+  zh: 2772b18178e09416
+/agent-note-first-party-durable-memory/consequences:
+  en: 85ee5026a38e5fd2
+  zh: f703673e5c4681c9
+/agent-note-first-party-durable-memory/testing:
+  en: 7bf2522973001971
+  zh: bdf12e067fcffbe4

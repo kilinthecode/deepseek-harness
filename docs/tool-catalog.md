@@ -41,6 +41,7 @@ This table connects model-visible tool names to the plugin package and service s
 | `@deepseek-ai/dsh-tool-subagent-control` | `interrupt_agent`, `list_agents`, `send_message` | `ctx.tools`, `ctx.subagents`, `ctx.agents and ctx.sessionProjections (list_agents only)` | `tool/call`, `tool/result`, `child session events through ctx.subagents` | - | The globally named control tools over continuable background subagents: provider-bound `tool-subagent` instances register distinct delegation tools, while this package registers `send_message` and `interrupt_agent` once, plus `list_agents` from its separately loaded `/list-agents` plugin (whose catalog rows use the sessionProjections and live Agent registries). |
 | `@deepseek-ai/dsh-tool-jobs` | `job_kill`, `job_list`, `job_output` | `ctx.tools`, `ctx.jobs`, `ctx.systemPrompt` | `tool/call`, `tool/result`, `user/message via agent.inject() for background completion notices` | - | The kind-agnostic background-job controller: background bash commands, PTY sends, and subagents are read, listed, and killed through the same three tools. Loading the plugin attaches the controller that arms producers' `ctx.jobs.start()`. |
 | `@deepseek-ai/dsh-experimental-tool-agent-team` | `interrupt_agent`, `list_agents`, `send_message`, `spawn_teammate`, `team_task_create`, `team_task_get`, `team_task_list`, `team_task_update`, `wait_agent` | `ctx.tools`, `ctx.systemPrompt`, `ctx.agentTeams`, `an exact live Team member Agent` | `tool/call`, `team/member`, `team/message/queued`, `team/message/delivered`, `team/task`, `tool/result` | - | All nine tools are scoped to implicit Team Leads and durable teammates. The shipped dsh-base bundle keeps the package disabled; the documented Agent Teams profile patch enables it while disabling the legacy continuable-child control names. |
+| `@deepseek-ai/dsh-tool-memory` | `memory_forget`, `memory_recall`, `memory_write` | `ctx.tools`, `ctx.memory`, `ctx.systemPrompt`, `ctx.sessionProjections`, `owning Agent session` | `tool/call`, `tool/result`, `user/message catalog at pre-step` | - | The three tools read and write the durable memory store owned by dsh-memory; the session working directory selects the project scope. The injected catalog is a user/message with the `tool-memory` source, bounded by `injectMaxBytes`, so the catalog states the shipped budget and recall cap. |
 | `@deepseek-ai/dsh-tool-todo` | `todo_write` | `ctx.tools`, `owning Agent session` | `tool/call`, `todo/write`, `tool/result` | - | todo_write is session-owned state; UIs render the latest todo/write event as a checklist. `allowParallelInProgress` is required with no default, so the catalog states its choice: `true`, whose description invites several `in_progress` items. A deployment choosing `false` receives the same tool with a description asking for exactly one active task. |
 | `@deepseek-ai/dsh-tool-workflow` | `workflow` | `ctx.tools`, `ctx.workflowEngine`, `ctx.systemPrompt`, `a calling Agent (exec.agent parents the script children)` | `tool/call`, `tool/result` | - | - |
 | `@deepseek-ai/dsh-tool-workspace-dependencies` | `load_workspace_dependencies` | `ctx.tools` | `tool/call`, `tool/result` | - | - |
@@ -2504,6 +2505,111 @@ Wait for the next teammate status, mailbox, or shared-task change after this cal
 Source: [`packages/experimental/tool-agent-team/src/index.ts`](../packages/experimental/tool-agent-team/src/index.ts)
 
 All nine tools are scoped to implicit Team Leads and durable teammates. The shipped dsh-base bundle keeps the package disabled; the documented Agent Teams profile patch enables it while disabling the legacy continuable-child control names.
+
+<a id="deepseek-aidsh-tool-memory"></a>
+
+## `@deepseek-ai/dsh-tool-memory`
+
+### `memory_forget`
+
+Delete one saved memory by name and scope.
+
+```json
+{
+  "type": "object",
+  "properties": {
+    "name": {
+      "type": "string",
+      "description": "Name of the memory to delete."
+    },
+    "scope": {
+      "type": "string",
+      "description": "Scope the memory lives in.",
+      "enum": [
+        "global",
+        "project"
+      ]
+    }
+  },
+  "required": [
+    "name",
+    "scope"
+  ]
+}
+```
+
+Source: [`packages/memory/tool-memory/src/tools.ts`](../packages/memory/tool-memory/src/tools.ts)
+
+### `memory_recall`
+
+Read saved global memories and the current project's memories.
+
+```json
+{
+  "type": "object",
+  "properties": {
+    "query": {
+      "type": "string",
+      "description": "Case-insensitive substring matched against name, description, and content. Omit to list the newest memories."
+    }
+  }
+}
+```
+
+Source: [`packages/memory/tool-memory/src/tools.ts`](../packages/memory/tool-memory/src/tools.ts)
+
+### `memory_write`
+
+Save one durable memory for future sessions.
+
+```json
+{
+  "type": "object",
+  "properties": {
+    "name": {
+      "type": "string",
+      "description": "Stable lowercase kebab-case identifier (1 to 64 characters), e.g. \"prefers-pnpm\". Writing an existing name in the same scope replaces that memory."
+    },
+    "type": {
+      "type": "string",
+      "description": "user (who the user is and how they like to work) | feedback (feedback or corrections on how to do the work) | project (a durable fact or constraint about the current project) | reference (a pointer to an external resource such as a URL, ticket, or dashboard).",
+      "enum": [
+        "user",
+        "feedback",
+        "project",
+        "reference"
+      ]
+    },
+    "scope": {
+      "type": "string",
+      "description": "project for facts about the current repository (visible in sessions inside its project root) | global for everything else (visible in every session).",
+      "enum": [
+        "global",
+        "project"
+      ]
+    },
+    "description": {
+      "type": "string",
+      "description": "One line (at most 256 characters) shown in the memory catalog; make it specific enough to decide whether to recall the memory."
+    },
+    "content": {
+      "type": "string",
+      "description": "The memory itself: the fact, why it matters, and how to apply it."
+    }
+  },
+  "required": [
+    "name",
+    "type",
+    "scope",
+    "description",
+    "content"
+  ]
+}
+```
+
+Source: [`packages/memory/tool-memory/src/tools.ts`](../packages/memory/tool-memory/src/tools.ts)
+
+The three tools read and write the durable memory store owned by dsh-memory; the session working directory selects the project scope. The injected catalog is a user/message with the `tool-memory` source, bounded by `injectMaxBytes`, so the catalog states the shipped budget and recall cap.
 
 <a id="deepseek-aidsh-tool-todo"></a>
 

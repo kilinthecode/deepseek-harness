@@ -122,6 +122,7 @@
 | deploy root | 部署根目录 | | | |
 | dormant | 休眠 | | 睡眠、蛰伏 | 指已声明可配置但当前未注册路由的提供方 |
 | durability | 持久性 | | | |
+| durable memory | 持久记忆 | | | `dsh-memory` 跨会话保存的 agent 记忆；指动作时写「跨会话记住」 |
 | feature requirement | 功能依赖 | | | 功能或功能选项通过 `requires` 声明的关系 |
 | event | 事件 | | | |
 | event log | 事件日志 | | | |
@@ -149,6 +150,8 @@
 | language switcher | 语言切换行 | | | i18n 配对机制用语：双语配对文件顶部的互链行 |
 | merge | 合并 | | | |
 | message | 消息 | | | |
+| memory catalog | 记忆目录 | | | `dsh-tool-memory` 注入的已保存记忆索引消息；单独出现的 catalog 在记忆语境中写「目录」 |
+| memory scope | 作用域 | | | 记忆可见范围；取值 `global`、`project` 保持代码形式，正文可写「全局作用域」「项目作用域」 |
 | mod | 模组 | | | |
 | model provider | 模型提供商 | | | 指为模型提供 API 的厂商或网关：模型设置页文案、用户指南 providers 与 `ui-settings-models` README 用「提供商」；llm seam 的开发者文档（可配置提供方目录、dormant 等）沿用「提供方」 |
 | model selection | 模型选择 | | 模型目标 | 面向 Agent 的提供方、模型和可选推理强度选择。 |
@@ -170,8 +173,10 @@
 | prompt | 提示词 | | | |
 | provider | 提供方 | | | 泛指的提供方（搜索、检查、settings 文件、subagent 等）；模型厂商或网关见 model provider 行 |
 | provider-neutral | 提供方无关 | | 提供方中立 | |
+| project root | 项目根目录 | | | 从会话工作目录向上找到的首个含项目标记的目录 |
 | quality gate | 质量门禁 | | | |
 | quiescence | 完全停稳 | | 静默、静止状态 | 指生命周期工作全部结算后的状态 |
+| recall (memory) | 回忆 | | | 第一方记忆的读取操作；`memory_recall` 保持代码形式 |
 | reasoning | 推理 | 推理（reasoning） | | 需要和 `inference` 区分时保留英文括注 |
 | reasoning_content | 思考内容 | | | |
 | registry | 注册表 | | | |

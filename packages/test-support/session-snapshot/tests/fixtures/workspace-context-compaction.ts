@@ -1,8 +1,7 @@
 import type { Context } from '@deepseek-ai/cordis'
 import type {} from '@deepseek-ai/dsh-agent'
-import { CompactionId, compactCheckpointSource } from '@deepseek-ai/dsh-compaction'
-import { createUserMessage } from '@deepseek-ai/dsh-llm'
 import type {} from '@deepseek-ai/dsh-tools'
+import { appendFixtureCompaction } from './fixture-compaction.ts'
 
 export const name = 'workspace-context-compaction'
 
@@ -24,28 +23,7 @@ export function apply(ctx: Context): void {
         && event.data.source.kind === 'agent-instructions'
         && event.data.source.baseline === true)
     if (baseline === undefined) throw new Error('workspace baseline missing before snapshot compaction')
-    const openTurn = agent.session.snapshotEvents().findLast(event => event.type === 'turn/start')
-    if (openTurn?.type !== 'turn/start') throw new Error('workspace snapshot compaction has no open turn')
-    const compactionId = CompactionId('workspace-context-fixture')
-    const content = [{ type: 'text' as const, text: 'Earlier context was compacted for this snapshot.' }]
-    agent.session.append('compaction/start', { compactionId, turn: openTurn.data.turn })
-    agent.session.append('compaction/summary', {
-      compactionId,
-      summary: content,
-      shadowedRange: { start: baseline.seq, end: baseline.seq },
-      shadowedSeqs: [baseline.seq],
-      shadowedTokenCount: 1,
-      provider: 'snapshot',
-      model: 'snapshot',
-    })
-    agent.session.append('user/message', createUserMessage({
-      content,
-      source: compactCheckpointSource(compactionId),
-    }), {
-      surfaceOp: { op: 'replace', startSeq: baseline.seq, endSeq: baseline.seq },
-      sourceEventSeqs: [baseline.seq],
-    })
-    agent.session.append('compaction/end', { compactionId, turn: openTurn.data.turn })
+    appendFixtureCompaction(agent, baseline, 'workspace-context-fixture')
     return downstream
   })
 }

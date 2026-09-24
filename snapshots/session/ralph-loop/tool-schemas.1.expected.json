@@ -261,6 +261,90 @@
       }
     },
     {
+      "name": "memory_forget",
+      "description": "Delete one saved memory by name and scope.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": "string",
+            "description": "Name of the memory to delete."
+          },
+          "scope": {
+            "type": "string",
+            "description": "Scope the memory lives in.",
+            "enum": [
+              "global",
+              "project"
+            ]
+          }
+        },
+        "required": [
+          "name",
+          "scope"
+        ]
+      }
+    },
+    {
+      "name": "memory_recall",
+      "description": "Read saved global memories and the current project's memories.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "query": {
+            "type": "string",
+            "description": "Case-insensitive substring matched against name, description, and content. Omit to list the newest memories."
+          }
+        }
+      }
+    },
+    {
+      "name": "memory_write",
+      "description": "Save one durable memory for future sessions.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": "string",
+            "description": "Stable lowercase kebab-case identifier (1 to 64 characters), e.g. \"prefers-pnpm\". Writing an existing name in the same scope replaces that memory."
+          },
+          "type": {
+            "type": "string",
+            "description": "user (who the user is and how they like to work) | feedback (feedback or corrections on how to do the work) | project (a durable fact or constraint about the current project) | reference (a pointer to an external resource such as a URL, ticket, or dashboard).",
+            "enum": [
+              "user",
+              "feedback",
+              "project",
+              "reference"
+            ]
+          },
+          "scope": {
+            "type": "string",
+            "description": "project for facts about the current repository (visible in sessions inside its project root) | global for everything else (visible in every session).",
+            "enum": [
+              "global",
+              "project"
+            ]
+          },
+          "description": {
+            "type": "string",
+            "description": "One line (at most 256 characters) shown in the memory catalog; make it specific enough to decide whether to recall the memory."
+          },
+          "content": {
+            "type": "string",
+            "description": "The memory itself: the fact, why it matters, and how to apply it."
+          }
+        },
+        "required": [
+          "name",
+          "type",
+          "scope",
+          "description",
+          "content"
+        ]
+      }
+    },
+    {
       "name": "ralph",
       "description": "Run a foreground fresh-agent Ralph loop toward one immutable objective. Use only when the direct human explicitly asks for Ralph or fresh-agent iteration. Each round opens a new child with no parent conversation or prior child session; the shared workspace is long-term memory, and only a bounded structured report crosses rounds. The call returns when a worker reports completion or a concrete blocker, or at the round limit. Ordinary long-running same-session work belongs to goal tools.",
       "parameters": {

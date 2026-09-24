@@ -1486,6 +1486,44 @@ export const SERVICE_API: readonly ServiceApiEntry[] = [
     ],
   },
   {
+    key: 'memory',
+    summary: 'The memory store.',
+    description: 'The memory store. Opening the domain happens during service init, so every consumer that injects `memory` sees an open store; the domain closes with this service\'s fiber.',
+    methods: [
+      {
+        signature: 'async resolveProjectRoot(cwd: string | undefined): Promise<string | undefined>',
+        description: 'Resolve the project root of one working directory.',
+        parameters: [{ name: 'cwd', description: 'session working directory; `undefined` when the session has none.' }],
+        returns: 'the absolute root, or `undefined` when there is no cwd or no marker above it.',
+      },
+      {
+        signature: 'async visible(cwd: string | undefined): Promise<MemoryVisible>',
+        description: 'Every record visible from one working directory: all global records plus the current project\'s records when a root resolves.',
+        parameters: [{ name: 'cwd', description: 'session working directory, when the session has one.' }],
+        returns: 'the visible records in stored order.',
+      },
+      {
+        signature: 'async write(request: MemoryWriteRequest): Promise<MemoryWriteResult>',
+        description: 'Insert or replace one record durably. Writes and forgets of one store run one at a time in call order, from the project-root lookup to the durable put, so overlapping calls never exceed the cap and a same-name overlap reports `created` for the earlier call and keeps its `createdAt`. The cap counts the records this process has loaded or written.',
+        parameters: [{ name: 'request', description: 'the memory to store.' }],
+        returns: 'whether the record was created or updated, and the stored record.',
+        throws: ['{@link MemoryError} for an invalid name, description, or content, a project scope without a project root, or a cap reached in the target scope.'],
+      },
+      {
+        signature: 'async recall(request: MemoryRecallRequest): Promise<MemoryRecord[]>',
+        description: 'Find visible records by substring, newest first, then by name, then with `global` before `project`. A request without a resolvable project root searches the global records only.',
+        parameters: [{ name: 'request', description: 'query, result cap, and working directory.' }],
+        returns: 'at most `limit` matching records.',
+      },
+      {
+        signature: 'async forget(request: MemoryForgetRequest): Promise<void>',
+        description: 'Delete one record durably, in the same one-at-a-time call order as writes.',
+        parameters: [{ name: 'request', description: 'name, scope, and working directory.' }],
+        throws: ['{@link MemoryError} when the name is invalid, the project root is unavailable, or no such record exists in the scope.'],
+      },
+    ],
+  },
+  {
     key: 'messageFeedback',
     summary: 'Session-log service; cold operations never construct a Session or Agent.',
     description: 'Session-log service; cold operations never construct a Session or Agent.',
@@ -5620,6 +5658,42 @@ export const TYPE_API: readonly TypeApiEntry[] = [
   {
     name: 'McpResourceRequest',
     declaration: 'export type McpResourceRequest = {\n    method: \'resources/list\' | \'resources/templates/list\';\n    cursor?: string;\n} | {\n    method: \'resources/read\';\n    uri: string;\n};',
+  },
+  {
+    name: 'MemoryForgetRequest',
+    declaration: 'export interface MemoryForgetRequest {\n    readonly name: string;\n    readonly scope: MemoryScope;\n    readonly cwd?: string | undefined;\n}',
+  },
+  {
+    name: 'MemoryName',
+    declaration: 'export type MemoryName = Branded<\'MemoryName\'>;',
+  },
+  {
+    name: 'MemoryRecallRequest',
+    declaration: 'export interface MemoryRecallRequest {\n    readonly query?: string | undefined;\n    readonly limit: number;\n    readonly cwd?: string | undefined;\n}',
+  },
+  {
+    name: 'MemoryRecord',
+    declaration: 'export interface MemoryRecord {\n    readonly name: MemoryName;\n    readonly type: MemoryType;\n    readonly scope: MemoryScope;\n    readonly description: string;\n    readonly content: string;\n    readonly projectRoot?: string | undefined;\n    readonly createdAt: string;\n    readonly updatedAt: string;\n}',
+  },
+  {
+    name: 'MemoryScope',
+    declaration: 'export type MemoryScope = (typeof MEMORY_SCOPES)[number];',
+  },
+  {
+    name: 'MemoryType',
+    declaration: 'export type MemoryType = (typeof MEMORY_TYPES)[number];',
+  },
+  {
+    name: 'MemoryVisible',
+    declaration: 'export interface MemoryVisible {\n    readonly global: readonly MemoryRecord[];\n    readonly project?: {\n        readonly root: string;\n        readonly records: readonly MemoryRecord[];\n    };\n}',
+  },
+  {
+    name: 'MemoryWriteRequest',
+    declaration: 'export interface MemoryWriteRequest {\n    readonly name: string;\n    readonly type: MemoryType;\n    readonly scope: MemoryScope;\n    readonly description: string;\n    readonly content: string;\n    readonly cwd?: string | undefined;\n}',
+  },
+  {
+    name: 'MemoryWriteResult',
+    declaration: 'export interface MemoryWriteResult {\n    readonly outcome: \'created\' | \'updated\';\n    readonly record: MemoryRecord;\n}',
   },
   {
     name: 'Message',

@@ -2063,6 +2063,39 @@ export interface ReconnectConfig {
 ```
 <!-- END GENERATED config-catalog:@deepseek-ai/dsh-mcp-client -->
 
+<!-- BEGIN GENERATED config-catalog:@deepseek-ai/dsh-memory -->
+<a id="deepseek-aidsh-memory"></a>
+
+## `@deepseek-ai/dsh-memory`
+
+- `inject`: `storageDomain`
+- `source`: [`packages/memory/memory/src/index.ts:46`](../packages/memory/memory/src/index.ts)
+
+```ts config-catalog
+/** Store configuration. Invalid values fail plugin load. */
+export interface Config {
+  /**
+   * Cap on records in the global scope and, separately, in each project. A
+   * write that would exceed it fails so the agent curates with `forget`. The
+   * count covers the records this process has loaded or written.
+   */
+  maxRecords: number
+  /**
+   * UTF-8 byte cap on one record's `content`, checked on every write and on
+   * every stored record when the store opens; a stored record over the cap is
+   * backed up and skipped.
+   */
+  maxRecordBytes: number
+  /**
+   * Directory entries that identify a project root while walking upward from
+   * the session working directory. Mirrors the `agent-instructions` default so
+   * both plugins agree on what the project is.
+   */
+  projectRootMarkers?: string[]
+}
+```
+<!-- END GENERATED config-catalog:@deepseek-ai/dsh-memory -->
+
 <!-- BEGIN GENERATED config-catalog:@deepseek-ai/dsh-message-feedback -->
 <a id="deepseek-aidsh-message-feedback"></a>
 
@@ -3294,7 +3327,7 @@ export interface Config {
 
 ## `@deepseek-ai/dsh-system-prompt`
 
-- `source`: [`packages/core/system-prompt/src/index.ts:247`](../packages/core/system-prompt/src/index.ts)
+- `source`: [`packages/core/system-prompt/src/index.ts:248`](../packages/core/system-prompt/src/index.ts)
 
 ```ts config-catalog
 /** Plugin config: the deployment-authored fragment of the system prompt (see {@link Config.personaPrefix} for its contract). */
@@ -3610,6 +3643,29 @@ export interface Config {
 }
 ```
 <!-- END GENERATED config-catalog:@deepseek-ai/dsh-tool-lsp -->
+
+<!-- BEGIN GENERATED config-catalog:@deepseek-ai/dsh-tool-memory -->
+<a id="deepseek-aidsh-tool-memory"></a>
+
+## `@deepseek-ai/dsh-tool-memory`
+
+- `inject`: `memory` · `tools` · `sessionProjections` · `systemPrompt`
+- `source`: [`packages/memory/tool-memory/src/index.ts:30`](../packages/memory/tool-memory/src/index.ts)
+
+```ts config-catalog
+/** Model-facing memory configuration. Invalid values fail plugin load. */
+export interface Config {
+  /**
+   * UTF-8 byte budget of the injected catalog. `0` disables injection while
+   * the tools stay available; a positive budget that cuts entries adds a line
+   * saying how many were omitted.
+   */
+  injectMaxBytes: number
+  /** Most records one `memory_recall` call returns. */
+  maxRecallResults: number
+}
+```
+<!-- END GENERATED config-catalog:@deepseek-ai/dsh-tool-memory -->
 
 <!-- BEGIN GENERATED config-catalog:@deepseek-ai/dsh-tool-present -->
 <a id="deepseek-aidsh-tool-present"></a>

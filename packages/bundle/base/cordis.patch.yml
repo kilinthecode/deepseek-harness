@@ -175,6 +175,16 @@
       config:
         backend: json
 
+    # Durable agent memory: one JSON document per record under the `memory`
+    # domain (`storages/memory/{global,project}/`). The store is host-plane so
+    # the domain opens once per process; the model-facing tools and catalog
+    # (`tool-memory` below) compose per agent preset on Web.
+    - id: memory
+      name: '@deepseek-ai/dsh-memory'
+      config:
+        maxRecords: 200
+        maxRecordBytes: 4096
+
     # Persisted projection cache: throttled write-behind over the
     # session_projcache domain (per-record layout — one version-stamped
     # checkpoint document per session), serving the session listing's
@@ -430,6 +440,14 @@
       name: '@deepseek-ai/dsh-tool-todo'
       config:
         allowParallelInProgress: true
+
+    # Memory tools plus the catalog injected at session start; the store is the
+    # `memory` row above.
+    - id: tool-memory
+      name: '@deepseek-ai/dsh-tool-memory'
+      config:
+        injectMaxBytes: 4096
+        maxRecallResults: 8
 
     # Persisted same-session goals reach the model and the slash menu here; the
     # domain, driver, and `/goal` command are above.
