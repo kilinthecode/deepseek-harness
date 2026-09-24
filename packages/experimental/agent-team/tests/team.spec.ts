@@ -2069,4 +2069,27 @@ describe('Team mailbox and waiting', () => {
     expect(resolve).toHaveBeenCalledWith('mock', 'mock', expect.any(AbortSignal))
     expect(durable(lead).pendingMessages).toEqual([])
   })
+
+  it('does not queue an image message whose caller aborts during the target route read', async () => {
+    const { ctx, lead } = await setup(['hang'])
+    const started = await spawn(ctx, lead, 'abort-target')
+    const target = await waitRunning(ctx, started.member.id)
+    const controller = new AbortController()
+    const routeRead = Promise.withResolvers<{ inputModalities: string[] }>()
+    const resolve = vi.spyOn(ctx.llm, 'resolveModelInfo').mockReturnValue(routeRead.promise as never)
+
+    const sending = ctx.agentTeams.sendMessage(lead, {
+      target: 'abort-target', content: [imageBlock], signal: controller.signal,
+    })
+    await vi.waitFor(() => { expect(resolve).toHaveBeenCalled() })
+    controller.abort()
+    // The route lookup ignores the abort and succeeds anyway.
+    routeRead.resolve({ inputModalities: ['text', 'image'] })
+
+    await expect(sending).rejects.toMatchObject({ name: 'AbortError' })
+    expect(lead.session.snapshotEvents().some(event => event.type === 'team/message/queued')).toBe(false)
+
+    target.cancel({ kind: 'parent' })
+    await target.whenIdle()
+  })
 })

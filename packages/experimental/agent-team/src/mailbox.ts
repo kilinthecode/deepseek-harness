@@ -117,9 +117,11 @@ export class TeamMailbox {
     const content = admitTeamContent(request.content)
     if (contentHasImage(content)) {
       // Resolve the target and its route before the transaction so the LLM
-      // I/O this refusal check needs does not hold the journal lock; the
-      // append below re-resolves the target against the current state and
-      // repeats the self-message check as defense in depth.
+      // I/O this refusal check needs does not hold the journal lock. The
+      // transaction below resolves the target again, as it does for text;
+      // member names are never reused and an active member stays active, so
+      // that resolution names the target checked here. The transaction does
+      // not re-check the route, which needs another awaited model-info read.
       const preflightTarget = resolveActiveMember(root, this.journal.state(root), request.target)
       if (preflightTarget.id === caller.id) throw new TeamError('a Team member cannot message itself', 'TEAM_SELF_MESSAGE')
       await assertTeamTargetAcceptsImages(this.ctx, root, preflightTarget.id, request.signal)

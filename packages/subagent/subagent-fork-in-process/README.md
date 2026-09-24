@@ -57,6 +57,10 @@ The generated [configuration catalog](../../../docs/config-catalog.md#deepseek-a
 
 One tool call starts one child seeded with the completed turns and waits for its result: the child sees the conversation up to the parent's last completed turn, works in its own session, and the parent receives only its final output — or an errored tool result for cancellation, refusal, token-limit truncation, or startup rejection. The seed is captured once at start; later parent turns never reach the child.
 
+### Image prompts
+
+This backend declares `imageInput: true`: the child runs in this process and reads the same attachment store, so image blocks in its prompt and in the seeded completed turns stay valid durable references. The subagent service therefore admits an image prompt for this provider, and the resolved child route decides: the shared in-process driver checks a one-shot start before it creates the child, and the subagent service checks a continuable creation before any child write. A route whose declared input modalities omit `image` rejects with `MODEL_DOES_NOT_SUPPORT_IMAGES` and leaves no child; a route that never disclosed its modalities proceeds. Both starts capture the seed before that check's await, so a parent turn that completes while the check is pending never enters the seed.
+
 -----
 
 <a id="understand-the-implementation"></a>

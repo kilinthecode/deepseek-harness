@@ -53,6 +53,10 @@ kind: "package-reference"
 
 一次工具调用启动一个子 agent 并等待其结果：子 agent 在自有会话中工作，父级只接收其最终输出；若运行被取消、拒绝、被 token 上限截断或在启动时被拒，则收到出错的工具结果。被拒绝的启动不会留下已发布的子 agent；完成的运行在结果收集后即被 dispose（资源释放）。
 
+### 图片提示词
+
+本后端声明 `imageInput: true`：子 agent 在本进程内运行并读取同一个附件存储，因此其提示词中的图片块仍是有效的持久引用。subagent 服务因此会为本提供方放行图片提示词，由解析出的子级路由决定：共享的进程内驱动器在创建子 agent 之前检查一次性启动，subagent 服务在任何子级写入之前检查可继续创建。声明的输入模态省略 `image` 的路由会以 `MODEL_DOES_NOT_SUPPORT_IMAGES` 拒绝，且不留下子 agent；从未披露其模态的路由则放行。
+
 -----
 
 <a id="understand-the-implementation"></a>

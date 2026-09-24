@@ -76,6 +76,26 @@ interface ContinuationHost {
 }
 
 /**
+ * Take one child route source whole: the child's own route when it names
+ * either field, else the parent's current delegation route. Never mixes a
+ * child's provider with the parent's model, which is a route neither source
+ * names.
+ */
+function childRouteOrParent(
+  provider: string | undefined,
+  model: string | undefined,
+  parent: Agent,
+): { provider?: string; model?: string } {
+  const route = provider === undefined && model === undefined
+    ? parentAgentOptionsForDelegation(parent)
+    : { provider, model }
+  return {
+    ...route.provider !== undefined ? { provider: route.provider } : {},
+    ...route.model !== undefined ? { model: route.model } : {},
+  }
+}
+
+/**
  * The continuable-subagent orchestration service behind `ctx.subagents`. Tool
  * schema and host adapters are consumers of this one contract; foreground
  * one-shot delegation keeps calling `ctx.subagents.start()` and never enters
@@ -137,14 +157,16 @@ export class SubagentContinuationManager {
     // but the service is also callable outside a turn.
     const releaseHold = this.activations.holdOwnership(parent, childId)
     try {
-      if (contentHasImage(request.prompt)) {
-        await assertImageCapableRoute(this.ctx, agentProvider, agentModel, spec.signal)
-      }
+      // A provider's synchronous contribution (the fork seed) is captured
+      // here, before the first await, alongside the delegated policies above.
       const prepared = await this.host.prepareContinuable(spec.provider, {
         sessionId: childId,
         parent,
         signal: spec.signal,
       })
+      if (contentHasImage(request.prompt)) {
+        await assertImageCapableRoute(this.ctx, agentProvider, agentModel, spec.signal)
+      }
       spec.signal.throwIfAborted()
       this.activations.assertAdmitting(parent)
 
@@ -343,9 +365,11 @@ export class SubagentContinuationManager {
   /**
    * Resolve one continuable child's current LLM route from the same sources
    * cold resume reads: a live Activation's Agent options, or else the
-   * persisted descriptor's `agentProvider`/`agentModel`. Falls back to the
-   * parent's current delegation route for whichever field neither source
-   * names, so a Team teammate without a recorded route inherits the Lead's.
+   * persisted descriptor's `agentProvider`/`agentModel`. The fallback is per
+   * source, never per field: a child source that names either field is the
+   * route as a whole (a missing field stays missing), and only a source that
+   * names neither falls back to the parent's current delegation route as a
+   * whole, so a Team teammate without a recorded route inherits the Lead's.
    * @param parent - the delegating parent whose route is the fallback.
    * @param childId - durable direct-child session id.
    * @param signal - caller cancellation for the persisted descriptor read.
@@ -357,14 +381,8 @@ export class SubagentContinuationManager {
     signal: AbortSignal,
   ): Promise<{ provider?: string; model?: string }> {
     const live = this.activations.get(childId)
-    const fallback = parentAgentOptionsForDelegation(parent)
     if (live !== undefined) {
-      const provider = live.handle.agent.options.provider ?? fallback.provider
-      const model = live.handle.agent.options.model ?? fallback.model
-      return {
-        ...provider !== undefined ? { provider } : {},
-        ...model !== undefined ? { model } : {},
-      }
+      return childRouteOrParent(live.handle.agent.options.provider, live.handle.agent.options.model, parent)
     }
     const query = this.requireSessionQuery()
     let observation: SessionObservation
@@ -377,12 +395,7 @@ export class SubagentContinuationManager {
     using source = observation
     const descriptor = foldSubagentDescriptor(source.events.slice(source.inheritedEventCount))
     const persisted = descriptor?.mode === 'continuable' ? descriptor : undefined
-    const provider = persisted?.agentProvider ?? fallback.provider
-    const model = persisted?.agentModel ?? fallback.model
-    return {
-      ...provider !== undefined ? { provider } : {},
-      ...model !== undefined ? { model } : {},
-    }
+    return childRouteOrParent(persisted?.agentProvider, persisted?.agentModel, parent)
   }
 
   /**

@@ -1040,6 +1040,44 @@ describe('SubagentRuntime.startContinuable', () => {
     await waitNoActivation(ctx, innerChildId)
     await waitNoActivation(ctx, outer.childId)
   })
+
+  it('captures the fork seed before the pending image-capability check, not after it', async () => {
+    const { ctx, parent } = await setup([
+      textResponse('parent turn'),
+      textResponse('forked child'),
+    ])
+    const routeCheck = Promise.withResolvers<{ inputModalities: string[] }>()
+    const checking = Promise.withResolvers<undefined>()
+    const resolveModelInfo = ctx.llm.resolveModelInfo.bind(ctx.llm)
+    let first = true
+    vi.spyOn(ctx.llm, 'resolveModelInfo').mockImplementation((provider, model, signal) => {
+      if (!first) return resolveModelInfo(provider, model, signal)
+      first = false
+      checking.resolve(undefined)
+      return routeCheck.promise as never
+    })
+    const childId = SessionId('fork-image-seed-child')
+
+    const starting = ctx.subagents.startContinuable({
+      ...startSpec(parent, 'fork'),
+      childId,
+      request: { prompt: [imageBlock], parent },
+    })
+    await checking.promise
+    // The parent completes its first turn while the route check is pending.
+    // A seed captured after that await would carry this turn into the child.
+    parent.followup(createUserMessage({ content: message('parent work'), source: { kind: 'user' } }))
+    await parent.whenIdle()
+    parkParent(ctx, parent)
+    routeCheck.resolve({ inputModalities: ['text', 'image'] })
+    await starting
+    await waitNoActivation(ctx, childId)
+
+    const loaded = await loadStoredSession(ctx.sessionPersistence, childId)
+    expect(loaded.meta.isSeeded).toBe(false)
+    expect(loaded.inheritedEventCount).toBe(0)
+    expect(hasUserText(loaded.events, 'parent work')).toBe(false)
+  })
 })
 
 describe('continuable image Queue prompts', () => {
@@ -3176,6 +3214,45 @@ describe('continuable child route probe', () => {
     await assertContinuableChildAcceptsImages(ctx.subagents, parent, run.id, testSignal)
 
     expect(resolve).toHaveBeenCalledWith('mock', 'mock', testSignal)
+  })
+
+  it('takes a cold descriptor that names only a provider as the whole route, not mixed with the parent model', async () => {
+    const { ctx } = await setup([textResponse('child work')])
+    const providerOnly = await ctx.agentLoop.create(SessionId('provider-only-parent-cold'), { provider: 'mock' })
+    const started = await ctx.subagents.startContinuable(startSpec(providerOnly))
+    await waitNoActivation(ctx, started.childId)
+    // The parent has since logged a request that names a model.
+    vi.spyOn(providerOnly.session, 'requestHeader').mockReturnValue({
+      config: { provider: 'mock', model: 'later-model' },
+    })
+    const resolve = vi.spyOn(ctx.llm, 'resolveModelInfo')
+      .mockResolvedValue({ inputModalities: ['text'] } as never)
+
+    // The descriptor names `agentProvider` only; a per-field fallback would
+    // pair it with the parent's `later-model` and refuse against that route.
+    await assertContinuableChildAcceptsImages(ctx.subagents, providerOnly, started.childId, testSignal)
+
+    expect(resolve).not.toHaveBeenCalled()
+  })
+
+  it('takes live Activation options that name only a provider as the whole route, not mixed with the parent model', async () => {
+    const releaseChild = Promise.withResolvers<undefined>()
+    const adapter = new GatedAdapter([{ chunks: textResponse('child answer'), gate: releaseChild.promise }])
+    const { ctx } = await setupWith(adapter)
+    const providerOnly = await ctx.agentLoop.create(SessionId('provider-only-parent-live'), { provider: 'mock' })
+    const started = await ctx.subagents.startContinuable(startSpec(providerOnly))
+    await vi.waitFor(() => { expect(ctx.agents.get(started.childId)).toBeDefined() })
+    vi.spyOn(providerOnly.session, 'requestHeader').mockReturnValue({
+      config: { provider: 'mock', model: 'later-model' },
+    })
+    const resolve = vi.spyOn(ctx.llm, 'resolveModelInfo')
+      .mockResolvedValue({ inputModalities: ['text'] } as never)
+
+    await assertContinuableChildAcceptsImages(ctx.subagents, providerOnly, started.childId, testSignal)
+
+    expect(resolve).not.toHaveBeenCalled()
+    releaseChild.resolve(undefined)
+    await waitNoActivation(ctx, started.childId)
   })
 
   it('proceeds without a route when a live child and its parent both declare none', async () => {

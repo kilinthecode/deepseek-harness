@@ -214,6 +214,7 @@ Peer 消息追加在 target 可复用历史前缀之后。冷恢复会先复用�
 - **mailbox 不保证跨进程 exactly-once**——不支持多个 harness 进程并发操作同一 Team。
 - **teammate 继承 Lead 的委派路由**——`spawnTeammate()` 不请求按 child 的 `agentOptions`，因此带图片的初始提示词或 peer 消息只能到达继承路由接受图片的 teammate；为单个 teammate 选择不同模型属于本包之外的模型选择特性。
 - **以 Lead 为目标的路由检查可能落后于尚未生效的模型切换**——mailbox 的 Lead 目标网关与 `sendToParent` 读取 `parentAgentOptionsForDelegation`，即 Lead 最近一次已记录请求的路由：切换到支持图片的模型如果尚未记录，仍可能拒绝发给 Lead 的 teammate 图片，直到 Lead 下一次请求记录新路由；切换到纯文本模型若尚未记录则会放行该图片，之后运行时会把它投影为占位文本。
+- **图片路由检查先于持久追加，而 Lead 的路由可能在检查之后改变**——`sendMessage()` 与 `spawnTeammate()` 在其 Team 事务之前检查路由，事务不会重复该检查，因为它需要 await 一次模型信息读取。Lead 以不同模型记录一次请求时，其路由就会改变，而检查之后发生的这种改变有两个失败方向。若 Lead 目标的路由变为纯文本，已入队的图片仍会通过不施加任何图片网关的 `Agent.steer()` 投递，Lead 的模型看到的是占位文本而非图片。若 spawn 继承的路由变为纯文本，subagent 服务自身的创建检查会在 `provisioning` 记录之后拒绝该 child，于是 Team 记录一个 `failed` 成员，该名字与一个成员名额被用掉。改为支持图片的模型只会产生调用方可以重试的拒绝。
 
 <a id="dev-note"></a>
 ### 开发备注

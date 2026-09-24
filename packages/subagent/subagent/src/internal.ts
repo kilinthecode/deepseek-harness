@@ -118,7 +118,8 @@ export function steerHostSubagentPrompt(
 /**
  * Refuse image content for one continuable direct child whose resolved LLM
  * route cannot accept it — the live Activation route, or else the persisted
- * descriptor route, falling back to the parent's current delegation route.
+ * descriptor route, each taken whole, falling back to the parent's current
+ * delegation route only when that source names neither provider nor model.
  * Reads the runtime's private continuation manager through its own
  * fail-loud accessor instead of adding a public Service Definition member
  * for this one caller: unlike `assertImageCapableRoute`'s re-export above,
