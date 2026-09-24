@@ -2025,7 +2025,7 @@ lsp 工具将提供方选择和语言服务器子进程置于 ctx.lsp 之后，�
 
 ### `list_subagent_models`
 
-发现 subagent 可用的 LLM 路由，不更改当前 Agent。无参数调用会列出已注册提供方；提供 `provider` 时会列出其公布的模型及其图片输入支持；同时提供 `provider` 和 `model` 时会检查该精确模型、其图片输入支持及其推理强度。目录条目只提供建议：adapter 可能接受未列出的模型 id。把返回的 id 用于委派工具的 `provider`、`model` 与 `reasoning_effort` 字段。
+发现 subagent 可用的 LLM 路由，不更改当前 Agent。无参数调用会列出已注册提供方；提供 `provider` 时会列出其公布的模型；同时提供 `provider` 和 `model` 时会检查该精确模型及其推理强度。模型条目包含图片输入支持。目录条目只提供建议：adapter 可能接受未列出的模型 id。把返回的 id 用于委派工具的 `provider`、`model` 与 `reasoning_effort` 字段。
 
 ```json
 {
@@ -2266,7 +2266,7 @@ lsp 工具将提供方选择和语言服务器子进程置于 ctx.lsp 之后，�
 
 ### `list_agents`
 
-列出 Lead 与所有持久 teammate，以及可用于寻址的 target、当前可用状态和图片输入支持。inactive 表示没有轮次在执行，不表示任务结果。provisioning 与 failed 描述成员创建状态。无法解析某成员的路由时会省略其 acceptsImages。
+列出 Lead 与所有持久 teammate，以及可用于寻址的 target、当前可用状态和图片输入支持。inactive 表示没有轮次在执行，不表示任务结果。provisioning 与 failed 描述成员创建状态。
 
 ```json
 {

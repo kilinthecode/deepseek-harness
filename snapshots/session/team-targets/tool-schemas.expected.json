@@ -245,7 +245,7 @@
     },
     {
       "name": "list_agents",
-      "description": "List the Lead and every durable teammate with an addressable target, current availability, and image-input support. inactive means no turn is executing, not a task result. provisioning and failed describe member creation. acceptsImages is omitted when that member's route cannot be resolved.",
+      "description": "List the Lead and every durable teammate with an addressable target, current availability, and image-input support. inactive means no turn is executing, not a task result. provisioning and failed describe member creation.",
       "parameters": {
         "type": "object",
         "properties": {}
