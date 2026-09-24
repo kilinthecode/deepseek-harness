@@ -27,6 +27,7 @@ const SESSION = 'lead' as SessionId
 const WORKER = 'worker-id' as SessionId
 const TASK_1 = 'task-1' as TeamTaskId
 const TASK_2 = 'task-2' as TeamTaskId
+const TASK_3 = 'task-3' as TeamTaskId
 const PROPOSAL = 'proposal-1' as RoomProposalView['id']
 const task: TeamTask = {
   id: TASK_1,
@@ -378,6 +379,14 @@ describe('TeamAction', () => {
                     submittedRevision: 2, verifierName: 'worker', verdict: 'rejected', reason: 'the cache never invalidates',
                   },
                 },
+                {
+                  ...task,
+                  id: TASK_3,
+                  subject: 'Approved work',
+                  revision: 4,
+                  status: 'completed',
+                  verification: { submittedRevision: 3, verifierName: 'lead', verdict: 'approved' },
+                },
               ],
             },
           },
@@ -392,6 +401,7 @@ describe('TeamAction', () => {
     expect(screen.getByText(`${zh.verification}: ${zh.none}`)).toBeTruthy()
     expect(rejectedTask?.textContent).toContain(zh['status.in_progress'])
     expect(screen.getByText(`${zh.verification}: worker · ${zh['verdict.reject']} — the cache never invalidates`)).toBeTruthy()
+    expect(screen.getByText(`${zh.verification}: lead · ${zh['verdict.approve']}`)).toBeTruthy()
     for (const card of [verifying, rejectedTask]) expect(card?.querySelector('button, input, select, textarea')).toBeNull()
   })
 
@@ -646,13 +656,22 @@ describe('TeamAction room', () => {
   it('shows why each reviewer stood where it did', async () => {
     const debated: RoomRemoteView = {
       ...room,
-      proposals: [{ ...rejected, standings: [{ reviewer: 'worker', verdict: 'reject', reason: 'the cache never invalidates' }] }],
+      proposals: [{
+        ...rejected,
+        standings: [
+          { reviewer: 'worker', verdict: 'reject', reason: 'the cache never invalidates' },
+          { reviewer: 'auditor', verdict: 'approve', reason: 'bounded staleness is acceptable' },
+          { reviewer: 'lead', verdict: 'abstain', reason: 'the owner decides' },
+        ],
+      }],
     }
     render(<TeamAction {...roomBench(debated).props} />)
     openPanel()
 
     expect(await screen.findByText(`worker · ${zh['verdict.reject']}`)).toBeTruthy()
     expect(screen.getByText('the cache never invalidates')).toBeTruthy()
+    expect(screen.getByText(`auditor · ${zh['verdict.approve']}`)).toBeTruthy()
+    expect(screen.getByText(`lead · ${zh['verdict.abstain']}`)).toBeTruthy()
   })
 
   it('names quiet participants and the reviewers that went silent on an escalated decision', async () => {
@@ -699,6 +718,19 @@ describe('TeamAction room', () => {
 
     expect((await screen.findByRole('alert')).textContent).toBe('room unavailable (gateway/internal)')
     expect(screen.getByText('Implement runtime')).toBeTruthy()
+  })
+
+  it('reports a room read the carrier rejects instead of answering', async () => {
+    const thrown = bench({ injected: { loadRoom: vi.fn(() => Promise.reject(new Error('room namespace is not mounted'))) } })
+    const view = render(<TeamAction {...thrown.props} />)
+    openPanel()
+    expect((await screen.findByRole('alert')).textContent).toBe('room namespace is not mounted')
+    view.unmount()
+
+    const opaque = bench({ injected: { loadRoom: vi.fn(() => Promise.reject('socket closed')) } })
+    render(<TeamAction {...opaque.props} />)
+    openPanel()
+    expect((await screen.findByRole('alert')).textContent).toBe('socket closed')
   })
 
   it('shows a participant streaming live, then its committed utterance', async () => {
@@ -799,6 +831,79 @@ describe('TeamAction room', () => {
     await waitFor(() => { expect(escalateDecision).toHaveBeenCalledOnce() })
     expect(escalateDecision.mock.calls[0]).toEqual([SESSION, { proposalId: PROPOSAL, reason: 'the reviewers disagree' }])
     await waitFor(() => { expect(screen.queryByRole('textbox', { name: zh['room.reason'] })).toBeNull() })
+  })
+
+  it('keeps the prompt and escalation drafts when the Host refuses them', async () => {
+    const open: RoomRemoteView = { ...room, proposals: [{ ...rejected, phase: 'open', rejections: [], awaiting: ['worker'] }] }
+    const promptParticipant = vi.fn()
+      .mockResolvedValueOnce({ ok: false as const, error: new RemoteError('gateway/internal', 'floor refused', {}) })
+      .mockRejectedValueOnce('socket closed')
+    const escalateDecision = vi.fn(() =>
+      Promise.resolve({ ok: false as const, error: new RemoteError('gateway/internal', 'escalation refused', {}) }))
+    render(<TeamAction {...roomBench(open, { promptParticipant, escalateDecision }).props} />)
+    openPanel()
+    await screen.findByText('the cache serves stale reads')
+
+    fireEvent.change(screen.getByRole('combobox', { name: zh['room.promptTarget'] }), { target: { value: 'worker' } })
+    const instruction = screen.getByRole<HTMLInputElement>('textbox', { name: zh['room.instruction'] })
+    fireEvent.change(instruction, { target: { value: 'give your view' } })
+    fireEvent.click(screen.getByRole('button', { name: zh['room.prompt'] }))
+    expect((await screen.findByRole('alert')).textContent).toBe('floor refused (gateway/internal)')
+    // A carrier that rejects with a non-Error value still reaches the reader.
+    fireEvent.click(screen.getByRole('button', { name: zh['room.prompt'] }))
+    await waitFor(() => { expect(screen.getByRole('alert').textContent).toBe('socket closed') })
+    expect(instruction.value).toBe('give your view')
+
+    const escalate = screen.getByRole('button', { name: zh['room.escalate'] })
+    fireEvent.click(escalate)
+    const reason = screen.getByRole<HTMLInputElement>('textbox', { name: zh['room.reason'] })
+    fireEvent.change(reason, { target: { value: 'the reviewers disagree' } })
+    fireEvent.click(screen.getByRole('button', { name: zh['room.escalateSubmit'] }))
+    await waitFor(() => { expect(screen.getByRole('alert').textContent).toBe('escalation refused (gateway/internal)') })
+    expect(reason.value).toBe('the reviewers disagree')
+    // The escalate control toggles its form closed again.
+    fireEvent.click(escalate)
+    expect(escalate.getAttribute('aria-expanded')).toBe('false')
+    expect(screen.queryByRole('textbox', { name: zh['room.reason'] })).toBeNull()
+  })
+
+  it('keeps the last room view when the live follow ends', async () => {
+    const followRoom = vi.fn(() => Promise.reject(new Error('stream closed')))
+    render(<TeamAction {...roomBench(room, { followRoom }).props} />)
+    openPanel()
+    expect(await screen.findByText('the cache serves stale reads')).toBeTruthy()
+    await waitFor(() => { expect(followRoom).toHaveBeenCalledOnce() })
+    await act(async () => { await Promise.resolve() })
+    expect(screen.getByText('the cache serves stale reads')).toBeTruthy()
+    expect(screen.queryByRole('alert')).toBeNull()
+  })
+
+  it('drops a room read that settles after the panel closed', async () => {
+    const pending: Array<PromiseWithResolvers<Awaited<ReturnType<TeamActionInjected['loadRoom']>>>> = []
+    const loadRoom = vi.fn(() => {
+      const next = Promise.withResolvers<Awaited<ReturnType<TeamActionInjected['loadRoom']>>>()
+      pending.push(next)
+      return next.promise
+    })
+    const followRoom = vi.fn(() => new Promise<void>(() => {}))
+    render(<TeamAction {...bench({ injected: { loadRoom, followRoom } }).props} />)
+    openPanel()
+    await waitFor(() => { expect(loadRoom).toHaveBeenCalledOnce() })
+    fireEvent.keyDown(screen.getByRole('dialog'), { key: 'Escape' })
+    openPanel()
+    await waitFor(() => { expect(loadRoom).toHaveBeenCalledTimes(2) })
+    fireEvent.keyDown(screen.getByRole('dialog'), { key: 'Escape' })
+    await act(async () => {
+      pending[0]!.resolve({ ok: true as const, value: room })
+      pending[1]!.reject(new Error('late failure'))
+      await Promise.resolve()
+    })
+    openPanel()
+    await waitFor(() => { expect(loadRoom).toHaveBeenCalledTimes(3) })
+    // Neither stale answer reached the reopened panel.
+    expect(screen.queryByText('the cache serves stale reads')).toBeNull()
+    expect(screen.queryByRole('alert')).toBeNull()
+    expect(followRoom).not.toHaveBeenCalled()
   })
 
   it('reports a rejected room action and a thrown carrier failure without clearing the draft', async () => {

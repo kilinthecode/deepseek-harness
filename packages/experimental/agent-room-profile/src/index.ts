@@ -1,7 +1,8 @@
-/** Experimental profile bundle whose cordis.patch.yml composes the room layers. */
-
 /**
- * Marker export: the bundle contributes configuration, not runtime code. The
- * Loader reads `dsh.bundle.patch` from this package's manifest.
+ * @deepseek-ai/dsh-experimental-agent-room-profile — experimental room profile bundle.
+ * The package's runtime content is its `dsh.bundle.patch` document; this
+ * module exports no runtime API.
+ * @module @deepseek-ai/dsh-experimental-agent-room-profile
  */
-export const name = 'agent-room-profile'
+
+export {}

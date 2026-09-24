@@ -535,6 +535,38 @@ describe('dsh-tool-team', () => {
     await vi.waitFor(() => { expect(ctx.agents.get(childId)).toBeUndefined() }, { timeout: 5_000 })
   })
 
+  it('records a peer verdict and its reason on submitted work', async () => {
+    const { ctx, lead } = await setup(['hang', 'hang', 'hang'])
+    const spawned = await execute(ctx, lead, 'spawn_teammate', {
+      name: 'verified-worker', description: 'verified worker', prompt: 'wait', context: 'fresh',
+    })
+    const child = await waitRunning(ctx, spawnedChildId(ctx, lead, spawned))
+    const created = JSON.parse(text(await execute(ctx, lead, 'team_task_create', {
+      subject: 'verified task', description: 'needs a peer verdict',
+    }))) as { id: string; revision: number }
+    const claimed = JSON.parse(text(await execute(ctx, child, 'team_task_update', {
+      task_id: created.id, expected_revision: created.revision, action: 'claim',
+    }))) as { revision: number }
+    const submitted = JSON.parse(text(await execute(ctx, child, 'team_task_update', {
+      task_id: created.id, expected_revision: claimed.revision, action: 'submit',
+    }))) as { revision: number; status: string }
+    expect(submitted.status).toBe('verifying')
+
+    // Only another member's verdict, with its reason, completes submitted work.
+    const verified = await execute(ctx, lead, 'team_task_update', {
+      task_id: created.id,
+      expected_revision: submitted.revision,
+      action: 'verify',
+      verdict: 'approved',
+      reason: 'checked the delivered work',
+    })
+    expect(verified.isError).toBe(false)
+    expect(JSON.parse(text(verified))).toMatchObject({
+      status: 'completed',
+      verification: { verifierName: 'lead', verdict: 'approved', reason: 'checked the delivered work' },
+    })
+  })
+
   it('adapts optional task filters, mutations, pagination, and default waiting', async () => {
     const { ctx, lead } = await setup(['hang'])
     const spawned = await execute(ctx, lead, 'spawn_teammate', {
