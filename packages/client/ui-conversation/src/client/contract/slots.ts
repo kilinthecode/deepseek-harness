@@ -378,9 +378,10 @@ export interface ComposerBarOwnerProps {
   onRequestWorkspace?: () => void
   /**
    * Whether the Session's current model route accepts image input, as
-   * `ui-model-selection` advises. `false` refuses new image intake and
-   * disables Send while the rail holds one; omitted, `null`, and `true`
-   * all allow images (unknown capability is advisory allow, matching Host
+   * `ui-model-selection` advises. `false` refuses new image intake and,
+   * while the rail holds one, disables Send for a message draft or an
+   * attachment-carrying command claim; omitted, `null`, and `true` all
+   * allow images (unknown capability is advisory allow, matching Host
    * prompt admission).
    */
   acceptsImages?: boolean | null

@@ -67,6 +67,11 @@ export interface SessionInputDeps {
     release(ids: readonly DraftAttachmentId[]): void
     /** Localized composer notice for a claimed command that does not accept attachments. */
     unsupportedNotice(token: string): string
+    /**
+     * Localized refusal when `ids` include an image the Session's current
+     * route refuses (a `false` route-image advisory); undefined admits them.
+     */
+    imageRefusal(ids: readonly DraftAttachmentId[]): string | undefined
   }
 }
 
@@ -772,13 +777,16 @@ export class SessionInputShell implements SessionInput {
    * The submit transaction: claim.submit against the session scope; ok maps
    * from the outcome kind. An accepting claim receives the serialized draft
    * attachments, which are cleared and released only on a success outcome; a
-   * failure (serialize, transport, or handler error) keeps draft and attachments
-   * for correction.
+   * failure (image refusal, serialize, transport, or handler error) keeps
+   * draft and attachments for correction. The image refusal settles before
+   * serialization, so a refused image is neither encoded nor sent.
    */
   private beginSubmit(attempt: SubmitAttempt, claim: CommandClaim, args: string): void {
     const attachmentIds = claim.attachments === true ? [...this.attachmentIds] : []
     Promise.resolve()
-      .then(async () => {
+      .then(async (): Promise<SubmitOutcome | undefined> => {
+        const refusal = attachmentIds.length > 0 ? this.deps.commandAttachments.imageRefusal(attachmentIds) : undefined
+        if (refusal !== undefined) return { kind: 'error', text: refusal }
         const attachments = attachmentIds.length > 0 ? await this.deps.commandAttachments.serialize(attachmentIds) : []
         // Serialization may outlive the attempt (large files, session
         // teardown); a dead attempt must not reach the Host executor.

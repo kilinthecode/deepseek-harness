@@ -20,7 +20,7 @@ Web composer 在每个 route 上都接受图像。只有在点击发送之后、
 
 ### composer 只对 `false` 采取行动
 
-当值为 `false` 时，composer 以 `image.modelUnsupported` 拒绝图像输入；当 rail 持有图像时，它在每个片段中只显示一次该文案，禁用发送按钮，并拒绝用 Enter 手势提交消息草稿。`/` 命令仍可提交，以便用 `/model` 切换回去。`null` 和 `true` 不改变 composer 的行为。Host 提示准入仍是强制执行点。模型菜单在列表包含 `image` 的行上显示 Image 说明文字。
+当值为 `false` 时，composer 以 `image.modelUnsupported` 拒绝图像输入；当 rail 持有图像时，它在每个片段中只显示一次该文案，并对消息草稿或携带附件的命令认领拒绝发送按钮与 Enter 手势。认领不携带附件的 `/` 行仍可提交，由命令层按自己的附件策略处理；若某一行经裁决得到携带附件的认领，命令提交会在编码其图像之前拒绝它，因为 Host 命令执行不检查 route。`null` 和 `true` 不改变 composer 的行为。无论提示性信息如何，Host 提示准入都会拒绝 Session 已解析模型不接受的带图像提示。模型菜单在列表包含 `image` 的行上显示 Image 说明文字。
 
 ## 考虑过的替代方案
 
@@ -34,8 +34,8 @@ Web composer 在每个 route 上都接受图像。只有在点击发送之后、
 
 ## 影响
 
-composer 与 Host 的分歧只会偏向放行：未知或未列出的 route 允许图像，由 Host 来裁决。用户在发送前就能看到拒绝提示，可以移除图像或切换回去。没有组合 `ui-model-selection` 的部署保持今天的行为，因为该提示性信息保持为 `null`。
+composer 与 Host 提示准入可能在两个方向上出现分歧。未知或未列出的 route 允许图像，由 Host 来裁决。过时的提示性信息会拒绝 Host 本会接纳的图像：刷新目录失败后保留的 `false` 会在适配器、设置或凭据的变更使 route 支持图像之后继续存在，直到下一次成功加载；切换模型后，在 `modelSelection` 投影报告新选择之前也会沿用之前的值。用户在发送前就能看到拒绝提示，可以移除图像或切换回去。没有组合 `ui-model-selection` 的部署中该提示性信息保持为 `null`，因此其 composer 在每个 route 上都接受图像；Host 提示准入仍会拒绝发往仅支持文本 route 的带图像提示，而携带附件的命令中的图像会不经检查地进入模型请求。
 
 ## 测试
 
-测试覆盖目录字段（`packages/api/session-controller/tests/session-models.host.spec.ts`）、提示性信息推送（`packages/client/ui-model-selection/tests`）、注册表（`packages/client/ui-conversation/tests/route-image.client.spec.ts`），以及 composer 的输入、提示、发送、Enter 和斜杠命令行为（`packages/client/ui-conversation/tests/input-bar.client.spec.tsx`）。
+测试覆盖目录字段（`packages/api/session-controller/tests/session-models.host.spec.ts`）、提示性信息推送（`packages/client/ui-model-selection/tests`）、注册表（`packages/client/ui-conversation/tests/route-image.client.spec.ts`）、两种语言下 composer 的输入、提示、发送、Enter 和斜杠命令行为（`packages/client/ui-conversation/tests/input-bar.client.spec.tsx`），以及命令提交时的拒绝（同一目录下的 `input-matrix.client.spec.tsx`、`input-scenarios.client.spec.tsx` 和 `service-orchestration.client.spec.ts`，以及基于构建产物客户端的 `apps/web/tests/command-image-envelope.expected.e2e.ts`）。

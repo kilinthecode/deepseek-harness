@@ -245,9 +245,12 @@ export const InputBar = memo(function InputBar({
   // switch back rather than lose the attachment silently.
   const railHasUnsupportedImage = acceptsImages === false
     && attachments.some(attachment => attachment.kind === 'image')
-  // A slash command stays submittable so `/model` can switch back to an
-  // image-capable route without first discarding the images.
-  const imagesBlockSubmit = railHasUnsupportedImage && !draft.trimStart().startsWith('/')
+  // A `/` line stays submittable unless its claim carries attachments
+  // (`/goal`, `/plan`). The command plane refuses attachments a command does
+  // not accept and runs an action command without them; a line that
+  // adjudicates to an attachment-carrying claim is refused at command submit.
+  const imagesBlockSubmit = railHasUnsupportedImage
+    && (!draft.trimStart().startsWith('/') || input?.claim?.attachments === true)
   const refusalAnnounced = useRef(false)
   useEffect(() => {
     if (!railHasUnsupportedImage) {
@@ -346,8 +349,8 @@ export const InputBar = memo(function InputBar({
       return
     }
     if (keyboard === undefined) return // absent machine: the button is disabled
-    /* v8 ignore next -- defensive: the primary button is disabled for empty, disabled, and pending-upload states. */
-    if (!empty && !disabled && !machineBusy && !uploadsPending) keyboard.submit(primarySubmitMode)
+    /* v8 ignore next -- defensive: the primary button is disabled for empty, disabled, pending-upload, and refused-image states. */
+    if (!empty && !disabled && !machineBusy && !uploadsPending && !imagesBlockSubmit) keyboard.submit(primarySubmitMode)
   }
 
   // Claim ghost hint: rendered by CSS as generated content after the last

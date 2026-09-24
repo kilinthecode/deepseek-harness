@@ -20,7 +20,7 @@ The Web composer accepted images on every route. It learned that the selected ro
 
 ### The composer acts only on `false`
 
-With `false`, the composer refuses image intake with `image.modelUnsupported`; while the rail holds images it shows that copy once per episode, disables Send, and refuses the Enter gesture for a message draft. A `/` command stays submittable so `/model` can switch back. `null` and `true` leave the composer unchanged. Host prompt admission remains the enforcement point. The model menu shows an Image caption on rows whose list includes `image`.
+With `false`, the composer refuses image intake with `image.modelUnsupported`; while the rail holds images it shows that copy once per episode and refuses Send and the Enter gesture for a message draft or for a command claim that carries attachments. A `/` line whose claim carries no attachments stays submittable under the command plane's own attachment policy, and the command submit refuses a line that adjudicates to an attachment-carrying claim before encoding its images, because Host command execution does not check the route. `null` and `true` leave the composer unchanged. Host prompt admission refuses an image prompt the Session's resolved model does not accept, regardless of the advisory. The model menu shows an Image caption on rows whose list includes `image`.
 
 ## Alternatives considered
 
@@ -34,8 +34,8 @@ With `false`, the composer refuses image intake with `image.modelUnsupported`; w
 
 ## Consequences
 
-The composer disagrees with the Host only toward allowing: an unknown or unlisted route allows images and the Host decides. Users see the refusal before sending and can remove the images or switch back. A deployment that composes no `ui-model-selection` keeps today's behavior because the advisory stays `null`.
+The composer and Host prompt admission can disagree in both directions. An unknown or unlisted route allows images, and the Host decides. A stale advisory refuses images the Host would admit: a `false` retained after a failed catalog refresh outlives an adapter, setting, or credential change that made the route image-capable until the next successful load, and a model switch keeps the previous value until the `modelSelection` projection reports the new selection. Users see the refusal before sending and can remove the images or switch back. A deployment that composes no `ui-model-selection` leaves the advisory `null`, so its composer accepts images on every route; Host prompt admission still refuses an image prompt on a text-only route, and the images of an attachment-carrying command reach the model request unchecked.
 
 ## Testing
 
-Specs cover the catalog field (`packages/api/session-controller/tests/session-models.host.spec.ts`), the advisory push (`packages/client/ui-model-selection/tests`), the registry (`packages/client/ui-conversation/tests/route-image.client.spec.ts`), and the composer intake, notice, Send, Enter, and slash-command behavior (`packages/client/ui-conversation/tests/input-bar.client.spec.tsx`).
+Specs cover the catalog field (`packages/api/session-controller/tests/session-models.host.spec.ts`), the advisory push (`packages/client/ui-model-selection/tests`), the registry (`packages/client/ui-conversation/tests/route-image.client.spec.ts`), the composer intake, notice, Send, Enter, and slash-command behavior in both locales (`packages/client/ui-conversation/tests/input-bar.client.spec.tsx`), and the command-submit refusal (`input-matrix.client.spec.tsx`, `input-scenarios.client.spec.tsx`, and `service-orchestration.client.spec.ts` in the same directory, and the built-client `apps/web/tests/command-image-envelope.expected.e2e.ts`).

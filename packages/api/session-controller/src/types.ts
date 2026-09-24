@@ -141,8 +141,8 @@ export interface ModelCatalogModel {
   /**
    * Accepted request modalities, copied from the resolved LLM registry entry.
    * Absent means unknown capability; a present list that omits `'image'`
-   * marks the route text-only. Catalog membership stays advisory — Host
-   * prompt admission is the enforcement point for an image-bearing request.
+   * marks the route text-only. Catalog membership stays advisory: prompt admission
+   * checks an image prompt against the Session's resolved model; command execution does not.
    */
   readonly inputModalities?: readonly ModelModality[]
 }

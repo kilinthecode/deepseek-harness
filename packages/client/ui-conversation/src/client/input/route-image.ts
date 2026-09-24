@@ -6,11 +6,14 @@
  * ui-model-selection → ui-conversation, never back — so the publisher pushes
  * here and the bar reads its own Session's store. Unlike a composer block,
  * this carries no reason text: `false` refuses new image intake, and `null`
- * (unknown capability, or the current selection is not listed) allows it,
- * matching Host prompt admission.
+ * (unknown capability, or the current selection is not listed) allows it and
+ * leaves the decision to Host prompt admission.
  *
- * This is an affordance, not enforcement: the Host refuses an image prompt a
- * route cannot serve regardless of what any client disables.
+ * Host prompt admission refuses an image prompt the Session's resolved model
+ * does not accept, regardless of this advisory. Host command execution does
+ * not check the images an attachment-accepting command (`/goal`, `/plan`)
+ * carries, so the composer's refusal under a `false` advisory is the only
+ * guard on that path (package README, Known Limitations and Deferred Work).
  */
 import { createSnapshotStore, type SnapshotStore } from '@deepseek-ai/dsh-client-store'
 import type { SessionId } from '@deepseek-ai/dsh-session/types'

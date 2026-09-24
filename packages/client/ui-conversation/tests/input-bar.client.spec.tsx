@@ -135,7 +135,7 @@ function bench(over?: BenchOptions) {
   const shell = new SessionInputShell({
     actx: SCTX,
     defaultSink: sink,
-    commandAttachments: { serialize: () => Promise.resolve([]), release: () => {}, unsupportedNotice: (token: string) => `${token.trim()} attachments-unsupported` },
+    commandAttachments: { serialize: () => Promise.resolve([]), release: () => {}, unsupportedNotice: (token: string) => `${token.trim()} attachments-unsupported`, imageRefusal: () => undefined },
     inbox: createSnapshotStore<InboxState>({
       'next-turn': over?.queue ?? [],
       'next-step': over?.nextStep ?? [],
@@ -583,16 +583,16 @@ describe('image draft rail', () => {
 })
 
 describe('route image capability', () => {
-  it('refuses an image batch when the route does not accept images, without calling addFiles', () => {
+  it.each([zh, en])('refuses an image batch when the route does not accept images, without calling addFiles', (dictionary) => {
     const addFiles = vi.fn(() => null)
-    const result = bench({ addFiles, acceptsImages: false })
+    const result = bench({ addFiles, acceptsImages: false, t: makeTranslate(dictionary, commonZh) })
     act(() => {
       attachmentOwner(result.slotCalls).onAddFiles([
         new File([Uint8Array.of(1)], 'x.png', { type: 'image/png' }),
       ])
     })
     expect(addFiles).not.toHaveBeenCalled()
-    expect(result.view.getByRole('alert').textContent).toContain('当前模型不支持图片，请切换支持图片的模型')
+    expect(result.view.getByRole('alert').textContent).toBe(dictionary['image.modelUnsupported'])
   })
 
   it('still admits a generic file batch when the route does not accept images', () => {
@@ -604,16 +604,16 @@ describe('route image capability', () => {
     expect(result.view.queryByRole('alert')).toBeNull()
   })
 
-  it('classifies images by declared MIME type when no image-limit projection has loaded', () => {
+  it.each([zh, en])('classifies images by declared MIME type when no image-limit projection has loaded', (dictionary) => {
     const addFiles = vi.fn(() => null)
-    const result = bench({ addFiles, acceptsImages: false })
+    const result = bench({ addFiles, acceptsImages: false, t: makeTranslate(dictionary, commonZh) })
     act(() => {
       attachmentOwner(result.slotCalls).onAddFiles([
         new File([Uint8Array.of(1)], 'x.jpeg', { type: 'image/jpeg' }),
       ])
     })
     expect(addFiles).not.toHaveBeenCalled()
-    expect(result.view.getByRole('alert').textContent).toContain('当前模型不支持图片')
+    expect(result.view.getByRole('alert').textContent).toBe(dictionary['image.modelUnsupported'])
   })
 
   it('still admits an image batch when the route accepts images or capability is unknown', () => {
@@ -648,15 +648,15 @@ describe('route image capability', () => {
     expect(addFilesOmitted).toHaveBeenCalled()
   })
 
-  it('toasts once and keeps the thumbnails when a route switch leaves images in the rail unsupported', () => {
+  it.each([zh, en])('toasts once and keeps the thumbnails when a route switch leaves images in the rail unsupported', (dictionary) => {
     const file = new File([Uint8Array.of(1)], 'pixel.png', { type: 'image/png' })
     const attachments = [
       { kind: 'image' as const, id: 'draft-1' as DraftAttachmentId, file, previewUrl: 'blob:draft-1' },
     ]
-    const result = bench({ attachments, acceptsImages: true })
+    const result = bench({ attachments, acceptsImages: true, t: makeTranslate(dictionary, commonZh) })
     expect(result.view.queryByRole('alert')).toBeNull()
     result.view.rerender(<InputBar {...result.props} acceptsImages={false} />)
-    expect(result.view.getByRole('alert').textContent).toContain('当前模型不支持图片，请切换支持图片的模型')
+    expect(result.view.getByRole('alert').textContent).toBe(dictionary['image.modelUnsupported'])
     expect(attachmentOwner(result.slotCalls).attachments).toEqual(attachments)
   })
 
@@ -666,44 +666,93 @@ describe('route image capability', () => {
     expect(result.view.queryByRole('alert')).toBeNull()
   })
 
-  it('disables Send while the rail holds an image the current route refuses', () => {
+  it.each([zh, en])('disables Send while the rail holds an image the current route refuses', (dictionary) => {
     const file = new File([Uint8Array.of(1)], 'pixel.png', { type: 'image/png' })
     const attachments = [
       { kind: 'image' as const, id: 'draft-1' as DraftAttachmentId, file, previewUrl: 'blob:draft-1' },
     ]
-    const result = bench({ attachments, acceptsImages: false })
-    expect((result.view.getByRole('button', { name: '发送消息' }) as HTMLButtonElement).disabled).toBe(true)
+    const result = bench({ attachments, acceptsImages: false, t: makeTranslate(dictionary, commonZh) })
+    expect((result.view.getByRole('button', { name: dictionary['input.send'] }) as HTMLButtonElement).disabled).toBe(true)
   })
 
-  it('announces the refusal when images already sit in the rail of a route that refuses them', () => {
+  it.each([zh, en])('announces the refusal when images already sit in the rail of a route that refuses them', (dictionary) => {
     const file = new File([Uint8Array.of(1)], 'pixel.png', { type: 'image/png' })
     const attachments = [
       { kind: 'image' as const, id: 'draft-1' as DraftAttachmentId, file, previewUrl: 'blob:draft-1' },
     ]
-    const result = bench({ attachments, acceptsImages: false })
-    expect(result.view.getByRole('alert').textContent).toContain('当前模型不支持图片')
+    const result = bench({ attachments, acceptsImages: false, t: makeTranslate(dictionary, commonZh) })
+    expect(result.view.getByRole('alert').textContent).toBe(dictionary['image.modelUnsupported'])
   })
 
-  it('refuses the Enter submit gesture while the rail holds an image the current route refuses', async () => {
-    const file = new File([Uint8Array.of(1)], 'pixel.png', { type: 'image/png' })
-    const attachments = [
-      { kind: 'image' as const, id: 'draft-1' as DraftAttachmentId, file, previewUrl: 'blob:draft-1' },
-    ]
-    const result = bench({ attachments, acceptsImages: false, draft: 'describe this' })
-    fireEvent.keyDown(result.textarea, { key: 'Enter' })
-    await act(async () => {})
-    expect(result.sink).not.toHaveBeenCalled()
-    expect(attachmentOwner(result.slotCalls).attachments).toEqual(attachments)
-    expect(result.view.getByRole('alert').textContent).toContain('当前模型不支持图片')
+  it.each([zh, en])('refuses the Enter submit gesture while the rail holds an image the current route refuses', async (dictionary) => {
+    vi.useFakeTimers()
+    try {
+      const file = new File([Uint8Array.of(1)], 'pixel.png', { type: 'image/png' })
+      const attachments = [
+        { kind: 'image' as const, id: 'draft-1' as DraftAttachmentId, file, previewUrl: 'blob:draft-1' },
+      ]
+      const result = bench({ attachments, acceptsImages: false, draft: 'describe this', t: makeTranslate(dictionary, commonZh) })
+      // Let the arrival announcement fade so the alert below is the Enter refusal's own.
+      act(() => { vi.advanceTimersByTime(4000) })
+      expect(result.view.queryByRole('alert')).toBeNull()
+      fireEvent.keyDown(result.textarea, { key: 'Enter' })
+      await act(async () => {})
+      expect(result.sink).not.toHaveBeenCalled()
+      expect(attachmentOwner(result.slotCalls).attachments).toEqual(attachments)
+      expect(result.view.getByRole('alert').textContent).toBe(dictionary['image.modelUnsupported'])
+    } finally {
+      vi.useRealTimers()
+    }
   })
 
-  it('keeps a slash command submittable while the rail holds refused images', () => {
+  it('keeps an unclaimed slash line submittable while the rail holds refused images', () => {
     const file = new File([Uint8Array.of(1)], 'pixel.png', { type: 'image/png' })
     const attachments = [
       { kind: 'image' as const, id: 'draft-1' as DraftAttachmentId, file, previewUrl: 'blob:draft-1' },
     ]
     const result = bench({ attachments, acceptsImages: false, draft: '/model' })
     expect(result.button.disabled).toBe(false)
+  })
+
+  it('keeps a claim that carries no attachments submittable while the rail holds refused images', () => {
+    const file = new File([Uint8Array.of(1)], 'pixel.png', { type: 'image/png' })
+    const attachments = [
+      { kind: 'image' as const, id: 'draft-1' as DraftAttachmentId, file, previewUrl: 'blob:draft-1' },
+    ]
+    const result = bench({ attachments, acceptsImages: false })
+    act(() => {
+      result.shell.beginCommand(
+        { name: 'compact', token: '/compact ', submit: () => Promise.resolve({ kind: 'success' }) },
+        { start: 0, end: 0, draftRev: result.shell.snapshot.draftRev },
+      )
+    })
+    expect(result.shell.snapshot.phase).toBe('claimed')
+    expect((result.view.getByRole('button', { name: '发送消息' }) as HTMLButtonElement).disabled).toBe(false)
+  })
+
+  it('refuses a claim that carries attachments like a message draft: Send disabled, Enter submits nothing', async () => {
+    const file = new File([Uint8Array.of(1)], 'pixel.png', { type: 'image/png' })
+    const attachments = [
+      { kind: 'image' as const, id: 'draft-1' as DraftAttachmentId, file, previewUrl: 'blob:draft-1' },
+    ]
+    const submit = vi.fn(() => Promise.resolve<SubmitOutcome>({ kind: 'success' }))
+    const result = bench({ attachments, acceptsImages: false })
+    act(() => {
+      result.shell.beginCommand(
+        { name: 'goal', token: '/goal ', attachments: true, submit },
+        { start: 0, end: 0, draftRev: result.shell.snapshot.draftRev },
+      )
+    })
+    writeDraft(result.shell, '/goal 描述这张图')
+    expect(result.shell.snapshot.phase).toBe('claimed')
+    expect((result.view.getByRole('button', { name: '发送消息' }) as HTMLButtonElement).disabled).toBe(true)
+    fireEvent.keyDown(result.textarea, { key: 'Enter' })
+    await act(async () => {})
+    expect(submit).not.toHaveBeenCalled()
+    expect(result.sink).not.toHaveBeenCalled()
+    expect(result.shell.snapshot.phase).toBe('claimed')
+    expect(result.shell.snapshot.draft).toBe('/goal 描述这张图')
+    expect(attachmentOwner(result.slotCalls).attachments).toEqual(attachments)
   })
 
   it('leaves Send enabled for the same rail when the route accepts images', () => {

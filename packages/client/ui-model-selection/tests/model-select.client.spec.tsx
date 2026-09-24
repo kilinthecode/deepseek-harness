@@ -8,19 +8,27 @@ import { createSnapshotStore } from '@deepseek-ai/dsh-client-store'
 import type { ComponentProps } from 'react'
 import type { ModelDirectoryState } from '../src/client/directory.ts'
 import { ModelSelect } from '../src/client/ModelSelect.tsx'
-import { zh } from '../src/client/locales.ts'
+import { en, zh } from '../src/client/locales.ts'
+import { en as commonEn } from '@deepseek-ai/dsh-client-locale/src/locales/en.ts'
 import { zh as commonZh } from '@deepseek-ai/dsh-client-locale/src/locales/zh.ts'
 
 // The seat's key domain is model ∪ common; the stub mirrors the real lookup
 // chain: package dictionary, then common vocabulary, then the key.
-const t: ComponentProps<typeof ModelSelect>['t'] = (key, params) => {
-  const template = (zh as Record<string, string>)[key]
-    ?? (commonZh as Record<string, string>)[key]
-    ?? key
-  return params === undefined
-    ? template
-    : template.replace(/\{(\w+)\}/g, (match, name: string) => name in params ? String(params[name]) : match)
+function translator(
+  dictionary: typeof zh | typeof en,
+  common: typeof commonZh | typeof commonEn,
+): ComponentProps<typeof ModelSelect>['t'] {
+  return (key, params) => {
+    const template = (dictionary as Record<string, string>)[key]
+      ?? (common as Record<string, string>)[key]
+      ?? key
+    return params === undefined
+      ? template
+      : template.replace(/\{(\w+)\}/g, (match, name: string) => name in params ? String(params[name]) : match)
+  }
 }
+
+const t = translator(zh, commonZh)
 
 const reasoning = {
   efforts: [
@@ -466,7 +474,10 @@ describe('ModelSelect keyboard walk', () => {
 })
 
 describe('ModelSelect image capability', () => {
-  it('captions only an image-capable row as its accessible description, keeping the model name as its accessible name', () => {
+  it.each([
+    { locale: 'zh', dictionary: zh, common: commonZh },
+    { locale: 'en', dictionary: en, common: commonEn },
+  ])('captions only an image-capable row as its accessible description, keeping the model name as its accessible name ($locale)', ({ dictionary, common }) => {
     const directory = createSnapshotStore(state({
       groups: [{
         id: 'deepseek-official',
@@ -485,19 +496,19 @@ describe('ModelSelect image capability', () => {
       directory={directory}
       load={vi.fn()}
       select={vi.fn().mockResolvedValue({ ok: true, value: undefined })}
-      t={t}
+      t={translator(dictionary, common)}
     />)
-    fireEvent.click(screen.getByRole('button', { name: /选择模型/ }))
-    fireEvent.click(screen.getByRole('menuitem', { name: /^模型/ }))
+    fireEvent.click(screen.getByRole('button', { name: new RegExp(dictionary['trigger.selectAria']) }))
+    fireEvent.click(screen.getByRole('menuitem', { name: new RegExp(`^${dictionary['menu.model']}`) }))
 
     const rows = screen.getAllByRole('menuitemradio')
     expect(rows.map(row => row.textContent)).toEqual([
-      'DeepSeek-V4-Flash图片', 'DeepSeek-V4-Pro', 'External Model',
+      `DeepSeek-V4-Flash${dictionary['capability.image']}`, 'DeepSeek-V4-Pro', 'External Model',
     ])
     // Accessible names stay the model names; only the image-capable row is described by the caption.
     const imageRow = screen.getByRole('menuitemradio', { name: 'DeepSeek-V4-Flash' })
     const describedBy = imageRow.getAttribute('aria-describedby')
-    expect(describedBy === null ? undefined : document.getElementById(describedBy)?.textContent).toBe('图片')
+    expect(describedBy === null ? undefined : document.getElementById(describedBy)?.textContent).toBe(dictionary['capability.image'])
     expect(screen.getByRole('menuitemradio', { name: 'DeepSeek-V4-Pro' }).getAttribute('aria-describedby')).toBeNull()
     expect(screen.getByRole('menuitemradio', { name: 'External Model' }).getAttribute('aria-describedby')).toBeNull()
   })

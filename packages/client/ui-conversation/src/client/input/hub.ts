@@ -21,6 +21,8 @@ import type {
 } from '../contract/input.ts'
 import type { ComposerKeyboard } from '../contract/draft-editor.ts'
 import type { InputSubmitMode } from '../contract/composer-submission.ts'
+import type { ComposerRouteImage } from '../contract/composer-route-image.ts'
+import type { ComposerAttachment } from '../contract/slots.ts'
 import type { PopupDismissFace } from './facade.ts'
 import { SessionInputShell } from './facade.ts'
 
@@ -35,7 +37,7 @@ interface InputTriggerServiceFace {
   sessionOf(actx: Context): InputTriggerController
 }
 
-/** Attachment-send face resolved lazily to keep hub/service construction acyclic. */
+/** Attachment-send and route-image face resolved lazily to keep hub/service construction acyclic. */
 interface ConversationAttachmentFace {
   sendSession(
     session: SessionFace,
@@ -46,6 +48,8 @@ interface ConversationAttachmentFace {
   ): Promise<SubmitOutcome>
   serializeDraftAttachments(attachmentIds: readonly DraftAttachmentId[]): Promise<DraftAttachmentSerializationResult>
   releaseDraftAttachment(id: DraftAttachmentId): void
+  resolveDraftAttachments(ids: readonly DraftAttachmentId[]): readonly ComposerAttachment[]
+  readonly routeImage: Pick<ComposerRouteImage, 'storeFor'>
 }
 
 /** Session-addressed input facade registry (SessionInputResolver face + composer-layer extras). */
@@ -111,6 +115,16 @@ export class InputHub implements SessionInputResolver {
         unsupportedNotice: token => this.t('command.attachmentsUnsupported', {
           command: token.trim().replace(/^\//u, ''),
         }),
+        // Host command execution applies no route-capability check to the
+        // images an accepting command carries, so the composer refuses them
+        // here under the same advisory that gates message drafts.
+        imageRefusal: (ids) => {
+          const conversation = this.conversation()
+          if (conversation.routeImage.storeFor(session.sessionId).getSnapshot() !== false) return undefined
+          return conversation.resolveDraftAttachments(ids).some(attachment => attachment.kind === 'image')
+            ? this.t('image.modelUnsupported')
+            : undefined
+        },
       },
     })
     this.shells.set(binding, shell)
