@@ -32,6 +32,7 @@ export const zh = {
   'warning.groupLoad': '{name} 加载失败：{message}',
   'empty.models': '没有可用的模型。',
   'empty.efforts': '当前模型未提供推理等级。',
+  'capability.image': '图片',
 } satisfies Record<string, string>
 
 /** The model namespace key union. */
@@ -61,4 +62,5 @@ export const en = {
   'warning.groupLoad': '{name} failed to load: {message}',
   'empty.models': 'No models available.',
   'empty.efforts': 'This model provides no reasoning effort levels.',
+  'capability.image': 'Image',
 } satisfies Record<ModelKey, string>

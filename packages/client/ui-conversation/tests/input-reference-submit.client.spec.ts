@@ -15,6 +15,7 @@ const commandAttachments = {
   serialize: () => Promise.resolve([]),
   release: () => {},
   unsupportedNotice: (token: string) => `${token.trim()} attachments-unsupported`,
+  imageRefusal: () => undefined,
 }
 
 function chip(shell: SessionInputShell): void {

@@ -39,6 +39,10 @@ Models stay grouped by provider. The composer menu shows model and effort names 
 
 The composer replaces the model and effort text with the Models icon when the expanded controls cannot share one line, and restores the text when space permits. The full selection remains available in the trigger's accessible name, tooltip, and menu.
 
+### Image-capable routes
+
+Each menu row whose catalog `inputModalities` includes `'image'` shows an `Image` caption beneath its name, which is also the option's accessible description (the accessible name stays the model name); a row that omits the field or lists only `'text'` shows no caption. This plugin also publishes a per-session route-image advisory to `ctx.conversation.routeImage`: `false` for a listed text-only current selection, `true` for a listed image-capable one or a listed row that omits the field (unknown capability stays allowed), and `null` before the first load or on an unlisted current selection. The composer uses it to refuse new image attachments and, while the rail holds one, to refuse sending a message or an attachment-carrying command; Host prompt admission refuses an image prompt the Session's resolved model does not accept, regardless of the advisory, while command images rely on the composer refusal ([limitation](../ui-conversation/README.md#known-limitations-and-deferred-work)).
+
 ### Unroutable sessions
 
 Catalog availability does not block sending with a saved selection; request execution reports missing credentials or unavailable models. Refreshes and refresh failures retain the last displayed selection and groups. A Host reset clears that display. Sign-out hides the account provider from the picker while preserving the saved provider/model ID and reasoning effort. Signing in restores the catalog name when that model is available again. Existing session logs remain unchanged.

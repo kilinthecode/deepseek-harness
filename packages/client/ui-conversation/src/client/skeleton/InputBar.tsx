@@ -3,8 +3,8 @@
  * (useInput + inputActions); the keyboard/DOM command face and stop arrive
  * through this entry's own inject, whose hooks compartment binds
  * useNotices/useLexicon; layout-phase inputs (variant and placeholder) ride
- * the owner props. Session facts
- * (running/removed/promptError) are self-selected via useSession.
+ * the owner props, alongside the advisory `acceptsImages` route capability.
+ * Session facts (running/removed/promptError) are self-selected via useSession.
  *
  * The text surface is the shell-owned Lexical editor bound here through
  * ComposerContentEditable; chips render as decorator portals, and the
@@ -36,6 +36,7 @@ import {
 } from '../input/editor/view-binding.ts'
 import { resolveSubmitMode } from '../input/submission-policy.ts'
 import { attachmentErrorText, imageSizeText } from '../image-labels.ts'
+import { isImageMediaType } from '../service.ts'
 import { ContextMeter } from './ContextMeter.tsx'
 import { observeControlRow } from './control-row-layout.ts'
 import css from './InputBar.module.css'
@@ -48,7 +49,7 @@ export const InputBar = memo(function InputBar({
   toggleCommandMenu, stop, t,
   renderSlot, useBusyEnter, useFileUploads, useNotices, useLexicon, useMenuLauncher, useStopShortcut,
   useProjection, sessionId, variant, disabled: inert = false, blocked,
-  workspacePickerOpen = false, onRequestWorkspace,
+  workspacePickerOpen = false, onRequestWorkspace, acceptsImages,
   placeholder, accessory,
 }: InputBarProps) {
   const input = useInput(s => s)
@@ -211,6 +212,11 @@ export const InputBar = memo(function InputBar({
   const intakeFiles = useCallback((files: readonly File[], directories?: ReadonlySet<File>): void => {
     if (subagent !== null || addFiles === undefined || files.length === 0) return
     const rejected = ((): string | null => {
+      // The files that would become image drafts, by the same MIME test the
+      // draft registry applies; every other file uploads as a generic file.
+      if (acceptsImages === false && files.some(file => isImageMediaType(file.type))) {
+        return t('image.modelUnsupported')
+      }
       if (imageLimits !== undefined) {
         const mediaTypes = imageLimits.mediaTypes as readonly string[]
         const images = files.filter(file => mediaTypes.includes(file.type))
@@ -230,7 +236,32 @@ export const InputBar = memo(function InputBar({
       return addFiles(files, directories)
     })()
     if (rejected !== null) showToast(rejected)
-  }, [subagent, addFiles, attachments, imageLimits, showToast, t])
+  }, [subagent, addFiles, attachments, imageLimits, showToast, t, acceptsImages])
+
+  // The rail holding an image the current route refuses blocks every submit
+  // gesture the same way an unresolved upload does, and announces the refusal
+  // once per episode: a route switch while images wait in the rail, or images
+  // restored into the rail (an adopted draft, a failed send) after the route
+  // already refuses them. The images remain so the user can remove them or
+  // switch back rather than lose the attachment silently.
+  const railHasUnsupportedImage = acceptsImages === false
+    && attachments.some(attachment => attachment.kind === 'image')
+  // A `/` line stays submittable unless its claim carries attachments
+  // (`/goal`, `/plan`). The command plane refuses attachments a command does
+  // not accept and runs an action command without them; a line that
+  // adjudicates to an attachment-carrying claim is refused at command submit.
+  const imagesBlockSubmit = railHasUnsupportedImage
+    && (!draft.trimStart().startsWith('/') || input?.claim?.attachments === true)
+  const refusalAnnounced = useRef(false)
+  useEffect(() => {
+    if (!railHasUnsupportedImage) {
+      refusalAnnounced.current = false
+      return
+    }
+    if (refusalAnnounced.current) return
+    refusalAnnounced.current = true
+    showToast(t('image.modelUnsupported'))
+  }, [railHasUnsupportedImage, showToast, t])
 
   const canAcceptDrop = subagent === null && !locked && !machineBusy && addFiles !== undefined
 
@@ -246,11 +277,11 @@ export const InputBar = memo(function InputBar({
   // registration survives re-renders without re-arming per keystroke.
   const gate = useRef({
     locked, machineBusy, canSteerQueue, running, steeringAvailable, busyEnter,
-    intakeFiles, uploadsPending, showToast, t, canAcceptDrop,
+    intakeFiles, uploadsPending, imagesRefused: imagesBlockSubmit, showToast, t, canAcceptDrop,
   })
   gate.current = {
     locked, machineBusy, canSteerQueue, running, steeringAvailable, busyEnter,
-    intakeFiles, uploadsPending, showToast, t, canAcceptDrop,
+    intakeFiles, uploadsPending, imagesRefused: imagesBlockSubmit, showToast, t, canAcceptDrop,
   }
 
   useEffect(() => {
@@ -302,7 +333,9 @@ export const InputBar = memo(function InputBar({
   // exposes Stop independently.
   const primaryStops = running && subagent === null && (empty || blocked !== undefined)
   // Disabled native buttons may omit mouseleave; their tooltip must close from state.
-  const primaryDisabled = primaryStops ? stop === undefined : empty || disabled || machineBusy || uploadsPending
+  const primaryDisabled = primaryStops
+    ? stop === undefined
+    : empty || disabled || machineBusy || uploadsPending || imagesBlockSubmit
   const interruptible = running && continuable
   const primarySubmitMode = resolveSubmitMode(busyEnter, running, 'enter', steeringAvailable)
   const plainMessageDraft = !empty && input?.phase === 'plain' && !draft.trimStart().startsWith('/')
@@ -317,8 +350,8 @@ export const InputBar = memo(function InputBar({
       return
     }
     if (keyboard === undefined) return // absent machine: the button is disabled
-    /* v8 ignore next -- defensive: the primary button is disabled for empty, disabled, and pending-upload states. */
-    if (!empty && !disabled && !machineBusy && !uploadsPending) keyboard.submit(primarySubmitMode)
+    /* v8 ignore next -- defensive: the primary button is disabled for empty, disabled, pending-upload, and refused-image states. */
+    if (!empty && !disabled && !machineBusy && !uploadsPending && !imagesBlockSubmit) keyboard.submit(primarySubmitMode)
   }
 
   // Claim ghost hint: rendered by CSS as generated content after the last

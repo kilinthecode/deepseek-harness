@@ -13,7 +13,7 @@ import AttachmentStore from '@deepseek-ai/dsh-attachment'
 import LlmRuntime, { LlmAdapter, ReasoningEffortId } from '@deepseek-ai/dsh-llm'
 import type {
   GenerateOptions, LlmCallConfig, LlmCallConfigAdapterDefaults, LlmModelInfo,
-  LlmModelReasoningInfo, LlmProviderInfo, LlmResolvedModelInfo, StreamChunk,
+  LlmModelReasoningInfo, LlmProviderInfo, LlmResolvedModelInfo, ModelModality, StreamChunk,
   UserMessage,
 } from '@deepseek-ai/dsh-llm'
 import SessionStore from '@deepseek-ai/dsh-session'
@@ -45,6 +45,7 @@ class CatalogAdapter extends LlmAdapter {
     private readonly models: readonly LlmModelInfo[] | Error,
     private readonly reasoning?: LlmModelReasoningInfo,
     private readonly exactError?: Error,
+    private readonly inputModalities?: readonly ModelModality[],
   ) {
     super()
   }
@@ -66,6 +67,7 @@ class CatalogAdapter extends LlmAdapter {
       id: model,
       name: model,
       ...this.reasoning === undefined ? {} : { reasoning: this.reasoning },
+      ...this.inputModalities === undefined ? {} : { inputModalities: this.inputModalities },
     })
   }
 
@@ -454,6 +456,12 @@ describe('Web session model selection', () => {
     ], {
       efforts: [{ id: ReasoningEffortId('high'), name: 'High', description: 'More thinking' }],
     }))
+    ctx.llm.registerAdapter(['image-capable'], new CatalogAdapter('Image Capable', [
+      { provider: 'image-capable', id: 'image-model', name: 'Image Model' },
+    ], undefined, undefined, ['text', 'image']))
+    ctx.llm.registerAdapter(['text-only-catalog'], new CatalogAdapter('Text Only Catalog', [
+      { provider: 'text-only-catalog', id: 'text-model', name: 'Text Model' },
+    ], undefined, undefined, ['text']))
     ctx.llm.registerAdapter(['string-failure'], new class extends CatalogAdapter {
       override listModels(): Promise<readonly LlmModelInfo[]> {
         // oxlint-disable-next-line typescript/prefer-promise-reject-errors -- non-Error provider normalization is the scenario.
@@ -467,6 +475,7 @@ describe('Web session model selection', () => {
 
     const catalog = await buildModelCatalog(ctx)
     expect(catalog.groups).toEqual(expect.arrayContaining([
+      // Omitted resolveModelInfo.inputModalities stays an omitted catalog field.
       { id: 'plain', name: 'Plain', models: [{ id: 'plain-model', name: 'Plain Model' }] },
       {
         id: 'described-reasoning',
@@ -478,6 +487,16 @@ describe('Web session model selection', () => {
             efforts: [{ id: 'high', name: 'High', description: 'More thinking' }],
           },
         }],
+      },
+      {
+        id: 'image-capable',
+        name: 'Image Capable',
+        models: [{ id: 'image-model', name: 'Image Model', inputModalities: ['text', 'image'] }],
+      },
+      {
+        id: 'text-only-catalog',
+        name: 'Text Only Catalog',
+        models: [{ id: 'text-model', name: 'Text Model', inputModalities: ['text'] }],
       },
     ]))
     expect(catalog.failures).toContainEqual({

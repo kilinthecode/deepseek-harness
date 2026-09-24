@@ -16,6 +16,7 @@ import type {} from '@deepseek-ai/dsh-client-ui-layout/client'
 import type { SessionId } from '@deepseek-ai/dsh-session/types'
 import type { WorkspaceId } from '@deepseek-ai/dsh-workspace/types'
 import type { ComposerBlock } from './composer-blocks.ts'
+import type { RouteImageState } from './composer-route-image.ts'
 import type { DraftAttachmentId, InputActions, InputNotice, InputState } from './input.ts'
 import type { ComposerKeyboard, EditSelection } from './draft-editor.ts'
 import type { createConversationStore } from '../stores.ts'
@@ -330,7 +331,14 @@ export interface ConversationInjected {
   /** Connect and open a blank Session in the selected Workspace. */
   selectWorkspace: (workspaceId: WorkspaceId) => Promise<void>
   /** Session-addressed composer block source, or the stable absent source. */
-  hooks: { composerBlock: ObservableSnapshot<ComposerBlock | undefined> }
+  hooks: {
+    composerBlock: ObservableSnapshot<ComposerBlock | undefined>
+    /**
+     * Session-addressed route-image advisory, or the stable absent source
+     * (`null`). `false` is the only refusing value.
+     */
+    routeImage: ObservableSnapshot<RouteImageState>
+  }
 }
 
 /** Business callbacks injected into the strict Session body. */
@@ -368,6 +376,15 @@ export interface ComposerBarOwnerProps {
   workspacePickerOpen?: boolean
   /** Open the Workspace picker from the inert composer surface. */
   onRequestWorkspace?: () => void
+  /**
+   * Whether the Session's current model route accepts image input, as
+   * `ui-model-selection` advises. `false` refuses new image intake and,
+   * while the rail holds one, disables Send for a message draft or an
+   * attachment-carrying command claim; omitted, `null`, and `true` all
+   * allow images (unknown capability is advisory allow, matching Host
+   * prompt admission).
+   */
+  acceptsImages?: boolean | null
   placeholder?: string
   /** Optional content rendered above the composer surface. */
   accessory?: ReactNode

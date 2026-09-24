@@ -19,6 +19,7 @@ import type { ModelSelection, ModelSelectionProjection } from '@deepseek-ai/dsh-
 import type { CommandContribution, PopupSelectSpec, SelectOption } from '@deepseek-ai/dsh-client-ui-commands/client'
 import type { ModelSelectInjected } from '../src/client/slots.ts'
 import { apply, inject } from '../src/client/index.ts'
+import { ModelDirectoryResolver } from '../src/client/service.ts'
 import { zh } from '../src/client/locales.ts'
 
 const sid = (k: string): SessionId => k as SessionId
@@ -39,6 +40,8 @@ const GROUPS = [{
         ],
         defaultEffort: 'high',
       },
+      // Image-capable route: the route-image advisory allows it.
+      inputModalities: ['text', 'image'],
     },
     {
       id: 'deepseek-v4-pro',
@@ -52,6 +55,8 @@ const GROUPS = [{
         ],
         defaultEffort: 'high',
       },
+      // Text-only route: the route-image advisory refuses it.
+      inputModalities: ['text'],
     },
   ],
 }, {
@@ -61,11 +66,15 @@ const GROUPS = [{
     id: 'deepseek-v4-flash',
     name: 'External Flash',
     description: 'Provider-authored description.',
+    // Omitted field: unknown capability, the route-image advisory allows it.
   }],
 }]
 
-/** Boot the plugin over fake faces + a stateful fake host (current moves on selectModel). */
-async function bench(locale: 'zh' | 'en' = 'zh') {
+/**
+ * Boot the plugin over fake faces + a stateful fake host (current moves on selectModel).
+ * `conversation: false` composes no conversation service.
+ */
+async function bench(locale: 'zh' | 'en' = 'zh', options: { conversation?: boolean } = {}) {
   const ctx = new Context()
   let defaultSelection: ModelSelection = { provider: 'deepseek-official', model: 'deepseek-v4-flash' }
   let selected = defaultSelection
@@ -107,11 +116,17 @@ async function bench(locale: 'zh' | 'en' = 'zh') {
   const remote = Object.assign(new TestRemote(ctx), { session: sessionRemote })
   ctx.reflect.provide('remote.session', sessionRemote)
   const blocks = new Map<SessionId, { reason: string } | undefined>()
-  ctx.provide('conversation', {
-    blocks: {
-      set: (id: SessionId, block: { reason: string } | undefined) => { blocks.set(id, block) },
-    },
-  })
+  const routeImages = new Map<SessionId, boolean | null>()
+  if (options.conversation !== false) {
+    ctx.provide('conversation', {
+      blocks: {
+        set: (id: SessionId, block: { reason: string } | undefined) => { blocks.set(id, block) },
+      },
+      routeImage: {
+        set: (id: SessionId, value: boolean | null) => { routeImages.set(id, value) },
+      },
+    })
+  }
   let contribution: CommandContribution | undefined
   ctx.provide('commandUi', {
     register(c: CommandContribution) {
@@ -192,6 +207,7 @@ async function bench(locale: 'zh' | 'en' = 'zh') {
     setCatalogFailure: (next: boolean) => { catalogFailure = next },
     setRoutable: (next: boolean) => { routable = next },
     blockOf: (key: string) => blocks.get(sid(key)),
+    routeImageOf: (key: string) => routeImages.get(sid(key)),
   }
 }
 
@@ -522,5 +538,139 @@ describe('ui-model-selection dual entry', () => {
     b.ctx.emit('connection/reset')
     await Promise.resolve()
     expect(b.calls).toEqual({ models: 2, select: 0 })
+  })
+})
+
+describe('ui-model-selection route-image advisory', () => {
+  it('publishes true for the image-capable default selection once loaded', async () => {
+    const b = await bench()
+    b.mint('s1')
+    const face = b.seat().inject!(sid('s1'))
+    face.load()
+    await Promise.resolve()
+    await Promise.resolve()
+    expect(b.routeImageOf('s1')).toBe(true)
+  })
+
+  it('publishes null before the resolver\'s eager catalog load resolves', async () => {
+    const ctx = new Context()
+    const sessionRemote = {
+      modelCatalog: () => new Promise<never>(() => {}),
+      selectModel: () => Promise.reject(new Error('unused')),
+    }
+    Object.assign(new TestRemote(ctx), { session: sessionRemote })
+    ctx.reflect.provide('remote.session', sessionRemote)
+    const routeImages = new Map<SessionId, boolean | null>()
+    ctx.provide('conversation', {
+      routeImage: { set: (id: SessionId, value: boolean | null) => { routeImages.set(id, value) } },
+    })
+    const scopes = new Map<SessionId, Context>()
+    const bindings = new Map<SessionId, {
+      sessionId: SessionId
+      session: { sessionId: SessionId; projections: { faceOf: () => SnapshotStore<ModelSelectionProjection | undefined> } }
+      ctx: Context
+    }>()
+    ctx.provide('sessions', {
+      scope: (id: SessionId) => scopes.get(id),
+      binding: (id: SessionId) => bindings.get(id),
+      subagentAddress: () => undefined,
+    })
+    const id = sid('s1')
+    const handle = createScope(ctx, id)
+    scopes.set(id, handle.ctx)
+    const projection = createSnapshotStore<ModelSelectionProjection | undefined>({ lastUsed: null, next: null })
+    bindings.set(id, {
+      sessionId: id,
+      session: { sessionId: id, projections: { faceOf: () => projection } },
+      ctx: handle.ctx,
+    })
+    await ctx.plugin(ModelDirectoryResolver).await()
+    ctx.modelDirectories.directoryFor(id)
+    expect(routeImages.get(id)).toBeNull()
+    await ctx.fiber.dispose()
+  })
+
+  it('publishes false for a listed text-only current selection', async () => {
+    const b = await bench()
+    b.mint('s1')
+    const face = b.seat().inject!(sid('s1'))
+    await face.select({ provider: 'deepseek-official', model: 'deepseek-v4-pro' })
+    expect(b.routeImageOf('s1')).toBe(false)
+  })
+
+  it('allows an omitted-field model (unknown capability)', async () => {
+    const b = await bench()
+    b.mint('s1')
+    const face = b.seat().inject!(sid('s1'))
+    await face.select({ provider: 'external', model: 'deepseek-v4-flash' })
+    expect(b.routeImageOf('s1')).toBe(true)
+  })
+
+  it('allows an advisory-unlisted current selection', async () => {
+    const b = await bench()
+    b.mint('s1')
+    const face = b.seat().inject!(sid('s1'))
+    face.load()
+    await Promise.resolve()
+    await Promise.resolve()
+    b.setHostCurrent({ provider: 'deepseek-official', model: 'unlisted' })
+    b.ctx.emit('connection/reset')
+    face.load()
+    await Promise.resolve()
+    await Promise.resolve()
+    expect(b.routeImageOf('s1')).toBeNull()
+  })
+
+  it('keeps the replacement route-image advisory when the previous scope finishes cleanup', async () => {
+    const b = await bench()
+    const first = b.mint('s1')
+    const oldDirectory = b.ctx.modelDirectories.directoryFor(sid('s1'))
+    await oldDirectory.load()
+    const replacement = b.mint('s1')
+    replacement.projection.set({
+      lastUsed: null,
+      next: { provider: 'deepseek-official', model: 'deepseek-v4-pro' },
+    })
+    const directory = b.ctx.modelDirectories.directoryFor(sid('s1'))
+    try {
+      expect(directory).not.toBe(oldDirectory)
+      expect(b.routeImageOf('s1')).toBe(false)
+      // The previous directory still observes its own selection, but it no
+      // longer owns the Session's advisory.
+      first.projection.set({
+        lastUsed: null,
+        next: { provider: 'deepseek-official', model: 'deepseek-v4-flash' },
+      })
+      expect(oldDirectory.store.getSnapshot().current?.model).toBe('deepseek-v4-flash')
+      expect(b.routeImageOf('s1')).toBe(false)
+      await first.fiber.dispose()
+      expect(b.routeImageOf('s1')).toBe(false)
+      await replacement.fiber.dispose()
+      expect(b.routeImageOf('s1')).toBeNull()
+    } finally {
+      await Promise.all([first.fiber.dispose(), replacement.fiber.dispose()])
+      await b.ctx.fiber.dispose()
+    }
+  })
+
+  it('clears the advisory when the session scope goes', async () => {
+    const b = await bench()
+    const scope = b.mint('s1')
+    const face = b.seat().inject!(sid('s1'))
+    face.load()
+    await Promise.resolve()
+    await Promise.resolve()
+    expect(b.routeImageOf('s1')).toBe(true)
+    await scope.fiber.dispose()
+    expect(b.routeImageOf('s1')).toBeNull()
+  })
+
+  it('resolves and loads a directory when no conversation service is composed', async () => {
+    const b = await bench('zh', { conversation: false })
+    b.mint('s1')
+    const directory = b.ctx.modelDirectories.directoryFor(sid('s1'))
+    await directory.load()
+    expect(directory.store.getSnapshot().current).toEqual({ provider: 'deepseek-official', model: 'deepseek-v4-flash' })
+    expect(b.routeImageOf('s1')).toBeUndefined()
   })
 })

@@ -53,7 +53,11 @@ interface FakeCommand {
   input?: { hint: string; attachments?: boolean }
 }
 
-/** Decision-table source over an in-memory directory (menu/space/enter columns for leadingInput + execute). */
+/**
+ * Decision-table source over an in-memory directory (menu/space/enter columns
+ * for leadingInput + execute), including the enter column's attachment
+ * envelope: a line carrying attachments resolves only through an accepting claim.
+ */
 function commandSource(
   commands: FakeCommand[],
   execute: (line: string, images?: readonly SubmitAttachment[]) => Promise<SubmitOutcome>,
@@ -99,8 +103,13 @@ function commandSource(
         const token = ws === -1 ? trimmed : trimmed.slice(0, ws)
         const desc = resolve(token.slice(1))
         if (desc === undefined) return Promise.resolve(undefined)
-        if (desc.input !== undefined) return Promise.resolve({ claim: leadingClaim(desc) })
+        const refuseAttachments = (): Promise<PickOutcome> => Promise.reject(new Error(`${token} attachments-unsupported`))
+        if (desc.input !== undefined) {
+          if (envelope.attachments > 0 && desc.input.attachments !== true) return refuseAttachments()
+          return Promise.resolve({ claim: leadingClaim(desc) })
+        }
         if (ws !== -1) return Promise.resolve(undefined) // execute with trailing → default sink
+        if (envelope.attachments > 0) return refuseAttachments()
         executed.push(trimmed)
         void execute(trimmed)
         return Promise.resolve('handled')
@@ -117,8 +126,15 @@ const COMMANDS: FakeCommand[] = [
 
 const PNG: SubmitAttachment = { type: 'image', mediaType: 'image/png', data: 'AA==' }
 
-/** Real scope bench: a Controller-owned Session scope + InputTriggerController + shell listeners. */
-async function scopedBench(register?: (inputTriggers: InputTriggerService) => void) {
+/**
+ * Real scope bench: a Controller-owned Session scope + InputTriggerController + shell listeners.
+ * `acceptsImages` feeds both the bar's route-image advisory and the hub-equivalent
+ * command image refusal (every draft id in this bench resolves to an image).
+ */
+async function scopedBench(
+  register?: (inputTriggers: InputTriggerService) => void,
+  options?: { readonly acceptsImages?: boolean | null },
+) {
   const runtime = await SlotTestRuntime.create()
   onTestFinished(() => runtime.dispose())
   const ctx = runtime.ctx
@@ -135,7 +151,9 @@ async function scopedBench(register?: (inputTriggers: InputTriggerService) => vo
   const sink = vi.fn(() => Promise.resolve<SubmitOutcome>({ kind: 'success' }))
   const serialize = vi.fn((ids: readonly DraftAttachmentId[]) => Promise.resolve(ids.map(() => PNG)))
   const release = vi.fn()
-  const shell = new SessionInputShell({ actx, inputTriggers: () => controller, defaultSink: sink, commandAttachments: { serialize, release, unsupportedNotice: (token: string) => `${token.trim()} attachments-unsupported` } })
+  const imageRefusal = vi.fn((ids: readonly DraftAttachmentId[]) =>
+    options?.acceptsImages === false && ids.length > 0 ? zh['image.modelUnsupported'] : undefined)
+  const shell = new SessionInputShell({ actx, inputTriggers: () => controller, defaultSink: sink, commandAttachments: { serialize, release, unsupportedNotice: (token: string) => `${token.trim()} attachments-unsupported`, imageRefusal } })
   // The hub's listener wiring, verbatim.
   actx.on('slash/input-begin-command', req => shell.beginCommand(req.claim, req.span) ? true : undefined)
   actx.on('slash/input-insert-reference', req => shell.insertReference(req.reference, req.span) ? true : undefined)
@@ -194,13 +212,14 @@ async function scopedBench(register?: (inputTriggers: InputTriggerService) => vo
     useStopShortcut: bindSnapshotSelector(createSnapshotStore<readonly string[]>([])),
     t: makeTranslate(zh, commonZh),
     variant: 'composer',
+    ...(options?.acceptsImages === undefined ? {} : { acceptsImages: options.acceptsImages }),
   }
   const view = render(<InputBar {...barProps} />)
   const textarea = view.container.querySelector<HTMLDivElement>('[data-composer-input]')!
   const type = (text: string): void => {
     act(() => { shell.setDraft(text) })
   }
-  return { runtime, inputTriggers, controller, shell, wiring, view, textarea, type, sink, serialize, release }
+  return { runtime, inputTriggers, controller, shell, wiring, view, textarea, type, sink, serialize, release, imageRefusal }
 }
 
 async function bench(executeImpl?: (line: string) => Promise<SubmitOutcome>) {
@@ -308,6 +327,76 @@ describe('scenario: images ride an accepting command through the real pipeline',
     expect(b.envelopes).toEqual([{ attachments: 0 }])
     expect(b.serialize).not.toHaveBeenCalled()
     expect(b.release).not.toHaveBeenCalled()
+  })
+})
+
+describe('scenario: rail images on a route that refuses images', () => {
+  const img = 'img-1' as DraftAttachmentId
+  const commands: FakeCommand[] = [
+    { name: 'goal', description: '设定目标', input: { hint: '目标内容', attachments: true } },
+    { name: 'model', description: '选择模型' },
+  ]
+
+  async function textOnlyBench() {
+    const execute = vi.fn((line: string, _images?: readonly SubmitAttachment[]) =>
+      Promise.resolve<SubmitOutcome>({ kind: 'success', text: `已执行 ${line}` }))
+    const { source, executed, envelopes } = commandSource(commands, execute)
+    const base = await scopedBench((inputTriggers) => { inputTriggers.registerSource(source) }, { acceptsImages: false })
+    act(() => { base.shell.addAttachments([img]) })
+    const send = (): HTMLButtonElement => base.view.getByRole('button', { name: zh['input.send'] }) as HTMLButtonElement
+    return { ...base, execute, executed, envelopes, send }
+  }
+
+  it('refuses a pasted /goal line once adjudication claims it: nothing is serialized, executed, or sent', async () => {
+    const b = await textOnlyBench()
+    act(() => { b.shell.setDraft('/goal 描述这张图') })
+    // The unclaimed line is handed to the command plane rather than refused up front.
+    expect(b.send().disabled).toBe(false)
+    fireEvent.keyDown(b.textarea, { key: 'Enter' })
+    await vi.waitFor(() => { expect(b.imageRefusal).toHaveBeenCalledWith([img]) })
+    await vi.waitFor(() => { expect(b.shell.snapshot.phase).toBe('claimed') })
+    expect(b.envelopes).toEqual([{ attachments: 1 }])
+    expect(b.serialize).not.toHaveBeenCalled()
+    expect(b.execute).not.toHaveBeenCalled()
+    expect(b.sink).not.toHaveBeenCalled()
+    expect(b.shell.snapshot.draft).toBe('/goal 描述这张图')
+    expect(b.shell.snapshot.attachmentIds).toEqual([img])
+    // The retained attachment-carrying claim now disables Send like a message draft.
+    expect(b.send().disabled).toBe(true)
+  })
+
+  it('refuses a claimed /goal up front: Send disabled, and Enter neither adjudicates nor submits', async () => {
+    const b = await textOnlyBench()
+    b.type('/goal')
+    fireEvent.keyDown(b.textarea, { key: ' ', keyCode: 32 })
+    expect(b.shell.snapshot.phase).toBe('claimed')
+    b.type('/goal 描述这张图')
+    expect(b.send().disabled).toBe(true)
+    fireEvent.keyDown(b.textarea, { key: 'Enter' })
+    await act(async () => {})
+    expect(b.shell.snapshot.phase).toBe('claimed')
+    expect(b.envelopes).toEqual([])
+    expect(b.imageRefusal).not.toHaveBeenCalled()
+    expect(b.serialize).not.toHaveBeenCalled()
+    expect(b.execute).not.toHaveBeenCalled()
+    expect(b.sink).not.toHaveBeenCalled()
+    expect(b.view.getByRole('alert').textContent).toContain(zh['image.modelUnsupported'])
+    expect(b.shell.snapshot.attachmentIds).toEqual([img])
+  })
+
+  it('hands /model to the command plane, whose attachment refusal leaves nothing run or sent', async () => {
+    const b = await textOnlyBench()
+    act(() => { b.shell.setDraft('/model') })
+    expect(b.send().disabled).toBe(false)
+    fireEvent.keyDown(b.textarea, { key: 'Enter' })
+    await vi.waitFor(() => { expect(b.view.getByText('/model attachments-unsupported')).toBeTruthy() })
+    expect(b.envelopes).toEqual([{ attachments: 1 }])
+    expect(b.executed).toEqual([])
+    expect(b.execute).not.toHaveBeenCalled()
+    expect(b.serialize).not.toHaveBeenCalled()
+    expect(b.sink).not.toHaveBeenCalled()
+    expect(b.shell.snapshot.draft).toBe('/model')
+    expect(b.shell.snapshot.attachmentIds).toEqual([img])
   })
 })
 

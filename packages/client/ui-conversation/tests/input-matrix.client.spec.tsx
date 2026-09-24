@@ -100,11 +100,14 @@ function bench(over?: {
   disabled?: boolean
   submit?: (args: string) => Promise<SubmitOutcome>
   serialize?: (ids: readonly DraftAttachmentId[]) => Promise<readonly SubmitAttachment[]>
+  /** The hub's route-image refusal for command attachments (absent = every attachment admitted). */
+  imageRefusal?: (ids: readonly DraftAttachmentId[]) => string | undefined
 }) {
   const sink = vi.fn(() => Promise.resolve<SubmitOutcome>({ kind: 'success' }))
   const serialize = vi.fn(over?.serialize ?? (() => Promise.resolve<readonly SubmitAttachment[]>([])))
   const release = vi.fn()
-  const shell = new SessionInputShell({ actx: SCTX, defaultSink: sink, commandAttachments: { serialize, release, unsupportedNotice: (token: string) => `${token.trim()} attachments-unsupported` } })
+  const imageRefusal = vi.fn(over?.imageRefusal ?? (() => undefined))
+  const shell = new SessionInputShell({ actx: SCTX, defaultSink: sink, commandAttachments: { serialize, release, unsupportedNotice: (token: string) => `${token.trim()} attachments-unsupported`, imageRefusal } })
   const wiring = shell
   const view = mountBar(shell, over)
   const textarea = view.container.querySelector<HTMLDivElement>('[data-composer-input]')!
@@ -121,7 +124,7 @@ function bench(over?: {
       )
     })
   }
-  return { view, textarea, shell, wiring, sink, claim, serialize, release }
+  return { view, textarea, shell, wiring, sink, claim, serialize, release, imageRefusal }
 }
 
 describe('matrix row: plain', () => {
@@ -136,6 +139,7 @@ describe('matrix row: plain', () => {
         serialize: () => Promise.resolve([]),
         release: () => {},
         unsupportedNotice: token => `${token.trim()} attachments-unsupported`,
+        imageRefusal: () => undefined,
       },
     })
 
@@ -245,6 +249,36 @@ describe('matrix row: claimed with attachments', () => {
     expect(shell.snapshot.attachmentIds).toEqual([img])
     expect(release).not.toHaveBeenCalled()
     expect(shell.snapshot.draft).toBe('/goal ')
+  })
+
+  it('an image refusal settles before serialization: notice, no submit call, draft and images kept', async () => {
+    const submit = vi.fn(() => Promise.resolve({ kind: 'success' as const }))
+    const refusal = zh['image.modelUnsupported']
+    const { view, textarea, shell, claim, serialize, release, imageRefusal } = bench({
+      submit,
+      serialize: () => Promise.resolve([{ type: 'image', mediaType: 'image/png', data: 'AA==' }]),
+      imageRefusal: () => refusal,
+    })
+    claim('/goal ', '目标', true)
+    act(() => { shell.addAttachments([img]) })
+    fireEvent.keyDown(textarea, { key: 'Enter' })
+    await vi.waitFor(() => { expect(view.getByText(refusal)).toBeTruthy() })
+    expect(imageRefusal).toHaveBeenCalledWith([img])
+    expect(serialize).not.toHaveBeenCalled()
+    expect(submit).not.toHaveBeenCalled()
+    expect(release).not.toHaveBeenCalled()
+    expect(shell.snapshot.phase).toBe('claimed')
+    expect(shell.snapshot.draft).toBe('/goal ')
+    expect(shell.snapshot.attachmentIds).toEqual([img])
+  })
+
+  it('an attachment-free command submit never consults the image refusal', async () => {
+    const submit = vi.fn(() => Promise.resolve({ kind: 'success' as const }))
+    const { textarea, claim, imageRefusal } = bench({ submit, imageRefusal: () => zh['image.modelUnsupported'] })
+    claim('/goal ', '目标', true)
+    fireEvent.keyDown(textarea, { key: 'Enter' })
+    await vi.waitFor(() => { expect(submit).toHaveBeenCalledWith('', SCTX, []) })
+    expect(imageRefusal).not.toHaveBeenCalled()
   })
 
   it('a serialize rejection blocks the transaction: notice, no submit call, images kept', async () => {

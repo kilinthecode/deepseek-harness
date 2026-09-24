@@ -27,6 +27,8 @@ import { ConversationController, UnsupportedImageMediaTypeError, isImageMediaTyp
 import type { IConversation } from './service.ts'
 import { ComposerBlockRegistry } from './input/blocks.ts'
 import type { ComposerBlock } from './contract/composer-blocks.ts'
+import { ComposerRouteImageRegistry } from './input/route-image.ts'
+import type { RouteImageState } from './contract/composer-route-image.ts'
 import { InputHub } from './input/hub.ts'
 import { ComposerSubmissionPolicy } from './input/submission-policy.ts'
 import { queueDockEntry } from './queue/QueueDock.tsx'
@@ -75,6 +77,10 @@ const ABSENT_NOTICES = {
 }
 const ABSENT_BLOCK = {
   getSnapshot: (): ComposerBlock | undefined => undefined,
+  subscribe: () => () => {},
+}
+const ABSENT_ROUTE_IMAGE = {
+  getSnapshot: (): RouteImageState => null,
   subscribe: () => () => {},
 }
 const EMPTY_LEXICON: ReadonlyMap<'/' | '@', readonly string[]> = new Map()
@@ -266,6 +272,7 @@ export function apply(ctx: Context, config: Config = Config({})): void {
 
   const inputHub = new InputHub(ctx, t)
   const composerBlocks = new ComposerBlockRegistry()
+  const composerRouteImage = new ComposerRouteImageRegistry()
 
   ctx.inject(['commandUi'], (scope) => {
     const commands = scope.get('commandUi') as FileCommandRegistry
@@ -325,6 +332,7 @@ export function apply(ctx: Context, config: Config = Config({})): void {
     inject: (sessionId: SessionId | undefined): ConversationInjected => ({
       hooks: {
         composerBlock: sessionId === undefined ? ABSENT_BLOCK : composerBlocks.storeFor(sessionId),
+        routeImage: sessionId === undefined ? ABSENT_ROUTE_IMAGE : composerRouteImage.storeFor(sessionId),
       },
       selectWorkspace: workspaceId => workspaceNavigation.openWorkspace(workspaceId, (nextId) => {
         if (sessionId !== undefined && nextId !== sessionId) {
@@ -545,6 +553,7 @@ export function apply(ctx: Context, config: Config = Config({})): void {
   ctx.plugin(ConversationController, {
     input: inputHub,
     blocks: composerBlocks,
+    routeImage: composerRouteImage,
     maxConcurrentFileUploads,
   })
   ctx.plugin(todoDockEntry)
