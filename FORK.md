@@ -57,7 +57,7 @@ These are upstream files the fork edits with the smallest possible change, delib
 | `packages/boot/app-boot/src/profile.ts` | Adds `@deepseek-ai/dsh-experimental-agent-room-profile` to `OPTIONAL_BUNDLES`. | 2026-09-17 |
 | `apps/cli/package.json` | Adds the `@deepseek-ai/dsh-experimental-agent-room-profile` dependency, which an `OPTIONAL_BUNDLES` entry requires the installation to ship. | 2026-09-17 |
 | `tsconfig.host.json` | Adds the `tool-agent-room` and `agent-room-profile` project references and `apps/web/tests/agent-room-panel.e2e.ts`. | 2026-09-17 |
-| `apps/web/tests/plugin-manager.e2e.ts`, `apps/web/tests/expected/plugin-manager/{manager,live-enabled}.expected.md` | Count the room bundle as a third optional bundle in the Official group. | 2026-09-23 |
+| `apps/web/tests/plugin-{manager,config}.e2e.ts`, `apps/web/tests/expected/plugin-manager/{manager,live-enabled}.expected.md`, `apps/web/tests/expected/plugin-config/official.expected.md` | Count the room bundle as a third optional bundle in the Official group. | 2026-09-23 |
 
 ## Category B — the model-visible identity (largest divergence)
 
@@ -110,7 +110,7 @@ The rooms and verification work necessarily modifies upstream-owned packages rat
 | `packages/test-support/session-snapshot/**` | Snapshot-harness support for scenarios that own child roles. | 2026-09-17 |
 | `apps/cli/tests/profiles/headless/**` | Owner-local expectations and the scripted team fixture. | 2026-09-17 |
 | `packages/client/web/**`, `packages/client/ui-renderer/**` | Boot-page overlay, handoff, and mount-into-host. The overlay's z-index (1150) sits above application layers (1100) and below the WebWorker preview's pre-boot source chooser (1200). | 2026-09-19 |
-| `apps/web/tests/settings-chrome.e2e.ts`, `apps/web/tests/preview-boot.e2e.ts` | Find the boot page by `[data-dsh-boot]`: the fork's overlay nests the progress hint in a status block and shows it only when boot outlasts the brand moment. | 2026-09-23 |
+| `apps/web/tests/settings-chrome.e2e.ts`, `apps/web/tests/preview-boot.e2e.ts`, `apps/web/tests/lifecycle-chrome.e2e.ts` | Find the boot page by `[data-dsh-boot]`: the fork's overlay nests the progress hint in a status block, shows it only when boot outlasts the brand moment, and holds over the mounted application on page timers, which a test's installed clock must run out. | 2026-09-23 |
 
 ## Category E — generated (never merged by hand)
 

@@ -3,8 +3,12 @@
 - button "刷新"
 - button "添加插件"
 - heading "官方" [level=3]
-- text: "6"
+- text: "7"
 - list:
+  - listitem:
+    - button "查看 智能体讨论室": 智能体讨论室
+    - text: 实验性 启用带共享讨论室的团队协作，成员在其中讨论并按法定人数表决决策。
+    - switch "启用 智能体讨论室"
   - listitem:
     - button "查看 智能体团队": 智能体团队
     - text: 实验性 启用团队协作、团队工具、成员列表和共享任务看板。
