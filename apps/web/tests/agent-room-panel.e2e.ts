@@ -9,8 +9,10 @@ import { chromium } from 'playwright'
 import { afterAll, beforeAll, describe, expect, it, onTestFailed } from 'vitest'
 import * as yaml from 'js-yaml'
 import { entryListSchema } from '@deepseek-ai/cordis-plugin-include'
+import { RoomMessageId, RoomProposalId, TeamId } from '@deepseek-ai/dsh-experimental-agent-team'
 import { createMessage, createUserMessage } from '@deepseek-ai/dsh-llm'
-import type { Session, SessionId } from '@deepseek-ai/dsh-session'
+import { SessionId } from '@deepseek-ai/dsh-session'
+import type { Session } from '@deepseek-ai/dsh-session'
 import {
   assertFixtureInventory, captureStableAria, compareOrRefreshGolden,
   launchWebScaffold, watchConsole, webSnapshotMode, type WebScaffold,
@@ -25,16 +27,7 @@ const INSTALL_ANCHORS = [
   fileURLToPath(new URL('../../../packages/experimental/agent-room-profile/package.json', import.meta.url)),
 ]
 const MODE = webSnapshotMode()
-const WORKER = 'room-worker' as SessionId
-
-/**
- * Append one durable event whose type the room package owns. This browser
- * project does not compile that package, so the fixture narrows `append` the
- * same way the room journal does rather than widening the project's includes.
- */
-function appendRoomEvent(session: Session, type: string, data: unknown): void {
-  (session.append as unknown as (eventType: string, payload: unknown) => void)(type, data)
-}
+const WORKER = SessionId('room-worker')
 
 function profileEntries(path: string): unknown[] {
   const parsed = yaml.load(readFileSync(path, 'utf8'), { schema: entryListSchema })
@@ -67,7 +60,7 @@ describe('web e2e: Agent room panel', () => {
     const agent = scaffold.ctx.agents.list()[0]
     if (agent === undefined) throw new Error('connected room workspace did not create an Agent')
     session = agent.session
-    const teamId = session.header.id
+    const teamId = TeamId(session.header.id)
     const member = {
       id: WORKER,
       name: 'worker',
@@ -98,44 +91,44 @@ describe('web e2e: Agent room panel', () => {
     session.append('turn/end', { turn: 1, reason: { kind: 'completed' } })
 
     // A durable participant, then the room records a decision that quorum settles.
-    appendRoomEvent(session, 'team/member', { version: 2, teamId, member: { ...member, phase: 'provisioning' } })
-    appendRoomEvent(session, 'team/member', { version: 2, teamId, member: { ...member, phase: 'active' } })
-    appendRoomEvent(session, 'room/message', {
+    session.append('team/member', { version: 2, teamId, member: { ...member, phase: 'provisioning' } })
+    session.append('team/member', { version: 2, teamId, member: { ...member, phase: 'active' } })
+    session.append('room/message', {
       version: 1,
       teamId,
       message: {
-        id: 'room-message-fixture',
+        id: RoomMessageId('room-message-fixture'),
         authorId: WORKER,
         content: [{ type: 'text', text: 'an uninvalidated cache serves stale reads' }],
       },
     })
-    appendRoomEvent(session, 'room/proposal', {
+    session.append('room/proposal', {
       version: 1,
       teamId,
       proposal: {
-        id: 'proposal-1',
+        id: RoomProposalId('proposal-1'),
         revision: 1,
         proposerId: session.header.id,
         statement: 'Adopt a global mutable cache with no invalidation.',
         phase: 'open',
       },
     })
-    appendRoomEvent(session, 'room/review', {
+    session.append('room/review', {
       version: 1,
       teamId,
       review: {
-        proposalId: 'proposal-1',
+        proposalId: RoomProposalId('proposal-1'),
         proposalRevision: 1,
         reviewerId: WORKER,
         verdict: 'reject',
         reason: 'stale reads are a correctness bug',
       },
     })
-    appendRoomEvent(session, 'room/proposal', {
+    session.append('room/proposal', {
       version: 1,
       teamId,
       proposal: {
-        id: 'proposal-1',
+        id: RoomProposalId('proposal-1'),
         revision: 1,
         proposerId: session.header.id,
         statement: 'Adopt a global mutable cache with no invalidation.',

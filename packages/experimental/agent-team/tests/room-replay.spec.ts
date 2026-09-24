@@ -19,19 +19,20 @@ import type { TeamProjectionState, TeamState } from '../src/projection.ts'
 
 const RECORDING = join(import.meta.dirname, 'fixtures', 'room-deliberation.jsonl')
 
+/** One JSONL line of the recording: the Session header or a committed event. */
+type RecordedLine = SessionEvent | { readonly type: 'session'; readonly id: string }
+
 /** The recorded log, split into its header and every committed event. */
 function recordedLog(): { readonly rootId: SessionId; readonly events: SessionEvent[] } {
   const records = readFileSync(RECORDING, 'utf8')
     .split('\n')
     .filter(line => line.trim() !== '')
-    .map(line => JSON.parse(line) as { type: string } & Record<string, unknown>)
+    .map((line): RecordedLine => JSON.parse(line))
   const header = records.find(record => record.type === 'session')
-  if (header === undefined) throw new Error('room recording is missing its Session header')
+  if (header?.type !== 'session') throw new Error('room recording is missing its Session header')
   return {
-    rootId: SessionId(String(header['id'])),
-    events: records
-      .filter(record => record.type !== 'session')
-      .map(record => record as unknown as SessionEvent),
+    rootId: SessionId(header.id),
+    events: records.filter((record): record is SessionEvent => record.type !== 'session'),
   }
 }
 

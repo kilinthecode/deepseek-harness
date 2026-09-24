@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { SESSION_FORMAT_VERSION, SessionId, SessionSeq } from '@deepseek-ai/dsh-session'
-import type { SessionEvent, SessionEventMap, SessionEventType } from '@deepseek-ai/dsh-session'
+import type { SessionEvent } from '@deepseek-ai/dsh-session'
 import { teamProjectionDefinition } from '../src/projection.ts'
 import type { TeamProjectionState, TeamState } from '../src/projection.ts'
 import { RoomMessageId, RoomProposalId, TeamId } from '../src/types.ts'
@@ -12,14 +12,6 @@ const ROOT = SessionId('room-root')
 const TEAM = TeamId(ROOT)
 const ALICE = SessionId('alice')
 const BOB = SessionId('bob')
-
-function event<T extends Extract<SessionEventType, `room/${string}`>>(
-  type: T,
-  data: SessionEventMap[T],
-  seq: SessionSeq,
-): SessionEvent<T> {
-  return { type, data, seq, time: seq } as unknown as SessionEvent<T>
-}
 
 function project(events: readonly SessionEvent[]): TeamProjectionState {
   let state = teamProjectionDefinition.init({
@@ -45,7 +37,7 @@ function messageEvent(overrides: Partial<RoomMessageSnapshot> = {}, seq = 0): Se
     content: [{ type: 'text', text: 'hello' }],
     ...overrides,
   }
-  return event('room/message', { version: 1, teamId: TEAM, message }, SessionSeq(seq))
+  return { type: 'room/message', data: { version: 1, teamId: TEAM, message }, seq: SessionSeq(seq), time: seq }
 }
 
 function proposalEvent(
@@ -60,7 +52,7 @@ function proposalEvent(
     phase: 'open',
     ...overrides,
   }
-  return event('room/proposal', { version: 1, teamId: TEAM, proposal }, SessionSeq(seq))
+  return { type: 'room/proposal', data: { version: 1, teamId: TEAM, proposal }, seq: SessionSeq(seq), time: seq }
 }
 
 function reviewEvent(overrides: Partial<RoomReviewSnapshot> = {}, seq = 0): SessionEvent<'room/review'> {
@@ -72,7 +64,7 @@ function reviewEvent(overrides: Partial<RoomReviewSnapshot> = {}, seq = 0): Sess
     reason: 'sound',
     ...overrides,
   }
-  return event('room/review', { version: 1, teamId: TEAM, review }, SessionSeq(seq))
+  return { type: 'room/review', data: { version: 1, teamId: TEAM, review }, seq: SessionSeq(seq), time: seq }
 }
 
 function timeoutEvent(
@@ -86,7 +78,7 @@ function timeoutEvent(
     stalled: [ALICE],
     ...overrides,
   }
-  return event('room/review-timeout', { version: 1, teamId: TEAM, timeout }, SessionSeq(seq))
+  return { type: 'room/review-timeout', data: { version: 1, teamId: TEAM, timeout }, seq: SessionSeq(seq), time: seq }
 }
 
 describe('room transcript projection', () => {

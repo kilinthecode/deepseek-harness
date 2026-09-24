@@ -155,6 +155,46 @@ async function mountCatalogChildScope(
 }
 
 /**
+ * Install one Team tool package for a stub Team Lead whose membership is the
+ * only Team-service behavior schema harvest reaches.
+ * @param ctx - catalog context owning the Lead scope.
+ * @param sessionId - Lead Session id for the stub member.
+ * @param plugin - Team-scoped tool package to install.
+ */
+async function mountTeamCatalogLead(
+  ctx: Context,
+  sessionId: SessionId,
+  plugin: typeof ToolTeam | typeof ToolRoom,
+): Promise<void> {
+  await ctx.plugin(AgentRegistry)
+  await ctx.plugin(SessionStore)
+  const session = ctx.sessions.create(sessionId)
+  let agent!: Agent
+  const membership = {
+    get root() { return agent },
+    id: session.id,
+    role: 'lead' as const,
+    name: 'lead',
+  }
+  ctx.provide('agentTeams', {
+    tryMembership: (candidate: Agent) => candidate === agent ? membership : undefined,
+    membership: () => membership,
+  } as unknown as TeamService)
+  await ctx.plugin(Object.assign(async (inner: Context) => {
+    agent = {
+      id: session.id,
+      session,
+      options: {},
+      status: 'idle',
+    } as unknown as Agent
+    Object.assign(agent, { ctx: createScope(inner, agent).ctx })
+    await inner.agents.register(agent)
+  }, { inject: ['tools', 'systemPrompt', 'agents', 'agentTeams'] }))
+  await ctx.plugin(plugin)
+  catalogChildScopes.set(ctx, agent)
+}
+
+/**
  * Tool package plus its hand-maintained boot recipe. The caller mounts the
  * prompt and registry; each recipe supplies only package-specific seams and
  * config, while `dir` participates in the completeness check.
@@ -587,34 +627,7 @@ const TOOL_PACKAGES: ToolPackage[] = [
     source: 'packages/experimental/tool-agent-team/src/index.ts',
     requires: ['ctx.tools', 'ctx.systemPrompt', 'ctx.agentTeams', 'an exact live Team member Agent'],
     writes: ['tool/call', 'team/member', 'team/message/queued', 'team/message/delivered', 'team/task', 'tool/result'],
-    async mount(ctx) {
-      await ctx.plugin(AgentRegistry)
-      await ctx.plugin(SessionStore)
-      const session = ctx.sessions.create(SessionId('tool-catalog-team-lead'))
-      let agent!: Agent
-      const membership = {
-        get root() { return agent },
-        id: session.id,
-        role: 'lead' as const,
-        name: 'lead',
-      }
-      ctx.provide('agentTeams', {
-        tryMembership: (candidate: Agent) => candidate === agent ? membership : undefined,
-        membership: () => membership,
-      } as unknown as TeamService)
-      await ctx.plugin(Object.assign(async (inner: Context) => {
-        agent = {
-          id: session.id,
-          session,
-          options: {},
-          status: 'idle',
-        } as unknown as Agent
-        Object.assign(agent, { ctx: createScope(inner, agent).ctx })
-        await inner.agents.register(agent)
-      }, { inject: ['tools', 'systemPrompt', 'agents', 'agentTeams'] }))
-      await ctx.plugin(ToolTeam)
-      catalogChildScopes.set(ctx, agent)
-    },
+    mount: ctx => mountTeamCatalogLead(ctx, SessionId('tool-catalog-team-lead'), ToolTeam),
     scope: ctx => catalogChildScopes.get(ctx) as Agent,
     note:
       'All nine tools are scoped to implicit Team Leads and durable teammates. The shipped dsh-base bundle keeps the package disabled; the documented Agent Teams profile patch enables it while disabling the legacy continuable-child control names.',
@@ -625,35 +638,7 @@ const TOOL_PACKAGES: ToolPackage[] = [
     source: 'packages/experimental/tool-agent-room/src/index.ts',
     requires: ['ctx.tools', 'ctx.systemPrompt', 'ctx.agentTeams', 'an exact live room participant Agent'],
     writes: ['tool/call', 'room/message', 'room/proposal', 'room/review', 'team/message/queued', 'team/message/delivered', 'tool/result'],
-    async mount(ctx) {
-      await ctx.plugin(AgentRegistry)
-      await ctx.plugin(SessionStore)
-      const session = ctx.sessions.create(SessionId('tool-catalog-room-lead'))
-      let agent!: Agent
-      const membership = {
-        get root() { return agent },
-        id: session.id,
-        role: 'lead' as const,
-        name: 'lead',
-      }
-      ctx.provide('agentTeams', {
-        tryMembership: (candidate: Agent) => candidate === agent ? membership : undefined,
-        membership: () => membership,
-        roomView: () => ({ participants: [], chair: 'lead', messages: [], proposals: [] }),
-      } as unknown as TeamService)
-      await ctx.plugin(Object.assign(async (inner: Context) => {
-        agent = {
-          id: session.id,
-          session,
-          options: {},
-          status: 'idle',
-        } as unknown as Agent
-        Object.assign(agent, { ctx: createScope(inner, agent).ctx })
-        await inner.agents.register(agent)
-      }, { inject: ['tools', 'systemPrompt', 'agents', 'agentTeams'] }))
-      await ctx.plugin(ToolRoom)
-      catalogChildScopes.set(ctx, agent)
-    },
+    mount: ctx => mountTeamCatalogLead(ctx, SessionId('tool-catalog-room-lead'), ToolRoom),
     scope: ctx => catalogChildScopes.get(ctx) as Agent,
     note:
       'Five tools are scoped to room participants. The shipped composition keeps them unmounted; a deployment enables them beside `@deepseek-ai/dsh-experimental-agent-team` with `roomEnabled: true`, and every outcome is decided by the service quorum rather than by the tool.',
