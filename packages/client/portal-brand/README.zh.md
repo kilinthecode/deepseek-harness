@@ -29,7 +29,7 @@ kind: "package-reference"
 
 ### 选择 profile
 
-`DSH_CLIENT_BUILD_PROFILE` 决定渲染哪套品牌。`portal` 构建在侧边栏显示 Portal 标记与名称，并在 hero 中显示 Portal 标记；`official` 构建不受影响，仍显示上游的 DeepSeek Harness 品牌。其他取值则保留外壳兜底 —— fish 标记与本地构建标签。任何情况下插件都会加载并通过校验，只有注册受 profile 门控。
+`DSH_CLIENT_BUILD_PROFILE` 决定渲染哪套品牌。`portal` 构建在侧边栏显示 Portal 标记与名称，并在 hero 中显示 Portal 标记；`official` 构建在这些位置显示上游的 DeepSeek Harness 品牌。其他取值则保留外壳兜底 —— fish 标记与本地构建标签。任何情况下插件都会加载并通过校验，只有注册受 profile 门控。启动页不是 slot：`dsh-client-web` 在所有构建 profile 下都在启动页上绘制 Portal 标记与名称，因此 `official` 或本地构建会先显示 Portal 启动品牌，再显示各自的应用内品牌。
 
 ### 更换品牌
 
@@ -93,4 +93,4 @@ kind: "package-reference"
 
 </details>
 
-**Runtime invariant:** 未发布配套组件。本包不保留可变状态，其三个 slot 占用组件通过一个事务性 effect 安装与退出。
+**Runtime invariant:** 未发布配套组件。本包不保留可变状态；其三个 slot 占用组件通过两组 declaration-aware 注册安装与退出，词典则通过一个 effect 安装与退出。

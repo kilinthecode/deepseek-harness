@@ -84,7 +84,7 @@ These limits describe what a room participant cannot do yet or what needs specia
 - **A participant speaks only when given the floor** — no tool lets a participant claim a turn or answer a peer unprompted, so a room whose participants stop granting the floor stalls.
 - **Scoped installation can reach a provider-owned subagent** — installation follows membership at creation time, before a provider-owned child's descriptor is recorded; the authority check inside each operation is what refuses it.
 - **A silent reviewer only delays a decision** — every eligible reviewer must vote before a decision settles, and the room reminds a reviewer that stops working before it escalates the decision to the human with the silent reviewers named.
-- **The room panel is read-only** — `@deepseek-ai/dsh-experimental-client-ui-agent-team` renders the transcript and decisions when the composition mounts it, but a human acts only through these tools.
+- **The room panel never records a standing** — `@deepseek-ai/dsh-experimental-client-ui-agent-team` renders the transcript and decisions when the composition mounts it, and it can give the floor, open a decision, and escalate one, but reviews come only from participants through `room_review`.
 
 No runtime invariant companion is published: the package owns no runtime state of its own. Every schema it declares delegates to `ctx.agentTeams`, and `@deepseek-ai/dsh-experimental-agent-team` owns the invariant that guards those records.
 

@@ -84,7 +84,7 @@ kind: "package-reference"
 - **参与者只在获得发言权时发言**——没有任何工具让参与者自行取得 turn 或主动回应同伴，因此当参与者不再交出发言权时，room 会停滞。
 - **scoped 安装可能触及 provider-owned subagent**——安装依据创建时的成员身份，早于 provider-owned child 的 descriptor 被记录；真正拒绝它的是每个操作内部的授权检查。
 - **沉默的 reviewer 只会推迟决策**——每个有资格的 reviewer 都必须投票后决策才会结清；room 会先提醒停止工作的 reviewer，之后才把决策连同沉默者名单升级给人类。
-- **room 面板是只读的**——当组合挂载 `@deepseek-ai/dsh-experimental-client-ui-agent-team` 时，它会渲染 transcript 与决策，但人类只能通过这些工具行动。
+- **room 面板从不记录立场**——当组合挂载 `@deepseek-ai/dsh-experimental-client-ui-agent-team` 时，它会渲染 transcript 与决策，并能交出发言权、开启决策和升级决策，但 review 只来自参与者通过 `room_review` 提交的立场。
 
 本包不发布 runtime invariant companion：它自身不拥有任何运行时状态。它声明的每个 schema 都委托给 `ctx.agentTeams`，而守护这些记录的不变式由 `@deepseek-ai/dsh-experimental-agent-team` 拥有。
 

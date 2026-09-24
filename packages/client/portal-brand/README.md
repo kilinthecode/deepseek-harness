@@ -29,7 +29,7 @@ Mount this plugin in the browser roster of a deployment whose identity is Portal
 
 ### Choosing the profile
 
-`DSH_CLIENT_BUILD_PROFILE` selects which brand renders. A `portal` build shows the Portal mark and name in the sidebar and the Portal mark in the hero; an `official` build is untouched and shows the upstream DeepSeek Harness brand. Any other value leaves the shell fallbacks — the fish mark and the local-build label — in place. The plugin still loads and validates in every case; only the registration is profile-gated.
+`DSH_CLIENT_BUILD_PROFILE` selects which brand renders. A `portal` build shows the Portal mark and name in the sidebar and the Portal mark in the hero; an `official` build shows the upstream DeepSeek Harness brand there. Any other value leaves the shell fallbacks — the fish mark and the local-build label — in place. The plugin still loads and validates in every case; only the registration is profile-gated. The boot page is not a slot: `dsh-client-web` draws the Portal mark and name on it under every build profile, so an `official` or local build opens on the Portal boot brand and then shows its own in-app brand.
 
 ### Changing the brand
 
@@ -93,4 +93,4 @@ This package is the fork's brand seam. Keep every fork brand change inside it: e
 
 </details>
 
-**Runtime invariant:** No companion is published. The package retains no mutable state, and its three slot occupants install and leave through one transactional effect.
+**Runtime invariant:** No companion is published. The package retains no mutable state; its three slot occupants install and leave through two declaration-aware registration sets, and its dictionaries through one effect.
