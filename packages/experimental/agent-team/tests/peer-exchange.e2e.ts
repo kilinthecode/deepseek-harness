@@ -7,7 +7,7 @@
 
 import { existsSync } from 'node:fs'
 import { mkdtempSync, rmSync } from 'node:fs'
-import { homedir, tmpdir } from 'node:os'
+import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterAll, describe, expect, it, vi } from 'vitest'
 import { Context } from '@deepseek-ai/cordis'
@@ -15,7 +15,7 @@ import type { Agent } from '@deepseek-ai/dsh-agent'
 import TimerService from '@deepseek-ai/cordis-plugin-timer'
 import AgentLoop from '@deepseek-ai/dsh-agent-loop'
 import { mountAgentLoopTestDependencies } from '@deepseek-ai/dsh-agent-loop-testkit'
-import { LocalCredentialProvider } from '@deepseek-ai/dsh-credentials-local'
+import { LocalCredentialProvider, resolveSpec } from '@deepseek-ai/dsh-credentials-local'
 import * as LlmDeepSeek from '@deepseek-ai/dsh-llm-deepseek-api-key'
 import { SessionId } from '@deepseek-ai/dsh-session'
 import JsonlSessionPersistence from '@deepseek-ai/dsh-session-persistence-jsonl'
@@ -31,7 +31,8 @@ const PROVIDER = 'deepseek-official'
 const QUESTIONER_MODEL = 'deepseek-flash'
 const ANSWERER_MODEL = 'deepseek-v4-pro'
 const QUESTION = 'Is the room transcript durable across a restart? Answer with yes or no and one clause.'
-const CREDENTIALS = join(homedir(), '.dsh', '.credentials.yaml')
+/** The document the mounted LocalCredentialProvider reads, so an isolated DSH_HOME skips. */
+const CREDENTIALS = resolveSpec({}).filename
 const LIVE = process.env.DEEPSEEK_API_KEY !== undefined || existsSync(CREDENTIALS)
 const SIGNAL = new AbortController().signal
 const ROOTS: string[] = []
