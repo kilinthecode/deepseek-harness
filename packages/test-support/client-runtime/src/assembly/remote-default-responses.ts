@@ -19,7 +19,7 @@ export const remoteDefaultResponses: RemoteTable = {
     'settings/describe': ok({ writable: true, hasDocument: false, namespaces: [] }),
     // ui-model-selection `ModelDirectoryResolver` constructor.
     'session/modelCatalog': ok({
-      default: { provider: 'deepseek-official', model: 'deepseek-v4-flash' },
+      default: { provider: 'deepseek-official', model: 'deepseek-flash' },
       routableProviders: [],
       groups: [],
       failures: [],
