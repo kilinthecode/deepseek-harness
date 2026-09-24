@@ -686,6 +686,24 @@ describe('route image capability', () => {
     expect(result.view.getByRole('alert').textContent).toBe(dictionary['image.modelUnsupported'])
   })
 
+  it('does not repeat the refusal when the composer re-renders with a new translator in the same episode', () => {
+    vi.useFakeTimers()
+    try {
+      const file = new File([Uint8Array.of(1)], 'pixel.png', { type: 'image/png' })
+      const attachments = [
+        { kind: 'image' as const, id: 'draft-1' as DraftAttachmentId, file, previewUrl: 'blob:draft-1' },
+      ]
+      const result = bench({ attachments, acceptsImages: false, t: makeTranslate(zh, commonZh) })
+      expect(result.view.getByRole('alert').textContent).toBe(zh['image.modelUnsupported'])
+      act(() => { vi.advanceTimersByTime(4000) })
+      expect(result.view.queryByRole('alert')).toBeNull()
+      result.view.rerender(<InputBar {...result.props} t={makeTranslate(en, commonZh)} />)
+      expect(result.view.queryByRole('alert')).toBeNull()
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
   it.each([zh, en])('refuses the Enter submit gesture while the rail holds an image the current route refuses', async (dictionary) => {
     vi.useFakeTimers()
     try {

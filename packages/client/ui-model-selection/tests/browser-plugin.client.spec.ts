@@ -70,8 +70,11 @@ const GROUPS = [{
   }],
 }]
 
-/** Boot the plugin over fake faces + a stateful fake host (current moves on selectModel). */
-async function bench(locale: 'zh' | 'en' = 'zh') {
+/**
+ * Boot the plugin over fake faces + a stateful fake host (current moves on selectModel).
+ * `conversation: false` composes no conversation service.
+ */
+async function bench(locale: 'zh' | 'en' = 'zh', options: { conversation?: boolean } = {}) {
   const ctx = new Context()
   let defaultSelection: ModelSelection = { provider: 'deepseek-official', model: 'deepseek-v4-flash' }
   let selected = defaultSelection
@@ -114,14 +117,16 @@ async function bench(locale: 'zh' | 'en' = 'zh') {
   ctx.reflect.provide('remote.session', sessionRemote)
   const blocks = new Map<SessionId, { reason: string } | undefined>()
   const routeImages = new Map<SessionId, boolean | null>()
-  ctx.provide('conversation', {
-    blocks: {
-      set: (id: SessionId, block: { reason: string } | undefined) => { blocks.set(id, block) },
-    },
-    routeImage: {
-      set: (id: SessionId, value: boolean | null) => { routeImages.set(id, value) },
-    },
-  })
+  if (options.conversation !== false) {
+    ctx.provide('conversation', {
+      blocks: {
+        set: (id: SessionId, block: { reason: string } | undefined) => { blocks.set(id, block) },
+      },
+      routeImage: {
+        set: (id: SessionId, value: boolean | null) => { routeImages.set(id, value) },
+      },
+    })
+  }
   let contribution: CommandContribution | undefined
   ctx.provide('commandUi', {
     register(c: CommandContribution) {
@@ -630,6 +635,14 @@ describe('ui-model-selection route-image advisory', () => {
     try {
       expect(directory).not.toBe(oldDirectory)
       expect(b.routeImageOf('s1')).toBe(false)
+      // The previous directory still observes its own selection, but it no
+      // longer owns the Session's advisory.
+      first.projection.set({
+        lastUsed: null,
+        next: { provider: 'deepseek-official', model: 'deepseek-v4-flash' },
+      })
+      expect(oldDirectory.store.getSnapshot().current?.model).toBe('deepseek-v4-flash')
+      expect(b.routeImageOf('s1')).toBe(false)
       await first.fiber.dispose()
       expect(b.routeImageOf('s1')).toBe(false)
       await replacement.fiber.dispose()
@@ -650,5 +663,14 @@ describe('ui-model-selection route-image advisory', () => {
     expect(b.routeImageOf('s1')).toBe(true)
     await scope.fiber.dispose()
     expect(b.routeImageOf('s1')).toBeNull()
+  })
+
+  it('resolves and loads a directory when no conversation service is composed', async () => {
+    const b = await bench('zh', { conversation: false })
+    b.mint('s1')
+    const directory = b.ctx.modelDirectories.directoryFor(sid('s1'))
+    await directory.load()
+    expect(directory.store.getSnapshot().current).toEqual({ provider: 'deepseek-official', model: 'deepseek-v4-flash' })
+    expect(b.routeImageOf('s1')).toBeUndefined()
   })
 })
