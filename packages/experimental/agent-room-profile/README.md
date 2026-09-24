@@ -35,7 +35,7 @@ dsh plugin --profile web add @deepseek-ai/dsh-experimental-agent-room-profile
 
 ### What you get
 
-Four rows after `dsh-base`: the Team domain with `roomEnabled: true`, its delegation tools, the room tools, and the Team browser UI. Every value the room enforces is stated in the patch rather than defaulted: eight members at most, a twenty-entry transcript window per prompt, majority approval, and four revisions before a decision must escalate.
+Four rows after `dsh-base`: the Team domain with `roomEnabled: true`, its delegation tools, the room tools, and the Team browser UI. Every value the room enforces is stated in the patch rather than defaulted: eight members at most, a twenty-entry transcript window per prompt, majority approval, and four revisions before a decision must escalate. The Plugins page reads the bundle's [icon](icon.svg) from its `package.json.icon` declaration, including while the bundle is disabled.
 
 <a id="understand-the-implementation"></a>
 ## Understand the implementation

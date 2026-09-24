@@ -35,7 +35,7 @@ dsh plugin --profile web add @deepseek-ai/dsh-experimental-agent-room-profile
 
 ### 你会得到什么
 
-在 `dsh-base` 之后的四行：开启 `roomEnabled: true` 的 Team 域、它的委派工具、room 工具，以及 Team 浏览器 UI。room 强制执行的每个值都写在 patch 中而不是依赖默认值：最多八个成员、每次 prompt 二十条 transcript 窗口、多数批准，以及决策必须升级前的四次 revision。
+在 `dsh-base` 之后的四行：开启 `roomEnabled: true` 的 Team 域、它的委派工具、room 工具，以及 Team 浏览器 UI。room 强制执行的每个值都写在 patch 中而不是依赖默认值：最多八个成员、每次 prompt 二十条 transcript 窗口、多数批准，以及决策必须升级前的四次 revision。插件页通过组合包的 `package.json.icon` 声明读取其[图标](icon.svg)，组合包禁用时也会显示。
 
 <a id="understand-the-implementation"></a>
 ## 理解实现
