@@ -37,7 +37,7 @@ Boot runs in two stages: the module stage adopts the parser-loaded bootstrap bat
 
 ### The boot page
 
-The boot page uses plain DOM and local CSS, so bundle and plugin-activation failures remain visible: it shows one spinner node whose CSS arc grows as entries activate, and reports per-entry status. The spinner and its animation phase persist until the boot page fades out over the mounted full UI. A plugin that fails import or activation is reported by name with the reason (missing service, import failure, or state) instead of a blank page. The console contains the original import error.
+The boot page uses plain DOM and local CSS, so bundle and plugin-activation failures remain visible: it draws the Portal mark with the typed `PORTAL` wordmark and `HARNESS` nameplate, and reports per-entry status. A boot that outlasts the brand moment also gains one spinner node whose CSS arc grows as entries activate; a boot that finishes inside it shows no spinner at all. A plugin that fails import or activation is reported by name with the reason (missing service, import failure, or state) instead of a blank page. The console contains the original import error.
 
 ### The shared module table
 
@@ -67,7 +67,7 @@ The kernel owns exactly three things: the module system, the Cordis Loader, and 
 
 ### Boot page mechanics
 
-The boot page is plain DOM with local CSS whose fallback fonts and colors match the theme tokens that arrive during loading. `internal/status` events drive one spinner node and per-entry labels; the page overlay keeps its node and animation phase through the application mount, and `fail()` renders the thrown reason. React mounting, slot rendering, and assembly live in `ui-renderer`; `ui-layout` owns the assembled browser-title projection.
+The boot page is plain DOM with local CSS whose fallback fonts and colors match the theme tokens that arrive during loading. The brand sequence reveals the mark in four staged groups, types the wordmark, and lands the nameplate as the caret leaves, animating opacity and transform alone so it keeps its frame rate while the plugin roster loads on the same main thread. `internal/status` events drive the spinner node and per-entry labels; the page overlay keeps its node and animation phase through the application mount, holds the brand moment for at least 1.35s from mount, then dissolves over the ready application, and `fail()` renders the thrown reason. React mounting, slot rendering, and assembly live in `ui-renderer`; `ui-layout` owns the assembled browser-title projection.
 
 The boot kernel delegates manifest entry creation to Client Modules so live graph synchronization owns the same entry identities after startup. The initial activation audit remains strict; later page-local failures appear in Settings → Plugins → Plugin list.
 
@@ -79,7 +79,7 @@ The boot kernel delegates manifest entry creation to Client Modules so live grap
 | [`src/boot.ts`](src/boot.ts) | `AppWebEntry`: module stage, boot page, immediate-tier prefetch, then `bootClient` + `mountClient` |
 | [`src/boot-client.ts`](src/boot-client.ts) | `bootClient` / `assertEntriesActive`: Loader mount, one entry per manifest row, activation audit |
 | [`src/mount.ts`](src/mount.ts) | `mountClient`: renderer handoff through a `uiRenderer` dependency fiber |
-| [`src/boot-page.ts`](src/boot-page.ts) | Framework-free boot page: spinner, per-entry status, failure rendering |
+| [`src/boot-page.ts`](src/boot-page.ts) | Framework-free boot page: brand sequence, spinner, per-entry status, failure rendering |
 | [`src/platform.ts`](src/platform.ts) | `PLATFORM_MODULES` / `PRELOADED_CLIENT_EXTERNALS`: the implicit external baseline |
 | [`src/seed.ts`](src/seed.ts) | Static module table handed to the loader at boot |
 

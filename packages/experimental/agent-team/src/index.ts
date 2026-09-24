@@ -285,7 +285,15 @@ export class TeamService extends TypertRemoteService {
   async updateTask(caller: Agent, request: UpdateTeamTaskRequest): Promise<TeamTaskView> {
     const membership = this.roster.membership(caller)
     const view = await this.tasks.update(caller, membership, request)
-    await this.announceTaskOutcome(caller, membership, request, view)
+    // The transition is already durable, so a refused notice must not report the
+    // committed mutation as failed: the model would retry it against the
+    // revision it no longer carries. Containment mirrors the room's transcript
+    // append, which fails the same way during disposal or a full mailbox.
+    await this.announceTaskOutcome(caller, membership, request, view).catch((error: unknown) => {
+      /* v8 ignore next -- a notice refused because the service is disposing is the only quiet path. */
+      if (this.lifecycle.disposed) return
+      this.ctx.logger.warn(`team task notice failed: ${errorMessage(error)}`)
+    })
     return view
   }
 

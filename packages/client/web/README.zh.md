@@ -37,7 +37,7 @@ kind: "package-library"
 
 ### 启动页
 
-启动页只使用原生 DOM 与本地 CSS，因此 bundle 与插件激活失败保持可见：它显示一个 spinner 节点，其 CSS 圆弧随 entry 激活而增长，并逐 entry 报告状态。spinner 及其动画相位会一直保留，直到启动页淡出于已挂载的完整 UI 之上。导入或激活失败的插件会按名称报告并给出原因（缺失服务、导入失败或状态），而不是白屏。控制台包含原始导入错误。
+启动页只使用原生 DOM 与本地 CSS，因此 bundle 与插件激活失败保持可见：它绘制 Portal 标记，配合逐字显现的 `PORTAL` 字标与 `HARNESS` 铭牌，并逐 entry 报告状态。若启动时长超过品牌时刻，页面才会加入一个 spinner 节点，其 CSS 圆弧随 entry 激活而增长；在品牌时刻内完成的启动完全不显示 spinner。导入或激活失败的插件会按名称报告并给出原因（缺失服务、导入失败或状态），而不是白屏。控制台包含原始导入错误。
 
 ### 共享模块表
 
@@ -67,7 +67,7 @@ kind: "package-library"
 
 ### 启动页机制
 
-启动页是原生 DOM 加本地 CSS，其回退字体与颜色匹配加载期间到达的主题 token。`internal/status` 事件驱动一个 spinner 节点与逐 entry 标签；页面遮罩在应用挂载期间保留该节点与动画相位，`fail()` 渲染抛出的原因。React 挂载、slot 渲染与应用组装位于 `ui-renderer`；`ui-layout` 拥有组装后的浏览器标题投影。
+启动页是原生 DOM 加本地 CSS，其回退字体与颜色匹配加载期间到达的主题 token。品牌序列分四组依次显现标记，逐字键入字标，并在光标退场时落下铭牌；它只动画 opacity 与 transform，因此在插件清单于同一主线程加载期间仍能保持帧率。`internal/status` 事件驱动 spinner 节点与逐 entry 标签；页面遮罩在应用挂载期间保留该节点与动画相位，自挂载起至少保持品牌时刻 1.35 秒，随后在就绪的应用之上溶解，`fail()` 渲染抛出的原因。React 挂载、slot 渲染与应用组装位于 `ui-renderer`；`ui-layout` 拥有组装后的浏览器标题投影。
 
 启动内核把清单条目创建交给 Client Modules，使启动后的动态图同步继续持有相同的条目身份。初始激活审计仍然严格；后续页面本地失败显示在「设置 → 插件 → 插件列表」。
 
@@ -79,7 +79,7 @@ kind: "package-library"
 | [`src/boot.ts`](src/boot.ts) | `AppWebEntry`：模块阶段、启动页、immediately 层级预取，随后调用 `bootClient` + `mountClient` |
 | [`src/boot-client.ts`](src/boot-client.ts) | `bootClient` / `assertEntriesActive`：挂载 Loader、每个 manifest 行一个 entry、激活审计 |
 | [`src/mount.ts`](src/mount.ts) | `mountClient`：经 `uiRenderer` 依赖 fiber 完成渲染器交接 |
-| [`src/boot-page.ts`](src/boot-page.ts) | 无框架启动页：spinner、逐 entry 状态、失败渲染 |
+| [`src/boot-page.ts`](src/boot-page.ts) | 无框架启动页：品牌序列、spinner、逐 entry 状态、失败渲染 |
 | [`src/platform.ts`](src/platform.ts) | `PLATFORM_MODULES` / `PRELOADED_CLIENT_EXTERNALS`：隐式 external 基座 |
 | [`src/seed.ts`](src/seed.ts) | 启动时交给 loader 的静态模块表 |
 

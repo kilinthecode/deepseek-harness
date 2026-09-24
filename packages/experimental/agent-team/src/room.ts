@@ -89,6 +89,12 @@ export interface RoomConfig {
 interface RoomParticipant {
   readonly id: SessionId
   readonly name: string
+  /**
+   * Whether the durable mailbox can address this participant. A member still
+   * provisioning has no committed Session, so it can be neither asked for a
+   * standing nor counted toward quorum; the Lead is always addressable.
+   */
+  readonly reachable: boolean
   /** Route the member record resolved for this participant, when it recorded one. */
   readonly agentModel?: string
 }
@@ -227,8 +233,13 @@ export class TeamRoom {
     // Resolve the timer before asking anyone, so a composition that cannot serve
     // a deadline fails before the room delivers its requests.
     this.requireTimer()
-    await this.requestReviews(caller, proposal)
-    this.armReview(membership.root, proposal)
+    try {
+      await this.requestReviews(caller, proposal)
+    } finally {
+      // A refused delivery still leaves a committed open decision, so the
+      // deadline is armed either way; otherwise nothing would ever settle it.
+      this.armReview(membership.root, proposal)
+    }
     return this.proposalView(membership.root.id, proposal.id)
   }
 
@@ -279,7 +290,8 @@ export class TeamRoom {
     this.published(membership.root.id)
     if (settled !== undefined) {
       this.disarmReview(request.proposalId)
-      await this.announceOutcome(membership.root.id, caller, settled.proposal, settled.tally)
+      // The standing is already durable, so the notice is best effort.
+      await this.notify(() => this.announceOutcome(membership.root.id, caller, settled.proposal, settled.tally))
     }
     else {
       const current = this.journal.state(membership.root).roomProposals.find(c => c.id === request.proposalId)
@@ -313,13 +325,29 @@ export class TeamRoom {
     // Delivery takes its own root transaction to checkpoint the receipt, so it
     // must run after this one commits rather than nested inside it.
     if (membership.role !== 'lead') {
-      await this.mailbox.send(caller, {
+      await this.notify(() => this.mailbox.send(caller, {
         target: 'lead',
         content: [{ type: 'text', text: `Room decision ${proposal.id} needs a human decision: ${reason}` }],
         signal: request.signal,
-      })
+      }))
     }
     return this.proposalView(membership.root.id, request.proposalId)
+  }
+
+  /**
+   * Run one notice that follows an already committed room change. A refused
+   * delivery must not report the committed change as failed, which would make
+   * the caller repeat an operation the log has already recorded.
+   * @param notice - delivery to attempt; only its outcome is observed here.
+   */
+  private async notify(notice: () => Promise<unknown>): Promise<void> {
+    try {
+      await notice()
+    } catch (error: unknown) {
+      /* v8 ignore next -- a notice refused because the room is disposing is the only quiet path. */
+      if (this.lifecycle.disposed) return
+      this.ctx.logger.warn(`room notice failed: ${errorMessage(error)}`)
+    }
   }
 
   /**
@@ -589,12 +617,13 @@ export class TeamRoom {
    * the roster uses to resolve a live member's Team identity.
    */
   private participants(rootId: SessionId, state: TeamState): RoomParticipant[] {
-    const result: RoomParticipant[] = [{ id: rootId, name: 'lead' }]
+    const result: RoomParticipant[] = [{ id: rootId, name: 'lead', reachable: true }]
     for (const member of state.members) {
       if (member.phase !== 'failed') {
         result.push({
           id: member.id,
           name: member.name,
+          reachable: member.phase === 'active',
           ...member.agentModel === undefined ? {} : { agentModel: member.agentModel },
         })
       }
@@ -617,10 +646,14 @@ export class TeamRoom {
     return timer
   }
 
-  /** Active reviewers for one decision, excluding its proposer. */
+  /**
+   * Reviewers one decision may count on: every addressable participant other
+   * than the proposer. A member that is still provisioning is a participant the
+   * room shows but cannot ask, so it never holds a decision open.
+   */
   private eligibleReviewers(state: TeamState, proposerId: SessionId): RoomParticipant[] {
     return this.participants(brandString<SessionId>(state.id), state)
-      .filter(candidate => candidate.id !== proposerId)
+      .filter(candidate => candidate.reachable && candidate.id !== proposerId)
   }
 
   /** Resolve one durable participant name for transcript attribution. */

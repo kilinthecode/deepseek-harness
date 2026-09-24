@@ -1,11 +1,11 @@
 {
   "en-US": {
     "menu": [
-      { "label": "About Portal", "role": "about" },
+      { "label": "About Portal Harness", "role": "about" },
       { "type": "separator" }
     ],
     "options": {
-      "applicationName": "Portal",
+      "applicationName": "Portal Harness",
       "applicationVersion": "1.0.0",
       "version": "",
       "copyright": "",
@@ -14,11 +14,11 @@
   },
   "zh-CN": {
     "menu": [
-      { "label": "关于 Portal", "role": "about" },
+      { "label": "关于 Portal Harness", "role": "about" },
       { "type": "separator" }
     ],
     "options": {
-      "applicationName": "Portal",
+      "applicationName": "Portal Harness",
       "applicationVersion": "1.0.0",
       "version": "",
       "copyright": "",

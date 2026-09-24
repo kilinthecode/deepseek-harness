@@ -361,6 +361,63 @@ describe('room collective decisions', () => {
     expect(ctx.agentTeams.roomView(lead).participants.map(participant => participant.name)).toEqual(['lead'])
   })
 
+  it('shows a provisioning member without counting it as a reviewer', async () => {
+    const { ctx, lead } = await setup(acks(2))
+    // The durable provisioning prefix a spawn writes before its child Session
+    // exists. The room shows the member, but no mailbox can address it yet.
+    lead.session.append('team/member', {
+      version: 2,
+      teamId: TeamId(lead.id),
+      member: {
+        id: SessionId('pending-member'),
+        name: 'pending',
+        description: 'pending responsibility',
+        provider: 'spawn',
+        context: 'fresh',
+        phase: 'provisioning',
+      },
+    })
+    expect(ctx.agentTeams.roomView(lead).participants.map(participant => participant.name))
+      .toEqual(['lead', 'pending'])
+    // Asking it would throw TEAM_MEMBER_NOT_FOUND after the proposal was already
+    // committed, so it must not hold the decision open.
+    await expect(ctx.agentTeams.roomPropose(lead, { statement: 'solo decision', signal: SIGNAL }))
+      .rejects.toMatchObject({ code: 'TEAM_ROOM_NO_REVIEWERS' })
+  })
+
+  it('keeps a settled decision whose proposer cannot be reached', async () => {
+    const { ctx, lead } = await setup([HANGING, HANGING, ...acks(8)], { maxPendingMessagesPerMember: 1 })
+    const alice = await addLiveParticipant(ctx, lead, 'alice')
+    const bob = await addLiveParticipant(ctx, lead, 'bob')
+    const opened = await ctx.agentTeams.roomPropose(ctx.agents.get(alice)!, {
+      statement: 'contested', signal: SIGNAL,
+    })
+
+    // The proposer stops, and one peer message stays queued in its only inbox
+    // slot, so the outcome notice the settled decision owes it is refused.
+    ctx.agents.get(alice)?.cancel({ kind: 'parent' })
+    await vi.waitFor(() => { expect(ctx.agents.get(alice)).toBeUndefined() }, { timeout: 5_000 })
+    vi.spyOn(ctx.sessionPersistence, 'open').mockRejectedValueOnce(new Error('temporary read failure'))
+    const queued = await ctx.agentTeams.sendMessage(lead, {
+      target: 'alice', content: content('queued while stopped'), signal: SIGNAL,
+    })
+    expect(queued.status).toBe('queued')
+
+    // One rejection from bob reaches the threshold for two eligible reviewers,
+    // so the decision settles and then owes its proposer the outcome.
+    const warnings: string[] = []
+    ctx.logger.warn = ((value: unknown) => { warnings.push(String(value)) }) as typeof ctx.logger.warn
+    const settled = await ctx.agentTeams.roomReview(ctx.agents.get(bob)!, {
+      proposalId: opened.id,
+      proposalRevision: opened.revision,
+      verdict: 'reject',
+      reason: 'not this',
+      signal: SIGNAL,
+    })
+    expect(settled.phase).toBe('rejected')
+    expect(warnings).toEqual([expect.stringContaining('room notice failed')])
+  })
+
   it('lets any participant put a decision to the room', async () => {
     const { ctx, alice } = await room()
     const opened = await ctx.agentTeams.roomPropose(ctx.agents.get(alice)!, {

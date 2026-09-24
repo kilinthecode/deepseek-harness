@@ -1647,6 +1647,45 @@ describe('Team mailbox and waiting', () => {
     })).rejects.toMatchObject({ code: 'TEST_CANCELLED' })
   })
 
+  it('keeps a committed verdict when its owner cannot be reached', async () => {
+    const { ctx, lead } = await setup(['hang', 'hang'], { maxPendingMessagesPerMember: 1 })
+    const ownerStarted = await spawn(ctx, lead, 'owner')
+    const owner = await waitRunning(ctx, ownerStarted.member.id)
+    const verifierStarted = await spawn(ctx, lead, 'verifier')
+    const verifier = await waitRunning(ctx, verifierStarted.member.id)
+    const task = await ctx.agentTeams.createTask(owner, { subject: 'work', description: 'work' })
+    const claimed = await ctx.agentTeams.updateTask(owner, {
+      taskId: task.id, expectedRevision: task.revision, action: 'claim',
+    })
+    const submitted = await ctx.agentTeams.updateTask(owner, {
+      taskId: task.id, expectedRevision: claimed.revision, action: 'submit',
+    })
+
+    // The owner stops, and one queued peer message fills its only inbox slot,
+    // so the verdict notice the committed transition owes it is refused.
+    owner.cancel({ kind: 'parent' })
+    await waitNoAgent(ctx, owner.id)
+    await ctx.agentTeams.sendMessage(lead, {
+      target: 'owner', content: content('queued while stopped'), signal: SIGNAL,
+    })
+
+    // The verdict is durable regardless: reporting the refusal as a failed
+    // mutation would make the verifier retry against a revision it no longer
+    // carries.
+    const warnings: string[] = []
+    ctx.logger.warn = ((value: unknown) => { warnings.push(String(value)) }) as typeof ctx.logger.warn
+    const verdict = await ctx.agentTeams.updateTask(verifier, {
+      taskId: task.id,
+      expectedRevision: submitted.revision,
+      action: 'verify',
+      verdict: 'rejected',
+      reason: 'rework it',
+    })
+    expect(verdict).toMatchObject({ status: 'in_progress' })
+    expect(verdict.verification).toMatchObject({ verdict: 'rejected', reason: 'rework it' })
+    expect(warnings).toEqual([expect.stringContaining('team task notice failed')])
+  })
+
   it('interrupts only the current turn and retains an already accepted follow-up', async () => {
     const { ctx, lead } = await setup(['hang', textResponse('after interrupt')])
     const started = await spawn(ctx, lead, 'worker')

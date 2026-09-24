@@ -35,7 +35,7 @@ changes:
 <a id="compatibility"></a>
 ## Compatibility
 
-The property is optional and additive: existing team/task records stay valid and keep their committed status variants, so a task without verification reads exactly as before. Awaiting verification is derived from a submission with no verdict rather than stored as a new status, which is why no durable union changes and no Session format version moves.
+The property is optional and additive: existing team/task records keep their committed status variants, and no durable union changes, which is why no Session format version moves. A task revision committed before this change that reached `completed` carries no verification record, and it stays readable as completed: the read rule accepts an absent verification record whatever the status, while the writer can no longer produce that pair because only an approving verdict reaches `completed`. Awaiting verification is derived from a submission with no verdict rather than stored as a new status.
 
 <a id="verification"></a>
 ## Verification

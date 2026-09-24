@@ -2106,13 +2106,7 @@ Create one named, durable teammate. Only the Team Lead may call this tool.
     },
     "reasoning_effort": {
       "type": "string",
-      "description": "Reasoning effort for this teammate. Defaults to your own setting.",
-      "enum": [
-        "off",
-        "low",
-        "medium",
-        "high"
-      ]
+      "description": "Reasoning effort for this teammate, named as the target model declares it. Defaults to your own setting."
     }
   },
   "required": [

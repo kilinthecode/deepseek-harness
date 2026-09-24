@@ -200,8 +200,7 @@ function install(agent: Agent, ctx: Context, config: Required<Config>): () => vo
         },
         reasoning_effort: {
           type: 'string',
-          enum: ['off', 'low', 'medium', 'high'],
-          description: 'Reasoning effort for this teammate. Defaults to your own setting.',
+          description: 'Reasoning effort for this teammate, named as the target model declares it. Defaults to your own setting.',
         },
       },
       output: jsonOutput(SPAWN_VALUE_SCHEMA),

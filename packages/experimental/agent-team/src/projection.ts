@@ -339,19 +339,18 @@ function parseCurrentTeamEvent(event: TeamSessionEvent): TeamSessionEvent {
 }
 
 /**
- * Refuse a task record whose verification cannot mean what it claims: completed
- * work carries a peer's approval, a verdict names the member that recorded it,
- * and no member verifies its own work.
+ * Refuse a task record whose verification cannot mean what it claims: a
+ * recorded verdict names the member that recorded it, no member verifies its
+ * own work, and completed work carries an approving verdict.
+ *
+ * A completed task with no verification record stays readable. Sessions written
+ * before peer verification existed carry exactly that shape, and the writer can
+ * no longer produce it because only an approving verdict reaches `completed`.
  * @param task - candidate task revision from one committed Team event.
  */
 function assertTaskVerification(task: TeamTaskSnapshot): void {
   const verification = task.verification
-  if (verification === undefined) {
-    if (task.status === 'completed') {
-      throw new Error(`team task "${task.id}" completed without a peer verification`)
-    }
-    return
-  }
+  if (verification === undefined) return
   if (verification.verdict !== undefined && verification.verifierId === undefined) {
     throw new Error(`team task "${task.id}" recorded a verdict without its verifier`)
   }

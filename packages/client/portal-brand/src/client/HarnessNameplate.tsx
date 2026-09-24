@@ -1,4 +1,4 @@
-import type { IconProps } from './icons/props.ts'
+import type { BrandArtworkProps } from './props.ts'
 
 /** Wordmark coordinates of the HARNESS nameplate; both renderings place it at the same position. */
 const HARNESS_NAMEPLATE_VIEWBOX = '129.348 0 52 24'
@@ -38,7 +38,7 @@ export function HarnessNameplateArtwork() {
  * @param props.className - extra class for layout placement.
  * @returns the nameplate svg (aria-hidden decorative brand art).
  */
-export function HarnessNameplate({ size = 24, className }: IconProps) {
+export function HarnessNameplate({ size = 24, className }: BrandArtworkProps) {
   return (
     <svg
       width={(size * NAMEPLATE_WIDTH) / 24}

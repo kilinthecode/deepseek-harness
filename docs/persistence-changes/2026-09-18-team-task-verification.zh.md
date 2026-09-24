@@ -35,7 +35,7 @@ changes:
 <a id="compatibility"></a>
 ## 兼容性
 
-该属性是可选的增量字段：已有的 team/task 记录仍然有效并保留其既有 status 变体，因此没有验证信息的任务读取结果与之前完全一致。等待验证是由“已提交但尚无裁决”派生出来的，而不是存储为新 status，因此没有持久 union 变更，也没有 Session 格式版本变化。
+该属性是可选的增量字段：已有的 team/task 记录保留其既有 status 变体，也没有持久 union 变更，因此没有 Session 格式版本变化。在此变更之前提交、且当时已达 `completed` 的 task revision 不携带验证记录，而它仍可作为已完成读取：读取规则接受缺失的验证记录，无论 status 是什么；写入方则再也无法产生这种组合，因为只有批准的裁决才能到达 `completed`。等待验证是由“已提交但尚无裁决”派生出来的，而不是存储为新 status。
 
 <a id="verification"></a>
 ## 验证

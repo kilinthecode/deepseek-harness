@@ -20,9 +20,9 @@ transcript 是一种派生，而不是第二个存储。`TeamRoom` 的 observer 
 
 发言不会唤醒 peer。`roomPrompt` 通过发送目标自己上次发言之后记录的 transcript 条目把发言权交给某个参与者，条目数量受 `roomTranscriptWindow` 限制，随后接上调用方的 instruction。由于参与者自己的上次发言总是排在它被展示过的一切之后，这个边界不需要额外记账，而未激活的参与者也不需要在线 Agent：持久 mailbox 会冷启动它。因此 room 只在人类或某个参与者交出发言权时推进，成本由结构而非提示词纪律来约束。
 
-工作由同行验证，而不是由作者自己结清。`complete` 已移除：任务 owner 用 `submit` 交出当前 revision，视图从「已提交但无裁决」派生出 `verifying`，只有另一位成员的 `verify` 裁决才会把工作推进到 `completed`，或连同反对意见退回。因此持久 task union 保留其既有变体，等待状态也不需要存储新的迁移。
+工作由同行验证，而不是由作者自己结清。任务 owner 用 `submit` 交出当前 revision，视图从「已提交但无裁决」派生出 `verifying`，只有另一位成员的 `verify` 裁决才会把工作推进到 `completed`，或连同反对意见退回。因此持久 task union 保留其既有变体，等待状态也不需要存储新的迁移。
 
-决策只由 quorum 结清。`room-quorum.ts` 仅根据记录在案的 review 计算结果：每个有资格的 reviewer 都是 proposer 之外的参与者，接受要求全部 reviewer 都已投票、其中至少 `roomApprovalRatio` 比例批准，且没有任何反对成立。反对一旦达到同一阈值，决策立即结清。服务不暴露任何可以强行给出结论的操作，proposer 不能 review 自己的决策，已结清的决策是最终的，而 `roomEscalate` 会把未决决策交给人类。`roomMaxProposalRevisions` 限制 proposer 可以把修订后的 statement 重新提交多少次，超过后必须升级。chair 随 transcript 长度轮转，不授予任何权力：它的存在只是为了让部署知道下一个该叫谁，而每个参与者都在同一规则下投票。每条已记录的立场都携带 reviewer 给出的理由并对所有参与者可见，而人类能做与参与者相同的三件事：`roomPrompt`、`roomPropose` 与 `roomEscalate` 让浏览器面板可以交出发言权、把 statement 提交给 room，并把未决决策交给人类，各自委派给 model-facing 工具所调用的同一个服务操作。面板不记录任何立场：review 属于拥有该裁决的参与者。问责需要的是反对意见本身，而不只是反对的票数，这正是每条已记录的立场都携带其 reviewer 给出的理由并对所有参与者可见的原因。每次提交都会触发一个进程内的 `room/updated` 通知，而一条 Remote stream 会在每次提交后重发完整 view，并转发每个实时 text chunk，因此读取方能在审议进行时展示它，同时持久日志仍是唯一事实来源。
+决策只由 quorum 结清。`room-quorum.ts` 仅根据记录在案的 review 计算结果：每个有资格的 reviewer 都是 proposer 之外的参与者，接受要求全部 reviewer 都已投票、其中至少 `roomApprovalRatio` 比例批准，且没有任何反对成立。反对一旦达到同一阈值，决策立即结清。服务不暴露任何可以强行给出结论的操作，proposer 不能 review 自己的决策，已结清的决策是最终的，而 `roomEscalate` 会把未决决策交给人类。`roomMaxProposalRevisions` 限制 proposer 可以把修订后的 statement 重新提交多少次，超过后必须升级。chair 随 transcript 长度轮转，不授予任何权力：它的存在只是为了让部署知道下一个该叫谁，而每个参与者都在同一规则下投票。人类能做与参与者相同的三件事：`roomPrompt`、`roomPropose` 与 `roomEscalate` 让浏览器面板可以交出发言权、把 statement 提交给 room，并把未决决策交给人类，各自委派给 model-facing 工具所调用的同一个服务操作。面板不记录任何立场：review 属于拥有该裁决的参与者；每条已记录的立场都携带 reviewer 给出的理由并对所有参与者可见，因为问责需要的是反对意见本身，而不只是反对的票数。每次提交都会触发一个进程内的 `room/updated` 通知，而一条 Remote stream 会在每次提交后重发完整 view，并转发每个实时 text chunk，因此读取方能在审议进行时展示它，同时持久日志仍是唯一事实来源。
 
 沉默是对每个 reviewer 的观察，而不是一个统一的墙钟期限。开启一个 revision 会向每个有资格的 reviewer 请求 standing，并启动该 reviewer 的 `roomReviewGraceMs` 窗口；维持窗口的是该 reviewer 自身的工作 —— 它自己 turn 的持久 event（包括在 room 已经开始等待之后才提交的那次），或实时的 `agent/assistant-stream` 帧 —— 而绝不是 room 自己的记录：Lead Session 保存着每个角色的记录，若把它们计入，就会把 peer 的工作算到 Lead 头上。窗口耗尽的 reviewer 会被记入持久的 `room/review-timeout` 记录，并至多被提醒 `roomReviewReminders` 次；每次提醒都会重启被提醒者的窗口，且绝不打扰 Lead —— Lead 自身的沉默要由人类来解决。只有当所有仍欠 standing 的 reviewer 都用尽窗口后决策才升级，升级记录会点名它们，因此慢模型的决策会交到人类手里，而不是由 room 编造一个 standing。
 
@@ -50,9 +50,9 @@ transcript 是一种派生，而不是第二个存储。`TeamRoom` 的 observer 
 
 `room-projection.spec.ts` 覆盖 fold：重复 transcript 身份、外来 room 身份、首 revision 规则、原地结清、拒绝改动最终决策、proposer 与 statement 不可变、只能通过下一个 revision 重开、review 放置，以及包含饱和 id 的身份分配。
 
-从开发 checkout 无法打包 Desktop 应用：macOS 的每一条打包路径——包括有文档记载的 prepare-only 停止点和 `--dir` 目录构建——都会校验 notary 环境，并在缺少真实 Apple 凭据集时失败。有文档记载的本地 adhoc 路径能走到最后的 native payload smoke，并在那里以 `libc++abi: terminating due to uncaught exception of type Napi::Error` 中止。失败位于 Desktop smoke 中，而不在 room 中。保留住 prepared 树（脚本在失败时会删除它）后可以看到，该 smoke 的每个组成部分单独运行都成功：五个 runtime payload 模块都能在打包的 Electron 运行时下加载，而它的第一步以完全相同的子环境、相同的嵌套 Electron 父进程和相同的树复现时，会打印自己的成功标记。组合后的 smoke 仍然中止，因此原因在于该 smoke 在此环境下的整体执行，而不是它指名的任何模块或参数。`DSH_ADHOC_SIGN=1` 会选择 adhoc 签名身份，但不会豁免 notarization，因此随产品发布的流水线无法产出未签名的本地构建，尽管 adhoc 身份是存在的。因此产出 `.app` 需要 release 凭据，而 room 是通过 `apps/cli` 的依赖闭包而非任何打包专属步骤加入其中的。
+产出 Desktop `.app` 需要 release 凭据：macOS 的每一条打包路径都会校验 notary 环境，而 `DSH_ADHOC_SIGN=1` 会选择 adhoc 签名身份，但不会豁免 notarization，因此随产品发布的流水线无法产出未签名的本地构建。room 是通过 `apps/cli` 的依赖闭包而非任何打包专属步骤加入其中的，也没有任何本地打包运行验证过它。
 
-随产品发布的 CLI 也经过了端到端验证：用 `dsh plugin add` 把 `agent-room-profile` 安装进一个 profile，然后让一个任务要求 Lead 把两位 teammate 安排在 不同模型上并向它们提交一个决策。二进制组合出了 room，模型调用了 room 工具，决策以两条独立写下的拒绝结清。该次运行暴露了已结清决策的 `awaiting` 不一致：由一次 quorum 拒绝结清的决策仍然把沉默的 reviewer 列为等待中，因此 `RoomProposalView.awaiting` 现在对任何已结清决策都为空。
+随产品发布的 CLI 也经过了端到端验证：用 `dsh plugin add` 把 `agent-room-profile` 安装进一个 profile，然后让一个任务要求 Lead 把两位 teammate 安排在 不同模型上并向它们提交一个决策。二进制组合出了 room，模型调用了 room 工具，决策以两条独立写下的拒绝结清。在并非所有 reviewer 都投票之前就结清的决策不会报告任何 `awaiting` 名称，因为从未投票的 reviewer 无法改变 quorum 已经达成的结论。
 
 `room.e2e.ts` 针对随产品发布的 DeepSeek route 认证在线路径。它把一位参与者安排在 `deepseek-v4-flash`、另一位安排在 `deepseek-v4-pro`，断言两者都以各自的 route 流式进入 room，向它们提交一个有争议的 statement，并等待 peer 模型用自己的 turn 结清该决策。随后它重新读取持久日志，要求存在带非空 reason 的记录在案的 verdict。若环境或 harness home 存储中没有凭据，它会自行跳过。
 
@@ -81,5 +81,3 @@ room 通过既有的 Agent Teams 面板而非新的界面到达人类：`@deepse
 只有当参与者能够对其采取行动时，room 才真正有用，因此 model-facing 界面作为独立包发布，而不是塞进 `agent-team`。`@deepseek-ai/dsh-experimental-tool-agent-room` 安装五个 scoped 工具 —— view、prompt、propose、review、escalate —— 以及共同问责策略，沿用 `@deepseek-ai/dsh-experimental-tool-agent-team` 已经建立的 scoped 安装生命周期。每个工具都委托给服务，因此工具界面不会带来这些操作本身不具备的任何权威。
 
 scoped 安装有一个值得说明的后果：安装依据 Agent 创建时的成员身份，而它早于 provider-owned child 的 descriptor，因此这样的 child 可能在 roster 不再承认它之前就收到工具。真正拒绝它的是每个操作内部的授权检查，那才是执行点；安装不是。
-
-room 复用 Team roster，因此继承其约束：单进程、共享 checkout、扁平且不可变的 roster，以及没有跨进程 exactly-once 投递。成员不可能只属于 room 而不属于 roster；失败的成员不再计入 quorum，这可能让原本无法达成的 quorum 变得可达。

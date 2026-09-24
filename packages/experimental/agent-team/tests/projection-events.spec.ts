@@ -75,10 +75,6 @@ describe('task verification in the durable stream', () => {
     const owned = { ownerId: CHILD }
     const cases: { readonly label: string; readonly tasks: [TeamTaskSnapshot, TeamTaskSnapshot] }[] = [
       {
-        label: 'completed without a peer verification',
-        tasks: [task(owned), task({ ...owned, revision: 2, status: 'completed' })],
-      },
-      {
         label: 'a verdict without its verifier',
         tasks: [
           task({ ...owned, verification: { submittedRevision: 1 } }),
@@ -127,6 +123,23 @@ describe('task verification in the durable stream', () => {
       ])
       expect(projected.failure, label).toBeDefined()
     }
+  })
+
+  it('reads a completed task committed before peer verification existed', () => {
+    // Sessions written before this change completed a task directly, so the
+    // record carries no verification. Rejecting it would make every such Lead
+    // Session unprojectable; the writer can no longer produce the pair because
+    // only an approving verdict reaches `completed`.
+    const legacy = projectTeam(ROOT, [
+      event('team/task', { version: 2, teamId: TEAM, task: task({ ownerId: CHILD }) }, SessionSeq(0)),
+      event('team/task', {
+        version: 2,
+        teamId: TEAM,
+        task: task({ ownerId: CHILD, revision: 2, status: 'completed' }),
+      }, SessionSeq(1)),
+    ])
+    expect(legacy.tasks.map(candidate => [candidate.revision, candidate.status]))
+      .toEqual([[2, 'completed']])
   })
 
   it('accepts a peer approval that names the revision it judged', () => {

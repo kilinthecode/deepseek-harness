@@ -1,4 +1,4 @@
-import type { IconProps } from './icons/props.ts'
+import type { BrandArtworkProps } from './props.ts'
 
 /**
  * Coordinate frame of the mark. The tesseract spans 217.6–806.4 across and
@@ -79,7 +79,7 @@ function Cell({ vertices, width, opacity }: CellProps) {
  * @param props.className - extra class for layout placement; color rides currentColor.
  * @returns the mark svg (aria-hidden; pair it with the product name for accessibility).
  */
-export function PortalMark({ size = 24, className }: IconProps) {
+export function PortalMark({ size = 24, className }: BrandArtworkProps) {
   return (
     <svg
       width={size}

@@ -45,6 +45,13 @@ let stopForRecovery = async (): Promise<void> => {}
 let shuttingDown = false
 let windowsLanguage: string | undefined
 
+/**
+ * Deadline after which the primary window is revealed even though its page has
+ * not reported a first paint, so a stalled load stays visible and closeable
+ * instead of leaving a running process with no window.
+ */
+const FIRST_PAINT_TIMEOUT_MS = 15_000
+
 function currentDesktopLocale(): ReturnType<typeof resolveDesktopLocale> {
   return resolveDesktopLocale(windowsLanguage ?? app.getLocale())
 }
@@ -579,7 +586,7 @@ async function main(): Promise<void> {
   // development launch lacks; carry the product icon on the Dock instead.
   if (development && process.platform === 'darwin') app.dock?.setIcon(join(app.getAppPath(), 'resources', 'icon-macos.png'))
   app.setAboutPanelOptions({
-    applicationName: 'Portal',
+    applicationName: 'Portal Harness',
     applicationVersion: app.getVersion(),
     // The release has no separate build number; omit Electron's bundle version.
     version: '',
@@ -662,10 +669,20 @@ async function main(): Promise<void> {
     // Hidden until the first paint so the window never shows an empty
     // transparent frame before the boot page renders.
     const window = createWindow(appPreload, false, true)
-    window.once('ready-to-show', () => { if (!window.isDestroyed()) window.show() })
+    // A page that never paints would otherwise leave the process running with no
+    // visible window and no dialog, so the deadline reveals it regardless. The
+    // load failures below still report through reportFatal.
+    const firstPaint = setTimeout(() => { if (!window.isDestroyed()) window.show() }, FIRST_PAINT_TIMEOUT_MS)
+    window.once('ready-to-show', () => {
+      clearTimeout(firstPaint)
+      if (!window.isDestroyed()) window.show()
+    })
     mainWindow = window
     window.on('focus', automaticCheck)
-    window.on('closed', () => { if (mainWindow === window) mainWindow = undefined })
+    window.on('closed', () => {
+      clearTimeout(firstPaint)
+      if (mainWindow === window) mainWindow = undefined
+    })
     window.webContents.on('did-fail-load', (_event, code, description, url, isMainFrame) => {
       if (isMainFrame && code !== -3 && !quitting && !window.isDestroyed()) {
         reportFatal(new Error(`Desktop page failed to load: ${url} (${String(code)}: ${description})`))
