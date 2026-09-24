@@ -41,6 +41,8 @@ async function projectedContext(): Promise<Context> {
   return ctx
 }
 
+const IMAGES_DESCRIPTION = 'Attachment ids of images already shown in this conversation, appended to the prompt.'
+
 /**
  * Drives the REAL plugin body: mounts `dsh-tool-subagent` on a real
  * `ToolRuntime` + `SubagentRuntime`, with a package-local scripted child
@@ -382,7 +384,7 @@ describe('dsh-tool-subagent', () => {
     await ctx.plugin(SubagentRuntime)
     const backend = await mock.mountScriptedProvider(ctx, { name: 'mock' }) // fresh conversation (descriptor: false)
     await ctx.plugin(tool, { provider: 'mock' })
-    expect(ctx.tools.schemas().find(s => s.name === 'subagent')!.description).toContain('does not see this conversation')
+    expect(ctx.tools.schemas().find(s => s.name === 'subagent')!.description).toContain('works in its own context')
 
     // Backend unloads (HMR shape): the tool must not outlive its provider.
     await backend.dispose()
@@ -442,7 +444,7 @@ describe('dsh-tool-subagent', () => {
     // unregistering (removed-event with another name) must not touch the tool.
     const other = await mock.mountScriptedProvider(ctx, { name: 'other', inheritsParentContext: true })
     expect(ctx.tools.schemas().filter(s => s.name === 'subagent')).toHaveLength(1)
-    expect(ctx.tools.schemas().find(s => s.name === 'subagent')!.description).toContain('does not see this conversation')
+    expect(ctx.tools.schemas().find(s => s.name === 'subagent')!.description).toContain('works in its own context')
     await other.dispose()
     expect(ctx.tools.schemas().some(s => s.name === 'subagent')).toBe(true)
   })
@@ -450,7 +452,7 @@ describe('dsh-tool-subagent', () => {
   it('derives spawn-shaped wording from a fresh-conversation provider (default mock)', async () => {
     const ctx = await setup({ provider: 'mock' })
     const schema = ctx.tools.schemas().find(s => s.name === 'subagent')!
-    expect(schema.description).toContain('does not see this conversation')
+    expect(schema.description).toContain('works in its own context')
     const props = (schema.parameters as { properties: Record<string, { description: string }> }).properties
     expect(props['prompt']!.description).toContain('include everything it needs')
   })
@@ -466,19 +468,14 @@ describe('dsh-tool-subagent', () => {
     expect(schema.description).not.toContain('can prevent provider-side reuse of the inherited conversation prefix')
     const props = (schema.parameters as { properties: Record<string, { description: string }> }).properties
     expect(props['prompt']!.description).toContain('completed turns')
-    // A fork inherits only completed turns, so the wording points current-turn images at `images`.
-    expect(props['prompt']!.description).toContain('not inherited')
-    expect(props['images']!.description).toContain('Attachment ids of images already shown in this conversation')
+    expect(props['images']!.description).toBe(IMAGES_DESCRIPTION)
   })
 
-  it('documents the images parameter on a fresh-conversation provider without fork wording', async () => {
+  it('documents the images parameter on a fresh-conversation provider', async () => {
     const ctx = await setup({ provider: 'mock' })
     const schema = ctx.tools.schemas().find(s => s.name === 'subagent')!
     const props = (schema.parameters as { properties: Record<string, { description: string }> }).properties
-    expect(props['prompt']!.description).not.toContain('not inherited')
-    expect(props['images']!.description).toBe(
-      'Attachment ids of images already shown in this conversation, handed to the child after the text. Refused when the child\'s model or transport cannot accept images.',
-    )
+    expect(props['images']!.description).toBe(IMAGES_DESCRIPTION)
   })
 
   it('disposes the run on the success path (no leaked child)', async () => {
@@ -1252,7 +1249,7 @@ describe('dsh-tool-subagent continuable background mode', () => {
     expect(schema.description).not.toContain('job_output')
     expect(schema.description).not.toContain('job_kill')
     expect(schema.description).toContain('send_message')
-    expect(schema.description).toContain('steers the child\'s nearest step while it is running')
+    expect(schema.description).toContain('you are notified when the run settles')
     expect(schema.description).not.toContain('send_message` starts a later turn')
     expect(schema.description).toContain('runs in the background by default')
     expect(schema.description).not.toContain('never poll or wait on it')
@@ -1262,8 +1259,7 @@ describe('dsh-tool-subagent continuable background mode', () => {
     expect(properties.run_in_background?.description).toContain('Defaults to true')
     const assembly = await ctx.systemPrompt.assemble(assembleContextFor(parent))
     const guidance = assembly.sections.find(section => section.name === 'tool:subagent')
-    expect(guidance?.text).toContain('Use subagent in the background by default')
-    expect(guidance?.text).toContain('runtime sends you a notice containing its outcome')
+    expect(guidance?.text).toContain('Start independent subagent delegations together')
 
     const started = await callSubagent(
       ctx,
