@@ -2053,7 +2053,7 @@ Delegate a self-contained task to a subagent (a separate agent that works in its
     },
     "images": {
       "type": "array",
-      "description": "Attachment ids of images already shown in this conversation, handed to the child after the text. Refused when the child's model or transport cannot accept images.",
+      "description": "Attachment ids of images already shown in this conversation, appended to the prompt.",
       "items": {
         "type": "string"
       }
@@ -2139,7 +2139,7 @@ Send a message to an agent. A working agent receives it at its next step; an idl
     },
     "images": {
       "type": "array",
-      "description": "Attachment ids of images already shown in this conversation, delivered to the target agent after the text. Refused when the target's model or transport cannot accept images.",
+      "description": "Attachment ids of images already shown in this conversation, appended to the message.",
       "items": {
         "type": "string"
       }
@@ -2285,7 +2285,7 @@ Send one durable message to another Team member. A running target receives it at
     },
     "images": {
       "type": "array",
-      "description": "Attachment ids of images already shown in this conversation, delivered to the target after the text. Refused when the target's model or transport cannot accept images.",
+      "description": "Attachment ids of images already shown in this conversation, appended to the message.",
       "items": {
         "type": "string"
       }
@@ -2322,14 +2322,14 @@ Create one named, durable teammate. Only the Team Lead may call this tool.
     },
     "images": {
       "type": "array",
-      "description": "Attachment ids of images already shown in this conversation, handed to the teammate after the text. Refused when the teammate's model or transport cannot accept images.",
+      "description": "Attachment ids of images already shown in this conversation, appended to the prompt.",
       "items": {
         "type": "string"
       }
     },
     "context": {
       "type": "string",
-      "description": "fresh starts without Lead history; fork inherits completed Lead turns (images from the current turn are not inherited; pass them in images). Defaults to fresh.",
+      "description": "fresh starts without Lead history; fork inherits completed Lead turns. Defaults to fresh.",
       "enum": [
         "fresh",
         "fork"

@@ -184,12 +184,12 @@ function install(agent: Agent, ctx: Context, config: Required<Config>): () => vo
         images: {
           type: 'array',
           items: { type: 'string' },
-          description: 'Attachment ids of images already shown in this conversation, handed to the teammate after the text. Refused when the teammate\'s model or transport cannot accept images.',
+          description: 'Attachment ids of images already shown in this conversation, appended to the prompt.',
         },
         context: {
           type: 'string',
           enum: ['fresh', 'fork'],
-          description: 'fresh starts without Lead history; fork inherits completed Lead turns (images from the current turn are not inherited; pass them in images). Defaults to fresh.',
+          description: 'fresh starts without Lead history; fork inherits completed Lead turns. Defaults to fresh.',
         },
       },
       output: jsonOutput(SPAWN_VALUE_SCHEMA),
@@ -234,7 +234,7 @@ To message another teammate, use send_message({ target: "<teammate name>", messa
         images: {
           type: 'array',
           items: { type: 'string' },
-          description: 'Attachment ids of images already shown in this conversation, delivered to the target after the text. Refused when the target\'s model or transport cannot accept images.',
+          description: 'Attachment ids of images already shown in this conversation, appended to the message.',
         },
       },
       output: jsonOutput(SEND_VALUE_SCHEMA),

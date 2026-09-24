@@ -261,7 +261,7 @@ function providerWording(inheritsConversation: boolean): { description: string; 
         + 'You receive its result, not its intermediate steps.',
       promptDescription:
         'The task for the subagent. It already sees this conversation\'s completed turns, so build on them '
-        + 'freely and state only what is new. Images from the current turn are not inherited; hand them to the child with `images`.',
+        + 'freely and state only what is new.',
     }
   }
   return {
@@ -401,7 +401,7 @@ export function apply(ctx: Context, config: Config, session?: Session): void {
           images: {
             type: 'array',
             items: { type: 'string' },
-            description: 'Attachment ids of images already shown in this conversation, handed to the child after the text. Refused when the child\'s model or transport cannot accept images.',
+            description: 'Attachment ids of images already shown in this conversation, appended to the prompt.',
           },
           ...modelSelectionEnabled ? {
             provider: {

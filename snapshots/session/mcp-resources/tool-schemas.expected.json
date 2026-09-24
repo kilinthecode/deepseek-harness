@@ -377,7 +377,7 @@
           },
           "images": {
             "type": "array",
-            "description": "Attachment ids of images already shown in this conversation, delivered to the target agent after the text. Refused when the target's model or transport cannot accept images.",
+            "description": "Attachment ids of images already shown in this conversation, appended to the message.",
             "items": {
               "type": "string"
             }
@@ -421,7 +421,7 @@
           },
           "images": {
             "type": "array",
-            "description": "Attachment ids of images already shown in this conversation, handed to the child after the text. Refused when the child's model or transport cannot accept images.",
+            "description": "Attachment ids of images already shown in this conversation, appended to the prompt.",
             "items": {
               "type": "string"
             }
@@ -449,11 +449,11 @@
           },
           "prompt": {
             "type": "string",
-            "description": "The task for the subagent. It already sees this conversation's completed turns, so build on them freely and state only what is new. Images from the current turn are not inherited; hand them to the child with `images`."
+            "description": "The task for the subagent. It already sees this conversation's completed turns, so build on them freely and state only what is new."
           },
           "images": {
             "type": "array",
-            "description": "Attachment ids of images already shown in this conversation, handed to the child after the text. Refused when the child's model or transport cannot accept images.",
+            "description": "Attachment ids of images already shown in this conversation, appended to the prompt.",
             "items": {
               "type": "string"
             }

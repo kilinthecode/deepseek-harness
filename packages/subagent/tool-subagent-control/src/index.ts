@@ -46,7 +46,7 @@ export function apply(ctx: Context): void {
       images: {
         type: 'array',
         items: { type: 'string' },
-        description: 'Attachment ids of images already shown in this conversation, delivered to the target agent after the text. Refused when the target\'s model or transport cannot accept images.',
+        description: 'Attachment ids of images already shown in this conversation, appended to the message.',
       },
     },
     output: {

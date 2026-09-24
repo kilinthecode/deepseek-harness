@@ -2063,7 +2063,7 @@ lsp 工具将提供方选择和语言服务器子进程置于 ctx.lsp 之后，�
     },
     "images": {
       "type": "array",
-      "description": "Attachment ids of images already shown in this conversation, handed to the child after the text. Refused when the child's model or transport cannot accept images.",
+      "description": "Attachment ids of images already shown in this conversation, appended to the prompt.",
       "items": {
         "type": "string"
       }
@@ -2149,7 +2149,7 @@ lsp 工具将提供方选择和语言服务器子进程置于 ctx.lsp 之后，�
     },
     "images": {
       "type": "array",
-      "description": "Attachment ids of images already shown in this conversation, delivered to the target agent after the text. Refused when the target's model or transport cannot accept images.",
+      "description": "Attachment ids of images already shown in this conversation, appended to the message.",
       "items": {
         "type": "string"
       }
@@ -2295,7 +2295,7 @@ lsp 工具将提供方选择和语言服务器子进程置于 ctx.lsp 之后，�
     },
     "images": {
       "type": "array",
-      "description": "Attachment ids of images already shown in this conversation, delivered to the target after the text. Refused when the target's model or transport cannot accept images.",
+      "description": "Attachment ids of images already shown in this conversation, appended to the message.",
       "items": {
         "type": "string"
       }
@@ -2332,14 +2332,14 @@ lsp 工具将提供方选择和语言服务器子进程置于 ctx.lsp 之后，�
     },
     "images": {
       "type": "array",
-      "description": "Attachment ids of images already shown in this conversation, handed to the teammate after the text. Refused when the teammate's model or transport cannot accept images.",
+      "description": "Attachment ids of images already shown in this conversation, appended to the prompt.",
       "items": {
         "type": "string"
       }
     },
     "context": {
       "type": "string",
-      "description": "fresh starts without Lead history; fork inherits completed Lead turns (images from the current turn are not inherited; pass them in images). Defaults to fresh.",
+      "description": "fresh starts without Lead history; fork inherits completed Lead turns. Defaults to fresh.",
       "enum": [
         "fresh",
         "fork"

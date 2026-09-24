@@ -41,6 +41,8 @@ async function projectedContext(): Promise<Context> {
   return ctx
 }
 
+const IMAGES_DESCRIPTION = 'Attachment ids of images already shown in this conversation, appended to the prompt.'
+
 /**
  * Drives the REAL plugin body: mounts `dsh-tool-subagent` on a real
  * `ToolRuntime` + `SubagentRuntime`, with a package-local scripted child
@@ -466,19 +468,14 @@ describe('dsh-tool-subagent', () => {
     expect(schema.description).not.toContain('can prevent provider-side reuse of the inherited conversation prefix')
     const props = (schema.parameters as { properties: Record<string, { description: string }> }).properties
     expect(props['prompt']!.description).toContain('completed turns')
-    // A fork inherits only completed turns, so the wording points current-turn images at `images`.
-    expect(props['prompt']!.description).toContain('not inherited')
-    expect(props['images']!.description).toContain('Attachment ids of images already shown in this conversation')
+    expect(props['images']!.description).toBe(IMAGES_DESCRIPTION)
   })
 
-  it('documents the images parameter on a fresh-conversation provider without fork wording', async () => {
+  it('documents the images parameter on a fresh-conversation provider', async () => {
     const ctx = await setup({ provider: 'mock' })
     const schema = ctx.tools.schemas().find(s => s.name === 'subagent')!
     const props = (schema.parameters as { properties: Record<string, { description: string }> }).properties
-    expect(props['prompt']!.description).not.toContain('not inherited')
-    expect(props['images']!.description).toBe(
-      'Attachment ids of images already shown in this conversation, handed to the child after the text. Refused when the child\'s model or transport cannot accept images.',
-    )
+    expect(props['images']!.description).toBe(IMAGES_DESCRIPTION)
   })
 
   it('disposes the run on the success path (no leaked child)', async () => {

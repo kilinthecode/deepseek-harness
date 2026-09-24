@@ -329,7 +329,7 @@ class SendMessageArgs(TypedDict):
     agent_id: str
     # The message to deliver to the agent.
     message: str
-    # Attachment ids of images already shown in this conversation, delivered to the target agent after the text. Refused when the target's model or transport cannot accept images.
+    # Attachment ids of images already shown in this conversation, appended to the message.
     images: NotRequired[list[str]]
     # Additional keys beyond those declared are allowed.
 
@@ -364,7 +364,7 @@ class SubagentArgs(TypedDict):
     description: str
     # The complete, self-contained task for the subagent. It does not share this conversation's context, so include everything it needs.
     prompt: str
-    # Attachment ids of images already shown in this conversation, handed to the child after the text. Refused when the child's model or transport cannot accept images.
+    # Attachment ids of images already shown in this conversation, appended to the prompt.
     images: NotRequired[list[str]]
     # Defaults to true. Set false only when your next action depends on the result.
     run_in_background: NotRequired[bool]
@@ -386,9 +386,9 @@ class SubagentOutput3(TypedDict):
 class SubagentForkArgs(TypedDict):
     # A short (3-5 word) description of the delegated task, for display.
     description: str
-    # The task for the subagent. It already sees this conversation's completed turns, so build on them freely and state only what is new. Images from the current turn are not inherited; hand them to the child with `images`.
+    # The task for the subagent. It already sees this conversation's completed turns, so build on them freely and state only what is new.
     prompt: str
-    # Attachment ids of images already shown in this conversation, handed to the child after the text. Refused when the child's model or transport cannot accept images.
+    # Attachment ids of images already shown in this conversation, appended to the prompt.
     images: NotRequired[list[str]]
     # Additional keys beyond those declared are allowed.
 
