@@ -1,6 +1,6 @@
-// Keyless assembled-browser coverage for the room Host layer over the Agent
-// Teams Web panel: the transcript and the decision board render through the
-// real Host Typert Remote flow.
+// Keyless assembled-browser coverage for the room profile layer's Agent Teams
+// Web panel: the transcript and the decision board render through the real
+// Host Typert Remote flow.
 import { fileURLToPath } from 'node:url'
 import { join } from 'node:path'
 import { readFileSync } from 'node:fs'
@@ -21,10 +21,8 @@ const SNAPSHOT_DIR = fileURLToPath(new URL('./snapshots/agent-room-panel', impor
 const PANEL_EXPECTED = join(SNAPSHOT_DIR, 'room.expected.md')
 const OVERLAY = fileURLToPath(new URL('./agent-room-panel.overlay.yml', import.meta.url))
 const ROOM_PATCH = fileURLToPath(new URL('../../../packages/experimental/agent-room-profile/cordis.patch.yml', import.meta.url))
-const WEB_PATCH = fileURLToPath(new URL('../../../packages/experimental/agent-team-web-profile/cordis.patch.yml', import.meta.url))
 const INSTALL_ANCHORS = [
   fileURLToPath(new URL('../../../packages/experimental/agent-room-profile/package.json', import.meta.url)),
-  fileURLToPath(new URL('../../../packages/experimental/agent-team-web-profile/package.json', import.meta.url)),
 ]
 const MODE = webSnapshotMode()
 const WORKER = 'room-worker' as SessionId
@@ -45,11 +43,8 @@ function profileEntries(path: string): unknown[] {
 }
 
 describe('Agent room panel overlay', () => {
-  it('matches the shipped room Host and Agent Teams Web profile layers', () => {
-    expect(profileEntries(OVERLAY)).toEqual([
-      ...profileEntries(ROOM_PATCH),
-      ...profileEntries(WEB_PATCH),
-    ])
+  it('matches the shipped room profile layer', () => {
+    expect(profileEntries(OVERLAY)).toEqual(profileEntries(ROOM_PATCH))
   })
 })
 
@@ -158,8 +153,9 @@ describe('web e2e: Agent room panel', () => {
 
   it('renders the room transcript and the settled decision', async () => {
     onTestFailed(() => saveFailureShot(page, 'web-e2e-agent-room-panel'))
-    const action = page.locator('[data-team-action]')
-    await action.getByRole('button', { name: /Agent Team/iu }).click()
+    await page.locator('[data-team-action]').getByRole('button', { name: /Agent Team/iu }).click()
+    // The panel renders in a portal dialog outside the header action.
+    const action = page.getByRole('dialog', { name: 'Agent Team', exact: true })
     await action.getByText('an uninvalidated cache serves stale reads').waitFor()
     await action.getByText('Adopt a global mutable cache with no invalidation.').waitFor()
     // The phase chip and the standing line both name the verdict, so match the chip exactly.
@@ -171,7 +167,7 @@ describe('web e2e: Agent room panel', () => {
     await action.getByText('worker · Rejected').waitFor()
     await action.getByText('stale reads are a correctness bug').waitFor()
 
-    const snapshot = await captureStableAria(page, '[data-team-action]', scaffold.workspaceCwd)
+    const snapshot = await captureStableAria(page, '[data-team-panel]', scaffold.workspaceCwd)
     await compareOrRefreshGolden(PANEL_EXPECTED, snapshot, MODE)
 
     // A decision opened after the panel mounted arrives through the live room
@@ -187,7 +183,7 @@ describe('web e2e: Agent room panel', () => {
 
     // The panel writes too: its own controls open a decision through the Remote
     // write path, and the committed record renders like any other.
-    await page.getByPlaceholder('Statement to put to the room').fill('Adopt the panel-driven path.')
+    await action.getByPlaceholder('Statement to put to the room').fill('Adopt the panel-driven path.')
     await action.getByRole('button', { name: 'Open a decision', exact: true }).click()
     await action.getByText('Adopt the panel-driven path.').waitFor({ timeout: 10_000 })
 

@@ -9,7 +9,7 @@ kind: "package-bundle"
 
 ## 概述
 
-`dsh-experimental-agent-room-profile` 是一个已发布的实验性 profile 层，它在 `@deepseek-ai/dsh-base` 之上把 [Agent Teams](../agent-team/README.zh.md) 变成 room。它的 patch 以 `roomEnabled` 挂载 Team 域，保留 Team 委派工具以便 roster 能够创建参与者，并加入 [room 工具](../tool-agent-room/README.zh.md)。此后集体决策只由记录在案的 quorum 结清，而被拒绝的决策必须携带修订后的 statement 或升级。dsh 安装把它作为可选 bundle 提供，任何随产品发布的 profile 都不会启用它；可在 Web 侧边栏的 Plugins 页面连同 Agent Teams Web 层一起启用，或把它显式加入某个已初始化的 profile。
+`dsh-experimental-agent-room-profile` 是一个已发布的实验性 profile 层，它在 `@deepseek-ai/dsh-base` 之上把 [Agent Teams](../agent-team/README.zh.md) 变成 room。它的 patch 以 `roomEnabled` 挂载 Team 域，保留 Team 委派工具以便 roster 能够创建参与者，并加入 [room 工具](../tool-agent-room/README.zh.md)。此后集体决策只由记录在案的 quorum 结清，而被拒绝的决策必须携带修订后的 statement 或升级。dsh 安装把它作为可选 bundle 提供，任何随产品发布的 profile 都不会启用它；可在 Web 侧边栏的 Plugins 页面启用它以代替 Agent Teams bundle，或把它显式加入某个已初始化的 profile。
 
 ## 目录
 
@@ -35,7 +35,7 @@ dsh plugin --profile web add @deepseek-ai/dsh-experimental-agent-room-profile
 
 ### 你会得到什么
 
-在 `dsh-base` 之后的三行：开启 `roomEnabled: true` 的 Team 域、它的委派工具，以及 room 工具。room 强制执行的每个值都写在 patch 中而不是依赖默认值：最多八个成员、每次 prompt 二十条 transcript 窗口、多数批准，以及决策必须升级前的四次 revision。
+在 `dsh-base` 之后的四行：开启 `roomEnabled: true` 的 Team 域、它的委派工具、room 工具，以及 Team 浏览器 UI。room 强制执行的每个值都写在 patch 中而不是依赖默认值：最多八个成员、每次 prompt 二十条 transcript 窗口、多数批准，以及决策必须升级前的四次 revision。
 
 <a id="understand-the-implementation"></a>
 ## 理解实现
@@ -76,9 +76,8 @@ patch 显式设置 `roomEnabled`。若不设置，room 工具仍会挂载，但�
 
 - **实验原型，无稳定性承诺**——本包公开发布，但孵化期间约定仍可自由变更。
 - **没有随产品发布的 profile 会启用它**——该层随安装提供，但在某个 profile 加入它之前一直关闭，因为 room 会改变其参与者 turn 的含义。
-- **面板还需要 Web 层**——只挂载该层会以 headless 方式运行 room；再加入 `@deepseek-ai/dsh-experimental-agent-team-web-profile` 才能在浏览器中读取 transcript 与决策。
+- **面板只在 Web Client 中渲染**——UI 行的浏览器入口只在那里挂载，因此 headless profile 运行 room 时没有浏览器界面；请改为通过 Session log 读取。
 - **room 继承 Team 的全部约束**——单进程、共享 checkout、扁平且不可变的 roster，以及没有跨进程 exactly-once 投递。
-- **没有 client 半边**——该层不挂载浏览器界面；加入 `@deepseek-ai/dsh-experimental-agent-team-web-profile` 即可在 Web 面板中渲染 room，或通过 session log 读取。
 
 本包不发布 runtime invariant companion：它只携带静态 profile patch，而其激活的可变关系由 Team 域拥有。
 

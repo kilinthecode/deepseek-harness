@@ -26,9 +26,10 @@ describe('Agent room profile bundle', () => {
     expect(manifest.publishConfig?.access).toBe('public')
     expect(manifest.dsh?.bundle?.patch).toBe('./cordis.patch.yml')
     expect(manifest.dependencies).toMatchObject({
-      '@deepseek-ai/dsh-experimental-agent-team': 'workspace:^',
-      '@deepseek-ai/dsh-experimental-tool-agent-room': 'workspace:^',
-      '@deepseek-ai/dsh-experimental-tool-agent-team': 'workspace:^',
+      '@deepseek-ai/dsh-experimental-agent-team': 'workspace:*',
+      '@deepseek-ai/dsh-experimental-client-ui-agent-team': 'workspace:*',
+      '@deepseek-ai/dsh-experimental-tool-agent-room': 'workspace:*',
+      '@deepseek-ai/dsh-experimental-tool-agent-team': 'workspace:*',
     })
 
     const parsed = yaml.load(
@@ -54,6 +55,9 @@ describe('Agent room profile bundle', () => {
       .toBe('@deepseek-ai/dsh-experimental-tool-agent-team')
     expect(inserted.find(row => row.id === 'tool-agent-room')?.name)
       .toBe('@deepseek-ai/dsh-experimental-tool-agent-room')
+    // The browser UI rides in the same layer, as in the Agent Teams bundle.
+    expect(inserted.find(row => row.id === 'ui-agent-team')?.name)
+      .toBe('@deepseek-ai/dsh-experimental-client-ui-agent-team')
     // Rooms are opt-in: the layer inserts rows and disables nothing.
     expect(patches.every(patch => Object.keys(patch).every(key => key === 'insert'))).toBe(true)
   })

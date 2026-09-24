@@ -9,7 +9,7 @@ English | [中文](README.zh.md)
 
 ## Summary
 
-`dsh-experimental-agent-room-profile` is a published experimental profile layer that turns [Agent Teams](../agent-team/README.md) into a room over `@deepseek-ai/dsh-base`. Its patch mounts the Team domain with `roomEnabled`, keeps the Team delegation tools so the roster can create participants, and adds the [room tools](../tool-agent-room/README.md). Collective decisions then settle only by recorded quorum, and every rejected decision needs a revised statement or an escalation. The dsh installation ships it as an optional bundle that no shipped profile enables; switch it on from the Web sidebar's Plugins page together with the Agent Teams Web layer, or add it explicitly to an initialized profile.
+`dsh-experimental-agent-room-profile` is a published experimental profile layer that turns [Agent Teams](../agent-team/README.md) into a room over `@deepseek-ai/dsh-base`. Its patch mounts the Team domain with `roomEnabled`, keeps the Team delegation tools so the roster can create participants, and adds the [room tools](../tool-agent-room/README.md). Collective decisions then settle only by recorded quorum, and every rejected decision needs a revised statement or an escalation. The dsh installation ships it as an optional bundle that no shipped profile enables; switch it on from the Web sidebar's Plugins page in place of the Agent Teams bundle, or add it explicitly to an initialized profile.
 
 ## Table of Contents
 
@@ -35,7 +35,7 @@ dsh plugin --profile web add @deepseek-ai/dsh-experimental-agent-room-profile
 
 ### What you get
 
-Three rows after `dsh-base`: the Team domain with `roomEnabled: true`, its delegation tools, and the room tools. Every value the room enforces is stated in the patch rather than defaulted: eight members at most, a twenty-entry transcript window per prompt, majority approval, and four revisions before a decision must escalate.
+Four rows after `dsh-base`: the Team domain with `roomEnabled: true`, its delegation tools, the room tools, and the Team browser UI. Every value the room enforces is stated in the patch rather than defaulted: eight members at most, a twenty-entry transcript window per prompt, majority approval, and four revisions before a decision must escalate.
 
 <a id="understand-the-implementation"></a>
 ## Understand the implementation
@@ -76,9 +76,8 @@ These limits describe what this layer cannot do yet or what needs special operat
 
 - **Experimental prototype with no stability promise** — the package is public, but its contracts can change freely while it incubates.
 - **No shipped profile enables it** — the layer ships with the installation but stays off until a profile adds it, because a room changes what its participants' turns mean.
-- **The panel needs the Web layer too** — mounting this layer alone runs the room headlessly; add `@deepseek-ai/dsh-experimental-agent-team-web-profile` to read the transcript and decisions in the browser.
+- **The panel renders only in a Web Client** — the UI row's browser entry mounts only there, so a headless profile runs the room without a browser surface; read it through the Session log instead.
 - **A room inherits every Team constraint** — one process, one shared checkout, a flat immutable roster, and no cross-process exactly-once delivery.
-- **No client half** — the layer mounts no browser surface; add `@deepseek-ai/dsh-experimental-agent-team-web-profile` to render the room in the Web panel, or read it through the session log.
 
 No runtime invariant companion is published: the package carries only a static profile patch, and the Team domain owns the mutable relationships it activates.
 

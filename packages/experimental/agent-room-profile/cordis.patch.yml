@@ -3,7 +3,8 @@
 # decisions settle only by recorded quorum.
 #
 # This layer keeps the ordinary Team delegation tools mounted, because a room
-# needs participants and the roster is what creates them.
+# needs participants and the roster is what creates them. The Team browser UI
+# rides in the same layer; its browser entry mounts only in a Web Client.
 
 - insert:
     - id: agent-team
@@ -29,3 +30,6 @@
       name: '@deepseek-ai/dsh-experimental-tool-agent-room'
       config:
         maxTranscriptEntries: 20
+
+    - id: ui-agent-team
+      name: '@deepseek-ai/dsh-experimental-client-ui-agent-team'
