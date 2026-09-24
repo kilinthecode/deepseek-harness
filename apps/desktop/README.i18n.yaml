@@ -1,6 +1,70 @@
-# Bilingual-pair consistency record (docs/i18n/README.md): the git blob hash of each
-# side as of the last confirmed-consistent state. Both languages carry equal authority;
-# after editing either side, bring the other along and re-record with:
+# Bilingual-pair consistency record for README.md (docs/i18n/README.md): per heading
+# section, a hash of its English and Chinese blocks outside code blocks and generated regions.
+# After editing either side, bring the other along and re-record with:
 #   pnpm run verify-translation-pairing --write apps/desktop/README.md
-README.md: 2450bca460a884a0c47511a39955efda1b8d314e
-README.zh.md: 4cc173998f660d9c81a24dae749c8f3fe8811325
+/portal-desktop:
+  en: 0e4894ea7acf58d6
+  zh: 7fd57d430a8a2f7a
+/portal-desktop/closing-the-window-and-quitting:
+  en: d240d4f84d1995f2
+  zh: e408fa419ca3a3c2
+/portal-desktop/key-technical-decisions:
+  en: 069fdfd72d2ea26a
+  zh: 76ae549d43c99bb4
+/portal-desktop/key-technical-decisions/bundled-workspace-dependencies:
+  en: 31cbb7452be8e1ad
+  zh: 502ec556e2ec301e
+/portal-desktop/installation-ownership:
+  en: 8307baf6c5b691d0
+  zh: 86e46b9552017ff6
+/portal-desktop/installation-ownership/runtime-and-plugin-activation:
+  en: 4efa9e3d88f1c9d0
+  zh: 2210ce3df7efb81b
+/portal-desktop/develop:
+  en: 9b9b362a9865e763
+  zh: c748901168e2db8c
+/portal-desktop/develop/startup-onboarding:
+  en: 5e2d62207a603d81
+  zh: 5fb863d4906f4a67
+/portal-desktop/develop/welcome-window-appearance:
+  en: 7220801ccc3b2e6b
+  zh: 042dc97976aef979
+/portal-desktop/package:
+  en: 4cd8a8da6977928d
+  zh: 9f624855a2edac37
+/portal-desktop/package/release-versions:
+  en: f461b255133384cc
+  zh: 2b9db718f22fdd04
+/portal-desktop/package/runtime-file-selection:
+  en: f0e345fd89868803
+  zh: fd2c775ad23fa2f0
+/portal-desktop/package/upload-updates:
+  en: c64d7fe2fe2534b7
+  zh: 2188e1ae99ab4b33
+/portal-desktop/package/unsigned-windows-test-installer:
+  en: cfd5780dd26a8e46
+  zh: f7a16b1ede793b7b
+/portal-desktop/package/windows-installer-interface:
+  en: f176a8b1c7de3064
+  zh: 6ea2dbe6bb808c34
+/portal-desktop/package/windows-ev-signing:
+  en: 8efe3498dbe8686d
+  zh: a88c16f20a9430f3
+/portal-desktop/updates:
+  en: d0df867b69cbffa4
+  zh: eeb47b79b86fe5ee
+/portal-desktop/updates/mandatory-update-policy:
+  en: 2f789a4949fafb12
+  zh: d8b28c01cfee11b7
+/portal-desktop/updates/local-updater-qualification:
+  en: bc50fd8a4d96c227
+  zh: fb0a6ce80c31cda6
+/portal-desktop/low-level-development-overrides:
+  en: 0b225f914142ef0b
+  zh: 9ffd07768d37824e
+/portal-desktop/known-limitations:
+  en: 5b77213c86bbcfb6
+  zh: b34bf21773bb852b
+/portal-desktop/dev-note:
+  en: 8e26b460ba31f21b
+  zh: fbcd0307b3867125

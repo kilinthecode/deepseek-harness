@@ -1,6 +1,22 @@
-# Bilingual-pair consistency record (docs/i18n/README.md): the git blob hash of each
-# side as of the last confirmed-consistent state. Both languages carry equal authority;
-# after editing either side, bring the other along and re-record with:
+# Bilingual-pair consistency record for 2026-09-17-multi-model-rooms.md (docs/i18n/README.md): per heading
+# section, a hash of its English and Chinese blocks outside code blocks and generated regions.
+# After editing either side, bring the other along and re-record with:
 #   pnpm run verify-translation-pairing --write .agents/notes/implemented/feature/2026-09-17-multi-model-rooms.md
-2026-09-17-multi-model-rooms.md: ac1beddbd7b0912a0d2161a85495beb337ca94df
-2026-09-17-multi-model-rooms.zh.md: 478362a264cb7e7efa61280962af2b89f3bc1899
+/agent-note-quorum-authorized-rooms-over-the-agent-teams-roster:
+  en: 993e02b9fe98c4dc
+  zh: 5ef43cb1fe03eede
+/agent-note-quorum-authorized-rooms-over-the-agent-teams-roster/problem:
+  en: 717298628914ddeb
+  zh: 550e5c44c1605bbe
+/agent-note-quorum-authorized-rooms-over-the-agent-teams-roster/decision:
+  en: a41759d077a12baf
+  zh: e75af3320f5f7530
+/agent-note-quorum-authorized-rooms-over-the-agent-teams-roster/alternatives-considered:
+  en: 1ac1bb3904ebf075
+  zh: eede6fbb6fc5c426
+/agent-note-quorum-authorized-rooms-over-the-agent-teams-roster/testing:
+  en: 48d7bad5e48b95ae
+  zh: a6497cd23c35ca04
+/agent-note-quorum-authorized-rooms-over-the-agent-teams-roster/consequences:
+  en: 9f8f5cf8c6576986
+  zh: d46a76a669c94cbf

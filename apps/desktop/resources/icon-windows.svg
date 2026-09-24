@@ -8,8 +8,9 @@
 
   <rect x="0" y="0" width="1024" height="1024" rx="44" fill="url(#lift)"/>
 
-  <!-- tesseract, top-corner isometric projection -->
-  <g stroke="#e9ebf1" fill="none" stroke-linecap="round" stroke-linejoin="round">
+  <!-- tesseract, top-corner isometric projection. The tray renderer scales tray-glyph around (552, 544);
+       the outer translate pair keeps that point on the tile center (512, 512). -->
+  <g transform="translate(-40 -32)"><g id="tray-glyph"><g transform="translate(40 32)" stroke="#e9ebf1" fill="none" stroke-linecap="round" stroke-linejoin="round">
     <!-- 4D edges: outer cell to inner cell -->
     <g stroke-width="12" opacity="0.68">
       <line x1="512" y1="172" x2="512" y2="369.2"/>
@@ -39,5 +40,5 @@
       <line x1="512" y1="512" x2="806.4" y2="682"/>
       <line x1="512" y1="512" x2="217.6" y2="682"/>
     </g>
-  </g>
+  </g></g></g>
 </svg>

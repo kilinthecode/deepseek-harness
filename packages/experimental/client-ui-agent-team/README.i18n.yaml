@@ -1,6 +1,46 @@
-# Bilingual-pair consistency record (docs/i18n/README.md): the git blob hash of each
-# side as of the last confirmed-consistent state. Both languages carry equal authority;
-# after editing either side, bring the other along and re-record with:
+# Bilingual-pair consistency record for README.md (docs/i18n/README.md): per heading
+# section, a hash of its English and Chinese blocks outside code blocks and generated regions.
+# After editing either side, bring the other along and re-record with:
 #   pnpm run verify-translation-pairing --write packages/experimental/client-ui-agent-team/README.md
-README.md: 66eff15f10e6f71a4f5894cadc7ac6f7a0fc1884
-README.zh.md: b378b7a713d3cda41308753b23293b96ef155be7
+/:
+  en: be46bc034b099cb3
+  zh: 9a514d5d30c9e32b
+/deepseek-ai-dsh-experimental-client-ui-agent-team:
+  en: 447e3c2bbf1ea3c6
+  zh: 25bba08497976d12
+/deepseek-ai-dsh-experimental-client-ui-agent-team/summary:
+  en: f4af275147c8f069
+  zh: ac4493aacd6abde1
+/deepseek-ai-dsh-experimental-client-ui-agent-team/table-of-contents:
+  en: d152484eb41ac6b4
+  zh: 09388d293f9be9cb
+/deepseek-ai-dsh-experimental-client-ui-agent-team/use-this-package:
+  en: ba021754d3ae6d9e
+  zh: 18017b40f13e6ffd
+/deepseek-ai-dsh-experimental-client-ui-agent-team/use-this-package/inspect-and-navigate-the-roster:
+  en: 62778e911a4ee9e9
+  zh: dff1dbbc3d5e4af6
+/deepseek-ai-dsh-experimental-client-ui-agent-team/use-this-package/read-the-room:
+  en: 6c5e90247b81d2c7
+  zh: 09de5248e1425291
+/deepseek-ai-dsh-experimental-client-ui-agent-team/use-this-package/inspect-the-task-board:
+  en: 5ca409f1b6be6e06
+  zh: 666f52c40c005ae0
+/deepseek-ai-dsh-experimental-client-ui-agent-team/understand-the-implementation:
+  en: 92e355fc4152ac2d
+  zh: 2353ff4bc06ec52c
+/deepseek-ai-dsh-experimental-client-ui-agent-team/further-exploration:
+  en: 843590a38f1db344
+  zh: 0342c668238a16bb
+/deepseek-ai-dsh-experimental-client-ui-agent-team/model-experience:
+  en: 4f8110764f72bb27
+  zh: 939d3ae1dfea19da
+/deepseek-ai-dsh-experimental-client-ui-agent-team/model-experience/kv-cache-effect:
+  en: b51b320f5e4dacfc
+  zh: 6695947c3f9fed28
+/deepseek-ai-dsh-experimental-client-ui-agent-team/known-limitations-and-deferred-work:
+  en: 9433147dabba8bdc
+  zh: 6b8927239bad0bb2
+/deepseek-ai-dsh-experimental-client-ui-agent-team/known-limitations-and-deferred-work/dev-note:
+  en: ef3f285c7d9767bb
+  zh: 2b25120987632300

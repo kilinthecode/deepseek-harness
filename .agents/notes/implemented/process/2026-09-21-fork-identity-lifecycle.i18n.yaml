@@ -1,6 +1,19 @@
-# Bilingual-pair consistency record (docs/i18n/README.md): the git blob hash of each
-# side as of the last confirmed-consistent state. Both languages carry equal authority;
-# after editing either side, bring the other along and re-record with:
+# Bilingual-pair consistency record for 2026-09-21-fork-identity-lifecycle.md (docs/i18n/README.md): per heading
+# section, a hash of its English and Chinese blocks outside code blocks and generated regions.
+# After editing either side, bring the other along and re-record with:
 #   pnpm run verify-translation-pairing --write .agents/notes/implemented/process/2026-09-21-fork-identity-lifecycle.md
-2026-09-21-fork-identity-lifecycle.md: de940d25242606e50848e58d6205ff48c2f658c0
-2026-09-21-fork-identity-lifecycle.zh.md: a1f8707948ad315653c42977b3f820c6a794c917
+/agent-note-fork-product-identity-lives-in-fork-owned-packages:
+  en: 96ce31d8806bc4b7
+  zh: 9e565a867fe45533
+/agent-note-fork-product-identity-lives-in-fork-owned-packages/problem:
+  en: 08c2df308962c7c3
+  zh: cb949eef5cc13c7b
+/agent-note-fork-product-identity-lives-in-fork-owned-packages/decision:
+  en: d5421a13aa6857ac
+  zh: 28de69b5fcaa16f6
+/agent-note-fork-product-identity-lives-in-fork-owned-packages/alternatives-considered:
+  en: 0e96422c4d200706
+  zh: a613967bd3fa26bb
+/agent-note-fork-product-identity-lives-in-fork-owned-packages/consequences:
+  en: 76406b0819f297d7
+  zh: 5ec20105cf09e68e
