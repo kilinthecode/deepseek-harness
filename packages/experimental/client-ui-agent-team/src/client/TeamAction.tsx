@@ -69,7 +69,7 @@ export type TeamActionProps =
 
 /**
  * Participants with more committed utterances in `next` than in `previous`.
- * @param previous - transcript the panel rendered before.
+ * @param previous - transcript of the previous followed view.
  * @param next - transcript a committed room change republished.
  * @returns names whose transcript entry count grew.
  */
@@ -299,18 +299,19 @@ function RoomSection({
   const [escalating, setEscalating] = useState<string | null>(null)
   const [escalateReason, setEscalateReason] = useState('')
   const generation = useRef(0)
-  /** Transcript of the latest view the panel rendered, read when the next view frame arrives. */
-  const shown = useRef<RoomRemoteView['messages']>([])
+  /**
+   * Transcript of the latest followed view, compared with the next view frame.
+   * A room read never updates it: a read that already shows an utterance must
+   * not hide that utterance's commit from the follow that clears its live text.
+   */
+  const followed = useRef<RoomRemoteView['messages']>([])
 
   const refresh = useCallback(async (): Promise<void> => {
     const current = ++generation.current
     try {
       const result = await loadRoom(sessionId)
       if (generation.current !== current) return
-      if (result.ok) {
-        shown.current = result.value.messages
-        setRoom(result.value)
-      }
+      if (result.ok) setRoom(result.value)
       else setError(failureText(result.error))
     } catch (reason: unknown) {
       // An unmounted Remote namespace reaches the panel as a rejection, not a result.
@@ -332,8 +333,8 @@ function RoomSection({
     // text survives a view that records someone else's message or a review.
     followRoom(sessionId, controller.signal, (frame) => {
       if (frame.type === 'view') {
-        const committed = committedAuthors(shown.current, frame.view.messages)
-        shown.current = frame.view.messages
+        const committed = committedAuthors(followed.current, frame.view.messages)
+        followed.current = frame.view.messages
         setRoom(frame.view)
         if (committed.size > 0) {
           setStreaming(previous => Object.fromEntries(

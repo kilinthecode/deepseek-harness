@@ -3,7 +3,7 @@
   - button "lead Current chat Inactive" [disabled]
   - button "worker Inactive"
   - heading "Room" [level=3]
-  - text: "Chair: lead"
+  - text: "Chair: worker"
   - combobox "Participant":
     - option "Participant" [selected]
     - option "lead"
@@ -13,7 +13,7 @@
   - textbox "Statement to put to the room"
   - button "Open a decision"
   - heading "Transcript" [level=3]
-  - text: worker an uninvalidated cache serves stale reads lead Room ready.
+  - text: worker an uninvalidated cache serves stale reads
   - heading "Decisions" [level=3]
   - text: "Rejected proposal-1 Revision 1 Proposer: lead"
   - paragraph: Adopt a global mutable cache with no invalidation.

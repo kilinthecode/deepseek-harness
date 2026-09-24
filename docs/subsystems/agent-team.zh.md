@@ -384,13 +384,14 @@ Source: [`packages/experimental/agent-team/src/index.ts`](../../packages/experim
 
 #### `room/stream` — emit
 
-One room participant produced a live assistant stream frame. This is a process-local observation of an in-flight turn; the durable record is the participant's own `assistant/message` and the room transcript.
+One room participant produced a live assistant stream frame. This is a process-local observation of an in-flight turn; the durable record is the participant's own `assistant/message` and the room transcript. A room opens with its Team's first teammate, so a Lead without one emits none.
 
 ```ts cordis-catalog
 /**
  * One room participant produced a live assistant stream frame. This is a
  * process-local observation of an in-flight turn; the durable record is the
- * participant's own `assistant/message` and the room transcript.
+ * participant's own `assistant/message` and the room transcript. A room
+ * opens with its Team's first teammate, so a Lead without one emits none.
  * @param payload.teamId - Team identity of the room the participant belongs to.
  * @param payload.participantId - Session identity of the speaking participant.
  * @param payload.participantName - Model-facing participant name.

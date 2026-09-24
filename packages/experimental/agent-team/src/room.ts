@@ -50,7 +50,8 @@ declare module '@deepseek-ai/cordis' {
     /**
      * One room participant produced a live assistant stream frame. This is a
      * process-local observation of an in-flight turn; the durable record is the
-     * participant's own `assistant/message` and the room transcript.
+     * participant's own `assistant/message` and the room transcript. A room
+     * opens with its Team's first teammate, so a Lead without one emits none.
      * @param payload.teamId - Team identity of the room the participant belongs to.
      * @param payload.participantId - Session identity of the speaking participant.
      * @param payload.participantName - Model-facing participant name.
@@ -148,7 +149,7 @@ export class TeamRoom {
     const agent = this.ctx.agents.get(session.header.id)
     /* v8 ignore next -- the loop appends an assistant message only while its Agent is registered. */
     if (agent === undefined) return
-    const membership = this.roster.tryMembership(agent)
+    const membership = this.speaker(agent)
     if (membership === undefined) return
     const message: RoomMessageSnapshot = {
       // The author name and its own event sequence identify the utterance in both
@@ -160,9 +161,6 @@ export class TeamRoom {
     const { root } = membership
     void this.journal.transact(root.id, async () => {
       const state = this.journal.state(root)
-      // Every root Agent is an implicit Lead, so the room opens with the first
-      // teammate: a conversation that never forms a Team records no transcript.
-      if (state.members.length === 0) return
       /* v8 ignore next -- the identity is derived from the committed event, so a reload cannot duplicate it. */
       if (state.roomMessages.some(candidate => candidate.id === message.id)) return
       await this.journal.appendAndFlush(root, 'room/message', {
@@ -170,12 +168,33 @@ export class TeamRoom {
         teamId: TeamId(root.id),
         message,
       })
-    }).then(() => { this.published(root.id) }).catch((error: unknown) => {
+      // Readers re-read the room only after an entry this call appended.
+      this.published(root.id)
+    }).catch((error: unknown) => {
       // An append that races shutdown is not a room failure, and the injected
       // agents service is already unreachable in that context.
       /* v8 ignore next -- disposal during the append is the only quiet path, observed by teardown tests. */
       if (this.ctx.get('agents')?.get(root.id) === undefined) return
       this.ctx.logger.warn(`room transcript append failed: ${errorMessage(error)}`)
+    })
+  }
+
+  /**
+   * Publish one participant's live stream frame to room readers.
+   * @param agent - Agent whose turn produced the frame.
+   * @param frame - live assistant stream frame of that turn.
+   */
+  observeStream(agent: Agent, frame: AssistantStreamFrame): void {
+    if (!this.config.enabled) return
+    // A streaming participant is working even before it commits a message.
+    this.noteActivity(agent.id)
+    const membership = this.speaker(agent)
+    if (membership === undefined) return
+    this.ctx.emit('room/stream', {
+      teamId: membership.id,
+      participantId: agent.id,
+      participantName: membership.name,
+      frame,
     })
   }
 
@@ -408,7 +427,7 @@ export class TeamRoom {
    * Record that one participant produced activity, durable or streamed.
    * @param id - participant Session identity.
    */
-  noteActivity(id: SessionId): void {
+  private noteActivity(id: SessionId): void {
     this.activity.set(id, Date.now())
   }
 
@@ -585,6 +604,29 @@ export class TeamRoom {
       throw new TeamError('room operations are disabled in this composition', 'TEAM_ROOM_DISABLED')
     }
     return this.roster.membership(caller)
+  }
+
+  /**
+   * Resolve the membership of one Agent whose turns the room transcribes and
+   * streams. Every root Agent is an implicit Lead, so a room opens with its
+   * Team's first teammate; until then the Lead's turns are its own
+   * conversation. The roster never shrinks, so a turn streamed into an open
+   * room is transcribed when it commits.
+   * @param agent - Agent whose streamed frame or committed message is observed.
+   * @returns its Team membership, or undefined when the room ignores its turns.
+   */
+  private speaker(agent: Agent): TeamMembership | undefined {
+    const membership = this.roster.tryMembership(agent)
+    if (membership === undefined) return undefined
+    let state: TeamState
+    try {
+      state = this.journal.state(membership.root)
+    } catch {
+      // A Lead log the Team projection refused opens no room. Team operations
+      // report the refusal; this runs for every streamed chunk, so it does not.
+      return undefined
+    }
+    return state.members.length === 0 ? undefined : membership
   }
 
   /** Release the armed stall check for one decision of one Lead. */

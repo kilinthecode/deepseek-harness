@@ -4062,7 +4062,7 @@ export const EVENT_API: readonly EventApiEntry[] = [
     mode: 'emit',
     signature: '\'room/stream\'(payload: RoomStreamFrame): void',
     summary: 'One room participant produced a live assistant stream frame.',
-    description: 'One room participant produced a live assistant stream frame. This is a process-local observation of an in-flight turn; the durable record is the participant\'s own `assistant/message` and the room transcript.',
+    description: 'One room participant produced a live assistant stream frame. This is a process-local observation of an in-flight turn; the durable record is the participant\'s own `assistant/message` and the room transcript. A room opens with its Team\'s first teammate, so a Lead without one emits none.',
     parameters: [{ name: 'payload', description: '.frame - The participant\'s live stream frame.' }],
   },
   {

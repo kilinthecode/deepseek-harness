@@ -743,6 +743,8 @@ describe('TeamAction room', () => {
     openPanel()
     await screen.findByText('the cache serves stale reads')
     await waitFor(() => { expect(emit).toBeDefined() })
+    // A followed room opens on its complete view.
+    act(() => { emit?.({ type: 'view', view: room }) })
 
     act(() => { emit?.({ type: 'stream', participant: 'worker', delta: 'stale reads' }) })
     act(() => { emit?.({ type: 'stream', participant: 'worker', delta: ' are' }) })
@@ -770,6 +772,7 @@ describe('TeamAction room', () => {
     openPanel()
     await screen.findByText('the cache serves stale reads')
     await waitFor(() => { expect(emit).toBeDefined() })
+    act(() => { emit?.({ type: 'view', view: room }) })
 
     act(() => { emit?.({ type: 'stream', participant: 'worker', delta: 'a long answer' }) })
     act(() => { emit?.({ type: 'stream', participant: 'lead', delta: 'a short note' }) })
@@ -788,6 +791,37 @@ describe('TeamAction room', () => {
     expect(screen.getByText('a long answer continues')).toBeTruthy()
     expect(screen.queryByText('a short note')).toBeNull()
     expect(screen.getByText('a short note, committed')).toBeTruthy()
+  })
+
+  it('clears live text whose commit a room read showed before the follow delivered it', async () => {
+    let emit: ((frame: RoomFollowFrame) => void) | undefined
+    const followRoom = vi.fn((_sessionId: SessionId, _signal: AbortSignal, frame: (next: RoomFollowFrame) => void) => {
+      emit = frame
+      return new Promise<void>(() => {})
+    })
+    const committed: RoomRemoteView = {
+      ...room,
+      messages: [...room.messages, { author: 'worker', text: 'stale reads are a bug' }],
+    }
+    const loadRoom = vi.fn<TeamActionInjected['loadRoom']>()
+      .mockResolvedValueOnce({ ok: true, value: room })
+      .mockResolvedValue({ ok: true, value: committed })
+    const proposeDecision = vi.fn(() => Promise.resolve({ ok: true as const, value: rejected }))
+    render(<TeamAction {...bench({ injected: { loadRoom, followRoom, proposeDecision } }).props} />)
+    openPanel()
+    await screen.findByText('the cache serves stale reads')
+    await waitFor(() => { expect(emit).toBeDefined() })
+    act(() => { emit?.({ type: 'view', view: room }) })
+    act(() => { emit?.({ type: 'stream', participant: 'worker', delta: 'stale reads are' }) })
+
+    // A panel action re-reads the room, and the read lands before the follow delivers the same commit.
+    fireEvent.change(screen.getByRole('textbox', { name: zh['room.statement'] }), {
+      target: { value: 'adopt the panel path' },
+    })
+    fireEvent.click(screen.getByRole('button', { name: zh['room.propose'] }))
+    expect(await screen.findByText('stale reads are a bug')).toBeTruthy()
+    act(() => { emit?.({ type: 'view', view: committed }) })
+    expect(screen.queryByText('stale reads are')).toBeNull()
   })
 
   it('stops following the room when the panel closes', async () => {

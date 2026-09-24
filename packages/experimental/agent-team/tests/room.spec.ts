@@ -115,6 +115,14 @@ function delivered(ctx: Context, id: SessionId): string[] {
       : [])
 }
 
+/** Text of every assistant message one Agent committed to its own Session. */
+function answers(agent: Agent): string[] {
+  return agent.session.snapshotEvents()
+    .flatMap(event => event.type === 'assistant/message'
+      ? [event.data.message.content.flatMap(block => block.type === 'text' ? [block.text] : []).join('')]
+      : [])
+}
+
 describe('room transcript', () => {
   it('records each participant utterance with durable attribution', async () => {
     const { ctx, lead } = await setup(acks(8))
@@ -287,6 +295,53 @@ describe('room transcript', () => {
     abort.abort()
     await pump
   }, 15_000)
+
+  it('streams and republishes nothing while the Lead has no teammate', async () => {
+    const { ctx, lead } = await setup([textResponse('first answer'), textResponse('second answer')])
+    const streamed: RoomStreamFrame[] = []
+    ctx.on('room/stream', (payload) => { streamed.push(payload) })
+    const abort = new AbortController()
+    const frames: RoomFollowFrame[] = []
+    const pump = (async () => {
+      for await (const frame of ctx.agentTeams.roomStream(lead, abort.signal)) frames.push(frame)
+    })()
+    await vi.waitFor(() => { expect(frames).toHaveLength(1) }, { timeout: 5_000 })
+
+    for (const question of ['first question', 'second question']) {
+      lead.followup(createUserMessage({ content: content(question), source: { kind: 'user' } }))
+      await lead.whenIdle()
+    }
+    await new Promise(resolve => setTimeout(resolve, 50))
+    // The Lead answered twice in its own conversation; a reader of its room saw neither answer.
+    expect(answers(lead)).toEqual(['first answer', 'second answer'])
+    expect(streamed).toEqual([])
+    expect(frames).toHaveLength(1)
+
+    abort.abort()
+    await pump
+  }, 15_000)
+
+  it('leaves a Lead whose Team log the projection refused answering quietly outside any room', async () => {
+    const { ctx, lead } = await setup([textResponse('still answering')])
+    const streamed: RoomStreamFrame[] = []
+    ctx.on('room/stream', (payload) => { streamed.push(payload) })
+    const warnings: string[] = []
+    ctx.logger.warn = ((value: unknown) => { warnings.push(String(value)) }) as typeof ctx.logger.warn
+    // A resumed log the Team projection cannot fold reports a failure instead of Team state.
+    const projections = ctx.sessionProjections
+    const read = projections.stateOf.bind(projections)
+    vi.spyOn(projections, 'stateOf').mockImplementation((session, key) => {
+      if (key !== 'agentTeam' || session.id !== lead.id) return read(session, key)
+      return { ...read(session, 'agentTeam')!, failure: 'the recorded Team log is refused' }
+    })
+
+    lead.followup(createUserMessage({ content: content('are you there'), source: { kind: 'user' } }))
+    await lead.whenIdle()
+    expect(answers(lead).at(-1)).toBe('still answering')
+    expect(streamed).toEqual([])
+    // Team operations report the refusal; the room does not repeat it for every streamed chunk.
+    expect(warnings).toEqual([])
+  })
 
   it('ignores another room, other frame kinds, and ends when the service disposes', async () => {
     const { ctx, lead, fiber } = await setup([HANGING, ...acks(2)])

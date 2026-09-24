@@ -176,19 +176,7 @@ export class TeamService extends TypertRemoteService {
 
     ctx.on('session/event', (session, event) => { this.mailbox.observeSessionEvent(session, event) })
     ctx.on('session/event', (session, event) => { this.room.observeSessionEvent(session, event) })
-    ctx.on('agent/assistant-stream', ({ agent, frame }) => {
-      if (!this.config.roomEnabled) return
-      // A streaming participant is working even before it commits a message.
-      this.room.noteActivity(agent.id)
-      const membership = this.roster.tryMembership(agent)
-      if (membership === undefined) return
-      ctx.emit('room/stream', {
-        teamId: membership.id,
-        participantId: agent.id,
-        participantName: membership.name,
-        frame,
-      })
-    }, { global: true })
+    ctx.on('agent/assistant-stream', ({ agent, frame }) => { this.room.observeStream(agent, frame) }, { global: true })
     ctx.on('agent/created', ({ agent }) => { this.scheduleRecovery(agent) })
     ctx.on('agent/status', ({ agent }) => {
       const membership = this.roster.tryMembership(agent)

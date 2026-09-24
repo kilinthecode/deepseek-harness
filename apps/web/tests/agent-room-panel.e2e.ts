@@ -71,6 +71,7 @@ describe('web e2e: Agent room panel', () => {
       agentModel: 'reviewer-model',
     }
     // One conversation turn so the panel's host action has a place to render.
+    // It precedes the Team's first teammate, so the room does not transcribe it.
     session.append('turn/start', { turn: 1 })
     session.append('user/message', createUserMessage({
       content: [{ type: 'text', text: 'Open the room.' }],
