@@ -262,7 +262,7 @@
     },
     {
       "name": "memory_forget",
-      "description": "Delete one saved memory by name and scope. Use it when a memory is wrong or no longer applies.",
+      "description": "Delete one saved memory by name and scope.",
       "parameters": {
         "type": "object",
         "properties": {
@@ -287,7 +287,7 @@
     },
     {
       "name": "memory_recall",
-      "description": "Read saved memories. Matches the query as a case-insensitive substring of a memory's name, description, or content across global memories and the current project's memories; omit the query to list the newest ones. Use it to read the content behind a catalog entry.",
+      "description": "Read saved global memories and the current project's memories.",
       "parameters": {
         "type": "object",
         "properties": {
@@ -300,7 +300,7 @@
     },
     {
       "name": "memory_write",
-      "description": "Save one durable memory for future sessions, or replace the memory of the same name and scope. Use it for user preferences and working style, feedback on how to do the work, durable project facts and constraints, and pointers to external resources. Never save task progress, transient state, or secrets.",
+      "description": "Save one durable memory for future sessions.",
       "parameters": {
         "type": "object",
         "properties": {
@@ -310,7 +310,7 @@
           },
           "type": {
             "type": "string",
-            "description": "user (who the user is, preferences) | feedback (how to do the work, corrections) | project (facts and constraints of this project) | reference (pointer to an external resource).",
+            "description": "user (who the user is and how they like to work) | feedback (feedback or corrections on how to do the work) | project (a durable fact or constraint about the current project) | reference (a pointer to an external resource such as a URL, ticket, or dashboard).",
             "enum": [
               "user",
               "feedback",
@@ -320,7 +320,7 @@
           },
           "scope": {
             "type": "string",
-            "description": "global (visible in every session) | project (visible in sessions inside the current project root).",
+            "description": "project for facts about the current repository (visible in sessions inside its project root) | global for everything else (visible in every session).",
             "enum": [
               "global",
               "project"
@@ -962,7 +962,7 @@
       },
       {
         "name": "memory_forget",
-        "description": "Delete one saved memory by name and scope. Use it when a memory is wrong or no longer applies.",
+        "description": "Delete one saved memory by name and scope.",
         "parameters": {
           "type": "object",
           "properties": {
@@ -987,7 +987,7 @@
       },
       {
         "name": "memory_recall",
-        "description": "Read saved memories. Matches the query as a case-insensitive substring of a memory's name, description, or content across global memories and the current project's memories; omit the query to list the newest ones. Use it to read the content behind a catalog entry.",
+        "description": "Read saved global memories and the current project's memories.",
         "parameters": {
           "type": "object",
           "properties": {
@@ -1000,7 +1000,7 @@
       },
       {
         "name": "memory_write",
-        "description": "Save one durable memory for future sessions, or replace the memory of the same name and scope. Use it for user preferences and working style, feedback on how to do the work, durable project facts and constraints, and pointers to external resources. Never save task progress, transient state, or secrets.",
+        "description": "Save one durable memory for future sessions.",
         "parameters": {
           "type": "object",
           "properties": {
@@ -1010,7 +1010,7 @@
             },
             "type": {
               "type": "string",
-              "description": "user (who the user is, preferences) | feedback (how to do the work, corrections) | project (facts and constraints of this project) | reference (pointer to an external resource).",
+              "description": "user (who the user is and how they like to work) | feedback (feedback or corrections on how to do the work) | project (a durable fact or constraint about the current project) | reference (a pointer to an external resource such as a URL, ticket, or dashboard).",
               "enum": [
                 "user",
                 "feedback",
@@ -1020,7 +1020,7 @@
             },
             "scope": {
               "type": "string",
-              "description": "global (visible in every session) | project (visible in sessions inside the current project root).",
+              "description": "project for facts about the current repository (visible in sessions inside its project root) | global for everything else (visible in every session).",
               "enum": [
                 "global",
                 "project"
