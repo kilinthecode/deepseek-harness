@@ -3,7 +3,7 @@
 - button "刷新"
 - button "添加插件"
 - heading "官方" [level=3]
-- text: "7"
+- text: "8"
 - list:
   - listitem:
     - button "查看 智能体讨论室": 智能体讨论室
