@@ -4,13 +4,12 @@ import { afterEach, describe, expect, it } from 'vitest'
 import { Context } from '@deepseek-ai/cordis'
 import type { Agent } from '@deepseek-ai/dsh-agent'
 import { ToolCallId } from '@deepseek-ai/dsh-llm'
-import { SessionId } from '@deepseek-ai/dsh-session'
 import SessionProjectionRegistry from '@deepseek-ai/dsh-session-projection'
 import SystemPrompt from '@deepseek-ai/dsh-system-prompt'
 import ToolRuntime from '@deepseek-ai/dsh-tools'
 import * as tool from '@deepseek-ai/dsh-tool-memory'
 import type { Config } from '@deepseek-ai/dsh-tool-memory'
-import { cleanupRoots, freshRoot, mountStore, project } from './helpers.ts'
+import { cleanupRoots, freshRoot, mountStore, project, sessionAgent, sessionAt } from './helpers.ts'
 
 const signal = new AbortController().signal
 const contexts: Context[] = []
@@ -21,9 +20,9 @@ afterEach(async () => {
   await cleanupRoots()
 })
 
-/** A stand-in agent: the tools read only `agent.session.header.cwd`. */
+/** An agent whose session header carries `cwd`; the tools read only that field. */
 function agentAt(cwd?: string): Agent {
-  return { id: SessionId('agent'), session: { header: { cwd } } } as unknown as Agent
+  return sessionAgent(sessionAt(cwd, 'agent'))
 }
 
 async function setup(config: Config = { injectMaxBytes: 2048, maxRecallResults: 2 }) {

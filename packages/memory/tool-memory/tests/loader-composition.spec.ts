@@ -38,22 +38,22 @@ async function boot(configLines: readonly string[]): Promise<Context> {
   root = await mkdtemp(join(tmpdir(), 'dsh-tool-memory-loader-'))
   const configPath = join(root, 'cordis.yml')
   await writeFile(configPath, [
-    "- name: '@deepseek-ai/dsh-agent'",
-    "- name: '@deepseek-ai/dsh-system-prompt'",
-    "- name: '@deepseek-ai/dsh-tools'",
-    "- name: '@deepseek-ai/dsh-session-projection'",
-    "- name: '@deepseek-ai/dsh-storage'",
-    "- name: '@deepseek-ai/dsh-storage-json'",
+    '- name: cordis:agents',
+    '- name: cordis:systemPrompt',
+    '- name: cordis:tools',
+    '- name: cordis:sessionProjections',
+    '- name: cordis:storage',
+    '- name: cordis:storage-json',
     '  config:',
     `    root: ${JSON.stringify(join(root, 'storages'))}`,
-    "- name: '@deepseek-ai/dsh-storage-domain'",
+    '- name: cordis:storage-domain',
     '  config:',
     '    backend: json',
-    "- name: '@deepseek-ai/dsh-memory'",
+    '- name: cordis:memory',
     '  config:',
     '    maxRecords: 5',
     '    maxRecordBytes: 256',
-    "- name: '@deepseek-ai/dsh-tool-memory'",
+    '- name: cordis:tool-memory',
     ...configLines.length > 0 ? ['  config:', ...configLines] : [],
     '',
   ].join('\n'))
@@ -63,24 +63,17 @@ async function boot(configLines: readonly string[]): Promise<Context> {
   ctx.baseUrl = pathToFileURL(root).href + '/'
   await ctx.plugin(Loader)
   ctx.loader.builtins.include = Include
-  const modules = new Map<string, unknown>([
-    ['@deepseek-ai/dsh-agent', AgentRegistry],
-    ['@deepseek-ai/dsh-system-prompt', SystemPrompt],
-    ['@deepseek-ai/dsh-tools', ToolRuntime],
-    ['@deepseek-ai/dsh-session-projection', SessionProjectionRegistry],
-    ['@deepseek-ai/dsh-storage', Storage],
-    ['@deepseek-ai/dsh-storage-json', StorageJson],
-    ['@deepseek-ai/dsh-storage-domain', StorageDomain],
-    ['@deepseek-ai/dsh-memory', MemoryStore],
-    ['@deepseek-ai/dsh-tool-memory', ToolMemory],
-  ])
-  ctx.loader.internal = {
-    version: 'v2',
-    async import(specifier: string) {
-      if (!modules.has(specifier)) throw new Error(`unexpected Loader import: ${specifier}`)
-      return modules.get(specifier)
-    },
-  } as unknown as NonNullable<typeof ctx.loader.internal>
+  Object.assign(ctx.loader.builtins, {
+    agents: AgentRegistry,
+    systemPrompt: SystemPrompt,
+    tools: ToolRuntime,
+    sessionProjections: SessionProjectionRegistry,
+    storage: Storage,
+    'storage-json': StorageJson,
+    'storage-domain': StorageDomain,
+    memory: MemoryStore,
+    'tool-memory': ToolMemory,
+  })
   await ctx.loader.create({ name: 'cordis:include', config: { path: pathToFileURL(configPath).href } })
   await ctx.loader.await()
   for (const entry of ctx.loader.entries()) await entry.fiber?.await()

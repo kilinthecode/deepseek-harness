@@ -86,7 +86,7 @@ type MemoryErrorCode =
 
 ## 目录投影
 
-`dsh-tool-memory` 注册 `memoryCatalog` 会话投影，其状态为 `{ lastCatalog: string | null }`：本插件最近一次注入的目录文本，由其自身 `snapshot` 形式的 `user/message` 事件折叠而来，并在 `compaction/summary` 时重置为 `null`。`agent/pre-step` 监听器在投影值为 `null` 且存储有可见记录时，或某轮第一步渲染出与之不同的目录时注入；在目录已送达模型之后被清空的存储渲染为显式的空目录 `EMPTY_CATALOG_TEXT`。该决定读取投影以及存储当前的可见记录；每份注入的目录都是一条已记录的 `user/message`，因此回放可以从日志重建每个模型请求。
+`dsh-tool-memory` 注册 `memoryCatalog` 会话投影，其状态为 `{ lastCatalog: string | null }`：本插件最近一次注入的目录文本，由其自身 `snapshot` 形式、source kind 为 `tool-memory` 的 `user/message` 事件折叠而来，并在 `compaction/summary` 时重置为 `null`。`agent/pre-step` 监听器在投影值为 `null` 且存储有可见记录时，或某轮第一步渲染出与之不同的目录时注入；在目录已送达模型之后被清空的存储渲染为显式的空目录 `EMPTY_CATALOG_TEXT`。该决定读取投影以及存储当前的可见记录；每份注入的目录都是一条已记录的 `user/message`，因此回放可以从日志重建每个模型请求。
 
 <!-- BEGIN GENERATED cordis-surface (gen-cordis-catalog.ts) — do not edit between markers -->
 

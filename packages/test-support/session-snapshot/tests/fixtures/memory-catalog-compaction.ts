@@ -20,8 +20,7 @@ export function apply(ctx: Context): void {
     const catalog = agent.session.surface.nodes
       .map(seq => agent.session.snapshotEvents()[seq])
       .findLast(event => event?.type === 'user/message'
-        && event.data.source.kind === 'plugin'
-        && event.data.source.plugin === 'tool-memory')
+        && event.data.source.kind === 'tool-memory')
     if (catalog === undefined) throw new Error('memory catalog missing before snapshot compaction')
     appendFixtureCompaction(agent, catalog, 'memory-catalog-fixture')
     return downstream

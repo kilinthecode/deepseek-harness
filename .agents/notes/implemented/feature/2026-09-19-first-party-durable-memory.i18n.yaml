@@ -2,5 +2,5 @@
 # side as of the last confirmed-consistent state. Both languages carry equal authority;
 # after editing either side, bring the other along and re-record with:
 #   pnpm run verify-translation-pairing --write .agents/notes/implemented/feature/2026-09-19-first-party-durable-memory.md
-2026-09-19-first-party-durable-memory.md: 2cf3f1bdfd69cc0c9030c633e85afb94c3ca7699
-2026-09-19-first-party-durable-memory.zh.md: d9ba804bccf676f15b00ced8d2701db3484d1b30
+2026-09-19-first-party-durable-memory.md: 97a41a26c51ec201c70c04aea3a07e652378b601
+2026-09-19-first-party-durable-memory.zh.md: f73e5136ee1b5dc7f6f114d0cdbc16d991b64d12

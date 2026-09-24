@@ -89,7 +89,7 @@ kind: "package-reference"
 
 ### 注入机制
 
-监听器以前置方式注册在 `agent/pre-step` 上，等待链上其余部分完成后，把目录追加到 `enter` 决定中。它每个步骤运行一次，而不是每次重试运行一次。在尚未注入任何内容时，它在每个步骤都检查存储，因此新会话中的第一次写入之后，下一步就会跟着目录；一旦表面上已有目录，只有每轮的第一步才会重新检查。`compaction/summary` 会把投影的目录重置为 `null`，因此下一步会重新注入。目录消息携带 `source: { kind: 'plugin', plugin: 'tool-memory', form: 'snapshot', sections: [{ name: 'memory-catalog', text }] }`；投影折叠的正是 sections 中的文本。
+监听器以前置方式注册在 `agent/pre-step` 上，等待链上其余部分完成后，把目录追加到 `enter` 决定中。它每个步骤运行一次，而不是每次重试运行一次。在尚未注入任何内容时，它在每个步骤都检查存储，因此新会话中的第一次写入之后，下一步就会跟着目录；一旦表面上已有目录，只有每轮的第一步才会重新检查。`compaction/summary` 会把投影的目录重置为 `null`，因此下一步会重新注入。目录消息携带 `source: { kind: 'tool-memory', form: 'snapshot', sections: [{ name: 'memory-catalog', text }] }`；投影折叠的正是 sections 中的文本。`tool-memory` kind 仅用于归属：未安装本插件的读取方会保留该消息及其 source 字段。
 
 ### 呈现
 

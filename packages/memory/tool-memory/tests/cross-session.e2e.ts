@@ -75,7 +75,7 @@ describe('durable memory across two headless processes', () => {
       events.some(event => event.type === 'tool/call' && event.data.name === 'memory_recall'))
     if (recallSession === undefined) throw new Error('no session called memory_recall')
     const catalogIndex = recallSession.findIndex(event =>
-      event.type === 'user/message' && event.data.source.kind === 'plugin' && event.data.source.plugin === 'tool-memory')
+      event.type === 'user/message' && event.data.source.kind === 'tool-memory')
     const firstAssistantIndex = recallSession.findIndex(event => event.type === 'assistant/message')
     expect(catalogIndex).toBeGreaterThan(-1)
     expect(catalogIndex).toBeLessThan(firstAssistantIndex)

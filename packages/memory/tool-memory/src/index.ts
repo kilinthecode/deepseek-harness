@@ -20,7 +20,7 @@ export { EMPTY_CATALOG_TEXT, renderCatalog } from './catalog.ts'
 export type { MemoryCatalogState } from './catalog.ts'
 export { MEMORY_SECTION_TEXT } from './prompt.ts'
 
-/** Cordis plugin name; also the `source.plugin` of every injected catalog. */
+/** Cordis plugin name; also the `source.kind` of every injected catalog. */
 export const name = 'tool-memory'
 
 /** Services the tools, the catalog, and the prompt section register into. */
@@ -57,5 +57,5 @@ export function apply(ctx: Context, config: Config): void {
     text: MEMORY_SECTION_TEXT,
   })
   registerMemoryTools(ctx, config.maxRecallResults)
-  registerCatalogInjection(ctx, name, config.injectMaxBytes)
+  registerCatalogInjection(ctx, config.injectMaxBytes)
 }

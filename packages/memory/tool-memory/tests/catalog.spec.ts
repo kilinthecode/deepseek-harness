@@ -3,17 +3,23 @@ import { Context } from '@deepseek-ai/cordis'
 import AgentRegistry, { agentEvents } from '@deepseek-ai/dsh-agent'
 import type { Agent, PreStepDecision } from '@deepseek-ai/dsh-agent'
 import { createUserMessage } from '@deepseek-ai/dsh-llm'
+import type { ContextFormed } from '@deepseek-ai/dsh-llm'
 import type { MemoryRecord, MemoryVisible } from '@deepseek-ai/dsh-memory'
-import { SESSION_FORMAT_VERSION, Session, SessionId, SessionSeq } from '@deepseek-ai/dsh-session'
-import type { SessionHeader } from '@deepseek-ai/dsh-session'
+import { SessionSeq } from '@deepseek-ai/dsh-session'
+import type { Session } from '@deepseek-ai/dsh-session'
 import SessionProjectionRegistry from '@deepseek-ai/dsh-session-projection'
 import SystemPrompt from '@deepseek-ai/dsh-system-prompt'
 import ToolRuntime from '@deepseek-ai/dsh-tools'
 import * as tool from '@deepseek-ai/dsh-tool-memory'
 import { EMPTY_CATALOG_TEXT, renderCatalog } from '@deepseek-ai/dsh-tool-memory'
 import type { MemoryCatalogState } from '@deepseek-ai/dsh-tool-memory'
-import { unsupportedInbox } from '@deepseek-ai/dsh-agent-loop-testkit'
-import { cleanupRoots, freshRoot, mountStore, project } from './helpers.ts'
+import { catalogEvents, cleanupRoots, freshRoot, mountStore, project, sessionAgent, sessionAt } from './helpers.ts'
+
+declare module '@deepseek-ai/dsh-llm' {
+  interface MessageSourceMap {
+    'someone-else': { kind: 'someone-else' } & ContextFormed
+  }
+}
 
 const SIGNAL = new AbortController().signal
 const contexts: Context[] = []
@@ -134,46 +140,8 @@ async function mount(config: tool.Config = { injectMaxBytes: 2048, maxRecallResu
   return { ctx, root, fiber }
 }
 
-function sessionAt(cwd: string | undefined, id = 'session'): Session {
-  const sessionId = SessionId(id)
-  const header: SessionHeader = {
-    version: SESSION_FORMAT_VERSION,
-    id: sessionId,
-    createdAt: 0,
-    isSeeded: false,
-    ...cwd === undefined ? {} : { cwd },
-  }
-  return Session.create(sessionId, undefined, header)
-}
-
-function sessionAgent(session: Session): Agent {
-  return {
-    id: session.id,
-    options: {},
-    session,
-    inbox: unsupportedInbox(),
-    status: 'running',
-    ctx: new Context(),
-    send: () => {},
-    followup: () => {},
-    steer: () => {},
-    inject: () => { throw new Error('the catalog must append directly to the open step') },
-    cancel() {},
-    runMaintenance: task => task(new AbortController().signal),
-    whenIdle: () => Promise.resolve(),
-  }
-}
-
 function catalogs(session: Session): string[] {
-  const texts: string[] = []
-  for (const event of session.snapshotEvents()) {
-    if (event.type === 'user/message'
-      && event.data.source.kind === 'plugin'
-      && event.data.source.plugin === 'tool-memory') {
-      texts.push(event.data.content.map(block => block.type === 'text' ? block.text : '').join(''))
-    }
-  }
-  return texts
+  return catalogEvents(session.snapshotEvents()).map(event => event.text)
 }
 
 async function fire(
@@ -283,7 +251,7 @@ describe('catalog injection', () => {
     await ctx.memory.write({ ...WRITE, name: 'prefers-pnpm' })
     const session = sessionAt(undefined)
     const agent = sessionAgent(session)
-    const rejected = await fire(ctx, agent, 1, 1, SIGNAL, () => Promise.resolve({ kind: 'reject', reason: 'busy' } as unknown as PreStepDecision))
+    const rejected = await fire(ctx, agent, 1, 1, SIGNAL, () => Promise.resolve<PreStepDecision>({ kind: 'reject' }))
     expect(rejected.kind).toBe('reject')
     const aborted = new AbortController()
     aborted.abort()
@@ -324,11 +292,11 @@ describe('catalog injection', () => {
     expect(ctx.sessionProjections.stateOf(session, 'memoryCatalog')).toBe(before)
     session.append('user/message', createUserMessage({
       content: [{ type: 'text', text: 'foreign snapshot' }],
-      source: { kind: 'plugin', plugin: 'someone-else', form: 'snapshot', sections: [{ name: 'x', text: 'foreign snapshot' }] },
+      source: { kind: 'someone-else', form: 'snapshot', sections: [{ name: 'x', text: 'foreign snapshot' }] },
     }), { surfaceOp: 'append' })
     session.append('user/message', createUserMessage({
       content: [{ type: 'text', text: 'not a catalog' }],
-      source: { kind: 'plugin', plugin: 'tool-memory', form: 'notice', summary: 'x' },
+      source: { kind: 'tool-memory', form: 'notice', summary: 'x' },
     }), { surfaceOp: 'append' })
     expect(ctx.sessionProjections.stateOf(session, 'memoryCatalog')).toEqual({ lastCatalog: null })
   })

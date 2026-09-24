@@ -13,10 +13,21 @@ import type { Context } from '@deepseek-ai/cordis'
 import { z as zod } from 'zod'
 import type { PreStepDecision } from '@deepseek-ai/dsh-agent'
 import { createUserMessage } from '@deepseek-ai/dsh-llm'
+import type { ContextFormed } from '@deepseek-ai/dsh-llm'
 import { MEMORY_TYPES, compareStoredText } from '@deepseek-ai/dsh-memory'
 import type { MemoryRecord, MemoryType, MemoryVisible } from '@deepseek-ai/dsh-memory'
 import type {} from '@deepseek-ai/dsh-compaction'
 import type {} from '@deepseek-ai/dsh-session-projection'
+
+declare module '@deepseek-ai/dsh-llm' {
+  interface MessageSourceMap {
+    /** Memory catalog attribution; readers preserve the content without this producer.
+     * Its projection uses the kind to find the last injected catalog.
+     * @persistenceAttribution
+     */
+    'tool-memory': { kind: 'tool-memory' } & ContextFormed
+  }
+}
 
 declare module '@deepseek-ai/dsh-session-projection/types' {
   interface SessionProjectionStateMap {
@@ -91,11 +102,11 @@ export function renderCatalog(visible: MemoryVisible, maxBytes: number): string 
 /**
  * Register the `memoryCatalog` projection and, when `maxBytes` is positive,
  * the prepended `agent/pre-step` listener that injects the catalog.
+ * Every catalog message carries the `tool-memory` source kind.
  * @param ctx - plugin context carrying `memory` and `sessionProjections`; both registrations dispose with it.
- * @param pluginName - the injecting plugin's name, stamped on every catalog message's source.
  * @param maxBytes - catalog byte budget; `0` keeps the projection but never injects.
  */
-export function registerCatalogInjection(ctx: Context, pluginName: string, maxBytes: number): void {
+export function registerCatalogInjection(ctx: Context, maxBytes: number): void {
   ctx.sessionProjections.register({
     key: 'memoryCatalog',
     stateVersion: 1,
@@ -104,7 +115,7 @@ export function registerCatalogInjection(ctx: Context, pluginName: string, maxBy
     apply: (state, event) => {
       if (event.type === 'user/message') {
         const source = event.data.source
-        if (source.kind !== 'plugin' || source.plugin !== pluginName || source.form !== 'snapshot') return state
+        if (source.kind !== 'tool-memory' || source.form !== 'snapshot') return state
         return { lastCatalog: source.sections.map(section => section.text).join('') }
       }
       if (event.type === 'compaction/summary') {
@@ -130,7 +141,7 @@ export function registerCatalogInjection(ctx: Context, pluginName: string, maxBy
         ...decision.messages,
         createUserMessage({
           content: [{ type: 'text', text }],
-          source: { kind: 'plugin', plugin: pluginName, form: 'snapshot', sections: [{ name: 'memory-catalog', text }] },
+          source: { kind: 'tool-memory', form: 'snapshot', sections: [{ name: 'memory-catalog', text }] },
         }),
       ],
     }

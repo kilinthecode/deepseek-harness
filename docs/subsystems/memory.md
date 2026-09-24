@@ -86,7 +86,7 @@ type MemoryErrorCode =
 
 ## Catalog projection
 
-`dsh-tool-memory` registers the `memoryCatalog` session projection, whose state is `{ lastCatalog: string | null }`: the text of this plugin's latest injected catalog, folded from its own `snapshot`-form `user/message` events, and reset to `null` by `compaction/summary`. The `agent/pre-step` listener injects when the projected value is `null` and the store has visible records, or when a turn's first step renders a catalog that differs from it; a store emptied after a catalog reached the model renders as the explicit empty catalog `EMPTY_CATALOG_TEXT`. The decision reads the projection and the store's current visible records; every injected catalog is a logged `user/message`, so replay rebuilds each model request from the log.
+`dsh-tool-memory` registers the `memoryCatalog` session projection, whose state is `{ lastCatalog: string | null }`: the text of this plugin's latest injected catalog, folded from its own `snapshot`-form `user/message` events, which carry the `tool-memory` source kind, and reset to `null` by `compaction/summary`. The `agent/pre-step` listener injects when the projected value is `null` and the store has visible records, or when a turn's first step renders a catalog that differs from it; a store emptied after a catalog reached the model renders as the explicit empty catalog `EMPTY_CATALOG_TEXT`. The decision reads the projection and the store's current visible records; every injected catalog is a logged `user/message`, so replay rebuilds each model request from the log.
 
 <!-- BEGIN GENERATED cordis-surface (gen-cordis-catalog.ts) — do not edit between markers -->
 

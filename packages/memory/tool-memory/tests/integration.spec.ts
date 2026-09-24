@@ -12,7 +12,7 @@ import { ask, catalogEvents, cleanupRoots, freshRoot, mountStore, project, waitF
 /**
  * Full-loop integration: a scripted mock model drives the REAL memory tools
  * through the agent loop over a real store; only the model is mocked. The
- * catalog lands in the log as an ordinary plugin-sourced user message.
+ * catalog lands in the log as an ordinary user message with the `tool-memory` source.
  */
 const contexts: Context[] = []
 
@@ -52,7 +52,7 @@ describe('memory tools through the agent loop', () => {
     let log = agent.session.snapshotEvents()
     expect(log.find(event => event.type === 'tool/call')?.data.name).toBe('memory_write')
     const resultIndex = log.findIndex(event => event.type === 'tool/result')
-    expect(log[resultIndex]?.type === 'tool/result' && log[resultIndex].data.message.content[0]?.isError).toBe(false)
+    expect(log[resultIndex]?.type === 'tool/result' && log[resultIndex].data.message.isError).toBe(false)
     expect(await readdir(join(root, 'memory', 'global'))).toEqual(['prefers-pnpm.json'])
     // Nothing had been injected yet, so the step after the write carries the catalog.
     let catalogs = catalogEvents(log)
@@ -100,7 +100,7 @@ describe('memory tools through the agent loop', () => {
     expect(catalogs[0]!.index).toBeLessThan(log.findIndex(event => event.type === 'assistant/message'))
     expect(adapter.requests[0]!.messages.some(message => message.content.some(block => block.type === 'text' && block.text.includes('- [feedback] review-style — Terse reviews')))).toBe(true)
     const result = log.find(event => event.type === 'tool/result')
-    expect(result?.data.message.content[0]?.isError).toBe(false)
+    expect(result?.data.message.isError).toBe(false)
     const resultText = JSON.stringify(result?.data.message.content)
     expect(resultText).toContain('Lead with the verdict.')
   })

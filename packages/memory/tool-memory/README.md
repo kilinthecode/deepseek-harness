@@ -89,7 +89,7 @@ The plugin is a function/namespace plugin: it exports `name` / `inject` / `Confi
 
 ### Injection mechanics
 
-The listener is prepended on `agent/pre-step`, awaits the rest of the chain, and appends the catalog to an `enter` decision. It runs once per step, not per retry. While nothing has been injected yet it checks the store at every step, so the first write in a fresh session is followed by the catalog on the next step; once a catalog is on the surface, only a turn's first step re-checks. A `compaction/summary` resets the projected catalog to `null`, so the next step re-injects. The catalog message carries `source: { kind: 'plugin', plugin: 'tool-memory', form: 'snapshot', sections: [{ name: 'memory-catalog', text }] }`; the sections carry the text the projection folds.
+The listener is prepended on `agent/pre-step`, awaits the rest of the chain, and appends the catalog to an `enter` decision. It runs once per step, not per retry. While nothing has been injected yet it checks the store at every step, so the first write in a fresh session is followed by the catalog on the next step; once a catalog is on the surface, only a turn's first step re-checks. A `compaction/summary` resets the projected catalog to `null`, so the next step re-injects. The catalog message carries `source: { kind: 'tool-memory', form: 'snapshot', sections: [{ name: 'memory-catalog', text }] }`; the sections carry the text the projection folds. The `tool-memory` kind is attribution-only: a reader without this plugin keeps the message and its source fields.
 
 ### Presentation
 

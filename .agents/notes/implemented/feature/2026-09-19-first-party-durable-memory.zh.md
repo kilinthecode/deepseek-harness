@@ -14,11 +14,11 @@ agent（智能体）在会话之间会忘记一切。用户表达过的偏好、
 
 `@deepseek-ai/dsh-memory` 是 `ctx.memory` 上的 Service Definition 与 Provider：基于现有存储 domain 数据形式的一个 `memory` domain，采用逐记录布局，包含以记忆名称为键的 `global` 表和以 `<project slug>__<name>` 为键的 `project` 表。一条记录携带 `name`、`type`（`user`、`feedback`、`project`、`reference`）、`scope`（`global`、`project`）、最多 256 个字符的一行 `description`、受 `maxRecordBytes` 限制的 `content`、项目记录的 `projectRoot`，以及绝不会到达模型的 ISO 时间戳。记录在打开时由 zod 以 `backup-and-skip` 校验，每个字段都有上限，内容受存储当前的 `maxRecordBytes` 限制，因此弄坏某个文件的手工编辑只会把该文件移到一旁并保留其余记录。存储对全局作用域和每个项目分别执行 `maxRecords`，执行位置是每个存储唯一的串行区段，该区段包含项目根目录查找、存在性检查、上限检查以及持久的写入或删除，因此同一进程内的重叠调用按调用顺序执行且绝不会超出上限；计数覆盖本进程已加载或写入的记录，因此其他进程的写入只有在 domain 重新打开后才计入。它通过从会话工作目录向上查找 `projectRootMarkers` 条目来解析项目根目录，在无法解析根目录时让项目作用域的写入和遗忘明确失败，此时回忆和目录只显示全局记录。
 
-`@deepseek-ai/dsh-tool-memory` 是 Consumer：`ctx.tools` 上的 `memory_write`、`memory_recall` 和 `memory_forget`，位于 `TOOL_MEMORY` 位置、说明何时记忆的静态提示词段落，以及以 `source.form: 'snapshot'` 的 `user/message` 注入的可见记忆目录。`memoryCatalog` 会话投影折叠插件自身的目录消息，并在 `compaction/summary` 时重置；前置的 `agent/pre-step` 监听器在投影为空时的任意步骤、某轮第一步渲染出与投影不同的目录时，以及压缩之后注入；当某轮第一步发现存储在目录已送达模型之后被清空时，它注入一份唯一条目行为 `No saved memories.` 的目录，使已遗忘的条目不再被依赖。正文只能通过 `memory_recall` 到达模型，受 `maxRecallResults` 和存储的字节上限约束。目录受 `injectMaxBytes` 约束；`0` 关闭注入。
+`@deepseek-ai/dsh-tool-memory` 是 Consumer：`ctx.tools` 上的 `memory_write`、`memory_recall` 和 `memory_forget`，位于 `TOOL_MEMORY` 位置、说明何时记忆的静态提示词段落，以及以 source 为 `{ kind: 'tool-memory', form: 'snapshot' }` 的 `user/message` 注入的可见记忆目录。`memoryCatalog` 会话投影折叠插件自身的目录消息，并在 `compaction/summary` 时重置；前置的 `agent/pre-step` 监听器在投影为空时的任意步骤、某轮第一步渲染出与投影不同的目录时，以及压缩之后注入；当某轮第一步发现存储在目录已送达模型之后被清空时，它注入一份唯一条目行为 `No saved memories.` 的目录，使已遗忘的条目不再被依赖。正文只能通过 `memory_recall` 到达模型，受 `maxRecallResults` 和存储的字节上限约束。目录受 `injectMaxBytes` 约束；`0` 关闭注入。
 
-不新增任何会话事件。每个模型可见的输入都是已有的事件类型：目录是一条 `user/message`，每次变更都是带有 `tool/result` 的 `tool/call`。因此本包不发布不变量配套插件，也不记录持久化类型变更。
+不新增任何会话事件。每个模型可见的输入都是已有的事件类型：目录是一条 `user/message`，每次变更都是带有 `tool/result` 的 `tool/call`。因此本包不发布不变量配套插件。消息 source 由生产者拥有，所以本包声明 `MessageSourceMap` 的 `tool-memory` 成员，并将其标记为仅用于归属：未安装该生产者的读取方保留目录的内容和 source 字段，[记忆目录 source 记录](../../../../docs/persistence-changes/2026-09-24-memory-catalog-source.zh.md)把这次新增确认为同版本变更。
 
-base 组合包在宿主平面挂载存储，并把工具挂载在 `tool-todo` 旁边；Web 组合包在宿主平面禁用工具，而 `standard`、`ptc` 和 `cordis` 预设按会话挂载它们，因为一个 domain 在每个进程中只打开一次，而预设按 agent 挂载工具。
+base 组合包在宿主平面挂载存储，并把工具挂载在 `tool-todo` 旁边；Web 组合包在宿主平面禁用工具，而 `packages/bundle/web-app/presets/` 下的 `standard`、`ptc` 和 `cordis` 预设声明按会话挂载它们，因为一个 domain 在每个进程中只打开一次，而预设按 agent 挂载工具。
 
 ## Storage layout
 
@@ -30,13 +30,13 @@ base 组合包在宿主平面挂载存储，并把工具挂载在 `tool-todo` �
 
 **一个包同时持有存储、工具和注入。** 纸面上更小，但 Web profile 按 agent 预设挂载工具，而存储 domain 在每个进程中只打开一次，因此单包要么按预设打开 domain（被 domain facility 拒绝），要么把工具强行放到宿主平面、对包括 `minimal` 在内的每个预设生效。goal/tool-goal 的拆分正是仓库对这种形态的模板。
 
-**带不变量配套插件的 `memory/write` 与 `memory/forget` 会话事件。** 它们会为 UI 渲染和回放提供每次变更的专用记录。它们对可重建性并非必要：工具调用与结果已经记录了每次变更，而存储是跨会话状态而非会话状态。没有它们，本包就不需要不变量配套插件、持久化变更记录，也不需要重新生成持久化目录。未来的记忆面板会通过宿主控制器读取存储。
+**带不变量配套插件的 `memory/write` 与 `memory/forget` 会话事件。** 它们会为 UI 渲染和回放提供每次变更的专用记录。它们对可重建性并非必要：工具调用与结果已经记录了每次变更，而存储是跨会话状态而非会话状态。没有它们，本包就不需要不变量配套插件，也不新增事件类型。未来的记忆面板会通过宿主控制器读取存储。
 
 **每次写入后重新注入目录，并用代数计数器控制。** 在模型刚做出的写入之后重发整份目录只会消耗 token 而不带来任何信息。在某轮第一步把渲染的目录与投影中的上一份比较，只用一个可空字符串的投影状态就覆盖了本进程任何会话的写入、手工编辑和压缩。
 
 **按类型限制目录条目数。** 第二个旋钮，用来防止某一类型挤占其他类型。按类型等级（`user`、`feedback`、`project`、`reference`）再按名称排序，在单一字节预算下提供了同样的保护。
 
-**为记忆增加 `MessageSourceMap` 成员。** 现有的 `plugin` 来源配合 `form: 'snapshot'` 和命名的 sections 已经携带了文本和取代语义；新的来源种类会在没有消费者的情况下扩大联合类型。
+**不带归属限定的 `tool-memory` source kind。** 没有归属限定时，持久化分类器把新增的 kind 视为需要 Session 格式 5 的联合类型变更，尽管未安装该生产者的读取方已经原样保留目录。
 
 **在回忆路径中使用语义搜索或 LLM。** 已拒绝：它会破坏无密钥回放的确定性，并给读取增加模型依赖。回忆在名称、描述和内容上做子串匹配；重新考虑的触发条件是可度量的回忆未命中。
 

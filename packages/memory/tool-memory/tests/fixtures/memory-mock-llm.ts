@@ -60,7 +60,7 @@ class MemoryMockAdapter extends LlmAdapter {
   async * stream(options: GenerateOptions): AsyncIterable<StreamChunk> {
     // The catalog lands after a tool result on the step that follows the first
     // write, so the result is not always the last message.
-    const toolResult = options.messages.flatMap(message => message.content).findLast(block => block.type === 'tool-result')
+    const toolResult = options.messages.findLast(message => message.role === 'tool')
     if (toolResult !== undefined) {
       const toolText = toolResult.content.filter(block => block.type === 'text').map(block => block.text).join('')
       yield* text(`RESULT: ${toolText.trim()}`)

@@ -35,14 +35,14 @@ async function boot(configLines: readonly string[]): Promise<Context> {
   const storageRoot = join(root, 'storages')
   const configPath = join(root, 'cordis.yml')
   await writeFile(configPath, [
-    "- name: '@deepseek-ai/dsh-storage'",
-    "- name: '@deepseek-ai/dsh-storage-json'",
+    '- name: cordis:storage',
+    '- name: cordis:storage-json',
     '  config:',
     `    root: ${JSON.stringify(storageRoot)}`,
-    "- name: '@deepseek-ai/dsh-storage-domain'",
+    '- name: cordis:storage-domain',
     '  config:',
     '    backend: json',
-    "- name: '@deepseek-ai/dsh-memory'",
+    '- name: cordis:memory',
     ...configLines.length > 0 ? ['  config:', ...configLines] : [],
     '',
   ].join('\n'))
@@ -52,19 +52,9 @@ async function boot(configLines: readonly string[]): Promise<Context> {
   ctx.baseUrl = pathToFileURL(root).href + '/'
   await ctx.plugin(Loader)
   ctx.loader.builtins.include = Include
-  const modules = new Map<string, unknown>([
-    ['@deepseek-ai/dsh-storage', Storage],
-    ['@deepseek-ai/dsh-storage-json', StorageJson],
-    ['@deepseek-ai/dsh-storage-domain', StorageDomain],
-    ['@deepseek-ai/dsh-memory', MemoryStore],
-  ])
-  ctx.loader.internal = {
-    version: 'v2',
-    async import(specifier: string) {
-      if (!modules.has(specifier)) throw new Error(`unexpected Loader import: ${specifier}`)
-      return modules.get(specifier)
-    },
-  } as unknown as NonNullable<typeof ctx.loader.internal>
+  Object.assign(ctx.loader.builtins, {
+    storage: Storage, 'storage-json': StorageJson, 'storage-domain': StorageDomain, memory: MemoryStore,
+  })
   await ctx.loader.create({ name: 'cordis:include', config: { path: pathToFileURL(configPath).href } })
   await ctx.loader.await()
   for (const entry of ctx.loader.entries()) await entry.fiber?.await()

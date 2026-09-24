@@ -632,7 +632,7 @@ const TOOL_PACKAGES: ToolPackage[] = [
       await ctx.plugin(ToolMemory, { injectMaxBytes: 4096, maxRecallResults: 8 })
     },
     note:
-      'The three tools read and write the durable memory store owned by dsh-memory; the session working directory selects the project scope. The injected catalog is a plugin-sourced user/message bounded by `injectMaxBytes`, so the catalog states the shipped budget and recall cap.',
+      'The three tools read and write the durable memory store owned by dsh-memory; the session working directory selects the project scope. The injected catalog is a user/message with the `tool-memory` source, bounded by `injectMaxBytes`, so the catalog states the shipped budget and recall cap.',
   },
   {
     pkg: '@deepseek-ai/dsh-tool-todo',
