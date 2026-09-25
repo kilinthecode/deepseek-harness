@@ -4,6 +4,7 @@ import type { Agent } from '@deepseek-ai/dsh-agent'
 import type { TeamMembership } from './roster.ts'
 import { TeamError } from './error.ts'
 import type { TeamJournal } from './journal.ts'
+import { assertTaskVerification } from './projection.ts'
 import type { TeamState } from './projection.ts'
 import { resolveActiveMember } from './roster.ts'
 import { assertTaskGraphCandidate, TeamTaskGraphError } from './task-graph.ts'
@@ -15,7 +16,7 @@ import type {
   TeamTaskView,
   UpdateTeamTaskRequest,
 } from './types.ts'
-import { projectTaskView, taskReady } from './task-view.ts'
+import { awaitingVerification, projectTaskView, taskReady } from './task-view.ts'
 import { requiredText, writeScope } from './validation.ts'
 
 const TASK_GRAPH_ERROR_CODES: Record<TeamTaskGraphViolation, string> = {
@@ -133,15 +134,17 @@ export class TeamTaskBoard {
           if (current.status !== 'pending' || !taskReady(state, current)) {
             throw new TeamError(`team task "${current.id}" is not ready to claim`, 'TEAM_TASK_BLOCKED')
           }
-          next = { ...current, status: 'in_progress', ownerId: caller.id }
+          next = this.withoutVerification({ ...current, status: 'in_progress', ownerId: caller.id })
           break
         case 'release':
           authorizeOwner()
           if (current.status !== 'in_progress') throw new TeamError('only an in-progress task can be released', 'TEAM_TASK_INVALID_TRANSITION')
-          next = this.withoutOwner({ ...current, status: 'pending' })
+          this.refuseWhileAwaitingVerdict(current)
+          next = this.withoutVerification(this.withoutOwner({ ...current, status: 'pending' }))
           break
         case 'edit':
           authorizeOwner()
+          this.refuseWhileAwaitingVerdict(current)
           if (request.subject === undefined && request.description === undefined && request.writeScopes === undefined) {
             throw new TeamError('task edit requires subject, description, or write_scopes', 'TEAM_INVALID_ARGUMENT')
           }
@@ -156,18 +159,55 @@ export class TeamTaskBoard {
           break
         case 'set_dependencies':
           authorizeOwner()
+          this.refuseWhileAwaitingVerdict(current)
           if (request.blockedBy === undefined) throw new TeamError('set_dependencies requires blocked_by', 'TEAM_INVALID_ARGUMENT')
           next = { ...current, blockedBy: this.dependencies(request.blockedBy, state, current.id) }
           break
-        case 'complete':
+        case 'submit':
           authorizeOwner()
-          if (current.status !== 'in_progress') throw new TeamError('only an in-progress task can complete', 'TEAM_TASK_INVALID_TRANSITION')
-          next = { ...current, status: 'completed' }
+          if (current.status !== 'in_progress') {
+            throw new TeamError('only an in-progress task can be submitted for verification', 'TEAM_TASK_INVALID_TRANSITION')
+          }
+          if (!taskReady(state, current)) {
+            throw new TeamError(`team task "${current.id}" still waits on its blockers`, 'TEAM_TASK_BLOCKED')
+          }
+          // The submission awaits the next revision, so a verdict names exactly
+          // the work the owner handed over.
+          next = {
+            ...current,
+            verification: { submittedRevision: current.revision + 1 },
+          }
           break
+        case 'verify': {
+          if (!awaitingVerification(current) || current.verification === undefined) {
+            throw new TeamError('only a submitted task can be verified', 'TEAM_TASK_INVALID_TRANSITION')
+          }
+          if (owner) {
+            throw new TeamError(
+              'a task owner cannot verify its own work; ask another member to verify it',
+              'TEAM_TASK_SELF_VERIFICATION',
+            )
+          }
+          if (request.verdict === undefined || request.reason === undefined) {
+            throw new TeamError('verify requires verdict and reason', 'TEAM_INVALID_ARGUMENT')
+          }
+          const reason = requiredText(request.reason, 'reason', 2_000)
+          next = {
+            ...current,
+            status: request.verdict === 'approved' ? 'completed' : 'in_progress',
+            verification: {
+              submittedRevision: current.verification.submittedRevision,
+              verifierId: caller.id,
+              verdict: request.verdict,
+              reason,
+            },
+          }
+          break
+        }
         case 'reopen':
           authorizeOwner()
           if (current.status !== 'completed') throw new TeamError('only a completed task can reopen', 'TEAM_TASK_INVALID_TRANSITION')
-          next = this.withoutOwner({ ...current, status: 'pending' })
+          next = this.withoutVerification(this.withoutOwner({ ...current, status: 'pending' }))
           break
         case 'reassign': {
           if (!lead) throw new TeamError('only the Team Lead can reassign tasks', 'TEAM_LEAD_REQUIRED')
@@ -177,17 +217,19 @@ export class TeamTaskBoard {
               'TEAM_TASK_INVALID_TRANSITION',
             )
           }
+          this.refuseWhileAwaitingVerdict(current)
           if (request.owner === undefined || request.owner.trim().length === 0) {
-            next = this.withoutOwner({ ...current, status: 'pending' })
+            next = this.withoutVerification(this.withoutOwner({ ...current, status: 'pending' }))
             break
           }
           if (!taskReady(state, current)) throw new TeamError(`team task "${current.id}" is blocked`, 'TEAM_TASK_BLOCKED')
           const assignee = resolveActiveMember(root, state, request.owner)
-          next = { ...current, status: 'in_progress', ownerId: assignee.id }
+          next = this.withoutVerification({ ...current, status: 'in_progress', ownerId: assignee.id })
           break
         }
         case 'delete': {
           authorizeOwner()
+          this.refuseWhileAwaitingVerdict(current)
           const dependent = state.tasks.find(task =>
             task.status !== 'deleted' && task.id !== current.id && task.blockedBy.includes(current.id))
           if (dependent !== undefined) {
@@ -205,6 +247,7 @@ export class TeamTaskBoard {
         revision: current.revision + 1,
       }
       this.assertTaskGraph(state, task)
+      this.assertTaskVerification(task)
       await this.journal.appendAndFlush(root, 'team/task', { version: 2, teamId: TeamId(root.id), task })
       return projectTaskView(state, task)
     })
@@ -247,9 +290,43 @@ export class TeamTaskBoard {
     }
   }
 
+  /**
+   * Refuse a revision the Team projection would reject, before it is appended.
+   * A committed revision the projection rejects fails the whole Team for every
+   * later read and replay.
+   */
+  private assertTaskVerification(candidate: TeamTaskSnapshot): void {
+    try {
+      assertTaskVerification(candidate)
+      /* v8 ignore start -- every transition above yields a verification the projection accepts. */
+    } catch (error: unknown) {
+      const message = error instanceof Error ? error.message : String(error)
+      throw new TeamError(message, 'TEAM_TASK_INVALID_TRANSITION', { cause: error })
+    }
+    /* v8 ignore stop */
+  }
+
+  /** Refuse a transition that would change or end work a peer is judging. */
+  private refuseWhileAwaitingVerdict(current: TeamTaskSnapshot): void {
+    if (!awaitingVerification(current)) return
+    throw new TeamError(
+      `team task "${current.id}" is awaiting verification; wait for its verdict`,
+      'TEAM_TASK_INVALID_TRANSITION',
+    )
+  }
+
   /** Remove an optional owner field under exactOptionalPropertyTypes. */
   private withoutOwner(task: TeamTaskSnapshot): TeamTaskSnapshot {
     const { ownerId: _ownerId, ...without } = task
     return without
+  }
+
+  /**
+   * Drop a consumed verification: a reopened task starts unverified, and a
+   * verdict judged the previous owner's submission, so it leaves with that owner.
+   */
+  private withoutVerification(task: TeamTaskSnapshot): TeamTaskSnapshot {
+    const { verification: _consumed, ...rest } = task
+    return rest
   }
 }

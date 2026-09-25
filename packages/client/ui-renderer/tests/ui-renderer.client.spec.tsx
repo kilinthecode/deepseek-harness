@@ -64,7 +64,7 @@ describe('UI renderer plugin', () => {
     expect(el.querySelector('[data-testid="root-probe"]')).toBeTruthy()
   })
 
-  it('hydrates the boot page before switching to the assembled application', async () => {
+  it('mounts beside the boot page without touching its DOM', async () => {
     const { ctx, slots } = await bench()
     slots.register({ name: 'root' }, () => <div data-testid="root-probe" />)
     const el = container()
@@ -81,6 +81,7 @@ describe('UI renderer plugin', () => {
     expect(error).not.toHaveBeenCalled()
     error.mockRestore()
     expect(el.querySelector('[data-testid="root-probe"]')).toBeTruthy()
+    expect(el.querySelector('[data-dsh-boot]')).toBe(boot)
     expect(records.some(record => record.target === boot)).toBe(false)
   })
 

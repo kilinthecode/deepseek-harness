@@ -26,7 +26,30 @@ export function taskReady(state: TeamState, task: TeamTaskSnapshot): boolean {
 }
 
 /**
- * Derive one task view with owner name, readiness, and advisory write overlaps.
+ * Whether one task is submitted and still waiting for a peer verdict.
+ * @param task - durable task snapshot to test.
+ * @returns whether the task carries a verification without a verdict.
+ */
+export function awaitingVerification(task: TeamTaskSnapshot): boolean {
+  return task.verification !== undefined && task.verification.verdict === undefined
+}
+
+/**
+ * Resolve one member id to its Team name, or `lead` for the Lead Session.
+ * @param state - Team state supplying members.
+ * @param id - member Session id, when one is recorded.
+ * @returns the member name, or undefined when absent or unknown.
+ */
+function memberName(state: TeamState, id: SessionId | undefined): string | undefined {
+  if (id === undefined) return undefined
+  if (id === brandString<SessionId>(state.id)) return 'lead'
+  return state.members.find(member => member.id === id)?.name
+}
+
+/**
+ * Derive one task view with owner name, readiness, advisory write overlaps, and
+ * the recorded peer verification. A submitted task without a verdict reports
+ * status `verifying`.
  * A committing caller may pass its pre-append state because `task` supplies the
  * new value explicitly; owner names, blocker readiness, and other task scopes
  * do not change when that snapshot is appended.
@@ -35,11 +58,7 @@ export function taskReady(state: TeamState, task: TeamTaskSnapshot): boolean {
  * @returns a detached task view.
  */
 export function projectTaskView(state: TeamState, task: TeamTaskSnapshot): TeamTaskView {
-  const ownerName = task.ownerId === undefined
-    ? undefined
-    : task.ownerId === brandString<SessionId>(state.id)
-      ? 'lead'
-      : state.members.find(member => member.id === task.ownerId)?.name
+  const ownerName = memberName(state, task.ownerId)
   const warnings = new Set<string>()
   for (const other of state.tasks) {
     if (other.id === task.id || other.status !== 'in_progress') continue
@@ -47,16 +66,26 @@ export function projectTaskView(state: TeamState, task: TeamTaskSnapshot): TeamT
       warnings.add(`write scopes overlap with ${other.id}`)
     }
   }
+  const verification = task.verification
+  const verifierName = memberName(state, verification?.verifierId)
   return {
     id: task.id,
     revision: task.revision,
     subject: task.subject,
     description: task.description,
-    status: task.status,
+    status: awaitingVerification(task) ? 'verifying' : task.status,
     blockedBy: [...task.blockedBy],
     writeScopes: [...task.writeScopes],
     ...ownerName === undefined ? {} : { ownerName },
     ready: task.status === 'pending' && taskReady(state, task),
     writeScopeWarnings: [...warnings],
+    ...verification === undefined ? {} : {
+      verification: {
+        submittedRevision: verification.submittedRevision,
+        ...verifierName === undefined ? {} : { verifierName },
+        ...verification.verdict === undefined ? {} : { verdict: verification.verdict },
+        ...verification.reason === undefined ? {} : { reason: verification.reason },
+      },
+    },
   }
 }

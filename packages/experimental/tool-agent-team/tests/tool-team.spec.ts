@@ -6,7 +6,7 @@ import { Context } from '@deepseek-ai/cordis'
 import type { Agent } from '@deepseek-ai/dsh-agent'
 import AgentLoop from '@deepseek-ai/dsh-agent-loop'
 import { mountAgentLoopTestDependencies } from '@deepseek-ai/dsh-agent-loop-testkit'
-import { ToolCallId, createUserMessage } from '@deepseek-ai/dsh-llm'
+import { ReasoningEffortId, ToolCallId, createUserMessage } from '@deepseek-ai/dsh-llm'
 import { scopeOf } from '@deepseek-ai/dsh-scope'
 import { SessionId, SessionLogOffset } from '@deepseek-ai/dsh-session'
 import JsonlSessionPersistence from '@deepseek-ai/dsh-session-persistence-jsonl'
@@ -63,7 +63,11 @@ afterEach(async () => {
   for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true })
 })
 
-async function setup(script: ConstructorParameters<typeof MockAdapter>[0], legacyControl = false) {
+async function setup(
+  script: ConstructorParameters<typeof MockAdapter>[0],
+  legacyControl = false,
+  reasoning?: ConstructorParameters<typeof MockAdapter>[1],
+) {
   const ctx = new Context()
   contexts.add(ctx)
   await mountAgentLoopTestDependencies(ctx)
@@ -78,7 +82,7 @@ async function setup(script: ConstructorParameters<typeof MockAdapter>[0], legac
   await ctx.plugin(SubagentFork, { providerName: 'fork' })
   await ctx.plugin(TeamService)
   const fiber = await ctx.plugin(toolTeam)
-  const adapter = new MockAdapter(script)
+  const adapter = new MockAdapter(script, reasoning)
   ctx.llm.registerAdapter(['mock'], adapter)
   const lead = await ctx.agentLoop.create(SessionId('tool-team-lead'), { provider: 'mock', model: 'mock' })
   return { ctx, lead, fiber, adapter }
@@ -518,7 +522,7 @@ describe('dsh-tool-team', () => {
         void execute(ctx, child, 'team_task_update', {
           task_id: task.id,
           expected_revision: 2,
-          action: 'complete',
+          action: 'submit',
         }).then(resolve, reject)
       }, 0)
     })
@@ -529,6 +533,41 @@ describe('dsh-tool-team', () => {
     expect(childInterrupt.isError).toBe(true)
     await execute(ctx, lead, 'interrupt_agent', { target: 'json-worker' })
     await vi.waitFor(() => { expect(ctx.agents.get(childId)).toBeUndefined() }, { timeout: 5_000 })
+  })
+
+  it('records a peer verdict and its reason on submitted work', async () => {
+    const { ctx, lead } = await setup(['hang', 'hang', 'hang'])
+    const spawned = await execute(ctx, lead, 'spawn_teammate', {
+      name: 'verified-worker', description: 'verified worker', prompt: 'wait', context: 'fresh',
+    })
+    const child = await waitRunning(ctx, spawnedChildId(ctx, lead, spawned))
+    const created = JSON.parse(text(await execute(ctx, lead, 'team_task_create', {
+      subject: 'verified task', description: 'needs a peer verdict',
+    }))) as { id: string; revision: number }
+    const claimed = JSON.parse(text(await execute(ctx, child, 'team_task_update', {
+      task_id: created.id, expected_revision: created.revision, action: 'claim',
+    }))) as { revision: number }
+    const submitted = JSON.parse(text(await execute(ctx, child, 'team_task_update', {
+      task_id: created.id, expected_revision: claimed.revision, action: 'submit',
+    }))) as { revision: number; status: string }
+    expect(submitted.status).toBe('verifying')
+    // The Lead finds work awaiting a verdict by the status the view reports.
+    expect(JSON.parse(text(await execute(ctx, lead, 'team_task_list', { status: 'verifying' }))))
+      .toMatchObject({ tasks: [{ id: created.id, status: 'verifying' }] })
+
+    // Only another member's verdict, with its reason, completes submitted work.
+    const verified = await execute(ctx, lead, 'team_task_update', {
+      task_id: created.id,
+      expected_revision: submitted.revision,
+      action: 'verify',
+      verdict: 'approved',
+      reason: 'checked the delivered work',
+    })
+    expect(verified.isError).toBe(false)
+    expect(JSON.parse(text(verified))).toMatchObject({
+      status: 'completed',
+      verification: { verifierName: 'lead', verdict: 'approved', reason: 'checked the delivered work' },
+    })
   })
 
   it('adapts optional task filters, mutations, pagination, and default waiting', async () => {
@@ -717,6 +756,92 @@ describe('dsh-tool-team', () => {
     expect('default' in toolTeam).toBe(false)
     expect(toolTeam.name).toBe('tool-agent-team')
     expect(toolTeam.inject).toEqual(['agents', 'agentTeams', 'tools', 'systemPrompt'])
+  })
+
+
+  it('routes each teammate to the model route the caller names', async () => {
+    const { ctx, lead } = await setup(['hang', 'hang', 'hang'])
+    const flash = await execute(ctx, lead, 'spawn_teammate', {
+      name: 'flash-worker', description: 'flash worker', prompt: 'wait',
+      provider: 'mock', model: 'mock-flash',
+    })
+    const pro = await execute(ctx, lead, 'spawn_teammate', {
+      name: 'pro-worker', description: 'pro worker', prompt: 'wait',
+      provider: 'mock', model: 'mock-pro',
+    })
+    expect(flash.isError).toBe(false)
+    expect(pro.isError).toBe(false)
+    const flashChild = await waitRunning(ctx, spawnedChildId(ctx, lead, flash))
+    const proChild = await waitRunning(ctx, spawnedChildId(ctx, lead, pro))
+    expect(flashChild.options).toMatchObject({ provider: 'mock', model: 'mock-flash' })
+    expect(proChild.options).toMatchObject({ provider: 'mock', model: 'mock-pro' })
+    // A teammate without a named route keeps inheriting the Lead's own.
+    const inherited = await execute(ctx, lead, 'spawn_teammate', {
+      name: 'inherited-worker', description: 'inherited worker', prompt: 'wait',
+    })
+    const inheritedChild = await waitRunning(ctx, spawnedChildId(ctx, lead, inherited))
+    expect(inheritedChild.options).toMatchObject({ provider: 'mock', model: 'mock' })
+    await execute(ctx, lead, 'interrupt_agent', { target: 'flash-worker' })
+    await execute(ctx, lead, 'interrupt_agent', { target: 'pro-worker' })
+    await execute(ctx, lead, 'interrupt_agent', { target: 'inherited-worker' })
+  })
+
+
+  it('refuses a route that does not declare the requested reasoning effort, before creating a child', async () => {
+    const { ctx, lead } = await setup(['hang', 'hang'])
+    const refused = await execute(ctx, lead, 'spawn_teammate', {
+      name: 'effort-worker', description: 'effort worker', prompt: 'wait',
+      provider: 'mock', model: 'mock', reasoning_effort: 'high',
+    })
+    // Misconfiguration is named at the spawn rather than surfacing later as a
+    // durability failure, and no child is created for it.
+    expect(refused.isError).toBe(true)
+    expect(text(refused)).toContain('does not declare reasoning effort "high"')
+    expect(ctx.agentTeams.listMembers(lead).some(member => member.name === 'effort-worker')).toBe(false)
+
+    // The refused name is still free, so a corrected retry seats the teammate.
+    const accepted = await execute(ctx, lead, 'spawn_teammate', {
+      name: 'effort-worker', description: 'effort worker', prompt: 'wait',
+      provider: 'mock', model: 'mock',
+    })
+    expect(accepted.isError).toBe(false)
+    await execute(ctx, lead, 'interrupt_agent', { target: 'effort-worker' })
+  })
+
+
+  it('validates the requested reasoning effort against the route that declares it', async () => {
+    const route = { efforts: [{ id: ReasoningEffortId('low'), name: 'Low' }] }
+    const { ctx, lead } = await setup(['hang', 'hang'], false, route)
+
+    // The declared effort is accepted and seats the teammate.
+    const accepted = await execute(ctx, lead, 'spawn_teammate', {
+      name: 'low-worker', description: 'low worker', prompt: 'wait',
+      provider: 'mock', model: 'mock', reasoning_effort: 'low',
+    })
+    expect(accepted.isError).toBe(false)
+    await execute(ctx, lead, 'interrupt_agent', { target: 'low-worker' })
+
+    // An undeclared one is refused, and the refusal names what the route declares.
+    const refused = await execute(ctx, lead, 'spawn_teammate', {
+      name: 'high-worker', description: 'high worker', prompt: 'wait',
+      provider: 'mock', model: 'mock', reasoning_effort: 'high',
+    })
+    expect(refused.isError).toBe(true)
+    expect(text(refused)).toContain('it declares "low"')
+    expect(ctx.agentTeams.listMembers(lead).some(member => member.name === 'high-worker')).toBe(false)
+  })
+
+  it('refuses an effort the inherited route does not declare', async () => {
+    // Naming only an effort still resolves against the caller's own route, so the
+    // refusal arrives before any child exists rather than as a failed turn.
+    const { ctx, lead } = await setup(['hang'])
+    const result = await execute(ctx, lead, 'spawn_teammate', {
+      name: 'inherit-worker', description: 'inherit worker', prompt: 'wait',
+      reasoning_effort: 'low',
+    })
+    expect(result.isError).toBe(true)
+    expect(text(result)).toContain('does not declare reasoning effort "low"')
+    expect(ctx.agentTeams.listMembers(lead).some(member => member.name === 'inherit-worker')).toBe(false)
   })
 
   it('uses configured fresh and fork provider names', async () => {

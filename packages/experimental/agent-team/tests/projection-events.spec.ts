@@ -73,6 +73,99 @@ function task(overrides: Partial<TeamTaskSnapshot> = {}): TeamTaskSnapshot {
   }
 }
 
+describe('task verification in the durable stream', () => {
+  it('refuses every verification record that cannot be true', () => {
+    const owned = { ownerId: CHILD }
+    const cases: { readonly label: string; readonly tasks: [TeamTaskSnapshot, TeamTaskSnapshot] }[] = [
+      {
+        label: 'a verdict without its verifier',
+        tasks: [
+          task({ ...owned, verification: { submittedRevision: 1 } }),
+          task({ ...owned, revision: 2, verification: { submittedRevision: 1, verdict: 'approved' } }),
+        ],
+      },
+      {
+        label: 'a member verifying its own work',
+        tasks: [
+          task({ ...owned, verification: { submittedRevision: 1 } }),
+          task({
+            ...owned,
+            revision: 2,
+            verification: { submittedRevision: 1, verifierId: CHILD, verdict: 'approved' },
+          }),
+        ],
+      },
+      {
+        label: 'completion without an approving verdict',
+        tasks: [
+          task({ ...owned, verification: { submittedRevision: 1 } }),
+          task({
+            ...owned,
+            revision: 2,
+            status: 'completed',
+            verification: { submittedRevision: 1, verifierId: ROOT, verdict: 'rejected', reason: 'no' },
+          }),
+        ],
+      },
+      {
+        label: 'awaiting a verdict on a revision it no longer carries',
+        tasks: [task(owned), task({ ...owned, revision: 2, verification: { submittedRevision: 1 } })],
+      },
+      {
+        label: 'a submission revision ahead of its own',
+        tasks: [
+          task(owned),
+          task({ ...owned, revision: 2, verification: { submittedRevision: 3, verifierId: ROOT, verdict: 'approved' } }),
+        ],
+      },
+    ]
+    for (const { label, tasks } of cases) {
+      const projected = project(ROOT, [
+        event('team/task', { version: 2, teamId: TEAM, task: tasks[0] }, SessionSeq(0)),
+        event('team/task', { version: 2, teamId: TEAM, task: tasks[1] }, SessionSeq(1)),
+      ])
+      expect(projected.failure, label).toBeDefined()
+    }
+  })
+
+  it('reads a completed task committed before peer verification existed', () => {
+    // Sessions written before this change completed a task directly, so the
+    // record carries no verification. Rejecting it would make every such Lead
+    // Session unprojectable; the writer can no longer produce the pair because
+    // only an approving verdict reaches `completed`.
+    const legacy = projectTeam(ROOT, [
+      event('team/task', { version: 2, teamId: TEAM, task: task({ ownerId: CHILD }) }, SessionSeq(0)),
+      event('team/task', {
+        version: 2,
+        teamId: TEAM,
+        task: task({ ownerId: CHILD, revision: 2, status: 'completed' }),
+      }, SessionSeq(1)),
+    ])
+    expect(legacy.tasks.map(candidate => [candidate.revision, candidate.status]))
+      .toEqual([[2, 'completed']])
+  })
+
+  it('accepts a peer approval that names the revision it judged', () => {
+    const projected = project(ROOT, [
+      event('team/task', {
+        version: 2,
+        teamId: TEAM,
+        task: task({ ownerId: CHILD, verification: { submittedRevision: 1 } }),
+      }, SessionSeq(0)),
+      event('team/task', {
+        version: 2,
+        teamId: TEAM,
+        task: task({
+          ownerId: CHILD,
+          revision: 2,
+          verification: { submittedRevision: 1, verifierId: ROOT, verdict: 'approved', reason: 'checked' },
+        }),
+      }, SessionSeq(1)),
+    ])
+    expect(projected.failure).toBeUndefined()
+  })
+})
+
 function message(overrides: Partial<TeamMessageSnapshot> = {}): TeamMessageSnapshot {
   return {
     id: TeamMessageId('message-1'),
@@ -394,7 +487,7 @@ describe('Agent Teams projection events', () => {
       task: task(),
     }, SessionSeq(1))
     const state = project(ROOT, [invalid, later])
-    expect(state.failure).toMatch(/unsupported Agent Teams event version 1/)
+    expect(state.failure).toMatch(/unsupported Agent Teams team\/task event version 1/)
     expect(isEmptyState(state)).toBe(true)
   })
 
@@ -470,7 +563,7 @@ describe('Agent Teams projection events', () => {
       }, SessionSeq(2)))
       expect(failed).not.toBe(valid)
       expect(valid.failure).toBeUndefined()
-      expect(failed.failure).toMatch(/unsupported Agent Teams event version 1/)
+      expect(failed.failure).toMatch(/unsupported Agent Teams team\/task event version 1/)
       expect(failed.members).toBe(valid.members)
       expect(failed.tasks).toBe(valid.tasks)
       expect(teamProjectionDefinition.apply(failed, queuedEvent)).toBe(failed)
@@ -535,7 +628,7 @@ describe('Agent Teams projection events', () => {
         version: 1 as 2, teamId: TEAM, task: task(),
       }, SessionSeq(2))])
       const view = teamProjectionView(state)
-      expect(view.failure).toMatch(/unsupported Agent Teams event version 1/)
+      expect(view.failure).toMatch(/unsupported Agent Teams team\/task event version 1/)
       expect(view.members).toHaveLength(2)
       expect(view.tasks).toHaveLength(1)
       expect(teamProjectionDefinition.wire.viewSchema.parse(view)).toEqual(view)

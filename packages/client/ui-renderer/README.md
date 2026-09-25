@@ -9,7 +9,7 @@ English | [中文](README.zh.md)
 
 ## Summary
 
-`dsh-client-ui-renderer` mounts the assembled dsh web client GUI: after the complete client plugin roster settles, the boot kernel calls `ctx.uiRenderer.mount(container)`, which hydrates the framework-free boot page and switches to the full React application before the next paint. Business plugins stay plain React components that receive session and workspace data through typed props and never wire subscriptions themselves — the renderer binds the runtime's bare observable sources into selector hooks at the slot outlets. The web shell and the boot kernel are its only direct consumers, so a composition needs it exactly when it wants a React-rendered GUI.
+`dsh-client-ui-renderer` mounts the assembled dsh web client GUI: after the client plugin roster settles, the boot kernel calls `ctx.uiRenderer.mount(container)`, which renders the React application beneath the framework-free boot page overlay before the next paint; the kernel fades it out. Business plugins stay plain React components that receive session and workspace data through typed props and never wire subscriptions themselves — the renderer binds the runtime's bare observable sources into selector hooks at the slot outlets. The web shell and the boot kernel are its only direct consumers, so a composition needs it exactly when it wants a React-rendered GUI.
 
 ## Table of Contents
 
@@ -29,7 +29,7 @@ This package is infrastructure: the web shell and the boot kernel are its only d
 
 ### What mounting does
 
-`mount(container)` installs the slot renderer, hydrates the existing boot DOM when present, renders the assembled application into the container before the next paint, and returns a disposer that unmounts the React root. The renderer performs the sole context-level `renderSlot('root')` call; the registered root occupant owns product layout and document metadata.
+`mount(container)` installs the slot renderer, renders the assembled application into a fresh host element inside the container before the next paint, and returns a disposer that unmounts the root and removes the host. The kernel-owned boot page, when present, stays untouched as an overlay sibling; the boot kernel owns its fade-out. The renderer performs the sole context-level `renderSlot('root')` call; the registered root occupant owns product layout and document metadata.
 
 ### For business plugins
 
@@ -47,7 +47,7 @@ The package realizes one boundary: the object layer (runtime, React-free) owns b
 
 ### Activation and mount
 
-The plugin activates after `slots`, `sessions`, and `layout`; it installs `createSlotRenderer()` and reflects the `uiRenderer` service. `mountApp` looks for the boot kernel's `[data-dsh-boot]` element: when present it hydrates through `BootHandoff` (a one-frame pass-through that preserves the loading DOM), otherwise it creates a fresh root and flushes the render synchronously.
+The plugin activates after `slots`, `sessions`, and `layout`; it installs `createSlotRenderer()` and reflects the `uiRenderer` service. `mountApp` appends a `display: contents` host element to the container, creates a React root on it, and flushes the render synchronously. The boot kernel's `[data-dsh-boot]` overlay is left untouched; `dsh-client-web` disposes it after its brand moment so it fades out over the mounted application.
 
 ### Slot bindings
 

@@ -165,6 +165,7 @@ Headless/ACP 与 SDK 适配器在规范化之前，将原始目录中的子创�
 - **会话收集需要原始 JSONL mode**——`runScenario` 收集持久化 `.jsonl` 日志，因此快照配置使用 JSONL 后端的 `compression: 'none'`；压缩 JSONL 没有快照收集路径。
 - **构建 mode 需要当前产物**——选择 `DSH_EXAMPLE_MODE=lib` 前先运行 `pnpm run build`；源 mode 仍是零构建路径。
 - **ACP 继续覆盖协议行为**——刺激来自 ACP 客户端的取消与权限往返留在该适配器；组装式一次性行为与持久控制行为使用 headless 与 SDK 适配器。
+- **并发 live 场景只有在其工具结果不依赖时序时才能回放**——彼此唤醒的 Session 会记录一个无密钥回放无法复现的墙钟顺序，因此 live 多 agent room 需要先让流程确定化，才能成为已提交的语料用例。
 
 <a id="dev-note"></a>
 ### 开发备注

@@ -45,6 +45,7 @@
 | `@deepseek-ai/dsh-tool-subagent-control` | `interrupt_agent`、`list_agents`、`send_message` | `ctx.tools`、`ctx.subagents`、`ctx.agents and ctx.sessionProjections (list_agents only)` | `tool/call`、`tool/result`、`child session events through ctx.subagents` | - | 这些是控制可继续后台 subagent 的全局命名工具：绑定提供方的 `tool-subagent` 实例注册不同的委派工具；本包注册一次 `send_message` 和 `interrupt_agent`，另由 `list_agents` 通过单独加载的 `/list-agents` 插件提供，其目录行使用 sessionProjections 和实时 Agent 注册表。 |
 | `@deepseek-ai/dsh-tool-jobs` | `job_kill`、`job_list`、`job_output` | `ctx.tools`、`ctx.jobs`、`ctx.systemPrompt` | `tool/call`、`tool/result`、`user/message via agent.inject() for background completion notices` | - | 与任务种类无关的后台任务控制器：后台 bash 命令、PTY 发送和 subagent 都通过相同的 3 个工具读取、列出和终止。加载该插件会挂接控制器，从而启用生产方的 `ctx.jobs.start()`。 |
 | `@deepseek-ai/dsh-experimental-tool-agent-team` | `interrupt_agent`、`list_agents`、`send_message`、`spawn_teammate`、`team_task_create`、`team_task_get`、`team_task_list`、`team_task_update`、`wait_agent` | `ctx.tools`、`ctx.systemPrompt`、`ctx.agentTeams`、`an exact live Team member Agent` | `tool/call`、`team/member`、`team/message/queued`、`team/message/delivered`、`team/task`、`tool/result` | - | 这 9 个工具限定于隐式 Team Lead 与持久 teammate 作用域。随产品发布的 dsh-base bundle 默认禁用该包；文档中的 Agent Teams profile patch 会启用它，并禁用旧 continuable child 的同名控制工具。 |
+| `@deepseek-ai/dsh-experimental-tool-agent-room` | `room_escalate`、`room_prompt`、`room_propose`、`room_review`、`room_view` | `ctx.tools`、`ctx.systemPrompt`、`ctx.agentTeams`、`an exact live room participant Agent` | `tool/call`、`room/message`、`room/proposal`、`room/review`、`team/message/queued`、`team/message/delivered`、`tool/result` | - | 这 5 个工具限定于 room 参与者作用域。随产品发布的组合默认不挂载它们；部署会在开启 `roomEnabled: true` 的 `@deepseek-ai/dsh-experimental-agent-team` 旁启用它们，而每个结果都由服务端 quorum 而非工具决定。 |
 | `@deepseek-ai/dsh-tool-todo` | `todo_write` | `ctx.tools`、`owning Agent session` | `tool/call`、`todo/write`、`tool/result` | - | todo_write 是会话所有的状态；UI 将最新的 todo/write 事件渲染为检查清单。`allowParallelInProgress` 是没有默认值的必填项，因此本目录明确选择 `true`，对应描述允许同时存在多个 `in_progress` 项。选择 `false` 的部署会获得同一工具，但描述会要求只能有 1 个活动任务。 |
 | `@deepseek-ai/dsh-tool-workflow` | `workflow` | `ctx.tools`、`ctx.workflowEngine`、`ctx.systemPrompt`、`a calling Agent (exec.agent parents the script children)` | `tool/call`、`tool/result` | - | - |
 | `@deepseek-ai/dsh-tool-workspace-dependencies` | `load_workspace_dependencies` | `ctx.tools` | `tool/call`, `tool/result` | - | - |
@@ -2316,6 +2317,18 @@ lsp 工具将提供方选择和语言服务器子进程置于 ctx.lsp 之后，�
         "fresh",
         "fork"
       ]
+    },
+    "provider": {
+      "type": "string",
+      "description": "Model provider route for this teammate, for example deepseek-official. Defaults to your own route."
+    },
+    "model": {
+      "type": "string",
+      "description": "Model id for this teammate; pick one that fits its responsibility, since teammates on different models disagree more usefully than copies of one model. Defaults to your own model."
+    },
+    "reasoning_effort": {
+      "type": "string",
+      "description": "Reasoning effort for this teammate, named as the target model declares it. Defaults to your own setting."
     }
   },
   "required": [
@@ -2403,6 +2416,7 @@ lsp 工具将提供方选择和语言服务器子进程置于 ctx.lsp 之后，�
       "enum": [
         "pending",
         "in_progress",
+        "verifying",
         "completed"
       ]
     },
@@ -2446,13 +2460,14 @@ lsp 工具将提供方选择和语言服务器子进程置于 ctx.lsp 之后，�
     },
     "action": {
       "type": "string",
-      "description": "Task transition to apply.",
+      "description": "Task transition to apply. submit hands your own finished work to a peer; verify records a peer verdict on submitted work.",
       "enum": [
         "claim",
         "release",
         "edit",
         "set_dependencies",
-        "complete",
+        "submit",
+        "verify",
         "reopen",
         "reassign",
         "delete"
@@ -2483,6 +2498,18 @@ lsp 工具将提供方选择和语言服务器子进程置于 ctx.lsp 之后，�
     "owner": {
       "type": "string",
       "description": "Member target from spawn_teammate or list_agents for Lead-only reassign; omit to unassign."
+    },
+    "verdict": {
+      "type": "string",
+      "description": "Peer verdict required by verify.",
+      "enum": [
+        "approved",
+        "rejected"
+      ]
+    },
+    "reason": {
+      "type": "string",
+      "description": "Why the peer approved or rejected; required by verify and read by the owner."
     }
   },
   "required": [
@@ -2515,6 +2542,147 @@ lsp 工具将提供方选择和语言服务器子进程置于 ctx.lsp 之后，�
 
 这 10 个工具限定于隐式 Team Lead 与持久 teammate 作用域。随产品发布的 dsh-base bundle 默认禁用该包；文档中的 Agent Teams profile patch 会启用它，并禁用旧 continuable child 的同名控制工具。
 
+<a id="deepseek-aidsh-experimental-tool-agent-room"></a>
+
+## `@deepseek-ai/dsh-experimental-tool-agent-room`
+
+### `room_escalate`
+
+把一个未解决的决策交给人类。当 reviewer 无法达成一致、达到 revision 上限，或该选择不应由 room 做出时使用。
+
+```json
+{
+  "type": "object",
+  "properties": {
+    "proposal_id": {
+      "type": "string",
+      "description": "Decision id from room_propose or room_view."
+    },
+    "reason": {
+      "type": "string",
+      "description": "Why the human must decide."
+    }
+  },
+  "required": [
+    "proposal_id",
+    "reason"
+  ]
+}
+```
+
+来源：[`packages/experimental/tool-agent-room/src/index.ts`](../packages/experimental/tool-agent-room/src/index.ts)
+
+### `room_prompt`
+
+当下一步需要某位参与者而不是你的判断时，把发言权交给它。目标会收到它尚未见过的 transcript。
+
+```json
+{
+  "type": "object",
+  "properties": {
+    "target": {
+      "type": "string",
+      "description": "Participant name, or lead."
+    },
+    "instruction": {
+      "type": "string",
+      "description": "Self-contained statement of exactly what you want that participant to do or answer."
+    }
+  },
+  "required": [
+    "target",
+    "instruction"
+  ]
+}
+```
+
+来源：[`packages/experimental/tool-agent-room/src/index.ts`](../packages/experimental/tool-agent-room/src/index.ts)
+
+### `room_propose`
+
+把一个 statement 作为待评审的决策提交给 room。
+
+```json
+{
+  "type": "object",
+  "properties": {
+    "statement": {
+      "type": "string",
+      "description": "The exact decision the room is asked to accept or reject."
+    },
+    "supersedes": {
+      "type": "string",
+      "description": "Decision id this statement replaces, when carrying a revised statement back after rejections."
+    }
+  },
+  "required": [
+    "statement"
+  ]
+}
+```
+
+来源：[`packages/experimental/tool-agent-room/src/index.ts`](../packages/experimental/tool-agent-room/src/index.ts)
+
+### `room_review`
+
+记录你对某个决策 revision 的立场。
+
+```json
+{
+  "type": "object",
+  "properties": {
+    "proposal_id": {
+      "type": "string",
+      "description": "Decision id from room_propose or room_view."
+    },
+    "revision": {
+      "type": "integer",
+      "description": "Revision you are judging, exactly as room_view reports it."
+    },
+    "verdict": {
+      "type": "string",
+      "description": "approve only when you would defend the decision yourself, reject when you found a specific problem, abstain when you have no basis to judge.",
+      "enum": [
+        "approve",
+        "reject",
+        "abstain"
+      ]
+    },
+    "reason": {
+      "type": "string",
+      "description": "Why you chose this standing; a rejection names the problem so the proposer can act on it. The proposer and the human read it."
+    }
+  },
+  "required": [
+    "proposal_id",
+    "revision",
+    "verdict",
+    "reason"
+  ]
+}
+```
+
+来源：[`packages/experimental/tool-agent-room/src/index.ts`](../packages/experimental/tool-agent-room/src/index.ts)
+
+### `room_view`
+
+读取 room roster、最近的共享 transcript，以及每个决策及其当前投票。被唤醒后请重新读取，而不是依赖记忆。
+
+```json
+{
+  "type": "object",
+  "properties": {
+    "entries": {
+      "type": "integer",
+      "description": "Number of trailing transcript entries to return, 1 through 20. Defaults to 20."
+    }
+  }
+}
+```
+
+来源：[`packages/experimental/tool-agent-room/src/index.ts`](../packages/experimental/tool-agent-room/src/index.ts)
+
+这 5 个工具限定于 room 参与者作用域。随产品发布的组合默认不挂载它们；部署会在开启 `roomEnabled: true` 的 `@deepseek-ai/dsh-experimental-agent-team` 旁启用它们，而每个结果都由服务端 quorum 而非工具决定。
 
 <a id="deepseek-aidsh-tool-todo"></a>
 

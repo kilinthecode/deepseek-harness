@@ -871,10 +871,13 @@ async function main(): Promise<void> {
     updates.dispose()
   })
 
+  // macOS reads the application icon from the bundle, and the unpackaged
+  // development bundle carries Electron's icon; carry the product icon on the Dock instead.
+  if (development && process.platform === 'darwin') app.dock?.setIcon(join(app.getAppPath(), 'resources', 'icon-macos.png'))
   const applicationIconPath = development ? join(app.getAppPath(), 'resources', 'icon-windows.png')
     : join(process.resourcesPath, 'icon.png')
   app.setAboutPanelOptions({
-    applicationName: 'DeepSeek Harness',
+    applicationName: 'Portal Harness',
     applicationVersion: app.getVersion(),
     // The release has no separate build number; omit Electron's bundle version.
     version: '',

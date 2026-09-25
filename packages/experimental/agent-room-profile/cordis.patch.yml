@@ -1,0 +1,37 @@
+# Experimental room profile layer. Apply after dsh-base so a Team roster can also
+# deliberate: the room transcript records attributed utterances, and collective
+# decisions settle only by recorded quorum.
+#
+# This layer keeps the ordinary Team delegation tools mounted, because a room
+# needs participants and the roster is what creates them. The Team browser UI
+# rides in the same layer; its browser entry mounts only in a Web Client.
+
+- insert:
+    - id: agent-team
+      name: '@deepseek-ai/dsh-experimental-agent-team'
+      config:
+        maxMembers: 8
+        maxTasks: 256
+        maxPendingMessagesPerMember: 64
+        maxMessageBytes: 65536
+        disposalTimeoutMs: 5000
+        roomEnabled: true
+        roomTranscriptWindow: 20
+        roomApprovalRatio: 0.5
+        roomMaxProposalRevisions: 4
+        roomReviewGraceMs: 120000
+        roomReviewReminders: 1
+
+    - id: tool-agent-team
+      name: '@deepseek-ai/dsh-experimental-tool-agent-team'
+      config:
+        freshProvider: spawn
+        forkProvider: fork
+
+    - id: tool-agent-room
+      name: '@deepseek-ai/dsh-experimental-tool-agent-room'
+      config:
+        maxTranscriptEntries: 20
+
+    - id: ui-agent-team
+      name: '@deepseek-ai/dsh-experimental-client-ui-agent-team'

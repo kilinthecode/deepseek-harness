@@ -47,6 +47,18 @@ function durable(agent: Agent): {
   }
 }
 
+/** Peer text this member's inbox admitted, in delivery order. */
+function steered(ctx: Context, id: SessionId): string[] {
+  const session = ctx.sessions.get(id)
+  if (session === undefined) return []
+  return session.snapshotEvents()
+    .flatMap(event => event.type === 'agent/inbox/spliced'
+      ? event.data.inserted.flatMap(input => input.source.kind === 'team-message'
+        ? [input.content.flatMap(block => block.type === 'text' ? [block.text] : []).join('')]
+        : [])
+      : [])
+}
+
 /** Read one stored session's full event log through a short-lived read handle. */
 async function storedEvents(ctx: Context, id: SessionId): Promise<readonly SessionEvent[]> {
   const handle = await ctx.sessionPersistence.open(id, 'read')
@@ -230,6 +242,42 @@ describe('Team identity and provisioning', () => {
     ])
     await expect(spawn(ctx, lead, 'third-worker')).rejects.toMatchObject({ code: 'TEAM_MEMBER_LIMIT' })
     await expect(spawn(ctx, lead, 'fresh-worker')).rejects.toMatchObject({ code: 'TEAM_MEMBER_NAME_TAKEN' })
+  })
+
+  it('keeps every teammate on its recorded route after the child stops', async () => {
+    const { ctx, lead } = await setup([
+      textResponse('lead answer'),
+      textResponse('own route answer'),
+      textResponse('inherited route answer'),
+    ])
+    lead.followup(createUserMessage({ content: content('lead turn'), source: { kind: 'user' } }))
+    await lead.whenIdle()
+
+    const own = await ctx.agentTeams.spawnTeammate(lead, {
+      name: 'own-route',
+      description: 'own-route responsibility',
+      prompt: content('own-route initial'),
+      context: 'fresh',
+      provider: 'spawn',
+      agentOptions: { provider: 'mock', model: 'verifier-model' },
+      signal: SIGNAL,
+    })
+    const inherited = await spawn(ctx, lead, 'inherited-route')
+    await waitNoAgent(ctx, own.member.id)
+    await waitNoAgent(ctx, inherited.member.id)
+
+    // A teammate holds no live Agent between turns. Reading the Lead's route
+    // there would name the wrong model for the row a human audits.
+    expect(ctx.agentTeams.listMembers(lead).map(row => [row.name, row.model])).toEqual([
+      ['lead', 'mock'],
+      ['own-route', 'verifier-model'],
+      ['inherited-route', 'mock'],
+    ])
+    // The route is recorded, not remembered: the member record carries it.
+    expect(durable(lead).members.map(member => [member.name, member.agentProvider, member.agentModel])).toEqual([
+      ['own-route', 'mock', 'verifier-model'],
+      ['inherited-route', 'mock', 'mock'],
+    ])
   })
 
   it('flushes the accepted child prompt before committing the active roster edge', async () => {
@@ -595,7 +643,14 @@ describe('Team shared task DAG', () => {
   })
 
   it('enforces CAS, ownership, dependencies, transitions, and write-scope warnings', async () => {
-    const { ctx, lead } = await setup(['hang', 'hang', textResponse('beta integrated update')])
+    // The submission wakes the Lead to assign a verifier and the verdict wakes
+    // the owner to act on it, so the script carries one settled turn for each.
+    const { ctx, lead } = await setup([
+      'hang',
+      'hang',
+      textResponse('lead noted the submission'),
+      textResponse('owner noted the verdict'),
+    ])
     const firstMember = await spawn(ctx, lead, 'alpha')
     const alpha = await waitRunning(ctx, firstMember.member.id)
     const secondMember = await spawn(ctx, lead, 'beta')
@@ -642,15 +697,37 @@ describe('Team shared task DAG', () => {
     await expect(ctx.agentTeams.updateTask(alpha, {
       taskId: first.id,
       expectedRevision: first.revision,
-      action: 'complete',
+      action: 'submit',
     })).rejects.toMatchObject({ code: 'TEAM_TASK_STALE_REVISION' })
 
-    const completed = await ctx.agentTeams.updateTask(alpha, {
+    // Work completes only through a peer verdict: the owner submits, beta verifies.
+    const submitted = await ctx.agentTeams.updateTask(alpha, {
       taskId: first.id,
       expectedRevision: claimed.revision,
-      action: 'complete',
+      action: 'submit',
+    })
+    expect(submitted.status).toBe('verifying')
+    await expect(ctx.agentTeams.updateTask(alpha, {
+      taskId: first.id,
+      expectedRevision: submitted.revision,
+      action: 'verify',
+      verdict: 'approved',
+      reason: 'self-review',
+    })).rejects.toMatchObject({ code: 'TEAM_TASK_SELF_VERIFICATION' })
+    const completed = await ctx.agentTeams.updateTask(beta, {
+      taskId: first.id,
+      expectedRevision: submitted.revision,
+      action: 'verify',
+      verdict: 'approved',
+      reason: 'the cache bounds are enforced',
     })
     expect(completed.status).toBe('completed')
+    expect(completed.verification).toEqual({
+      submittedRevision: submitted.revision,
+      verifierName: 'beta',
+      verdict: 'approved',
+      reason: 'the cache bounds are enforced',
+    })
     expect(ctx.agentTeams.getTask(beta, second.id).ready).toBe(true)
     const secondClaim = await ctx.agentTeams.updateTask(beta, {
       taskId: second.id,
@@ -667,7 +744,10 @@ describe('Team shared task DAG', () => {
 
     ctx.agentTeams.interrupt(lead, 'alpha')
     ctx.agentTeams.interrupt(lead, 'beta')
-    await Promise.all([waitNoAgent(ctx, alpha.id), waitNoAgent(ctx, beta.id)])
+    // The owner still holds the parked verdict notice, and unclaimed inbox work
+    // keeps its Activation resident; the peer with nothing pending settles.
+    await waitNoAgent(ctx, beta.id)
+    await vi.waitFor(() => { expect(ctx.agents.get(alpha.id)?.status).toBe('idle') })
   })
 
   it('rejects malformed scopes and every invalid dependency relation', async () => {
@@ -718,7 +798,7 @@ describe('Team shared task DAG', () => {
     })
     expect(() => ctx.agentTeams.getTask(lead, TeamTaskId('missing')))
       .toThrow(expect.objectContaining({ code: 'TEAM_TASK_NOT_FOUND' }))
-    for (const action of ['release', 'complete', 'reopen'] as const) {
+    for (const action of ['release', 'submit', 'verify', 'reopen'] as const) {
       await expect(ctx.agentTeams.updateTask(lead, {
         taskId: blocker.id,
         expectedRevision: blocker.revision,
@@ -742,8 +822,239 @@ describe('Team shared task DAG', () => {
     })).rejects.toMatchObject({ code: 'TEAM_TASK_HAS_DEPENDENTS' })
   })
 
+  it('refuses verification of unsubmitted work and submissions that block on peers', async () => {
+    const { ctx, lead } = await setup(['hang', 'hang'])
+    const ownerStarted = await spawn(ctx, lead, 'owner')
+    const owner = await waitRunning(ctx, ownerStarted.member.id)
+    const verifierStarted = await spawn(ctx, lead, 'verifier')
+    const verifier = await waitRunning(ctx, verifierStarted.member.id)
+
+    // Work that acquires a blocker after it was claimed cannot be handed over.
+    const blocker = await ctx.agentTeams.createTask(owner, { subject: 'blocker', description: 'blocker' })
+    const blocked = await ctx.agentTeams.createTask(owner, { subject: 'blocked', description: 'blocked' })
+    const blockedClaim = await ctx.agentTeams.updateTask(owner, {
+      taskId: blocked.id, expectedRevision: blocked.revision, action: 'claim',
+    })
+    const rewired = await ctx.agentTeams.updateTask(owner, {
+      taskId: blocked.id, expectedRevision: blockedClaim.revision, action: 'set_dependencies',
+      blockedBy: [blocker.id],
+    })
+    await expect(ctx.agentTeams.updateTask(owner, {
+      taskId: blocked.id, expectedRevision: rewired.revision, action: 'submit',
+    })).rejects.toMatchObject({ code: 'TEAM_TASK_BLOCKED' })
+
+    const openTask = await ctx.agentTeams.createTask(owner, { subject: 'open', description: 'open' })
+    const openClaim = await ctx.agentTeams.updateTask(owner, {
+      taskId: openTask.id, expectedRevision: openTask.revision, action: 'claim',
+    })
+    // Verifying a task nobody submitted is refused before any verdict is read.
+    await expect(ctx.agentTeams.updateTask(verifier, {
+      taskId: openTask.id, expectedRevision: openClaim.revision, action: 'verify',
+      verdict: 'approved', reason: 'nothing to verify',
+    })).rejects.toMatchObject({ code: 'TEAM_TASK_INVALID_TRANSITION' })
+
+    const submitted = await ctx.agentTeams.updateTask(owner, {
+      taskId: openTask.id, expectedRevision: openClaim.revision, action: 'submit',
+    })
+    await expect(ctx.agentTeams.updateTask(verifier, {
+      taskId: openTask.id, expectedRevision: submitted.revision, action: 'verify',
+    })).rejects.toMatchObject({ code: 'TEAM_INVALID_ARGUMENT' })
+    await expect(ctx.agentTeams.updateTask(owner, {
+      taskId: openTask.id, expectedRevision: submitted.revision, action: 'set_dependencies', blockedBy: [],
+    })).rejects.toMatchObject({ code: 'TEAM_TASK_INVALID_TRANSITION' })
+
+    // A rejection returns the work with the objection recorded.
+    const rejected = await ctx.agentTeams.updateTask(verifier, {
+      taskId: openTask.id, expectedRevision: submitted.revision, action: 'verify',
+      verdict: 'rejected', reason: 'the cache bounds are not enforced',
+    })
+    expect(rejected).toMatchObject({
+      status: 'in_progress',
+      verification: {
+        verifierName: 'verifier',
+        verdict: 'rejected',
+        reason: 'the cache bounds are not enforced',
+      },
+    })
+  })
+
+  it('keeps submitted work with its owner and clears a verdict when the owner changes', async () => {
+    const { ctx, lead } = await setup(['hang', 'hang'])
+    const ownerStarted = await spawn(ctx, lead, 'owner')
+    const owner = await waitRunning(ctx, ownerStarted.member.id)
+    const verifierStarted = await spawn(ctx, lead, 'verifier')
+    const verifier = await waitRunning(ctx, verifierStarted.member.id)
+    const handOver = async (subject: string) => {
+      const task = await ctx.agentTeams.createTask(lead, { subject, description: subject })
+      const claimed = await ctx.agentTeams.updateTask(owner, {
+        taskId: task.id, expectedRevision: task.revision, action: 'claim',
+      })
+      return ctx.agentTeams.updateTask(owner, {
+        taskId: task.id, expectedRevision: claimed.revision, action: 'submit',
+      })
+    }
+
+    // Work a peer is judging cannot be released, reassigned, or deleted underneath it.
+    const reassigned = await handOver('reassigned')
+    await expect(ctx.agentTeams.updateTask(owner, {
+      taskId: reassigned.id, expectedRevision: reassigned.revision, action: 'release',
+    })).rejects.toThrow('is awaiting verification; wait for its verdict')
+    await expect(ctx.agentTeams.updateTask(lead, {
+      taskId: reassigned.id, expectedRevision: reassigned.revision, action: 'reassign', owner: 'verifier',
+    })).rejects.toThrow('is awaiting verification; wait for its verdict')
+    await expect(ctx.agentTeams.updateTask(lead, {
+      taskId: reassigned.id, expectedRevision: reassigned.revision, action: 'delete',
+    })).rejects.toThrow('is awaiting verification; wait for its verdict')
+
+    // A verdict judged the previous owner's submission, so the rejecting peer
+    // can take the work over and a later submission needs a fresh verdict.
+    const rejected = await ctx.agentTeams.updateTask(verifier, {
+      taskId: reassigned.id, expectedRevision: reassigned.revision, action: 'verify',
+      verdict: 'rejected', reason: 'the retry loop never stops',
+    })
+    const takenOver = await ctx.agentTeams.updateTask(lead, {
+      taskId: reassigned.id, expectedRevision: rejected.revision, action: 'reassign', owner: 'verifier',
+    })
+    expect(takenOver).toMatchObject({ status: 'in_progress', ownerName: 'verifier' })
+    expect(takenOver.verification).toBeUndefined()
+
+    const released = await handOver('released')
+    const returned = await ctx.agentTeams.updateTask(verifier, {
+      taskId: released.id, expectedRevision: released.revision, action: 'verify',
+      verdict: 'rejected', reason: 'the cache never evicts',
+    })
+    const pending = await ctx.agentTeams.updateTask(owner, {
+      taskId: released.id, expectedRevision: returned.revision, action: 'release',
+    })
+    expect(pending.verification).toBeUndefined()
+    const claimed = await ctx.agentTeams.updateTask(verifier, {
+      taskId: released.id, expectedRevision: pending.revision, action: 'claim',
+    })
+    expect(claimed).toMatchObject({ status: 'in_progress', ownerName: 'verifier' })
+
+    // A released task that kept its verdict in an older log still passes to the peer that judged it.
+    const kept = TeamTaskId('task-99')
+    lead.session.append('team/task', {
+      version: 2,
+      teamId: TeamId(lead.id),
+      task: {
+        id: kept,
+        revision: 1,
+        subject: 'kept verdict',
+        description: 'released with its rejection',
+        status: 'pending',
+        blockedBy: [],
+        writeScopes: [],
+        verification: { submittedRevision: 1, verifierId: verifier.id, verdict: 'rejected', reason: 'unbounded' },
+      },
+    })
+    await ctx.sessions.flush(lead.session)
+    const inherited = await ctx.agentTeams.updateTask(verifier, { taskId: kept, expectedRevision: 1, action: 'claim' })
+    expect(inherited.verification).toBeUndefined()
+
+    // Every committed revision stays readable by the durable projection.
+    expect(durable(lead).tasks.map(task => task.ownerId)).toEqual([verifier.id, verifier.id, verifier.id])
+    expect(ctx.agentTeams.listTasks(lead)).toHaveLength(3)
+  })
+
+  it('asks the Lead for a verifier when a teammate submits finished work', async () => {
+    const { ctx, lead } = await setup(['hang', textResponse('lead noted the submission')])
+    const ownerStarted = await spawn(ctx, lead, 'owner')
+    const owner = await waitRunning(ctx, ownerStarted.member.id)
+    const task = await ctx.agentTeams.createTask(owner, { subject: 'hand over', description: 'hand over' })
+    const claimed = await ctx.agentTeams.updateTask(owner, {
+      taskId: task.id,
+      expectedRevision: task.revision,
+      action: 'claim',
+    })
+    const submitted = await ctx.agentTeams.updateTask(owner, {
+      taskId: task.id,
+      expectedRevision: claimed.revision,
+      action: 'submit',
+    })
+
+    // The Lead owns assignment, so a teammate's submission has to reach it
+    // rather than wait for the next poll.
+    const notices = steered(ctx, lead.id)
+    expect(notices).toHaveLength(1)
+    expect(notices[0]).toContain(task.id)
+    expect(notices[0]).toContain('awaiting a peer verdict')
+    expect(notices[0]).toContain(`expected_revision ${String(submitted.revision)}`)
+    // The submitter is not told what it just did.
+    expect(steered(ctx, owner.id)).toEqual([])
+  })
+
+  it('wakes a task owner with the verdict that decides its next move', async () => {
+    // Every submission asks the Lead for a verifier and every verdict wakes the
+    // owner, so each wake has a settled turn of its own.
+    const { ctx, lead } = await setup([
+      'hang',
+      'hang',
+      textResponse('lead noted the first submission'),
+      textResponse('owner noted the rejection'),
+      textResponse('lead noted the second submission'),
+      textResponse('owner noted the approval'),
+    ])
+    const ownerStarted = await spawn(ctx, lead, 'owner')
+    const owner = await waitRunning(ctx, ownerStarted.member.id)
+    const verifierStarted = await spawn(ctx, lead, 'verifier')
+    const verifier = await waitRunning(ctx, verifierStarted.member.id)
+    const task = await ctx.agentTeams.createTask(owner, { subject: 'checked work', description: 'checked work' })
+    const claimed = await ctx.agentTeams.updateTask(owner, {
+      taskId: task.id,
+      expectedRevision: task.revision,
+      action: 'claim',
+    })
+    const submitted = await ctx.agentTeams.updateTask(owner, {
+      taskId: task.id,
+      expectedRevision: claimed.revision,
+      action: 'submit',
+    })
+
+    const rejected = await ctx.agentTeams.updateTask(verifier, {
+      taskId: task.id,
+      expectedRevision: submitted.revision,
+      action: 'verify',
+      verdict: 'rejected',
+      reason: 'the bounds are not enforced',
+    })
+    const returned = steered(ctx, owner.id)
+    expect(returned).toHaveLength(1)
+    expect(returned[0]).toContain('rejected by verifier')
+    expect(returned[0]).toContain('the bounds are not enforced')
+    expect(returned[0]).toContain('submit the next revision')
+
+    // Rework hands the same revision rule to the peer again, and the approval
+    // closes the loop in the owner's own inbox.
+    const resubmitted = await ctx.agentTeams.updateTask(owner, {
+      taskId: task.id,
+      expectedRevision: rejected.revision,
+      action: 'submit',
+    })
+    await ctx.agentTeams.updateTask(verifier, {
+      taskId: task.id,
+      expectedRevision: resubmitted.revision,
+      action: 'verify',
+      verdict: 'approved',
+      reason: 'the bounds are enforced now',
+    })
+    const approved = steered(ctx, owner.id)
+    expect(approved).toHaveLength(2)
+    expect(approved[1]).toContain('approved by verifier')
+    expect(approved[1]).toContain('completed')
+    // Both submissions ask the Lead for a verifier; the verdicts belong to the
+    // owner whose next move they decide.
+    const assigned = steered(ctx, lead.id)
+    expect(assigned).toHaveLength(2)
+    expect(assigned.every(text => text.includes('awaiting a peer verdict'))).toBe(true)
+  })
+
   it('supports Lead reassignment, completion, reopen, and deletion permissions', async () => {
-    const { ctx, lead } = await setup(['hang'])
+    const { ctx, lead } = await setup([
+      'hang',
+      textResponse('lead noted the submission'),
+      textResponse('owner noted the verdict'),
+    ])
     const started = await spawn(ctx, lead, 'owner')
     const owner = await waitRunning(ctx, started.member.id)
     const task = await ctx.agentTeams.createTask(owner, { subject: 'lifecycle', description: 'lifecycle' })
@@ -759,11 +1070,26 @@ describe('Team shared task DAG', () => {
       action: 'reassign',
       owner: 'lead',
     })).rejects.toMatchObject({ code: 'TEAM_LEAD_REQUIRED' })
-    const complete = await ctx.agentTeams.updateTask(owner, {
+    const submitted = await ctx.agentTeams.updateTask(owner, {
       taskId: task.id,
       expectedRevision: assigned.revision,
-      action: 'complete',
+      action: 'submit',
     })
+    // An owner cannot edit or re-scope what it already handed to a peer.
+    await expect(ctx.agentTeams.updateTask(owner, {
+      taskId: task.id,
+      expectedRevision: submitted.revision,
+      action: 'edit',
+      subject: 'changed after submission',
+    })).rejects.toMatchObject({ code: 'TEAM_TASK_INVALID_TRANSITION' })
+    const complete = await ctx.agentTeams.updateTask(lead, {
+      taskId: task.id,
+      expectedRevision: submitted.revision,
+      action: 'verify',
+      verdict: 'approved',
+      reason: 'the lifecycle works',
+    })
+    expect(complete.status).toBe('completed')
     await expect(ctx.agentTeams.updateTask(lead, {
       taskId: task.id,
       expectedRevision: complete.revision,
@@ -775,6 +1101,7 @@ describe('Team shared task DAG', () => {
       expectedRevision: complete.revision,
       action: 'reopen',
     })
+    expect(reopened.verification).toBeUndefined()
     const claimed = await ctx.agentTeams.updateTask(owner, {
       taskId: task.id,
       expectedRevision: reopened.revision,
@@ -793,8 +1120,11 @@ describe('Team shared task DAG', () => {
       action: 'edit',
       subject: 'late',
     })).rejects.toMatchObject({ code: 'TEAM_TASK_DELETED' })
+    // The verdict notice is parked for the owner, so the interrupt leaves it
+    // resident and idle with the notice still owed to it.
     ctx.agentTeams.interrupt(lead, 'owner')
-    await waitNoAgent(ctx, owner.id)
+    await vi.waitFor(() => { expect(ctx.agents.get(owner.id)?.status).toBe('idle') })
+    expect(steered(ctx, owner.id)).toHaveLength(1)
   })
 
   it('covers partial edits, Lead ownership, unassignment, and blocked reassignment', async () => {
@@ -818,8 +1148,15 @@ describe('Team shared task DAG', () => {
       taskId: blocker.id, expectedRevision: blocker.revision, action: 'claim',
     })
     expect(leadClaim.ownerName).toBe('lead')
-    const completedBlocker = await ctx.agentTeams.updateTask(lead, {
-      taskId: blocker.id, expectedRevision: leadClaim.revision, action: 'complete',
+    const submittedBlocker = await ctx.agentTeams.updateTask(lead, {
+      taskId: blocker.id, expectedRevision: leadClaim.revision, action: 'submit',
+    })
+    const completedBlocker = await ctx.agentTeams.updateTask(editor, {
+      taskId: blocker.id,
+      expectedRevision: submittedBlocker.revision,
+      action: 'verify',
+      verdict: 'approved',
+      reason: 'the blocker is done',
     })
     expect(completedBlocker.status).toBe('completed')
     const assigned = await ctx.agentTeams.updateTask(lead, {
@@ -1330,6 +1667,45 @@ describe('Team mailbox and waiting', () => {
     await expect(ctx.agentTeams.sendMessage(lead, {
       target: 'target', content: content('cancelled'), signal: controller.signal,
     })).rejects.toMatchObject({ code: 'TEST_CANCELLED' })
+  })
+
+  it('keeps a committed verdict when its owner cannot be reached', async () => {
+    const { ctx, lead } = await setup(['hang', 'hang'], { maxPendingMessagesPerMember: 1 })
+    const ownerStarted = await spawn(ctx, lead, 'owner')
+    const owner = await waitRunning(ctx, ownerStarted.member.id)
+    const verifierStarted = await spawn(ctx, lead, 'verifier')
+    const verifier = await waitRunning(ctx, verifierStarted.member.id)
+    const task = await ctx.agentTeams.createTask(owner, { subject: 'work', description: 'work' })
+    const claimed = await ctx.agentTeams.updateTask(owner, {
+      taskId: task.id, expectedRevision: task.revision, action: 'claim',
+    })
+    const submitted = await ctx.agentTeams.updateTask(owner, {
+      taskId: task.id, expectedRevision: claimed.revision, action: 'submit',
+    })
+
+    // The owner stops, and one queued peer message fills its only inbox slot,
+    // so the verdict notice the committed transition owes it is refused.
+    owner.cancel({ kind: 'parent' })
+    await waitNoAgent(ctx, owner.id)
+    await ctx.agentTeams.sendMessage(lead, {
+      target: 'owner', content: content('queued while stopped'), signal: SIGNAL,
+    })
+
+    // The verdict is durable regardless: reporting the refusal as a failed
+    // mutation would make the verifier retry against a revision it no longer
+    // carries.
+    const warnings: string[] = []
+    ctx.logger.warn = ((value: unknown) => { warnings.push(String(value)) }) as typeof ctx.logger.warn
+    const verdict = await ctx.agentTeams.updateTask(verifier, {
+      taskId: task.id,
+      expectedRevision: submitted.revision,
+      action: 'verify',
+      verdict: 'rejected',
+      reason: 'rework it',
+    })
+    expect(verdict).toMatchObject({ status: 'in_progress' })
+    expect(verdict.verification).toMatchObject({ verdict: 'rejected', reason: 'rework it' })
+    expect(warnings).toEqual([expect.stringContaining('team task notice failed')])
   })
 
   it('interrupts only the current turn and retains an already accepted follow-up', async () => {

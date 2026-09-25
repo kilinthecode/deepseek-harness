@@ -2,15 +2,16 @@
 
 import { Profiler } from 'react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { act, cleanup, fireEvent, render, screen } from '@testing-library/react'
+import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import type { SessionId } from '@deepseek-ai/dsh-session/types'
 import type {
+  RoomFollowFrame, RoomPromptResult, RoomProposalView, RoomRemoteView,
   TeamMemberProjection, TeamProjection, TeamTaskId, TeamTaskView as TeamTask,
 } from '@deepseek-ai/dsh-experimental-agent-team/client'
 import type { SessionListState, SessionSnapshot, SessionSummary, UseProjection } from '@deepseek-ai/dsh-api-session-controller/client'
 import type { SessionStatusSnapshot } from '@deepseek-ai/dsh-client-ui-session/client'
 import { createSnapshotStore } from '@deepseek-ai/dsh-client-store'
-import { bindSnapshotSelector, makeTranslate } from '@deepseek-ai/dsh-client-test-runtime'
+import { bindSnapshotSelector, makeTranslate, RemoteError } from '@deepseek-ai/dsh-client-test-runtime'
 import { zh as commonZh } from '@deepseek-ai/dsh-client-locale/src/locales/zh.ts'
 import { TeamAction, type TeamActionInjected, type TeamActionProps } from '../src/client/TeamAction.tsx'
 import { zh } from '../src/client/locales.ts'
@@ -26,6 +27,8 @@ const SESSION = 'lead' as SessionId
 const WORKER = 'worker-id' as SessionId
 const TASK_1 = 'task-1' as TeamTaskId
 const TASK_2 = 'task-2' as TeamTaskId
+const TASK_3 = 'task-3' as TeamTaskId
+const PROPOSAL = 'proposal-1' as RoomProposalView['id']
 const task: TeamTask = {
   id: TASK_1,
   revision: 1,
@@ -43,6 +46,30 @@ const worker: TeamMemberProjection = {
   id: WORKER, name: 'worker', role: 'teammate', phase: 'active',
 }
 const team: TeamProjection = { members: [lead, worker], tasks: [task] }
+const rejected: RoomProposalView = {
+  id: PROPOSAL,
+  revision: 1,
+  proposerName: 'lead',
+  statement: 'Adopt a global mutable cache with no invalidation.',
+  phase: 'rejected',
+  requiredApprovals: 1,
+  approvals: [],
+  rejections: ['worker'],
+  abstentions: [],
+  awaiting: [],
+  stalled: [],
+  standings: [],
+}
+const room: RoomRemoteView = {
+  enabled: true,
+  participants: [
+    { id: SESSION, name: 'lead', status: 'running', quiet: false },
+    { id: WORKER, name: 'worker', status: 'inactive', quiet: false },
+  ],
+  chair: 'lead',
+  messages: [{ author: 'worker', text: 'the cache serves stale reads' }],
+  proposals: [rejected],
+}
 
 type Projections = SessionListState['projectionsBySession']
 
@@ -57,6 +84,7 @@ function bench(options: {
   openState?: SessionSnapshot['openState']
   statuses?: SessionStatusSnapshot
   running?: Record<SessionId, boolean>
+  injected?: Partial<TeamActionInjected>
 } = {}) {
   const sessionId = options.sessionId ?? SESSION
   const byId: Record<SessionId, SessionSummary> = {}
@@ -85,7 +113,17 @@ function bench(options: {
     awaitingFirstTurn: false,
   })
   const useSessions = bindSnapshotSelector(sessions)
-  const injected: TeamActionInjected = { openTeammate: vi.fn() }
+  const injected: TeamActionInjected = {
+    openTeammate: vi.fn(),
+    // Room reads stay pending unless a case supplies a room, so roster and
+    // task cases render exactly as they would in a composition without one.
+    loadRoom: vi.fn(() => new Promise<never>(() => {})),
+    followRoom: vi.fn(() => new Promise<void>(() => {})),
+    promptParticipant: vi.fn(() => new Promise<never>(() => {})),
+    proposeDecision: vi.fn(() => new Promise<never>(() => {})),
+    escalateDecision: vi.fn(() => new Promise<never>(() => {})),
+    ...options.injected,
+  }
   const props: TeamActionProps = {
     sessionId,
     useSession: bindSnapshotSelector(session),
@@ -120,6 +158,11 @@ function setProjectionSnapshot(
 
 function setProjection(sessions: ReturnType<typeof bench>['sessions'], sessionId: SessionId, value: TeamProjection): void {
   setProjectionSnapshot(sessions, sessionId, { state: 'ready', error: null, values: { agentTeam: value } })
+}
+
+/** Bench whose room read resolves to one fixed view. */
+function roomBench(value: RoomRemoteView, injected: Partial<TeamActionInjected> = {}) {
+  return bench({ injected: { loadRoom: vi.fn(() => Promise.resolve({ ok: true as const, value })), ...injected } })
 }
 
 describe('TeamAction', () => {
@@ -317,6 +360,51 @@ describe('TeamAction', () => {
     expect(document.activeElement).toBe(screen.getByRole('button', { name: /智能体团队/u }))
   })
 
+  it('shows a submitted task awaiting its peer verdict and the recorded verification', () => {
+    const b = bench({
+      projections: {
+        [SESSION]: {
+          state: 'ready', error: null,
+          values: {
+            agentTeam: {
+              members: [lead, worker],
+              tasks: [
+                { ...task, revision: 2, status: 'verifying', verification: { submittedRevision: 2 } },
+                {
+                  ...task,
+                  id: TASK_2,
+                  subject: 'Rejected work',
+                  revision: 3,
+                  verification: {
+                    submittedRevision: 2, verifierName: 'worker', verdict: 'rejected', reason: 'the cache never invalidates',
+                  },
+                },
+                {
+                  ...task,
+                  id: TASK_3,
+                  subject: 'Approved work',
+                  revision: 4,
+                  status: 'completed',
+                  verification: { submittedRevision: 3, verifierName: 'lead', verdict: 'approved' },
+                },
+              ],
+            },
+          },
+        },
+      },
+    })
+    render(<TeamAction {...b.props} />)
+    openPanel()
+    const [verifying, rejectedTask] = [...document.querySelectorAll('article')]
+    expect(verifying?.textContent).toContain(zh['status.verifying'])
+    expect(verifying?.querySelector('[data-state]')?.getAttribute('data-state')).toBe('ongoing')
+    expect(screen.getByText(`${zh.verification}: ${zh.none}`)).toBeTruthy()
+    expect(rejectedTask?.textContent).toContain(zh['status.in_progress'])
+    expect(screen.getByText(`${zh.verification}: worker · ${zh['verdict.reject']} — the cache never invalidates`)).toBeTruthy()
+    expect(screen.getByText(`${zh.verification}: lead · ${zh['verdict.approve']}`)).toBeTruthy()
+    for (const card of [verifying, rejectedTask]) expect(card?.querySelector('button, input, select, textarea')).toBeNull()
+  })
+
   it('closes the panel and clears a navigation failure when the conversation switches sessions', () => {
     const b = bench()
     b.injected.openTeammate = vi.fn(() => { throw new Error('navigation failed') })
@@ -504,6 +592,399 @@ describe('TeamAction', () => {
     fireEvent.keyDown(composer, { key: 'Escape' })
     expect(screen.queryByRole('dialog')).toBeNull()
     expect(document.activeElement).toBe(composer)
+  })
+})
+
+describe('TeamAction room', () => {
+  it('reads the room only once the panel opens, through the current conversation', async () => {
+    const b = roomBench(room)
+    render(<TeamAction {...b.props} />)
+    expect(b.injected.loadRoom).not.toHaveBeenCalled()
+    openPanel()
+    expect(await screen.findByText('the cache serves stale reads')).toBeTruthy()
+    expect(b.injected.loadRoom).toHaveBeenCalledOnce()
+    expect(b.injected.loadRoom).toHaveBeenCalledWith(SESSION)
+    await waitFor(() => { expect(b.injected.followRoom).toHaveBeenCalledOnce() })
+    expect(b.injected.followRoom).toHaveBeenCalledWith(SESSION, expect.any(AbortSignal), expect.any(Function))
+  })
+
+  it('omits the room section entirely when the composition has no room', async () => {
+    const b = roomBench({ enabled: false, participants: [], chair: 'lead', messages: [], proposals: [] })
+    render(<TeamAction {...b.props} />)
+    openPanel()
+    await waitFor(() => { expect(b.injected.loadRoom).toHaveBeenCalledOnce() })
+    await act(async () => { await Promise.resolve() })
+    expect(screen.getByText('Implement runtime')).toBeTruthy()
+    // A deployment without a room shows the roster and tasks, not an empty room.
+    expect(document.querySelector('[data-team-room]')).toBeNull()
+    expect(screen.queryByText(zh.transcript)).toBeNull()
+    expect(b.injected.followRoom).not.toHaveBeenCalled()
+  })
+
+  it('renders the room transcript and each decision with its recorded votes', async () => {
+    render(<TeamAction {...roomBench(room).props} />)
+    openPanel()
+
+    expect(await screen.findByText('the cache serves stale reads')).toBeTruthy()
+    expect(screen.getByText('Adopt a global mutable cache with no invalidation.')).toBeTruthy()
+    expect(screen.getByText('proposal-1')).toBeTruthy()
+    expect(screen.getByText(zh.revision)).toBeTruthy()
+    expect(screen.getByText(zh['phase.rejected'])).toBeTruthy()
+    expect(screen.getByText(`${zh['votes.rejections']}: worker`)).toBeTruthy()
+    expect(screen.getByText(`${zh['votes.approvals']}: ${zh.none}`)).toBeTruthy()
+    // A settled decision awaits nobody, so the panel says so instead of naming
+    // reviewers who can no longer change the outcome.
+    expect(screen.getByText(`${zh['votes.awaiting']}: ${zh.none}`)).toBeTruthy()
+    expect(screen.getByText(`${zh.chair}: lead`)).toBeTruthy()
+    expect(screen.queryByRole('button', { name: zh['room.escalate'] })).toBeNull()
+  })
+
+  it('labels every decision phase the room can report', async () => {
+    const phases = (['open', 'accepted', 'escalated'] as const).map(phase => ({
+      ...rejected,
+      id: `proposal-${phase}` as RoomProposalView['id'],
+      phase,
+    }))
+    render(<TeamAction {...roomBench({ ...room, proposals: phases }).props} />)
+    openPanel()
+
+    expect(await screen.findByText(zh['phase.open'])).toBeTruthy()
+    expect(screen.getByText(zh['phase.accepted'])).toBeTruthy()
+    expect(screen.getByText(zh['phase.escalated'])).toBeTruthy()
+  })
+
+  it('shows why each reviewer stood where it did', async () => {
+    const debated: RoomRemoteView = {
+      ...room,
+      proposals: [{
+        ...rejected,
+        standings: [
+          { reviewer: 'worker', verdict: 'reject', reason: 'the cache never invalidates' },
+          { reviewer: 'auditor', verdict: 'approve', reason: 'bounded staleness is acceptable' },
+          { reviewer: 'lead', verdict: 'abstain', reason: 'the owner decides' },
+        ],
+      }],
+    }
+    render(<TeamAction {...roomBench(debated).props} />)
+    openPanel()
+
+    expect(await screen.findByText(`worker · ${zh['verdict.reject']}`)).toBeTruthy()
+    expect(screen.getByText('the cache never invalidates')).toBeTruthy()
+    expect(screen.getByText(`auditor · ${zh['verdict.approve']}`)).toBeTruthy()
+    expect(screen.getByText(`lead · ${zh['verdict.abstain']}`)).toBeTruthy()
+  })
+
+  it('names quiet participants and the reviewers that went silent on an escalated decision', async () => {
+    const escalated: RoomRemoteView = {
+      ...room,
+      participants: room.participants.map(participant => ({ ...participant, quiet: participant.name === 'worker' })),
+      proposals: [{ ...rejected, phase: 'escalated', stalled: ['worker'] }],
+    }
+    render(<TeamAction {...roomBench(escalated).props} />)
+    openPanel()
+
+    expect(await screen.findByText(`${zh['votes.stalled']}: worker`)).toBeTruthy()
+    expect(screen.getByText(`${zh.quiet}: worker`)).toBeTruthy()
+  })
+
+  it('claims no silent reviewer while a decision is still being answered', async () => {
+    render(<TeamAction {...roomBench(room).props} />)
+    openPanel()
+
+    await screen.findByText('proposal-1')
+    expect(screen.queryByText(new RegExp(zh['votes.stalled'], 'u'))).toBeNull()
+    expect(screen.queryByText(new RegExp(zh.quiet, 'u'))).toBeNull()
+  })
+
+  it('reports an empty room without inventing transcript or decisions', async () => {
+    render(<TeamAction {...roomBench({ enabled: true, participants: [], chair: 'lead', messages: [], proposals: [] }).props} />)
+    openPanel()
+
+    expect(await screen.findByText(zh.noTranscript)).toBeTruthy()
+    expect(screen.getByText(zh.noDecisions)).toBeTruthy()
+  })
+
+  it('surfaces a room load failure beside the roster', async () => {
+    const b = bench({
+      injected: {
+        loadRoom: vi.fn(() => Promise.resolve({
+          ok: false as const,
+          error: new RemoteError('gateway/internal', 'room unavailable', {}),
+        })),
+      },
+    })
+    render(<TeamAction {...b.props} />)
+    openPanel()
+
+    expect((await screen.findByRole('alert')).textContent).toBe('room unavailable (gateway/internal)')
+    expect(screen.getByText('Implement runtime')).toBeTruthy()
+  })
+
+  it('reports a room read the carrier rejects instead of answering', async () => {
+    const thrown = bench({ injected: { loadRoom: vi.fn(() => Promise.reject(new Error('room namespace is not mounted'))) } })
+    const view = render(<TeamAction {...thrown.props} />)
+    openPanel()
+    expect((await screen.findByRole('alert')).textContent).toBe('room namespace is not mounted')
+    view.unmount()
+
+    const opaque = bench({ injected: { loadRoom: vi.fn<TeamActionInjected['loadRoom']>().mockRejectedValue('socket closed') } })
+    render(<TeamAction {...opaque.props} />)
+    openPanel()
+    expect((await screen.findByRole('alert')).textContent).toBe('socket closed')
+  })
+
+  it('shows a participant streaming live, then its committed utterance', async () => {
+    let emit: ((frame: RoomFollowFrame) => void) | undefined
+    const followRoom = vi.fn((_sessionId: SessionId, _signal: AbortSignal, frame: (next: RoomFollowFrame) => void) => {
+      emit = frame
+      return new Promise<void>(() => {})
+    })
+    render(<TeamAction {...roomBench(room, { followRoom }).props} />)
+    openPanel()
+    await screen.findByText('the cache serves stale reads')
+    await waitFor(() => { expect(emit).toBeDefined() })
+    // A followed room opens on its complete view.
+    act(() => { emit?.({ type: 'view', view: room }) })
+
+    act(() => { emit?.({ type: 'stream', participant: 'worker', delta: 'stale reads' }) })
+    act(() => { emit?.({ type: 'stream', participant: 'worker', delta: ' are' }) })
+    expect(screen.getByText('stale reads are')).toBeTruthy()
+
+    // A committed change republishes the whole view, so the live text yields to
+    // the durable transcript entry.
+    act(() => {
+      emit?.({
+        type: 'view',
+        view: { ...room, messages: [...room.messages, { author: 'worker', text: 'stale reads are a bug' }] },
+      })
+    })
+    expect(screen.getByText('stale reads are a bug')).toBeTruthy()
+    expect(screen.queryByText('stale reads are')).toBeNull()
+  })
+
+  it('keeps a live answer while another participant commits its own', async () => {
+    let emit: ((frame: RoomFollowFrame) => void) | undefined
+    const followRoom = vi.fn((_sessionId: SessionId, _signal: AbortSignal, frame: (next: RoomFollowFrame) => void) => {
+      emit = frame
+      return new Promise<void>(() => {})
+    })
+    render(<TeamAction {...roomBench(room, { followRoom }).props} />)
+    openPanel()
+    await screen.findByText('the cache serves stale reads')
+    await waitFor(() => { expect(emit).toBeDefined() })
+    act(() => { emit?.({ type: 'view', view: room }) })
+
+    act(() => { emit?.({ type: 'stream', participant: 'worker', delta: 'a long answer' }) })
+    act(() => { emit?.({ type: 'stream', participant: 'lead', delta: 'a short note' }) })
+    // A change that commits no utterance, such as a review, leaves both streams live.
+    act(() => { emit?.({ type: 'view', view: { ...room, chair: 'worker' } }) })
+    expect(screen.getByText('a long answer')).toBeTruthy()
+    expect(screen.getByText('a short note')).toBeTruthy()
+    // The Lead's utterance commits first; the worker is still answering.
+    act(() => {
+      emit?.({
+        type: 'view',
+        view: { ...room, messages: [...room.messages, { author: 'lead', text: 'a short note, committed' }] },
+      })
+    })
+    act(() => { emit?.({ type: 'stream', participant: 'worker', delta: ' continues' }) })
+    expect(screen.getByText('a long answer continues')).toBeTruthy()
+    expect(screen.queryByText('a short note')).toBeNull()
+    expect(screen.getByText('a short note, committed')).toBeTruthy()
+  })
+
+  it('clears live text whose commit a room read showed before the follow delivered it', async () => {
+    let emit: ((frame: RoomFollowFrame) => void) | undefined
+    const followRoom = vi.fn((_sessionId: SessionId, _signal: AbortSignal, frame: (next: RoomFollowFrame) => void) => {
+      emit = frame
+      return new Promise<void>(() => {})
+    })
+    const committed: RoomRemoteView = {
+      ...room,
+      messages: [...room.messages, { author: 'worker', text: 'stale reads are a bug' }],
+    }
+    const loadRoom = vi.fn<TeamActionInjected['loadRoom']>()
+      .mockResolvedValueOnce({ ok: true, value: room })
+      .mockResolvedValue({ ok: true, value: committed })
+    const proposeDecision = vi.fn(() => Promise.resolve({ ok: true as const, value: rejected }))
+    render(<TeamAction {...bench({ injected: { loadRoom, followRoom, proposeDecision } }).props} />)
+    openPanel()
+    await screen.findByText('the cache serves stale reads')
+    await waitFor(() => { expect(emit).toBeDefined() })
+    act(() => { emit?.({ type: 'view', view: room }) })
+    act(() => { emit?.({ type: 'stream', participant: 'worker', delta: 'stale reads are' }) })
+
+    // A panel action re-reads the room, and the read lands before the follow delivers the same commit.
+    fireEvent.change(screen.getByRole('textbox', { name: zh['room.statement'] }), {
+      target: { value: 'adopt the panel path' },
+    })
+    fireEvent.click(screen.getByRole('button', { name: zh['room.propose'] }))
+    expect(await screen.findByText('stale reads are a bug')).toBeTruthy()
+    act(() => { emit?.({ type: 'view', view: committed }) })
+    expect(screen.queryByText('stale reads are')).toBeNull()
+  })
+
+  it('stops following the room when the panel closes', async () => {
+    let signal: AbortSignal | undefined
+    const followRoom = vi.fn((_sessionId: SessionId, next: AbortSignal) => {
+      signal = next
+      return new Promise<void>(() => {})
+    })
+    render(<TeamAction {...roomBench(room, { followRoom }).props} />)
+    openPanel()
+    await waitFor(() => { expect(signal).toBeDefined() })
+    expect(signal?.aborted).toBe(false)
+    fireEvent.keyDown(screen.getByRole('dialog'), { key: 'Escape' })
+    expect(signal?.aborted).toBe(true)
+  })
+
+  it('grants the floor, opens a decision, and hands one to the human', async () => {
+    const open: RoomRemoteView = { ...room, proposals: [{ ...rejected, phase: 'open', rejections: [], awaiting: ['worker'] }] }
+    const promptParticipant = vi.fn((..._args: Parameters<TeamActionInjected['promptParticipant']>) =>
+      Promise.resolve({
+        ok: true as const,
+        value: { messageId: 'message-1' as RoomPromptResult['messageId'], status: 'accepted' as const },
+      }))
+    const proposeDecision = vi.fn((..._args: Parameters<TeamActionInjected['proposeDecision']>) =>
+      Promise.resolve({ ok: true as const, value: open.proposals[0]! }))
+    const escalateDecision = vi.fn((..._args: Parameters<TeamActionInjected['escalateDecision']>) =>
+      Promise.resolve({ ok: true as const, value: { ...open.proposals[0]!, phase: 'escalated' as const } }))
+    const b = roomBench(open, { promptParticipant, proposeDecision, escalateDecision })
+    render(<TeamAction {...b.props} />)
+    openPanel()
+    await screen.findByText('the cache serves stale reads')
+
+    // The panel refuses incomplete instructions before the Host is asked.
+    fireEvent.click(screen.getByRole('button', { name: zh['room.propose'] }))
+    expect((await screen.findByRole('alert')).textContent).toBe(zh['room.statementRequired'])
+    expect(proposeDecision).not.toHaveBeenCalled()
+    fireEvent.click(screen.getByRole('button', { name: zh['room.prompt'] }))
+    expect((await screen.findByRole('alert')).textContent).toBe(zh['room.promptRequired'])
+    expect(promptParticipant).not.toHaveBeenCalled()
+
+    fireEvent.change(screen.getByRole('textbox', { name: zh['room.statement'] }), {
+      target: { value: 'adopt the panel path' },
+    })
+    fireEvent.click(screen.getByRole('button', { name: zh['room.propose'] }))
+    await waitFor(() => { expect(proposeDecision).toHaveBeenCalledOnce() })
+    expect(proposeDecision.mock.calls[0]).toEqual([SESSION, { statement: 'adopt the panel path' }])
+    await waitFor(() => { expect(screen.queryByRole('alert')).toBeNull() })
+    expect(b.injected.loadRoom).toHaveBeenCalledTimes(2)
+
+    fireEvent.change(screen.getByRole('combobox', { name: zh['room.promptTarget'] }), {
+      target: { value: 'worker' },
+    })
+    fireEvent.change(screen.getByRole('textbox', { name: zh['room.instruction'] }), {
+      target: { value: 'give your view' },
+    })
+    fireEvent.click(screen.getByRole('button', { name: zh['room.prompt'] }))
+    await waitFor(() => { expect(promptParticipant).toHaveBeenCalledOnce() })
+    expect(promptParticipant.mock.calls[0]).toEqual([SESSION, { target: 'worker', instruction: 'give your view' }])
+
+    // An escalation carries the reason the human reads.
+    const escalate = screen.getByRole('button', { name: zh['room.escalate'] })
+    fireEvent.click(escalate)
+    expect(escalate.getAttribute('aria-expanded')).toBe('true')
+    fireEvent.click(screen.getByRole('button', { name: zh['room.escalateSubmit'] }))
+    expect((await screen.findByRole('alert')).textContent).toBe(zh['room.reasonRequired'])
+    expect(escalateDecision).not.toHaveBeenCalled()
+    fireEvent.change(screen.getByRole('textbox', { name: zh['room.reason'] }), {
+      target: { value: 'the reviewers disagree' },
+    })
+    fireEvent.click(screen.getByRole('button', { name: zh['room.escalateSubmit'] }))
+    await waitFor(() => { expect(escalateDecision).toHaveBeenCalledOnce() })
+    expect(escalateDecision.mock.calls[0]).toEqual([SESSION, { proposalId: PROPOSAL, reason: 'the reviewers disagree' }])
+    await waitFor(() => { expect(screen.queryByRole('textbox', { name: zh['room.reason'] })).toBeNull() })
+  })
+
+  it('keeps the prompt and escalation drafts when the Host refuses them', async () => {
+    const open: RoomRemoteView = { ...room, proposals: [{ ...rejected, phase: 'open', rejections: [], awaiting: ['worker'] }] }
+    const promptParticipant = vi.fn()
+      .mockResolvedValueOnce({ ok: false as const, error: new RemoteError('gateway/internal', 'floor refused', {}) })
+      .mockRejectedValueOnce('socket closed')
+    const escalateDecision = vi.fn(() =>
+      Promise.resolve({ ok: false as const, error: new RemoteError('gateway/internal', 'escalation refused', {}) }))
+    render(<TeamAction {...roomBench(open, { promptParticipant, escalateDecision }).props} />)
+    openPanel()
+    await screen.findByText('the cache serves stale reads')
+
+    fireEvent.change(screen.getByRole('combobox', { name: zh['room.promptTarget'] }), { target: { value: 'worker' } })
+    const instruction = screen.getByRole<HTMLInputElement>('textbox', { name: zh['room.instruction'] })
+    fireEvent.change(instruction, { target: { value: 'give your view' } })
+    fireEvent.click(screen.getByRole('button', { name: zh['room.prompt'] }))
+    expect((await screen.findByRole('alert')).textContent).toBe('floor refused (gateway/internal)')
+    // A carrier that rejects with a non-Error value still reaches the reader.
+    fireEvent.click(screen.getByRole('button', { name: zh['room.prompt'] }))
+    await waitFor(() => { expect(screen.getByRole('alert').textContent).toBe('socket closed') })
+    expect(instruction.value).toBe('give your view')
+
+    const escalate = screen.getByRole('button', { name: zh['room.escalate'] })
+    fireEvent.click(escalate)
+    const reason = screen.getByRole<HTMLInputElement>('textbox', { name: zh['room.reason'] })
+    fireEvent.change(reason, { target: { value: 'the reviewers disagree' } })
+    fireEvent.click(screen.getByRole('button', { name: zh['room.escalateSubmit'] }))
+    await waitFor(() => { expect(screen.getByRole('alert').textContent).toBe('escalation refused (gateway/internal)') })
+    expect(reason.value).toBe('the reviewers disagree')
+    // The escalate control toggles its form closed again.
+    fireEvent.click(escalate)
+    expect(escalate.getAttribute('aria-expanded')).toBe('false')
+    expect(screen.queryByRole('textbox', { name: zh['room.reason'] })).toBeNull()
+  })
+
+  it('keeps the last room view when the live follow ends', async () => {
+    const followRoom = vi.fn(() => Promise.reject(new Error('stream closed')))
+    render(<TeamAction {...roomBench(room, { followRoom }).props} />)
+    openPanel()
+    expect(await screen.findByText('the cache serves stale reads')).toBeTruthy()
+    await waitFor(() => { expect(followRoom).toHaveBeenCalledOnce() })
+    await act(async () => { await Promise.resolve() })
+    expect(screen.getByText('the cache serves stale reads')).toBeTruthy()
+    expect(screen.queryByRole('alert')).toBeNull()
+  })
+
+  it('drops a room read that settles after the panel closed', async () => {
+    const pending: Array<PromiseWithResolvers<Awaited<ReturnType<TeamActionInjected['loadRoom']>>>> = []
+    const loadRoom = vi.fn(() => {
+      const next = Promise.withResolvers<Awaited<ReturnType<TeamActionInjected['loadRoom']>>>()
+      pending.push(next)
+      return next.promise
+    })
+    const followRoom = vi.fn(() => new Promise<void>(() => {}))
+    render(<TeamAction {...bench({ injected: { loadRoom, followRoom } }).props} />)
+    openPanel()
+    await waitFor(() => { expect(loadRoom).toHaveBeenCalledOnce() })
+    fireEvent.keyDown(screen.getByRole('dialog'), { key: 'Escape' })
+    openPanel()
+    await waitFor(() => { expect(loadRoom).toHaveBeenCalledTimes(2) })
+    fireEvent.keyDown(screen.getByRole('dialog'), { key: 'Escape' })
+    await act(async () => {
+      pending[0]!.resolve({ ok: true as const, value: room })
+      pending[1]!.reject(new Error('late failure'))
+      await Promise.resolve()
+    })
+    openPanel()
+    await waitFor(() => { expect(loadRoom).toHaveBeenCalledTimes(3) })
+    // Neither stale answer reached the reopened panel.
+    expect(screen.queryByText('the cache serves stale reads')).toBeNull()
+    expect(screen.queryByRole('alert')).toBeNull()
+    expect(followRoom).not.toHaveBeenCalled()
+  })
+
+  it('reports a rejected room action and a thrown carrier failure without clearing the draft', async () => {
+    const proposeDecision = vi.fn()
+      .mockResolvedValueOnce({ ok: false as const, error: new RemoteError('gateway/internal', 'room refused', {}) })
+      .mockRejectedValueOnce(new Error('carrier lost'))
+    render(<TeamAction {...roomBench(room, { proposeDecision }).props} />)
+    openPanel()
+    await screen.findByText('the cache serves stale reads')
+
+    const statement = screen.getByRole<HTMLInputElement>('textbox', { name: zh['room.statement'] })
+    fireEvent.change(statement, { target: { value: 'adopt the panel path' } })
+    fireEvent.click(screen.getByRole('button', { name: zh['room.propose'] }))
+    expect((await screen.findByRole('alert')).textContent).toBe('room refused (gateway/internal)')
+    fireEvent.click(screen.getByRole('button', { name: zh['room.propose'] }))
+    await waitFor(() => { expect(screen.getByRole('alert').textContent).toBe('carrier lost') })
+    expect(statement.value).toBe('adopt the panel path')
   })
 })
 

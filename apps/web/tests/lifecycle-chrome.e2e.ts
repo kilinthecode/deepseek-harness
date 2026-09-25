@@ -497,6 +497,13 @@ describe('web e2e: lifecycle & chrome (workspace flow / reload / dark mode)', ()
       await recoveryPage.clock.install()
       await recoveryPage.goto(scaffold.authenticatedUrl, { waitUntil: 'load' })
       await recoveryPage.waitForSelector('[class*="frame"]', { timeout: 30_000 })
+      // The boot page holds its brand moment over the mounted application on
+      // page timers, which the installed clock freezes; run them out so the
+      // indicator is measured and hovered without the page above it.
+      await expect.poll(async () => {
+        await recoveryPage.clock.fastForward(1_000)
+        return await recoveryPage.locator('[data-dsh-boot]').count()
+      }, { timeout: 15_000 }).toBe(0)
       await expect.poll(() => sockets.length).toBe(1)
       rejectConnections = true
       await recoveryPage.context().setOffline(true)

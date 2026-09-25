@@ -3,14 +3,14 @@
 # After editing either side, bring the other along and re-record with:
 #   pnpm run verify-translation-pairing --write packages/experimental/client-ui-agent-team/README.md
 /:
-  en: 6deb254c416ff51b
-  zh: e0913c7be837da78
+  en: be46bc034b099cb3
+  zh: 9a514d5d30c9e32b
 /deepseek-ai-dsh-experimental-client-ui-agent-team:
   en: 447e3c2bbf1ea3c6
   zh: 25bba08497976d12
 /deepseek-ai-dsh-experimental-client-ui-agent-team/summary:
-  en: a30d7bbb951ed3ec
-  zh: 8b12eca1138820f0
+  en: f4af275147c8f069
+  zh: ac4493aacd6abde1
 /deepseek-ai-dsh-experimental-client-ui-agent-team/table-of-contents:
   en: d152484eb41ac6b4
   zh: 09388d293f9be9cb
@@ -20,24 +20,27 @@
 /deepseek-ai-dsh-experimental-client-ui-agent-team/use-this-package/inspect-and-navigate-the-roster:
   en: 62778e911a4ee9e9
   zh: dff1dbbc3d5e4af6
+/deepseek-ai-dsh-experimental-client-ui-agent-team/use-this-package/read-the-room:
+  en: 6c5e90247b81d2c7
+  zh: 09de5248e1425291
 /deepseek-ai-dsh-experimental-client-ui-agent-team/use-this-package/inspect-the-task-board:
-  en: cf09faa436dad9fd
-  zh: e7423f4111eb88f9
+  en: 5ca409f1b6be6e06
+  zh: 666f52c40c005ae0
 /deepseek-ai-dsh-experimental-client-ui-agent-team/understand-the-implementation:
-  en: 3ea723e7ea467be7
-  zh: dba02b20bef0fd7f
+  en: 92e355fc4152ac2d
+  zh: 2353ff4bc06ec52c
 /deepseek-ai-dsh-experimental-client-ui-agent-team/further-exploration:
-  en: 71ac041029c64d5a
-  zh: fef2e4c5dccb8d1b
+  en: 843590a38f1db344
+  zh: 0342c668238a16bb
 /deepseek-ai-dsh-experimental-client-ui-agent-team/model-experience:
-  en: 47ebeba07d72759d
-  zh: 8fe8133f6dd845a9
+  en: 4f8110764f72bb27
+  zh: 939d3ae1dfea19da
 /deepseek-ai-dsh-experimental-client-ui-agent-team/model-experience/kv-cache-effect:
   en: b51b320f5e4dacfc
   zh: 6695947c3f9fed28
 /deepseek-ai-dsh-experimental-client-ui-agent-team/known-limitations-and-deferred-work:
-  en: 254e4aa2f81037d2
-  zh: 3cdf19dffafb51df
+  en: 9433147dabba8bdc
+  zh: 6b8927239bad0bb2
 /deepseek-ai-dsh-experimental-client-ui-agent-team/known-limitations-and-deferred-work/dev-note:
-  en: 317e07f2fd605e55
-  zh: 66836ceef6216892
+  en: ef3f285c7d9767bb
+  zh: 2b25120987632300

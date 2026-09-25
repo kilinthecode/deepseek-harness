@@ -558,6 +558,12 @@ for (const scenario of scenarios) {
   }
 }
 
+/** Whether one scenario's manifest declares child Session roles of its own. */
+function ownsChildRoles(scenario: HeadlessScenario): boolean {
+  return (scenario.manifest.header.childSystemPrompts?.length ?? 0) > 0
+    || (scenario.manifest.header.childToolSchemas?.length ?? 0) > 0
+}
+
 function ownerOf(scenario: HeadlessScenario): HeadlessScenario {
   const owner = compositionOwners.get(scenario.manifest.composition)
   if (owner === undefined) throw new Error(`${scenario.name}: composition has no cordis.yml owner`)
@@ -747,7 +753,12 @@ async function verifyProviderCwdResume(
   }
 }
 
-async function verifyHeaders(scenario: HeadlessScenario, actualLogs: readonly SessionLog[], ctx: NormalizeContext): Promise<void> {
+async function verifyHeaders(
+  scenario: HeadlessScenario,
+  actualLogs: readonly SessionLog[],
+  ctx: NormalizeContext,
+  expectedLogs: readonly string[],
+): Promise<void> {
   const pin = pinOf(scenario)
   const fixture = await readFile(join(pin.dir, await primaryFixtureFile(pin.dir)), 'utf8')
   const pinned = normalizedHeaders(fixture, fixtureContext(fixture))
@@ -786,10 +797,24 @@ async function verifyHeaders(scenario: HeadlessScenario, actualLogs: readonly Se
       expect(prompts.length, `${scenario.name}: system/message count`)
         .toBe(1 + (logIndex === 0 ? pin.manifest.header.promptChanges ?? 0 : 0))
     }
+    // A child session inherits its parent's effective route, so its request
+    // header records what the adapter supplied for that session. Compare every
+    // session against its own committed headers; the pin owns only the shared
+    // prompt and tool-schema sidecars, and the Session comparison above already
+    // rejects any header change.
+    const sessionBase = logIndex === 0
+      ? reconstructed
+      : normalizedHeaders(expectedLogs[logIndex] ?? expectedLogs[0] as string, contextOf(expectedLogs))
+        .map((header, headerIndex) => restorePinnedToolSchemas(
+          header,
+          (childSchemas.get(logIndex)?.[headerIndex] ?? schemaSets[headerIndex] ?? schemaSets[0]) as unknown[],
+        ))
     for (const [index, header] of headers.entries()) {
       const selectedSchemas = childSchemas.get(logIndex)?.[index]
-      const base = reconstructed[index] ?? reconstructed[0]
-      const expected = selectedSchemas === undefined ? base : { ...base as JsonObject, tools: selectedSchemas }
+      const base = sessionBase[index] ?? sessionBase[0]
+      const expected = selectedSchemas === undefined || logIndex > 0
+        ? base
+        : { ...base as JsonObject, tools: selectedSchemas }
       expect(header, `${scenario.name}: request header ${index + 1}`).toEqual(expected)
     }
     if (prompts.length > 0) {
@@ -1120,6 +1145,9 @@ describe('headless recorded-session snapshots', () => {
           label: `${scenario.name} headless snapshot`,
           tempDirPrefix: 'dsh-log-snap-',
           ...(scenario.manifest.workspace?.parent === 'outside-temp' ? { tempDirParent: outsideTempWorkspaceParent() } : {}),
+          // A scenario that owns child roles provisions a peer before the
+          // primary Session can settle, so it gets the longer process budget.
+          ...(ownsChildRoles(scenario) ? { processTimeoutMs: 3 * LOADER_SMOKE_TEST_TIMEOUT_MS } : {}),
           binScript: dshBin,
           sourceImport: 'tsx/esm',
           configPath: join(baseComposition.dir, 'cordis.yml'),
@@ -1265,7 +1293,7 @@ describe('headless recorded-session snapshots', () => {
           : records(expectedSnapshots[index] as string)
         expect(actualRecords, `${scenario.name}: session ${index}`).toEqual(expectedRecords)
       }
-      await verifyHeaders(scenario, actualLogs, actualContext)
+      await verifyHeaders(scenario, actualLogs, actualContext, expected)
 
       if (initialWorkspace === undefined || finalWorkspace === undefined) {
         throw new Error(`${scenario.name}: workspace was not captured around the profile run`)
@@ -1276,6 +1304,8 @@ describe('headless recorded-session snapshots', () => {
       } else {
         expect(finalWorkspace, `${scenario.name}: a changed workspace requires workspace.final`).toEqual(initialWorkspace)
       }
-    }, scenario.name === 'provider-cwd' ? 3 * LOADER_SMOKE_TEST_TIMEOUT_MS : LOADER_SMOKE_TEST_TIMEOUT_MS)
+    }, scenario.name === 'provider-cwd' || ownsChildRoles(scenario)
+      ? 3 * LOADER_SMOKE_TEST_TIMEOUT_MS
+      : LOADER_SMOKE_TEST_TIMEOUT_MS)
   }
 })

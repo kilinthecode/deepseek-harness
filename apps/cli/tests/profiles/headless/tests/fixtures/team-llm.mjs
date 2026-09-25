@@ -75,7 +75,7 @@ function researcher(messages) {
   }
   if (!names.includes('send_message')) {
     return toolChunks([
-      { name: 'team_task_update', args: { task_id: 'task-1', expected_revision: 2, action: 'complete' } },
+      { name: 'team_task_update', args: { task_id: 'task-1', expected_revision: 2, action: 'submit' } },
       { name: 'send_message', args: { target: 'implementer', message: 'Research complete: use the deterministic finding.' } },
     ])
   }
@@ -89,6 +89,14 @@ function implementer(messages) {
   const userText = messages.flatMap(message => message.role === 'user'
     ? message.content.filter(block => block.type === 'text').map(block => block.text)
     : []).join('\n')
+  // A peer hands its finished work over for verification, and no member may
+  // verify its own submission, so this teammate records the standing.
+  if (!hasTaskAction(messages, 'verify') && text.includes('"status":"verifying"')) {
+    return toolChunks([{ name: 'team_task_update', args: {
+      task_id: 'task-1', expected_revision: 3, action: 'verify', verdict: 'approved',
+      reason: 'the research states the deterministic finding the implementation needs',
+    } }])
+  }
   if (!names.includes('team_task_create')) {
     if (last.includes('team_task_get') && text.includes('"subject":"Research"')) {
       return toolChunks([{ name: 'team_task_create', args: {
@@ -122,7 +130,7 @@ function implementer(messages) {
   }
   if (!names.includes('send_message')) {
     return toolChunks([
-      { name: 'team_task_update', args: { task_id: 'task-2', expected_revision: 2, action: 'complete' } },
+      { name: 'team_task_update', args: { task_id: 'task-2', expected_revision: 2, action: 'submit' } },
       { name: 'send_message', args: { target: 'lead', message: 'Implementation complete and verified.' } },
     ])
   }
@@ -162,6 +170,14 @@ function lead(messages) {
     }])
   }
   const result = latestToolText(messages)
+  // The board lists every task, so match the implementation task's own object:
+  // it is the one the Lead has not reviewed yet.
+  if (!hasTaskAction(messages, 'verify') && /"id":"task-2"[^}]*"status":"verifying"/u.test(result)) {
+    return toolChunks([{ name: 'team_task_update', args: {
+      task_id: 'task-2', expected_revision: 3, action: 'verify', verdict: 'approved',
+      reason: 'the implementation report matches the research task it depends on',
+    } }])
+  }
   if (last.includes('team_task_list')) {
     const completed = result.match(/"status":"completed"/gu)?.length ?? 0
     if (completed >= 2) return toolChunks([{ name: 'list_agents', args: {} }])

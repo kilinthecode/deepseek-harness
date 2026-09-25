@@ -731,8 +731,8 @@ const SERVICE_ROLES: ServiceRole[] = [
     pkg: 'experimental-agent-team',
     title: 'Agent Teams coordination domain',
     mode: 'core',
-    consumers: ['experimental-tool-agent-team'],
-    note: 'Owns the implicit-root roster, durable peer mailbox, shared task DAG, and continuable-child lifecycle; tool-agent-team contributes model controls.',
+    consumers: ['experimental-tool-agent-team', 'experimental-tool-agent-room', 'experimental-client-ui-agent-team'],
+    note: 'Owns the implicit-root roster, durable peer mailbox, shared task DAG, shared room, continuable-child lifecycle, and generated room Remote methods; tool-agent-team and tool-agent-room contribute model controls and client-ui-agent-team mounts the room Remote contribution.',
   },
   {
     key: 'inspector',

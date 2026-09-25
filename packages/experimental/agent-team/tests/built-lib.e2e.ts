@@ -1,4 +1,4 @@
-/** Plain-Node smoke for the built Agent Teams service. */
+/** Plain-Node smoke for the built Agent Teams service and its room Remote contribution. */
 
 import { execFile } from 'node:child_process'
 import { existsSync } from 'node:fs'
@@ -13,17 +13,21 @@ const artifactUrl = (path: string): string => pathToFileURL(artifact(path)).href
 
 const requiredArtifacts = [
   'packages/experimental/agent-team/lib/index.js',
+  'packages/experimental/agent-team/lib/typert.remote-client.js',
 ].every(path => existsSync(artifact(path)))
 
 describe.skipIf(!requiredArtifacts)('Agent Teams built LIB service', () => {
-  it('loads the Host service under plain Node', async () => {
+  it('loads the Host service and its generated room Remote contribution under plain Node', async () => {
     const urls = {
       host: artifactUrl('packages/experimental/agent-team/lib/index.js'),
+      remote: artifactUrl('packages/experimental/agent-team/lib/typert.remote-client.js'),
     }
     const script = `
       const host = await import(${JSON.stringify(urls.host)})
+      const remote = await import(${JSON.stringify(urls.remote)})
       console.log(JSON.stringify({
         className: host.default.name,
+        methods: remote.default.descriptors.map(descriptor => descriptor.id),
       }))
     `
 
@@ -31,9 +35,17 @@ describe.skipIf(!requiredArtifacts)('Agent Teams built LIB service', () => {
     expect(result.exitCode, `stderr:\n${result.stderr}`).toBe(0)
     const output = JSON.parse(result.stdout.trim().split('\n').at(-1) ?? '{}') as {
       className: string
+      methods: string[]
     }
     expect(output).toEqual({
       className: 'TeamService',
+      methods: [
+        '@deepseek-ai/dsh-experimental-agent-team#agentTeams/room',
+        '@deepseek-ai/dsh-experimental-agent-team#agentTeams/roomEscalate',
+        '@deepseek-ai/dsh-experimental-agent-team#agentTeams/roomPrompt',
+        '@deepseek-ai/dsh-experimental-agent-team#agentTeams/roomPropose',
+        '@deepseek-ai/dsh-experimental-agent-team#agentTeams/roomStream',
+      ],
     })
   })
 })

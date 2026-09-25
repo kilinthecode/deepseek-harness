@@ -74,6 +74,9 @@ export function resolveDesktopAppId(env) {
  * @returns {{ signingIdentity: string, teamId: string }} Expected certificate qualifier and Team ID.
  */
 export function resolveMacOSSigningEnvironment(env) {
+  if (env.DSH_ADHOC_SIGN === '1') {
+    return { signingIdentity: '-', teamId: '0000000000' }
+  }
   const signingIdentity = requireEnvironmentValue(env, MACOS_SIGNING_IDENTITY_ENV)
   if (signingIdentity.startsWith('Developer ID Application:')) {
     throw new Error(`desktop release environment: ${MACOS_SIGNING_IDENTITY_ENV} must omit the "Developer ID Application:" prefix`)

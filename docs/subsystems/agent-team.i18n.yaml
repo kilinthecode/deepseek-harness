@@ -6,8 +6,8 @@
   en: f571e223220bb616
   zh: dd7e37fdf359eeae
 /agent-teams/identity-and-roster:
-  en: c6e6d2add95df5e8
-  zh: 36c0b25c3f4eb80b
+  en: 92fc0e8d2f0ee391
+  zh: ea703bc1aef3a942
 /agent-teams/durable-mailbox:
   en: 75fb392a6ccfbdf9
   zh: f80678b84bd1ea47
@@ -15,8 +15,11 @@
   en: 4515005d07e4d2a3
   zh: 26811b31f69009d6
 /agent-teams/web-projection:
-  en: 6af99eff8036597a
-  zh: f172f994e01f12c1
+  en: e7e75990a5d16a5e
+  zh: 4412587f448a0517
+/agent-teams/shared-room:
+  en: 9f8f2b389713a60f
+  zh: a4a9c2eb2f0799a4
 /agent-teams/replay:
-  en: 4adfd7bad5c0e302
-  zh: 2d71ba065f44f2a1
+  en: 75a473ae1f8e2642
+  zh: fdd12a779a543907

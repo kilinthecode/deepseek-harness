@@ -353,6 +353,18 @@
               "fresh",
               "fork"
             ]
+          },
+          "provider": {
+            "type": "string",
+            "description": "Model provider route for this teammate, for example deepseek-official. Defaults to your own route."
+          },
+          "model": {
+            "type": "string",
+            "description": "Model id for this teammate; pick one that fits its responsibility, since teammates on different models disagree more usefully than copies of one model. Defaults to your own model."
+          },
+          "reasoning_effort": {
+            "type": "string",
+            "description": "Reasoning effort for this teammate, named as the target model declares it. Defaults to your own setting."
           }
         },
         "required": [
@@ -425,6 +437,7 @@
             "enum": [
               "pending",
               "in_progress",
+              "verifying",
               "completed"
             ]
           },
@@ -463,13 +476,14 @@
           },
           "action": {
             "type": "string",
-            "description": "Task transition to apply.",
+            "description": "Task transition to apply. submit hands your own finished work to a peer; verify records a peer verdict on submitted work.",
             "enum": [
               "claim",
               "release",
               "edit",
               "set_dependencies",
-              "complete",
+              "submit",
+              "verify",
               "reopen",
               "reassign",
               "delete"
@@ -500,6 +514,18 @@
           "owner": {
             "type": "string",
             "description": "Member target from spawn_teammate or list_agents for Lead-only reassign; omit to unassign."
+          },
+          "verdict": {
+            "type": "string",
+            "description": "Peer verdict required by verify.",
+            "enum": [
+              "approved",
+              "rejected"
+            ]
+          },
+          "reason": {
+            "type": "string",
+            "description": "Why the peer approved or rejected; required by verify and read by the owner."
           }
         },
         "required": [

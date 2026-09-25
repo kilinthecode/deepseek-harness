@@ -41,6 +41,7 @@ This table connects model-visible tool names to the plugin package and service s
 | `@deepseek-ai/dsh-tool-subagent-control` | `interrupt_agent`, `list_agents`, `send_message` | `ctx.tools`, `ctx.subagents`, `ctx.agents and ctx.sessionProjections (list_agents only)` | `tool/call`, `tool/result`, `child session events through ctx.subagents` | - | The globally named control tools over continuable background subagents: provider-bound `tool-subagent` instances register distinct delegation tools, while this package registers `send_message` and `interrupt_agent` once, plus `list_agents` from its separately loaded `/list-agents` plugin (whose catalog rows use the sessionProjections and live Agent registries). |
 | `@deepseek-ai/dsh-tool-jobs` | `job_kill`, `job_list`, `job_output` | `ctx.tools`, `ctx.jobs`, `ctx.systemPrompt` | `tool/call`, `tool/result`, `user/message via agent.inject() for background completion notices` | - | The kind-agnostic background-job controller: background bash commands, PTY sends, and subagents are read, listed, and killed through the same three tools. Loading the plugin attaches the controller that arms producers' `ctx.jobs.start()`. |
 | `@deepseek-ai/dsh-experimental-tool-agent-team` | `interrupt_agent`, `list_agents`, `send_message`, `spawn_teammate`, `team_task_create`, `team_task_get`, `team_task_list`, `team_task_update`, `wait_agent` | `ctx.tools`, `ctx.systemPrompt`, `ctx.agentTeams`, `an exact live Team member Agent` | `tool/call`, `team/member`, `team/message/queued`, `team/message/delivered`, `team/task`, `tool/result` | - | All nine tools are scoped to implicit Team Leads and durable teammates. The shipped dsh-base bundle keeps the package disabled; the documented Agent Teams profile patch enables it while disabling the legacy continuable-child control names. |
+| `@deepseek-ai/dsh-experimental-tool-agent-room` | `room_escalate`, `room_prompt`, `room_propose`, `room_review`, `room_view` | `ctx.tools`, `ctx.systemPrompt`, `ctx.agentTeams`, `an exact live room participant Agent` | `tool/call`, `room/message`, `room/proposal`, `room/review`, `team/message/queued`, `team/message/delivered`, `tool/result` | - | Five tools are scoped to room participants. The shipped composition keeps them unmounted; a deployment enables them beside `@deepseek-ai/dsh-experimental-agent-team` with `roomEnabled: true`, and every outcome is decided by the service quorum rather than by the tool. |
 | `@deepseek-ai/dsh-tool-todo` | `todo_write` | `ctx.tools`, `owning Agent session` | `tool/call`, `todo/write`, `tool/result` | - | todo_write is session-owned state; UIs render the latest todo/write event as a checklist. `allowParallelInProgress` is required with no default, so the catalog states its choice: `true`, whose description invites several `in_progress` items. A deployment choosing `false` receives the same tool with a description asking for exactly one active task. |
 | `@deepseek-ai/dsh-tool-workflow` | `workflow` | `ctx.tools`, `ctx.workflowEngine`, `ctx.systemPrompt`, `a calling Agent (exec.agent parents the script children)` | `tool/call`, `tool/result` | - | - |
 | `@deepseek-ai/dsh-tool-workspace-dependencies` | `load_workspace_dependencies` | `ctx.tools` | `tool/call`, `tool/result` | - | - |
@@ -2306,6 +2307,18 @@ Create one named, durable teammate. Only the Team Lead may call this tool.
         "fresh",
         "fork"
       ]
+    },
+    "provider": {
+      "type": "string",
+      "description": "Model provider route for this teammate, for example deepseek-official. Defaults to your own route."
+    },
+    "model": {
+      "type": "string",
+      "description": "Model id for this teammate; pick one that fits its responsibility, since teammates on different models disagree more usefully than copies of one model. Defaults to your own model."
+    },
+    "reasoning_effort": {
+      "type": "string",
+      "description": "Reasoning effort for this teammate, named as the target model declares it. Defaults to your own setting."
     }
   },
   "required": [
@@ -2393,6 +2406,7 @@ List shared tasks, including readiness, owner, revision, blockers, and write-sco
       "enum": [
         "pending",
         "in_progress",
+        "verifying",
         "completed"
       ]
     },
@@ -2436,13 +2450,14 @@ Compare-and-set a shared task action using the latest revision from team_task_ge
     },
     "action": {
       "type": "string",
-      "description": "Task transition to apply.",
+      "description": "Task transition to apply. submit hands your own finished work to a peer; verify records a peer verdict on submitted work.",
       "enum": [
         "claim",
         "release",
         "edit",
         "set_dependencies",
-        "complete",
+        "submit",
+        "verify",
         "reopen",
         "reassign",
         "delete"
@@ -2473,6 +2488,18 @@ Compare-and-set a shared task action using the latest revision from team_task_ge
     "owner": {
       "type": "string",
       "description": "Member target from spawn_teammate or list_agents for Lead-only reassign; omit to unassign."
+    },
+    "verdict": {
+      "type": "string",
+      "description": "Peer verdict required by verify.",
+      "enum": [
+        "approved",
+        "rejected"
+      ]
+    },
+    "reason": {
+      "type": "string",
+      "description": "Why the peer approved or rejected; required by verify and read by the owner."
     }
   },
   "required": [
@@ -2504,6 +2531,148 @@ Wait for the next teammate status, mailbox, or shared-task change after this cal
 Source: [`packages/experimental/tool-agent-team/src/index.ts`](../packages/experimental/tool-agent-team/src/index.ts)
 
 All nine tools are scoped to implicit Team Leads and durable teammates. The shipped dsh-base bundle keeps the package disabled; the documented Agent Teams profile patch enables it while disabling the legacy continuable-child control names.
+
+<a id="deepseek-aidsh-experimental-tool-agent-room"></a>
+
+## `@deepseek-ai/dsh-experimental-tool-agent-room`
+
+### `room_escalate`
+
+Hand one unresolved decision to the human. Use it when reviewers cannot converge, the revision limit is reached, or the choice is not the room's to make.
+
+```json
+{
+  "type": "object",
+  "properties": {
+    "proposal_id": {
+      "type": "string",
+      "description": "Decision id from room_propose or room_view."
+    },
+    "reason": {
+      "type": "string",
+      "description": "Why the human must decide."
+    }
+  },
+  "required": [
+    "proposal_id",
+    "reason"
+  ]
+}
+```
+
+Source: [`packages/experimental/tool-agent-room/src/index.ts`](../packages/experimental/tool-agent-room/src/index.ts)
+
+### `room_prompt`
+
+Give one participant the floor when the next step needs its judgement rather than yours. The target receives the transcript it has not yet seen.
+
+```json
+{
+  "type": "object",
+  "properties": {
+    "target": {
+      "type": "string",
+      "description": "Participant name, or lead."
+    },
+    "instruction": {
+      "type": "string",
+      "description": "Self-contained statement of exactly what you want that participant to do or answer."
+    }
+  },
+  "required": [
+    "target",
+    "instruction"
+  ]
+}
+```
+
+Source: [`packages/experimental/tool-agent-room/src/index.ts`](../packages/experimental/tool-agent-room/src/index.ts)
+
+### `room_propose`
+
+Put one statement to the room as a decision for review.
+
+```json
+{
+  "type": "object",
+  "properties": {
+    "statement": {
+      "type": "string",
+      "description": "The exact decision the room is asked to accept or reject."
+    },
+    "supersedes": {
+      "type": "string",
+      "description": "Decision id this statement replaces, when carrying a revised statement back after rejections."
+    }
+  },
+  "required": [
+    "statement"
+  ]
+}
+```
+
+Source: [`packages/experimental/tool-agent-room/src/index.ts`](../packages/experimental/tool-agent-room/src/index.ts)
+
+### `room_review`
+
+Record your standing on one decision revision.
+
+```json
+{
+  "type": "object",
+  "properties": {
+    "proposal_id": {
+      "type": "string",
+      "description": "Decision id from room_propose or room_view."
+    },
+    "revision": {
+      "type": "integer",
+      "description": "Revision you are judging, exactly as room_view reports it."
+    },
+    "verdict": {
+      "type": "string",
+      "description": "approve only when you would defend the decision yourself, reject when you found a specific problem, abstain when you have no basis to judge.",
+      "enum": [
+        "approve",
+        "reject",
+        "abstain"
+      ]
+    },
+    "reason": {
+      "type": "string",
+      "description": "Why you chose this standing; a rejection names the problem so the proposer can act on it. The proposer and the human read it."
+    }
+  },
+  "required": [
+    "proposal_id",
+    "revision",
+    "verdict",
+    "reason"
+  ]
+}
+```
+
+Source: [`packages/experimental/tool-agent-room/src/index.ts`](../packages/experimental/tool-agent-room/src/index.ts)
+
+### `room_view`
+
+Read the room roster, the recent shared transcript, and every decision with its current votes. Re-read after you are woken instead of relying on memory.
+
+```json
+{
+  "type": "object",
+  "properties": {
+    "entries": {
+      "type": "integer",
+      "description": "Number of trailing transcript entries to return, 1 through 20. Defaults to 20."
+    }
+  }
+}
+```
+
+Source: [`packages/experimental/tool-agent-room/src/index.ts`](../packages/experimental/tool-agent-room/src/index.ts)
+
+Five tools are scoped to room participants. The shipped composition keeps them unmounted; a deployment enables them beside `@deepseek-ai/dsh-experimental-agent-team` with `roomEnabled: true`, and every outcome is decided by the service quorum rather than by the tool.
 
 <a id="deepseek-aidsh-tool-todo"></a>
 
