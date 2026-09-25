@@ -58,7 +58,7 @@ describe('BootPage', () => {
     expect(el.querySelector('[role="img"]')?.getAttribute('aria-label')).toBe('Portal Harness')
   })
 
-  it('opens the mark as three stacked stage layers from the centre outward', () => {
+  it('opens the mark as three stacked stage layers, the outer one settling onto the spokes', () => {
     const { el } = mount()
     const mark = el.querySelector(`.${css.mark!}`)!
     const stages = [...mark.children] as SVGElement[]
@@ -73,6 +73,9 @@ describe('BootPage', () => {
     expect(stages.map(scheduled)).toEqual([
       { start: 240, end: 960 }, { start: 420, end: 1140 }, { start: 600, end: 1320 },
     ])
+    // The outer cell's corners are the spoke tips, so it settles inward onto
+    // them; the spokes and inner cell open outward from the centre.
+    expect(stages.map(stage => stage.classList.contains(css.stageSettle!))).toEqual([false, false, true])
     // Stage translucency rides on stroke-opacity, which the reveal keyframe's
     // own opacity would otherwise overwrite.
     expect(stages.some(stage => stage.getAttribute('opacity') !== null)).toBe(false)

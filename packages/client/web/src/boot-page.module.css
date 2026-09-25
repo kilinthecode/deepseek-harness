@@ -79,6 +79,14 @@
   animation: dsh-boot-stage-in var(--dsh-boot-ease-out) both;
 }
 
+/* The outer cell's corners are the spoke tips. Growing from the centre, it
+   would sit inside the already full-length spokes, whose tips would poke
+   past it; settling inward from just outside keeps every corner at or
+   beyond its spoke tip. */
+.stageSettle {
+  animation-name: dsh-boot-stage-settle;
+}
+
 .row {
   display: inline-flex;
   align-items: center;
@@ -177,7 +185,8 @@
 
 /* The brand dissolves ahead of the page while drifting gently forward on the
    same easing, so the handoff reads as the page opening onto the ready
-   application rather than a cut, and the brand never shows over it. */
+   application rather than a cut; the brand is mostly gone before the
+   application shows through. */
 .leaving .card {
   opacity: 0;
   transform: scale(1.03);
@@ -188,6 +197,11 @@
 
 @keyframes dsh-boot-stage-in {
   from { opacity: 0; transform: scale(0.6); }
+  to { opacity: 1; transform: none; }
+}
+
+@keyframes dsh-boot-stage-settle {
+  from { opacity: 0; transform: scale(1.06); }
   to { opacity: 1; transform: none; }
 }
 

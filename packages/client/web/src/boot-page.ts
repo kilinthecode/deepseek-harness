@@ -9,7 +9,7 @@ import stylesheet from './boot-page.module.css'
 const SVG_NS = 'http://www.w3.org/2000/svg' as const
 
 type BootClass =
-  | 'boot' | 'static' | 'leaving' | 'card' | 'brand' | 'mark' | 'stage' | 'row' | 'word'
+  | 'boot' | 'static' | 'leaving' | 'card' | 'brand' | 'mark' | 'stage' | 'stageSettle' | 'row' | 'word'
   | 'letter' | 'caret' | 'plate' | 'status' | 'spinner' | 'hint' | 'failed' | 'failedTitle' | 'failedItem'
 
 /** Generated class names; the stylesheet beside this module defines every class it reads. */
@@ -55,8 +55,9 @@ const PLATE = 'HARNESS'
  * the compositor runs the whole sequence and plugin loading on the main
  * thread cannot delay or bunch its steps. Each phase starts once the one
  * before it is mostly in place. The lead-in keeps the first frames still
- * while the document finishes its first paint; the three mark stages then
- * open outward from the centre (spokes, inner cell, outer cell).
+ * while the document finishes its first paint; the spokes and inner cell then
+ * open outward from the centre, and the outer cell settles onto the spoke
+ * tips from just outside them, so the spokes never cross it.
  */
 const STAGE_DELAY_MS = [240, 420, 600] as const
 const STAGE_MS = 720
@@ -129,9 +130,10 @@ function schedule(el: HTMLElement | SVGElement, delay: number, duration: number)
  * layer over the same viewBox.
  * @param delay - Reveal start in ms from the first animation frame.
  * @param parts - Stroked shapes drawn by this stage.
+ * @param settles - Whether the stage settles inward onto the mark instead of opening from its centre.
  * @returns the stage layer, hidden until its delay passes.
  */
-function stage(delay: number, parts: readonly SVGElement[]): SVGSVGElement {
+function stage(delay: number, parts: readonly SVGElement[], settles = false): SVGSVGElement {
   const layer = svgElement('svg', {
     viewBox: '160 160 704 704',
     fill: 'none',
@@ -139,7 +141,7 @@ function stage(delay: number, parts: readonly SVGElement[]): SVGSVGElement {
     'stroke-linecap': 'round',
     'stroke-linejoin': 'round',
   })
-  layer.setAttribute('class', css.stage)
+  layer.setAttribute('class', settles ? `${css.stage} ${css.stageSettle}` : css.stage)
   schedule(layer, delay, STAGE_MS)
   layer.append(...parts)
   return layer
@@ -384,7 +386,7 @@ export class BootPage {
     mark.append(
       stage(STAGE_DELAY_MS[0], spokes),
       stage(STAGE_DELAY_MS[1], [inner]),
-      stage(STAGE_DELAY_MS[2], [...lifts, outer]),
+      stage(STAGE_DELAY_MS[2], [...lifts, outer], true),
     )
     return mark
   }
