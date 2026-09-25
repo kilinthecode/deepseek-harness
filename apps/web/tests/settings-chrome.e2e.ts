@@ -281,18 +281,29 @@ describe('web e2e: settings modal and General preferences', () => {
       const loading = page.getByText('Loading plugins…', { exact: true })
       await loading.waitFor({ timeout: 10_000 })
       const state = await loading.evaluate((element) => {
-        const boot = element.parentElement?.parentElement
+        const boot = element.closest('[data-dsh-boot]')
         if (boot === undefined || boot === null) throw new Error('loading hint is detached from the boot page')
+        // Stage > edge > stroke under the hidden mark; a finished stroke has
+        // completed its length animation to a unit scale.
+        const markFinished = [...boot.querySelectorAll('[aria-hidden="true"] > div > div > div')]
+          .every(part => new DOMMatrix(getComputedStyle(part).transform).a === 1)
+        const wordFinished = [...boot.querySelectorAll('span')]
+          .filter(part => part.textContent !== '')
+          .every(part => getComputedStyle(part).opacity === '1')
         return {
           attr: document.body.hasAttribute('data-ds-dark-theme'),
           background: getComputedStyle(boot).backgroundColor,
           colorScheme: getComputedStyle(document.documentElement).colorScheme,
+          markFinished,
+          wordFinished,
         }
       })
       expect(state).toEqual({
         attr: true,
         background: 'rgb(21, 21, 23)',
         colorScheme: 'dark',
+        markFinished: true,
+        wordFinished: true,
       })
     } finally {
       releaseBundles()

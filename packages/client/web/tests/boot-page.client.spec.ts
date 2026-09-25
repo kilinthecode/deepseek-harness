@@ -1,7 +1,11 @@
 // @vitest-environment jsdom
-import { afterEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { BootPage } from '../src/boot-page.ts'
 import css from '../src/boot-page.module.css'
+
+// Every case drives the page's own schedule, so no pending reveal escapes into
+// the next one.
+beforeEach(() => { vi.useFakeTimers() })
 
 afterEach(() => {
   document.body.innerHTML = ''
@@ -15,44 +19,96 @@ function mount() {
   return { el, page: new BootPage(el) }
 }
 
+function finishBrand(el: HTMLElement): void {
+  el.querySelector(`.${css.plate!} .${css.letter!}:last-child`)!.dispatchEvent(new Event('animationend', { bubbles: true }))
+}
+
+/** The status block only joins the card once boot outlasts the brand moment. */
+const STATUS_MS = 4000
+
 describe('BootPage', () => {
-  it('draws the loading skeleton before any plugin state arrives', () => {
+  it('draws the brand before any plugin state arrives', () => {
     const { el } = mount()
     expect(el.firstElementChild?.getAttribute('data-dsh-boot')).toBe('')
-    expect(el.querySelector('svg')?.getAttribute('viewBox')).toBe('160 160 704 704')
+    expect(el.querySelector(`.${css.mark!}`)?.getAttribute('aria-hidden')).toBe('true')
     expect(el.textContent).toContain('PORTAL')
-    expect(el.textContent).toContain('Loading plugins…')
+    expect(el.textContent).toContain('HARNESS')
+    expect(el.querySelector('[role="img"]')?.getAttribute('aria-label')).toBe('Portal Harness')
   })
 
-  it('types the wordmark letters in sequence behind the caret', () => {
-    vi.useFakeTimers()
+  it('draws the center spokes before connecting the inner and outer cells', () => {
     const { el } = mount()
-    const spans = [...el.querySelectorAll('span')]
-    const word = spans.filter(span => span.textContent !== '')
-    const caret = spans.at(-1)!
-    expect(word).toHaveLength(6)
-    for (const span of word) expect(span.className).not.toContain(css.in)
-    vi.advanceTimersByTime(1050)
-    expect(word[0]!.className).toContain(css.in)
-    expect(word[1]!.className).not.toContain(css.in)
-    vi.advanceTimersByTime(5 * 80)
-    for (const span of word) expect(span.className).toContain(css.in)
-    expect(caret.className).toContain(css.caretOn)
-    vi.advanceTimersByTime(2150 - 1050 - 400)
-    expect(caret.className).toContain(css.caretDone)
-    expect(caret.className).not.toContain(css.caretOn)
+    const stages = [...el.querySelectorAll<HTMLElement>(`.${css.stage!}`)]
+    expect(stages).toHaveLength(4)
+    expect(stages.map(part => part.style.getPropertyValue('--dsh-stroke-delay')))
+      .toEqual(['120ms', '600ms', '1000ms', '1560ms'])
+    expect(stages.map(part => part.childElementCount)).toEqual([6, 12, 6, 12])
+    for (const edge of stages[0]!.querySelectorAll<HTMLElement>(`.${css.edge!}`)) {
+      expect(edge.style.left).toBe('50%')
+      expect(edge.style.top).toBe('50%')
+      expect(edge.firstElementChild?.classList.contains(css.stroke!)).toBe(true)
+    }
+  })
+
+  it('types both words after drawing the mark, with each glyph reserving its width', () => {
+    const { el } = mount()
+    const letters = [...el.querySelectorAll<HTMLElement>(`.${css.letter!}`)]
+    expect(letters.map(letter => letter.textContent).join('')).toBe('PORTALHARNESS')
+    expect(letters.map(letter => letter.style.getPropertyValue('--dsh-letter-delay')))
+      .toEqual(['2180ms', '2280ms', '2380ms', '2480ms', '2580ms', '2680ms',
+        '3020ms', '3100ms', '3180ms', '3260ms', '3340ms', '3420ms', '3500ms'])
   })
 
   it('reveals the finished brand immediately under reduced motion', () => {
     vi.stubGlobal('matchMedia', () => ({ matches: true }))
     const { el } = mount()
     expect(el.firstElementChild?.classList.contains(css.static!)).toBe(true)
-    expect(el.querySelectorAll(`.${css.static!} svg .${css.draw!}`)).toHaveLength(14)
+    expect(el.querySelectorAll(`.${css.static!} .${css.stage!}`)).toHaveLength(4)
+    vi.advanceTimersByTime(499)
+    expect(el.querySelector('[data-dsh-boot-spinner]')).toBeNull()
+    vi.advanceTimersByTime(1)
+    expect(el.querySelector('[data-dsh-boot-spinner]')).not.toBeNull()
+  })
+
+  it('withholds the spinner until boot outlasts the brand moment', () => {
+    const { el } = mount()
+    expect(el.querySelector('[data-dsh-boot-spinner]')).toBeNull()
+    expect(el.textContent).not.toContain('Loading plugins…')
+    vi.advanceTimersByTime(3580)
+    finishBrand(el)
+    vi.advanceTimersByTime(419)
+    expect(el.querySelector('[data-dsh-boot-spinner]')).toBeNull()
+    vi.advanceTimersByTime(1)
+    expect(el.querySelector('[data-dsh-boot-spinner]')).not.toBeNull()
+    expect(el.textContent).toContain('Loading plugins…')
+  })
+
+  it('waits for the rendered brand when startup delays its animation', () => {
+    const { el, page } = mount()
+    vi.advanceTimersByTime(STATUS_MS)
+    expect(el.querySelector('[data-dsh-boot-spinner]')).toBeNull()
+    finishBrand(el)
+    expect(el.querySelector('[data-dsh-boot-spinner]')).not.toBeNull()
+    page.dispose()
+    vi.advanceTimersByTime(219)
+    expect(el.firstElementChild?.classList.contains(css.leaving!)).toBe(false)
+    vi.advanceTimersByTime(1)
+    expect(el.firstElementChild?.classList.contains(css.leaving!)).toBe(true)
+  })
+
+  it('never shows the spinner when the handoff already started', () => {
+    const { el, page } = mount()
+    page.dispose()
+    vi.advanceTimersByTime(STATUS_MS)
+    expect(el.querySelector('[data-dsh-boot-spinner]')).toBeNull()
+    expect(el.textContent).not.toContain('Loading plugins…')
   })
 
   it('keeps loading while entries are active or loading', () => {
     const { el, page } = mount()
     page.setTotal(2)
+    finishBrand(el)
+    vi.advanceTimersByTime(STATUS_MS)
     const spinner = el.querySelector<HTMLElement>('[data-dsh-boot-spinner]')
     expect(spinner?.style.getPropertyValue('--dsh-boot-arc')).toBe('72deg')
     page.setState('a', 'active')
@@ -67,6 +123,8 @@ describe('BootPage', () => {
 
   it('lists failed entries', () => {
     const { el, page } = mount()
+    finishBrand(el)
+    vi.advanceTimersByTime(STATUS_MS)
     page.setState('@deepseek-ai/dsh-client-ui-layout', 'failed')
     page.setState('ok', 'active')
     page.setState('@deepseek-ai/dsh-client-ui-tool', 'failed')
@@ -86,13 +144,27 @@ describe('BootPage', () => {
   })
 
   it('holds the brand moment through disposal, then detaches after the leave fade', () => {
-    vi.useFakeTimers()
     const { el, page } = mount()
     page.dispose()
     expect(el.firstElementChild).not.toBeNull()
-    vi.advanceTimersByTime(2250)
+    vi.advanceTimersByTime(3580)
+    finishBrand(el)
+    vi.advanceTimersByTime(219)
+    expect(el.firstElementChild?.classList.contains(css.leaving!)).toBe(false)
+    vi.advanceTimersByTime(1)
+    expect(el.firstElementChild?.classList.contains(css.leaving!)).toBe(true)
+    vi.advanceTimersByTime(399)
     expect(el.firstElementChild).not.toBeNull()
-    vi.advanceTimersByTime(300)
+    vi.advanceTimersByTime(1)
     expect(el.childNodes).toHaveLength(0)
+  })
+
+  it('releases every pending timer once it detaches', () => {
+    const { el, page } = mount()
+    page.dispose()
+    vi.advanceTimersByTime(3580)
+    finishBrand(el)
+    vi.advanceTimersByTime(220 + 400)
+    expect(vi.getTimerCount()).toBe(0)
   })
 })

@@ -76,6 +76,8 @@ export interface WorkerHostConnection {
 /** Boot-readiness deferred shared with the client entry's pre-boot await. */
 interface BootReadyGlobal {
   __DSH_BOOT_READY__?: PromiseWithResolvers<void>
+  /** Set while a pre-boot stage renders its own screen ahead of the gate. */
+  __DSH_PREBOOT_OWNED__?: boolean
 }
 
 function bootReadyGate(): PromiseWithResolvers<void> {
@@ -84,11 +86,14 @@ function bootReadyGate(): PromiseWithResolvers<void> {
 
 /**
  * Install the page boot barrier before an asynchronous source chooser waits
- * for user input. The later {@link connectWorkerHost} call settles the same
+ * for user input, and claim the screen for that stage: the client entry then
+ * draws its boot page only after the gate settles, keeping the chooser visible
+ * and clickable. The later {@link connectWorkerHost} call settles the same
  * barrier.
  */
 function holdWorkerHostBoot(): void {
   const ready = bootReadyGate()
+  ;(globalThis as BootReadyGlobal).__DSH_PREBOOT_OWNED__ = true
   // A chooser may remain open indefinitely; if a later connection fails before
   // the stock entry subscribes, retain the rejection without browser noise.
   void ready.promise.catch(() => {})

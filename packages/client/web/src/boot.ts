@@ -18,24 +18,37 @@ import './base.css'
 /** Module transport hook replaced by jsdom tests. */
 export type BootSeams = Pick<ClientModuleCreateOptions, 'loadBundle'>
 
+/**
+ * Marker a pre-boot bootstrap sets while it renders its own screen ahead of
+ * the boot gate; the structural read needs no package edge to that bootstrap.
+ */
+interface PreBootStageGlobal {
+  __DSH_PREBOOT_OWNED__?: boolean
+}
+
 /** Browser boot entry consumed by `apps/web`. */
 export class AppWebEntry {
   private readonly container: HTMLElement
   private readonly seams: BootSeams | undefined
-  private readonly page: BootPage
+  /** Kernel-owned page; a pre-boot stage defers it to the boot gate. */
+  private page: BootPage | undefined
   private ctx: Context | undefined
   private modules!: ClientModuleSystem
   private manifest!: BootManifest
 
   /**
-   * Draw the boot page; {@link run} starts the loader.
+   * Bind the mount point; {@link run} draws the boot page once the pre-boot
+   * stage releases the document, then starts the loader.
    * @param container - Application mount point.
    * @param seams - Optional module transport replacement.
    */
   constructor(container: HTMLElement, seams?: BootSeams) {
     this.container = container
     this.seams = seams
-    this.page = new BootPage(container)
+    // A pre-boot stage (the preview source chooser) owns the screen until the
+    // boot gate settles; every other carrier wants the brand up before its
+    // injections land so no empty frame precedes the boot page.
+    if ((globalThis as PreBootStageGlobal).__DSH_PREBOOT_OWNED__ !== true) this.page = new BootPage(container)
   }
 
   /**
@@ -53,6 +66,9 @@ export class AppWebEntry {
       // row, or rejects it into the failure rendering below. An absent global
       // means no bootstrap owns the document and there is nothing to wait for.
       await (globalThis as { __DSH_BOOT_READY__?: { promise: Promise<void> } }).__DSH_BOOT_READY__?.promise
+      // The pre-boot stage releases the page here; draw the brand moment only
+      // over an actual boot.
+      const page = this.page ??= new BootPage(this.container)
       const win = globalThis as DshWindow
       const moduleLoader = win.__ModuleLoader__
       if (moduleLoader === undefined) {
@@ -77,24 +93,27 @@ export class AppWebEntry {
       const prefetching = this.prefetchImmediateTier()
       const ctx = new Context()
       this.ctx = ctx
-      this.page.setTotal(this.manifest.plugins.length)
+      page.setTotal(this.manifest.plugins.length)
       await prefetching
       await bootClient({
         ctx,
         modules: this.modules,
         manifest: this.manifest,
         onEntryState: (name, state) => {
-          if (onFailure === undefined || state !== 'failed') this.page.setState(name, state)
+          if (onFailure === undefined || state !== 'failed') page.setState(name, state)
         },
       })
       await mountClient(ctx, this.container)
       // The application now renders beneath the boot page overlay; start its
       // leave sequence so the brand moment plays out and fades to the app.
-      this.page.dispose()
+      page.dispose()
     } catch (reason) {
       console.error(reason)
+      // A gate rejection arrives before the page draws; the failure report
+      // still needs the kernel-owned surface to render on.
+      const page = this.page ??= new BootPage(this.container)
       if (onFailure !== undefined) onFailure(reason)
-      else this.page.fail(reason instanceof Error ? reason.message : String(reason))
+      else page.fail(reason instanceof Error ? reason.message : String(reason))
     }
   }
 
@@ -103,7 +122,7 @@ export class AppWebEntry {
     const ctx = this.ctx
     this.ctx = undefined
     if (ctx !== undefined) await ctx.fiber.dispose()
-    this.page.dispose()
+    this.page?.dispose()
   }
 
   /** Prefetch stage-one bundles and their dynamic requests before concurrent plugin imports. */
