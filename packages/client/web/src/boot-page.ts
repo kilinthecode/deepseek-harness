@@ -91,6 +91,11 @@ const MAX_SETTLE_MS = 4800
 const LEAVE_MS = 560
 /** Delay after which a boot still running earns the progress spinner and hint; later than the brand sequence. */
 const STATUS_MS = 3400
+/**
+ * Status delay under reduced motion, where the brand is complete from mount:
+ * a slow boot reports progress promptly, and a fast one still shows no spinner.
+ */
+const REDUCED_STATUS_MS = 500
 
 /** Whether the host exposes a reduced-motion preference (jsdom does not). */
 function prefersReducedMotion(): boolean {
@@ -197,7 +202,7 @@ export class BootPage {
     this.updateProgress()
     // A boot that outlasts the brand moment owes the reader progress; one that
     // finishes inside it never shows a spinner at all.
-    this.timers.push(setTimeout(() => { this.revealStatus() }, STATUS_MS))
+    this.timers.push(setTimeout(() => { this.revealStatus() }, this.reduced ? REDUCED_STATUS_MS : STATUS_MS))
   }
 
   /**
@@ -402,18 +407,28 @@ export class BootPage {
   private render(): void {
     const failed = [...this.states].filter(([, state]) => state === 'failed').map(([id]) => id)
     if (this.failure === undefined && failed.length === 0) {
-      const wanted = this.statusShown ? [this.brand, this.status] : [this.brand]
-      // The brand always leads, so the trailing element identifies the content.
-      if (this.card.childElementCount !== wanted.length || this.card.lastElementChild !== wanted.at(-1)) {
-        this.card.replaceChildren(...wanted)
-      }
+      this.showBelowBrand(this.statusShown ? this.status : undefined)
       return
     }
     const report = div(css.failed)
     report.append(div(css.failedTitle, 'Failed to load plugins'))
     for (const id of failed) report.append(div(css.failedItem, id))
     if (this.failure !== undefined) report.append(div(css.failedItem, this.failure))
-    this.card.replaceChildren(this.brand, report)
+    this.showBelowBrand(report)
+  }
+
+  /**
+   * Make `content` the card's only element after the brand. The brand node
+   * never leaves the card: re-attaching it would restart every animation in
+   * it, replaying a finished brand and holding {@link settled} for the replay.
+   * @param content - Status block or failure report, or `undefined` for the brand alone.
+   */
+  private showBelowBrand(content: HTMLDivElement | undefined): void {
+    // The brand always leads, so the trailing element is the current content.
+    const trailing = this.card.lastElementChild
+    if (trailing === content) return
+    if (trailing !== this.brand) trailing?.remove()
+    if (content !== undefined) this.card.append(content)
   }
 
   /** Grow the rotating arc monotonically as loader entries activate. */

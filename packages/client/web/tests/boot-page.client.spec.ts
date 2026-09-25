@@ -21,6 +21,8 @@ function mount() {
 
 /** The status block only joins the card once boot outlasts the brand moment. */
 const STATUS_MS = 3400
+/** Reduced motion shows the brand complete from mount, so the status follows sooner. */
+const REDUCED_STATUS_MS = 500
 /** Hold used where the host reports no animations (jsdom), then the leave fade. */
 const FALLBACK_HOLD_MS = 3340
 const LEAVE_MS = 560
@@ -46,6 +48,28 @@ function stubBrandAnimation(el: HTMLElement) {
   const brand = el.querySelector<HTMLElement>('[role="img"]')!
   brand.getAnimations = () => [animation as Animation]
   return { finish, cancel }
+}
+
+/**
+ * Watch the card's children. A browser restarts every animation in a node
+ * that leaves the document, even when the same node is appended again, so
+ * `removed()` lists each node the card has lost, including re-attached ones.
+ */
+function watchCard(el: HTMLElement) {
+  const brand = el.querySelector<HTMLElement>('[role="img"]')!
+  const card = brand.parentElement!
+  const lost: Node[] = []
+  const collect = (records: MutationRecord[]) => { for (const record of records) lost.push(...record.removedNodes) }
+  const observer = new MutationObserver(collect)
+  observer.observe(card, { childList: true })
+  return {
+    brand,
+    children: () => [...card.children],
+    removed: () => {
+      collect(observer.takeRecords())
+      return lost
+    },
+  }
 }
 
 describe('BootPage', () => {
@@ -173,6 +197,69 @@ describe('BootPage', () => {
     vi.advanceTimersByTime(1)
     expect(el.querySelector('[data-dsh-boot-spinner]')).not.toBeNull()
     expect(el.textContent).toContain('Loading plugins…')
+  })
+
+  it('admits the spinner sooner under reduced motion, where the brand is complete from mount', () => {
+    vi.stubGlobal('matchMedia', () => ({ matches: true }))
+    const { el } = mount()
+    vi.advanceTimersByTime(REDUCED_STATUS_MS - 1)
+    expect(el.querySelector('[data-dsh-boot-spinner]')).toBeNull()
+    vi.advanceTimersByTime(1)
+    expect(el.querySelector('[data-dsh-boot-spinner]')).not.toBeNull()
+    expect(el.textContent).toContain('Loading plugins…')
+  })
+
+  it('adds the status after the brand without re-attaching the brand', () => {
+    const { el } = mount()
+    const card = watchCard(el)
+    vi.advanceTimersByTime(STATUS_MS)
+    const [first, status, ...rest] = card.children()
+    expect(first).toBe(card.brand)
+    expect(status?.querySelector('[data-dsh-boot-spinner]')).not.toBeNull()
+    expect(rest).toHaveLength(0)
+    expect(card.removed()).toHaveLength(0)
+  })
+
+  it('shows a failure report after the brand without re-attaching the brand', () => {
+    const { el, page } = mount()
+    const card = watchCard(el)
+    page.fail('web boot: 1 entry did not activate')
+    const [first, report, ...rest] = card.children()
+    expect(first).toBe(card.brand)
+    expect(report?.textContent).toContain('Failed to load plugins')
+    expect(rest).toHaveLength(0)
+    expect(card.removed()).toHaveLength(0)
+  })
+
+  it('replaces the status, then each earlier report, with the latest report after the brand', () => {
+    const { el, page } = mount()
+    const card = watchCard(el)
+    vi.advanceTimersByTime(STATUS_MS)
+    const status = card.children()[1]
+    page.setState('a', 'failed')
+    const entryReport = card.children()[1]
+    page.fail('web boot: 1 entry did not activate')
+    const [first, report, ...rest] = card.children()
+    expect(first).toBe(card.brand)
+    expect(report?.textContent).toContain('web boot: 1 entry did not activate')
+    expect(rest).toHaveLength(0)
+    const removed = card.removed()
+    expect(removed).toHaveLength(2)
+    expect(removed[0]).toBe(status)
+    expect(removed[1]).toBe(entryReport)
+  })
+
+  it('drops the report once no entry has failed, keeping the brand in place', () => {
+    const { el, page } = mount()
+    const card = watchCard(el)
+    page.setState('a', 'failed')
+    const report = card.children()[1]
+    page.setState('a', 'active')
+    expect(card.children()).toHaveLength(1)
+    expect(card.children()[0]).toBe(card.brand)
+    const removed = card.removed()
+    expect(removed).toHaveLength(1)
+    expect(removed[0]).toBe(report)
   })
 
   it('never shows the spinner when the handoff already started', () => {

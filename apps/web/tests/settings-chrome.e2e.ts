@@ -334,16 +334,24 @@ describe('web e2e: settings modal and General preferences', () => {
       const state = await loading.evaluate((element) => {
         const boot = element.closest('[data-dsh-boot]')
         if (boot === null) throw new Error('loading hint is detached from the boot page')
+        // The hint joins the card after the brand sequence ends, so every mark
+        // stage layer and wordmark letter has finished its reveal; a brand that
+        // was re-attached replays from opacity 0 instead.
+        const opacities = (parts: Iterable<Element>): string[] => [...parts].map(part => getComputedStyle(part).opacity)
         return {
           attr: document.body.hasAttribute('data-ds-dark-theme'),
           background: getComputedStyle(boot).backgroundColor,
           colorScheme: getComputedStyle(document.documentElement).colorScheme,
+          stages: opacities(boot.querySelectorAll('svg')),
+          letters: opacities([...boot.querySelectorAll('span')].filter(part => part.textContent !== '')),
         }
       })
       expect(state).toEqual({
         attr: true,
         background: 'rgb(21, 21, 23)',
         colorScheme: 'dark',
+        stages: Array<string>(3).fill('1'),
+        letters: Array<string>(6).fill('1'),
       })
     } finally {
       releaseBundles()
