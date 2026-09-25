@@ -20,12 +20,18 @@ function mount() {
 }
 
 /** The status block only joins the card once boot outlasts the brand moment. */
-const STATUS_MS = 2800
+const STATUS_MS = 3400
 /** Hold used where the host reports no animations (jsdom), then the leave fade. */
-const FALLBACK_HOLD_MS = 2600
-const LEAVE_MS = 480
-const SETTLE_REST_MS = 260
-const MAX_SETTLE_MS = 4000
+const FALLBACK_HOLD_MS = 3340
+const LEAVE_MS = 560
+const SETTLE_REST_MS = 360
+const MAX_SETTLE_MS = 4800
+
+/** Read an element's inline animation window, in ms from the first animation frame. */
+function scheduled(el: HTMLElement | SVGElement): { start: number; end: number } {
+  const start = Number.parseFloat(el.style.animationDelay)
+  return { start, end: start + Number.parseFloat(el.style.animationDuration) }
+}
 
 /** Report one controllable brand animation, as a host with Web Animations would. */
 function stubBrandAnimation(el: HTMLElement) {
@@ -52,16 +58,21 @@ describe('BootPage', () => {
     expect(el.querySelector('[role="img"]')?.getAttribute('aria-label')).toBe('Portal Harness')
   })
 
-  it('opens the mark as four stacked stage layers from the centre outward', () => {
+  it('opens the mark as three stacked stage layers from the centre outward', () => {
     const { el } = mount()
     const mark = el.querySelector(`.${css.mark!}`)!
-    const stages = [...mark.children]
+    const stages = [...mark.children] as SVGElement[]
     // Each stage is an outer <svg>, the element Chromium can composite.
-    expect(stages.map(stage => stage.tagName)).toEqual(['svg', 'svg', 'svg', 'svg'])
+    expect(stages.map(stage => stage.tagName)).toEqual(['svg', 'svg', 'svg'])
     expect(stages.every(stage => stage.classList.contains(css.stage!))).toBe(true)
-    expect(stages.map(stage => stage.getAttribute('viewBox'))).toEqual(Array(4).fill('160 160 704 704'))
-    expect(stages.map(stage => (stage as SVGElement).style.animationDelay))
-      .toEqual(['240ms', '350ms', '460ms', '570ms'])
+    expect(stages.map(stage => stage.getAttribute('viewBox'))).toEqual(Array(3).fill('160 160 704 704'))
+    // Spokes, the inner cell, then the six lifts with the outer cell they join.
+    const sixLines = Array<string>(6).fill('line')
+    expect(stages.map(stage => [...stage.children].map(part => part.tagName)))
+      .toEqual([sixLines, ['polygon'], [...sixLines, 'polygon']])
+    expect(stages.map(scheduled)).toEqual([
+      { start: 240, end: 960 }, { start: 420, end: 1140 }, { start: 600, end: 1320 },
+    ])
     // Stage translucency rides on stroke-opacity, which the reveal keyframe's
     // own opacity would otherwise overwrite.
     expect(stages.some(stage => stage.getAttribute('opacity') !== null)).toBe(false)
@@ -73,9 +84,11 @@ describe('BootPage', () => {
     const letters = [...el.querySelectorAll<HTMLElement>(`.${css.letter!}`)]
     expect(letters.map(letter => letter.textContent).join('')).toBe('PORTAL')
     expect(letters.map(letter => letter.style.animationDelay))
-      .toEqual(['1060ms', '1145ms', '1230ms', '1315ms', '1400ms', '1485ms'])
-    expect(el.querySelector<HTMLElement>(`.${css.caret!}`)?.style.animationDelay).toBe('980ms')
-    expect(el.querySelector<HTMLElement>(`.${css.plate!}`)?.style.animationDelay).toBe('1900ms')
+      .toEqual(['1460ms', '1580ms', '1700ms', '1820ms', '1940ms', '2060ms'])
+    expect(letters.every(letter => letter.style.animationDuration === '420ms')).toBe(true)
+    // The caret lasts until the last letter is in place.
+    expect(scheduled(el.querySelector<HTMLElement>(`.${css.caret!}`)!)).toEqual({ start: 1160, end: 2480 })
+    expect(scheduled(el.querySelector<HTMLElement>(`.${css.plate!}`)!)).toEqual({ start: 2420, end: 2980 })
     // Only the status reveal waits on a timer; no step of the brand does.
     expect(vi.getTimerCount()).toBe(1)
   })
@@ -106,11 +119,37 @@ describe('BootPage', () => {
       'translateX(-68px)', 'translateX(-50px)', 'translateX(-40px)', 'translateX(-30px)',
       'translateX(-20px)', 'translateX(-10px)', 'translateX(0px)',
     ])
-    // Each hop starts as its letter appears: P at 1060ms, 80ms after the caret.
-    expect(options).toEqual({ delay: 980, duration: 565, fill: 'both' })
-    expect(frames[1]?.offset).toBeCloseTo(80 / 565)
-    expect(frames[2]?.offset).toBeCloseTo(140 / 565)
+    // Each hop starts as its letter appears: P at 1460ms, 300ms after the caret.
+    expect(options).toEqual({ delay: 1160, duration: 960, fill: 'both' })
+    expect(frames[1]?.offset).toBeCloseTo(300 / 960)
+    expect(frames[2]?.offset).toBeCloseTo(360 / 960)
     expect(frames.at(-1)?.offset).toBeCloseTo(1)
+  })
+
+  it('lands each brand phase before the next begins, then holds the complete lockup', async () => {
+    const { el, page } = mount()
+    const stages = [...el.querySelectorAll<SVGElement>(`.${css.stage!}`)].map(scheduled)
+    const letters = [...el.querySelectorAll<HTMLElement>(`.${css.letter!}`)].map(scheduled)
+    const caret = scheduled(el.querySelector<HTMLElement>(`.${css.caret!}`)!)
+    const plate = scheduled(el.querySelector<HTMLElement>(`.${css.plate!}`)!)
+    const first = letters[0]!
+    const last = letters.at(-1)!
+    // Typing starts only after the last mark stage has finished its reveal.
+    expect(first.start).toBeGreaterThanOrEqual(Math.max(...stages.map(stage => stage.end)))
+    // The nameplate follows the last letter no sooner than another letter
+    // would, and it settles last.
+    expect(plate.start).toBeGreaterThanOrEqual(last.start + letters[1]!.start - first.start)
+    const lockup = Math.max(...[...stages, ...letters, caret, plate].map(step => step.end))
+    expect(plate.end).toBe(lockup)
+    // The progress status never interrupts the sequence.
+    await vi.advanceTimersByTimeAsync(lockup)
+    expect(el.querySelector('[data-dsh-boot-spinner]')).toBeNull()
+    // The complete lockup holds for the rest before the page starts to leave.
+    page.leave()
+    await vi.advanceTimersByTimeAsync(SETTLE_REST_MS - 1)
+    expect(el.firstElementChild?.classList.contains(css.leaving!)).toBe(false)
+    await vi.advanceTimersByTimeAsync(1)
+    expect(el.firstElementChild?.classList.contains(css.leaving!)).toBe(true)
   })
 
   it('shows the finished brand and detaches at once under reduced motion', () => {

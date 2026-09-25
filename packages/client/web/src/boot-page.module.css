@@ -18,7 +18,7 @@
   position: fixed;
   inset: var(--dsh-windows-titlebar-height, 0) 0 0;
   /* Above every application layer (menus, toasts, and tooltips use 1100) for
-     the page's lifetime (~3s at boot), and below the WebWorker preview's
+     the page's lifetime (~4s at boot), and below the WebWorker preview's
      pre-boot source chooser (1200), which must stay usable over this page. */
   z-index: 1150;
   display: grid;
@@ -55,7 +55,7 @@
   gap: 20px;
 }
 
-/* The four stage layers stack over one 96px box. */
+/* The three stage layers stack over one 96px box. */
 .mark {
   position: relative;
   width: 96px;
@@ -67,7 +67,8 @@
    opacity and transform animate, and each stage is an outer <svg>, so the
    compositor runs the reveal while plugins load on the main thread. Stage
    translucency rides on `stroke-opacity`, which this keyframe leaves alone.
-   Per-stage delay is set inline. */
+   The stages, letters, caret, and plate take their delay and duration
+   inline from the brand schedule in boot-page.ts. */
 .stage {
   position: absolute;
   inset: 0;
@@ -75,7 +76,7 @@
   height: 100%;
   overflow: visible;
   opacity: 0;
-  animation: dsh-boot-stage-in 720ms var(--dsh-boot-ease-out) both;
+  animation: dsh-boot-stage-in var(--dsh-boot-ease-out) both;
 }
 
 .row {
@@ -111,17 +112,18 @@
   font-weight: 700;
   letter-spacing: 0.16em;
   opacity: 0;
-  animation: dsh-boot-plate-in 440ms var(--dsh-boot-ease-out) both;
+  animation: dsh-boot-plate-in var(--dsh-boot-ease-out) both;
 }
 
 /* Letters exist from mount, so the row never reflows as they arrive; each
    one rises into place on opacity and transform alone. */
 .letter {
   opacity: 0;
-  animation: dsh-boot-letter-in 420ms var(--dsh-boot-ease-out) both;
+  animation: dsh-boot-letter-in var(--dsh-boot-ease-out) both;
 }
 
-/* The caret holds steady while the word types, then fades out as the
+/* The caret fades in before the first letter, holds steady while the word
+   types, and fades out as the last letter settles, just before the
    nameplate lands; one continuous opacity animation, no stepped blink. */
 .caret {
   width: 2px;
@@ -129,7 +131,7 @@
   border-radius: 1px;
   background-color: var(--dsw-alias-label-secondary, var(--dsh-boot-label-secondary));
   opacity: 0;
-  animation: dsh-boot-caret 1100ms ease-in-out both;
+  animation: dsh-boot-caret ease-in-out both;
 }
 
 /* Admitted by the page only once boot outlasts the brand moment. It hangs
@@ -168,16 +170,20 @@
 
 .leaving {
   opacity: 0;
-  transition: opacity 480ms cubic-bezier(0.4, 0, 0.2, 1);
+  transition: opacity 560ms cubic-bezier(0.4, 0, 0.2, 1);
   /* The application beneath becomes interactive as the fade begins. */
   pointer-events: none;
 }
 
-/* The brand drifts gently forward as it dissolves, so the handoff reads as
-   the page opening onto the ready application rather than a cut. */
+/* The brand dissolves ahead of the page while drifting gently forward on the
+   same easing, so the handoff reads as the page opening onto the ready
+   application rather than a cut, and the brand never shows over it. */
 .leaving .card {
-  transform: scale(1.04);
-  transition: transform 480ms var(--dsh-boot-ease-out);
+  opacity: 0;
+  transform: scale(1.03);
+  transition:
+    opacity 320ms cubic-bezier(0.4, 0, 0.2, 1),
+    transform 560ms cubic-bezier(0.4, 0, 0.2, 1);
 }
 
 @keyframes dsh-boot-stage-in {
@@ -202,8 +208,8 @@
 
 @keyframes dsh-boot-caret {
   0% { opacity: 0; }
-  12% { opacity: 1; }
-  78% { opacity: 1; }
+  11% { opacity: 1; }
+  86% { opacity: 1; }
   100% { opacity: 0; }
 }
 

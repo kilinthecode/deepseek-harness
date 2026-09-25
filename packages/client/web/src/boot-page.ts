@@ -4,14 +4,16 @@
  * @module @deepseek-ai/dsh-client-web/src/boot-page
  */
 import type { LoaderEntryState } from './loader-status.ts'
-import css from './boot-page.module.css'
+import stylesheet from './boot-page.module.css'
 
 const SVG_NS = 'http://www.w3.org/2000/svg' as const
 
-/** Look up one generated class name; every class this module reads is defined in the stylesheet beside it. */
-function klass(name: string): string {
-  return css[name] ?? ''
-}
+type BootClass =
+  | 'boot' | 'static' | 'leaving' | 'card' | 'brand' | 'mark' | 'stage' | 'row' | 'word'
+  | 'letter' | 'caret' | 'plate' | 'status' | 'spinner' | 'hint' | 'failed' | 'failedTitle' | 'failedItem'
+
+/** Generated class names; the stylesheet beside this module defines every class it reads. */
+const css = stylesheet as Readonly<Record<BootClass, string>>
 
 /**
  * Tesseract geometry in the PortalMark 160–864 frame, mirrored here because
@@ -49,35 +51,45 @@ const PLATE = 'HARNESS'
 
 /**
  * Brand schedule in ms from the first animation frame. Every step is a CSS
- * animation with an inline delay, so the compositor runs the whole sequence
- * and plugin loading on the main thread cannot delay or bunch its steps.
- * The lead-in keeps the first frames still while the document finishes its
- * first paint; the four mark stages then open outward from the centre
- * (spokes, inner cell, lifts, outer cell).
+ * animation whose delay and duration are set inline from these values, so
+ * the compositor runs the whole sequence and plugin loading on the main
+ * thread cannot delay or bunch its steps. Each phase starts once the one
+ * before it is mostly in place. The lead-in keeps the first frames still
+ * while the document finishes its first paint; the three mark stages then
+ * open outward from the centre (spokes, inner cell, outer cell).
  */
-const STAGE_DELAY_MS = [240, 350, 460, 570] as const
-/** Caret visible while the word types, fading out as the nameplate lands. */
-const CARET_DELAY_MS = 980
-const LETTER_DELAY_MS = 1060
-const LETTER_STEP_MS = 85
+const STAGE_DELAY_MS = [240, 420, 600] as const
+const STAGE_MS = 720
+/** The caret appears once the mark has visibly settled and waits before the first letter. */
+const CARET_DELAY_MS = 1160
+/** Typing starts once the last mark stage has finished its reveal. */
+const LETTER_DELAY_MS = 1460
+/** One letter rises at a time: each is about 85% in place when the next starts. */
+const LETTER_STEP_MS = 120
+const LETTER_MS = 420
 /** Time the caret takes to hop past a letter as that letter appears. */
 const CARET_HOP_MS = 60
+/**
+ * The caret lasts until the last letter is in place; its keyframes fade it
+ * in before the first letter and out as the last one settles, just before
+ * the nameplate lands.
+ */
+const CARET_MS = LETTER_DELAY_MS + (WORD.length - 1) * LETTER_STEP_MS + LETTER_MS - CARET_DELAY_MS
 /** Easing shared with every arrival in the stylesheet (`--dsh-boot-ease-out`). */
 const EASE_OUT = 'cubic-bezier(0.16, 1, 0.3, 1)'
-const PLATE_DELAY_MS = 1900
-/**
- * Hold used where the host cannot report animation progress: the plate
- * settles at ~2340ms, followed by a short rest before the handoff.
- */
-const FALLBACK_HOLD_MS = 2600
+/** The nameplate lands last; its end (~2980ms) completes the brand sequence. */
+const PLATE_DELAY_MS = 2420
+const PLATE_MS = 560
 /** Rest between the settled brand and the leave fade. */
-const SETTLE_REST_MS = 260
+const SETTLE_REST_MS = 360
+/** Hold from mount used where the host cannot report animation progress. */
+const FALLBACK_HOLD_MS = PLATE_DELAY_MS + PLATE_MS + SETTLE_REST_MS
 /** Longest wait for the brand animations to finish once the application is ready. */
-const MAX_SETTLE_MS = 4000
-/** Leave fade, matching the dispose transition in the stylesheet. */
-const LEAVE_MS = 480
-/** Delay after which a boot still running earns the progress spinner and hint. */
-const STATUS_MS = 2800
+const MAX_SETTLE_MS = 4800
+/** Leave fade, matching the `.leaving` transitions in the stylesheet. */
+const LEAVE_MS = 560
+/** Delay after which a boot still running earns the progress spinner and hint; later than the brand sequence. */
+const STATUS_MS = 3400
 
 /** Whether the host exposes a reduced-motion preference (jsdom does not). */
 function prefersReducedMotion(): boolean {
@@ -85,9 +97,9 @@ function prefersReducedMotion(): boolean {
 }
 
 /** Create a div with one module class and optional text. */
-function div(className: string | undefined, text?: string): HTMLDivElement {
+function div(className: string, text?: string): HTMLDivElement {
   const el = document.createElement('div')
-  el.className = className ?? ''
+  el.className = className
   if (text !== undefined) el.textContent = text
   return el
 }
@@ -97,6 +109,17 @@ function svgElement<K extends keyof SVGElementTagNameMap>(tag: K, attributes: Re
   const el = document.createElementNS(SVG_NS, tag)
   for (const [name, value] of Object.entries(attributes)) el.setAttribute(name, String(value))
   return el
+}
+
+/**
+ * Place one element's stylesheet animation on the brand schedule.
+ * @param el - Element whose class names the animation.
+ * @param delay - Start in ms from the first animation frame.
+ * @param duration - Animation length in ms.
+ */
+function schedule(el: HTMLElement | SVGElement, delay: number, duration: number): void {
+  el.style.animationDelay = `${String(delay)}ms`
+  el.style.animationDuration = `${String(duration)}ms`
 }
 
 /**
@@ -116,8 +139,8 @@ function stage(delay: number, parts: readonly SVGElement[]): SVGSVGElement {
     'stroke-linecap': 'round',
     'stroke-linejoin': 'round',
   })
-  layer.setAttribute('class', klass('stage'))
-  layer.style.animationDelay = `${String(delay)}ms`
+  layer.setAttribute('class', css.stage)
+  schedule(layer, delay, STAGE_MS)
   layer.append(...parts)
   return layer
 }
@@ -156,7 +179,7 @@ export class BootPage {
   constructor(container: HTMLElement) {
     this.root = div(css.boot)
     this.root.dataset.dshBoot = ''
-    if (this.reduced) this.root.classList.add(klass('static'))
+    if (this.reduced) this.root.classList.add(css.static)
     this.card = div(css.card)
     const { brand, letters, caret } = this.buildBrand()
     this.brand = brand
@@ -218,7 +241,7 @@ export class BootPage {
       return
     }
     void this.settled().then(() => {
-      if (!this.detached) this.root.classList.add(klass('leaving'))
+      if (!this.detached) this.root.classList.add(css.leaving)
       return this.wait(LEAVE_MS)
     }).then(() => { this.detach() })
   }
@@ -278,17 +301,17 @@ export class BootPage {
     const word = div(css.word)
     const letters = Array.from(WORD, (letter, i) => {
       const span = document.createElement('span')
-      span.className = klass('letter')
+      span.className = css.letter
       span.textContent = letter
-      span.style.animationDelay = `${String(LETTER_DELAY_MS + i * LETTER_STEP_MS)}ms`
+      schedule(span, LETTER_DELAY_MS + i * LETTER_STEP_MS, LETTER_MS)
       return span
     })
     const caret = document.createElement('span')
-    caret.className = klass('caret')
-    caret.style.animationDelay = `${String(CARET_DELAY_MS)}ms`
+    caret.className = css.caret
+    schedule(caret, CARET_DELAY_MS, CARET_MS)
     word.append(...letters, caret)
     const plate = div(css.plate, PLATE)
-    plate.style.animationDelay = `${String(PLATE_DELAY_MS)}ms`
+    schedule(plate, PLATE_DELAY_MS, PLATE_MS)
     row.append(word, plate)
     brand.append(row)
     return { brand, letters, caret }
@@ -328,7 +351,7 @@ export class BootPage {
     caret.animate(keyframes, { delay: CARET_DELAY_MS, duration, fill: 'both' })
   }
 
-  /** Build the mark as four stacked stage layers revealed from the centre outward. */
+  /** Build the mark as three stacked stage layers revealed from the centre outward. */
   private buildMark(): HTMLDivElement {
     const mark = div(css.mark)
     mark.setAttribute('aria-hidden', 'true')
@@ -345,6 +368,8 @@ export class BootPage {
       'stroke-opacity': 0.9,
       'vector-effect': 'non-scaling-stroke',
     })
+    // Each lift lies along a spoke and adds no visible shape of its own, so
+    // the lifts open with the outer cell whose vertices they join.
     const lifts = LIFT_EDGES.map(([x1, y1, x2, y2]) => svgElement('line', {
       x1, y1, x2, y2,
       'stroke-width': 1.5,
@@ -359,8 +384,7 @@ export class BootPage {
     mark.append(
       stage(STAGE_DELAY_MS[0], spokes),
       stage(STAGE_DELAY_MS[1], [inner]),
-      stage(STAGE_DELAY_MS[2], lifts),
-      stage(STAGE_DELAY_MS[3], [outer]),
+      stage(STAGE_DELAY_MS[2], [...lifts, outer]),
     )
     return mark
   }
