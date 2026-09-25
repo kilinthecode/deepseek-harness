@@ -1,7 +1,7 @@
 // Boots the store through the real Loader from a cordis.yml so the schemastery
 // Config is exercised as configuration: a valid composition opens the domain
 // under the configured storage root, and a missing or invalid cap fails load.
-import { mkdtemp, readdir, rm, writeFile } from 'node:fs/promises'
+import { mkdir, mkdtemp, readdir, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { pathToFileURL } from 'node:url'
@@ -70,6 +70,16 @@ describe('dsh-memory real Loader composition through cordis.yml', () => {
       .rejects.toMatchObject({ code: 'over-cap' })
     await expect(ctx.memory.write({ name: 'only', type: 'user', scope: 'global', description: 'd', content: 'x'.repeat(17) }))
       .rejects.toMatchObject({ code: 'invalid-content' })
+  }, 30_000)
+
+  it('resolves omitted projectRootMarkers to .git through the schemastery default', async () => {
+    const ctx = await boot(['    maxRecords: 2', '    maxRecordBytes: 64'])
+    const projectRoot = join(root!, 'repo')
+    await mkdir(join(projectRoot, '.git'), { recursive: true })
+    const result = await ctx.memory.write({
+      name: 'build', type: 'project', scope: 'project', description: 'How to build', content: 'pnpm', cwd: projectRoot,
+    })
+    expect(result.record.projectRoot).toBe(projectRoot)
   }, 30_000)
 
   it.each([

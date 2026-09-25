@@ -9,8 +9,8 @@
   en: bbf00b4347d57138
   zh: dc66c1ce3d7fb64d
 /deepseek-ai-dsh-memory/summary:
-  en: 6ba390dfc75cefe1
-  zh: c2d38f9fc8645f47
+  en: bb9aaa6a295c6fc3
+  zh: 43aafd361a0b5b6e
 /deepseek-ai-dsh-memory/table-of-contents:
   en: d152484eb41ac6b4
   zh: 09388d293f9be9cb
@@ -21,26 +21,29 @@
   en: 3aa2fcc57710d321
   zh: 1e1a97d7e832e504
 /deepseek-ai-dsh-memory/use-this-package/minimal-configuration:
-  en: 13924eca85d105c7
-  zh: a7718714e7e91848
+  en: ccff8041c00fdd3f
+  zh: 343e94e000d0d904
 /deepseek-ai-dsh-memory/use-this-package/where-memories-live:
-  en: 38411b6d7829f4fa
-  zh: 9edb87bf541ebe77
+  en: 629a5787503a96aa
+  zh: 66217c49b4cd6bfd
 /deepseek-ai-dsh-memory/use-this-package/scopes-and-the-project-root:
   en: c51d13a9406a8695
   zh: 8cf8eda530dc2fb2
 /deepseek-ai-dsh-memory/use-this-package/what-each-operation-does:
-  en: d334f546e8ede27c
-  zh: 3dc73673ca6b0123
+  en: d9b8ce5fa51964cb
+  zh: c3de76f54e1e6d0b
+/deepseek-ai-dsh-memory/use-this-package/write-time-scan:
+  en: fa302dd707436afa
+  zh: e00d5a7ec04644be
 /deepseek-ai-dsh-memory/understand-the-implementation:
   en: 751d2a78ece20258
   zh: 2f375bd6611eb58b
 /deepseek-ai-dsh-memory/understand-the-implementation/design-philosophy:
-  en: bfa637eb862e76c7
-  zh: 8eaad9095336b6f8
+  en: f1603f8bf10a6411
+  zh: 67329228f4dff320
 /deepseek-ai-dsh-memory/understand-the-implementation/source-map:
-  en: 948f3b7e95e70b14
-  zh: 1febd4a00bcf0f06
+  en: d01ae4d7e3edfacf
+  zh: 7b5adb5e91f00952
 /deepseek-ai-dsh-memory/understand-the-implementation/lifecycle:
   en: 7863bfe05a0980c7
   zh: 6c18a9e1dff44614
@@ -60,8 +63,8 @@
   en: 40294c1c31b74824
   zh: 63e2ea2570cc4605
 /deepseek-ai-dsh-memory/known-limitations-and-deferred-work:
-  en: 9902743cdbf792eb
-  zh: 399e65996532273a
+  en: 397fbd0392230bf8
+  zh: 5cc3bae45f8f5032
 /deepseek-ai-dsh-memory/known-limitations-and-deferred-work/dev-note:
   en: ac1d08360a93382b
   zh: 5202abd09f7b6e99

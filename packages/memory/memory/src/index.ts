@@ -19,6 +19,8 @@ import {
 } from './domain.ts'
 import type { MemoryDomainSpec, MemoryName, MemoryRecord, MemoryScope, MemoryType, ProjectMemoryKey } from './domain.ts'
 import { findProjectRoot, projectMemoryKey } from './project.ts'
+import { scanMemoryText } from './scan.ts'
+import type { MemoryScanFinding } from './scan.ts'
 
 export {
   MEMORY_DESCRIPTION_MAX_CHARS,
@@ -32,6 +34,8 @@ export {
 } from './domain.ts'
 export type { MemoryDomainSpec, MemoryName, MemoryRecord, MemoryScope, MemoryType, ProjectMemoryKey } from './domain.ts'
 export { findProjectRoot, projectMemoryKey, projectSlug } from './project.ts'
+export { MEMORY_THREAT_PATTERNS, scanMemoryText } from './scan.ts'
+export type { MemoryScanFinding } from './scan.ts'
 
 declare module '@deepseek-ai/cordis' {
   interface Context {
@@ -59,7 +63,8 @@ export interface Config {
   /**
    * Directory entries that identify a project root while walking upward from
    * the session working directory. Mirrors the `agent-instructions` default so
-   * both plugins agree on what the project is.
+   * both plugins agree on what the project is. Omitted in a composition, the
+   * schemastery field default is `['.git']`; an explicit empty list stays empty.
    */
   projectRootMarkers?: string[]
 }
@@ -71,12 +76,18 @@ export const Config: z<Config> = z.object({
   projectRootMarkers: z.array(z.string()).default([...DEFAULT_PROJECT_ROOT_MARKERS]),
 })
 
-/** Why a store operation was rejected. */
+/**
+ * Why a store operation was rejected.
+ * `blocked-content` is a write-time scan finding; `project-key-collision`
+ * means this project's key already holds another project's record.
+ */
 export type MemoryErrorCode =
   | 'invalid-name'
   | 'invalid-description'
   | 'invalid-content'
   | 'over-cap'
+  | 'blocked-content'
+  | 'project-key-collision'
   | 'project-root-unavailable'
   | 'not-found'
 
@@ -98,7 +109,7 @@ export interface MemoryWriteRequest {
   readonly name: string
   readonly type: MemoryType
   readonly scope: MemoryScope
-  /** One-line summary shown in the catalog; trimmed, at most {@link MEMORY_DESCRIPTION_MAX_CHARS}. */
+  /** One-line summary shown in the catalog; trimmed, 1 to 256 characters, no U+000A, U+000D, U+2028, or U+2029. */
   readonly description: string
   /** The memory body; trimmed, at most `maxRecordBytes` UTF-8 bytes. */
   readonly content: string
@@ -181,7 +192,7 @@ export class MemoryStore extends Service {
     super(ctx, 'memory')
     this.maxRecords = config.maxRecords
     this.maxRecordBytes = config.maxRecordBytes
-    this.markers = config.projectRootMarkers ?? DEFAULT_PROJECT_ROOT_MARKERS
+    this.markers = config.projectRootMarkers ?? []
   }
 
   protected async [Service.init](): Promise<void> {
@@ -258,6 +269,15 @@ export class MemoryStore extends Service {
   }
 
   /**
+   * Scan one memory description or body using the store's fixed threat checks.
+   * @param text - raw description or content.
+   * @returns the first finding, or `undefined` when the text is allowed.
+   */
+  scan(text: string): MemoryScanFinding | undefined {
+    return scanMemoryText(text)
+  }
+
+  /**
    * Insert or replace one record durably. Writes and forgets of one store run
    * one at a time in call order, from the project-root lookup to the durable
    * put, so overlapping calls never exceed the cap and a same-name overlap
@@ -265,16 +285,22 @@ export class MemoryStore extends Service {
    * counts the records this process has loaded or written.
    * @param request - the memory to store.
    * @returns whether the record was created or updated, and the stored record.
-   * @throws {@link MemoryError} for an invalid name, description, or content, a
-   * project scope without a project root, or a cap reached in the target scope.
+   * @throws {@link MemoryError} for an invalid name, description, or content,
+   * blocked description or content, a project scope without a project root, a
+   * project key occupied by another project's record, or a cap reached in the
+   * target scope.
    */
   async write(request: MemoryWriteRequest): Promise<MemoryWriteResult> {
     const name = validateName(request.name)
     const description = request.description.trim()
-    if (description.length === 0 || description.length > MEMORY_DESCRIPTION_MAX_CHARS) {
+    if (
+      description.length === 0
+      || description.length > MEMORY_DESCRIPTION_MAX_CHARS
+      || /[\n\r\u2028\u2029]/.test(description)
+    ) {
       throw new MemoryError(
         'invalid-description',
-        `description must be 1 to ${MEMORY_DESCRIPTION_MAX_CHARS} characters after trimming`,
+        'description must be a single line of 1 to 256 characters after trimming',
       )
     }
     const content = request.content.trim()
@@ -283,6 +309,8 @@ export class MemoryStore extends Service {
     if (bytes > this.maxRecordBytes) {
       throw new MemoryError('invalid-content', `content is ${bytes} UTF-8 bytes; the cap is ${this.maxRecordBytes}`)
     }
+    const blocked = this.scan(description) ?? this.scan(content)
+    if (blocked !== undefined) throw new MemoryError('blocked-content', blocked.message)
     switch (request.scope) {
       case 'global': {
         const table = this.globalTable()
@@ -304,7 +332,8 @@ export class MemoryStore extends Service {
           const root = await this.requireProjectRoot(request.cwd)
           const key = projectMemoryKey(root, name)
           const existing = table.get(key)
-          this.assertCapacity(existing, this.projectRecords(root).length, `project ${root}`)
+          this.assertProjectKeyOwner(existing, root, name, 'write')
+          this.assertCapacity(existing, this.projectRecords(root).length, 'project')
           const now = new Date().toISOString()
           const record: MemoryRecord = {
             name, type: request.type, scope: 'project', description, content, projectRoot: root,
@@ -317,6 +346,22 @@ export class MemoryStore extends Service {
       /* v8 ignore next 2 -- MemoryScope is closed; the tool schema enum rejects other scopes */
       default:
         return assertNever(request.scope)
+    }
+  }
+
+  private assertProjectKeyOwner(
+    existing: MemoryRecord | undefined,
+    root: string,
+    name: MemoryName,
+    action: 'write' | 'forget',
+  ): void {
+    if (existing !== undefined && existing.projectRoot !== root) {
+      throw new MemoryError(
+        'project-key-collision',
+        action === 'write'
+          ? `cannot write project memory "${name}": another project's record already occupies this key`
+          : `cannot forget project memory "${name}": another project's record occupies this key`,
+      )
     }
   }
 
@@ -353,7 +398,8 @@ export class MemoryStore extends Service {
    * Delete one record durably, in the same one-at-a-time call order as writes.
    * @param request - name, scope, and working directory.
    * @throws {@link MemoryError} when the name is invalid, the project root is
-   * unavailable, or no such record exists in the scope.
+   * unavailable, no such record exists in the scope, or a project key is
+   * occupied by another project's record.
    */
   async forget(request: MemoryForgetRequest): Promise<void> {
     const name = validateName(request.name)
@@ -368,7 +414,9 @@ export class MemoryStore extends Service {
         const table = this.projectTable()
         return this.serialized(async () => {
           const root = await this.requireProjectRoot(request.cwd)
-          if (!await table.delete(projectMemoryKey(root, name))) throw notFound(name, 'project')
+          const key = projectMemoryKey(root, name)
+          this.assertProjectKeyOwner(table.get(key), root, name, 'forget')
+          if (!await table.delete(key)) throw notFound(name, 'project')
         })
       }
       /* v8 ignore next 2 -- MemoryScope is closed; the tool schema enum rejects other scopes */

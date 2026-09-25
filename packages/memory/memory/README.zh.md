@@ -9,7 +9,7 @@ kind: "package-reference"
 
 ## 概述
 
-`dsh-memory` 让 agent（智能体）的记忆跨会话保留。每条记忆是一条小记录，包含名称、类型（`user`、`feedback`、`project` 或 `reference`）、作用域（`global` 或 `project`）、一行描述及其内容，并在 harness home 下保存为一个可读的 JSON 文件。存储会校验每次写入，限制每个作用域可持有的记忆数量，并根据会话的工作目录解析当前项目，使项目记忆与其仓库保持在一起。凡是希望 agent 记住事情的地方都可以挂载它；`dsh-tool-memory` 为模型提供工具与目录。
+`dsh-memory` 让 agent（智能体）的记忆跨会话保留。每条记忆是一条小记录，包含名称、类型（`user`、`feedback`、`project` 或 `reference`）、作用域（`global` 或 `project`）、一行描述及其内容，并在 harness home 下保存为一个可读的 JSON 文件。存储会校验每次写入，扫描描述与内容中的注入与密钥，限制每个作用域可持有的记忆数量，并根据会话的工作目录解析当前项目。凡是希望 agent 记住事情的地方都可以挂载它；`dsh-tool-memory` 为模型提供工具与目录。
 
 ## 目录
 
@@ -53,13 +53,13 @@ kind: "package-reference"
 |---|---|---|
 | `maxRecords` | 必填 | 全局作用域内、以及每个项目内各自的最多记录数；超过上限的写入会失败 |
 | `maxRecordBytes` | 必填 | 单条记录内容的 UTF-8 字节上限 |
-| `projectRootMarkers` | `['.git']` | 从会话工作目录向上查找时用于识别项目根目录的目录条目 |
+| `projectRootMarkers` | `['.git']` | 从会话工作目录向上查找时用于识别项目根目录的目录条目；显式空列表保持为空 |
 
 生成的[配置目录](../../../docs/config-catalog.zh.md#deepseek-aidsh-memory)是受支持字段的完整来源。可通过 `dsh-storage-domain` 的 `routes` 将 `memory` domain 路由到其他后端（例如 `memory: sqlite`）；存储本身没有后端字段。
 
 ### 记忆存放在哪里
 
-使用 JSON 后端时，每条记忆是一个文件：全局记录位于 `<root>/memory/global/<name>.json`，项目记录位于 `<root>/memory/project/<slug>__<name>.json`，其中 `<slug>` 是项目目录经过清理的基础名加上根路径哈希的八个十六进制字符。每个文件保存 `{ "version": 1, "record": { … } }`，可以放心手工阅读或编辑。存储打开时，无法解析或违反字段上限的文件会被移到一旁改名为 `<name>.json.bak.<timestamp>`，其余记忆仍然可用。上限覆盖每个字段：名称格式、256 个字符的描述、不超过当前 `maxRecordBytes` 的内容（因此调低上限会把更大的记录移到一旁）、至多 32,767 个字符的项目根目录，以及 ISO-8601 UTC 时间戳。
+使用 JSON 后端时，每条记忆是一个文件：全局记录位于 `<root>/memory/global/<name>.json`，项目记录位于 `<root>/memory/project/<slug>__<name>.json`，其中 `<slug>` 是项目目录经过清理的基础名加上根路径哈希的八个十六进制字符。每个文件保存 `{ "version": 1, "record": { … } }`，可以放心手工阅读或编辑。存储打开时，无法解析或违反字段上限的文件会被移到一旁改名为 `<name>.json.bak.<timestamp>`，其余记忆仍然可用。上限覆盖每个字段：名称格式、256 个字符的描述、不超过当前 `maxRecordBytes` 的内容（因此调低上限会把更大的记录移到一旁）、至多 32,767 个字符的项目根目录，以及 ISO-8601 UTC 时间戳。写入要求描述为单行；含换行的手工编辑文件仍会加载，不会被隔离。
 
 ### 作用域与项目根目录
 
@@ -67,7 +67,11 @@ kind: "package-reference"
 
 ### 每个操作做什么
 
-`write` 校验名称（小写 kebab-case，1 到 64 个字符），修剪描述（最多 256 个字符）与内容（最多 `maxRecordBytes`），按本进程已加载或写入的记录执行作用域上限，并在返回 `created` 或 `updated` 之前持久地插入或替换记录。`recall` 在可见记录的名称、描述和内容上做不区分大小写的子串匹配，按最新优先、再按名称、再以全局先于项目的顺序返回，并受调用方的数量限制。`forget` 删除一条记录，不存在时以 `not-found` 失败。`visible` 返回所有全局记录加上当前项目的记录。每次拒绝都是带有稳定 `code` 和面向模型的消息的 `MemoryError`。
+`write` 校验名称（小写 kebab-case，1 到 64 个字符），将描述修剪为 1 到 256 个字符的单行（U+000A、U+000D、U+2028 和 U+2029 以 `invalid-description` 失败，消息为 `description must be a single line of 1 to 256 characters after trimming`），修剪内容（最多 `maxRecordBytes`），先扫描描述再扫描内容并将发现拒绝为 `blocked-content`，按本进程已加载或写入的记录执行作用域上限（`over-cap` 只把作用域称为 `global` 或 `project`：`the project scope already holds <count> memories (cap <max>); forget one before writing`），并在返回 `created` 或 `updated` 之前持久地插入或替换记录。若项目写入的键已被另一项目的记录占用，则以 `project-key-collision` 失败，消息为 `cannot write project memory "<name>": another project's record already occupies this key`，并保持该记录不变。`recall` 在可见记录的名称、描述和内容上做不区分大小写的子串匹配，按最新优先、再按名称、再以全局先于项目的顺序返回，并受调用方的数量限制。`forget` 删除一条记录，不存在时以 `not-found` 失败；若项目遗忘的键被另一项目的记录占用，则以 `project-key-collision` 失败，消息为 `cannot forget project memory "<name>": another project's record occupies this key`，并保持该记录不变。`visible` 返回所有全局记录加上当前项目的记录。`scan` 返回与 `scanMemoryText` 相同的发现。每次拒绝都是带有稳定 `code` 和面向模型的消息的 `MemoryError`。
+
+### 写入时扫描
+
+在记录被序列化之前，`write` 先对修剪后的描述、再对修剪后的内容运行 `scan`。这些检查写死在代码中，不是 Config 字段。原始文本首先：除制表符与换行以外的 C0 控制字符、全部 C1 控制字符，以及不可见或双向字符集 U+200B、U+200C、U+200D、U+2060、U+2062–U+2064、U+FEFF、U+202A–U+202E、U+2066–U+2069，会以 `blocked-content` 失败，消息为 `Blocked: content contains invisible unicode character U+XXXX (possible injection).`（大写十六进制，至少四位）。然后将一份副本做 NFKC 规范化（存储的字节不变）、截断到 65,536 个 UTF-16 码元，并用改编自 [Hermes Agent `tools/threat_patterns.py`](https://github.com/NousResearch/hermes-agent/blob/4c286ae7a0dcb86e70a7ad8c23c0f05c89e33ec3/tools/threat_patterns.py) 的威胁模式匹配（经典注入、角色劫持、系统提示泄露、外泄、持久化、硬编码密钥；不含 C2/promptware 与 Hermes 专有组）；匹配失败消息为 `Blocked: content matches threat pattern <id>.`。`MemoryStore.scan` 供目录与回忆消费者使用同一检查。持久 zod schema 不拒绝 `description` 中的换行，因此手工编辑的多行文件仍会加载。
 
 -----
 
@@ -85,6 +89,7 @@ kind: "package-reference"
 - **人类可编辑的记录。** 每条记忆一个格式化的 JSON 文档，使存储可以用任何编辑器查看并手工比对。
 - **显式作用域，绝不猜测根目录。** 项目身份只来自会话工作目录和配置的标记；缺少根目录是一个明确的错误，而不是悄悄回退到全局。
 - **时间戳留在存储里。** `createdAt` 和 `updatedAt` 用于排序回忆结果，绝不会到达模型，因此录制的会话可以逐字节回放。
+- **写入时扫描是安全不变量。** 不可见 unicode 与威胁模式检查位于 `src/scan.ts`，不是 Config，因此组合无法关闭它们。
 
 ### 源码地图
 
@@ -93,6 +98,7 @@ kind: "package-reference"
 | [`src/index.ts`](src/index.ts) | `MemoryStore` 服务（`ctx.memory`）、`Config`、请求与结果类型、`MemoryError` |
 | [`src/domain.ts`](src/domain.ts) | 按存储构建 zod 记录 schema 与 `memory` domain 规范的函数，以及品牌化的名称与键类型 |
 | [`src/project.ts`](src/project.ts) | 项目根目录发现与路径安全的项目键 |
+| [`src/scan.ts`](src/scan.ts) | 不可见 unicode 与威胁模式扫描（`scanMemoryText`、`MemoryStore.scan`） |
 
 ### 生命周期
 
@@ -142,6 +148,7 @@ kind: "package-reference"
 - **没有仓库内存储**——项目记忆按项目根目录存放在 harness home 下，不会随仓库提交，也无法通过 git 共享。
 - **项目身份是根目录的绝对路径**——项目记录保存其根目录，并以由该路径派生的 slug 作为键，因此移动或重命名仓库目录会使其项目记忆成为孤儿；新路径下的会话看不到它们，除非重新写入。
 - **内容上限按字节计算**——`maxRecordBytes` 统计 UTF-8 字节，因此多字节字符的文字能容纳的字符数少于 ASCII。
+- **扫描误报**——看起来像注入、外泄或带引号的 20 字符密钥的合法句子会在写入时被拒绝；模式集写死在代码中，因此更改它是源码变更，不是 Config 编辑。
 
 <a id="dev-note"></a>
 ### 开发备注
