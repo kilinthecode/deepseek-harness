@@ -8,14 +8,14 @@
 import type { Context } from '@deepseek-ai/cordis'
 import type { Agent } from '@deepseek-ai/dsh-agent'
 import { MEMORY_SCOPES, MEMORY_TYPES } from '@deepseek-ai/dsh-memory'
-import type { MemoryRecord, MemoryScope, MemoryType } from '@deepseek-ai/dsh-memory'
+import type { MemoryRecord, MemoryScanFinding, MemoryScope, MemoryType } from '@deepseek-ai/dsh-memory'
 
 import { defineTool } from '@deepseek-ai/dsh-tools'
 import type { GenericCallView, ToolExecution } from '@deepseek-ai/dsh-tools'
 
 const WRITE_DESCRIPTION = 'Save one durable memory for future sessions.'
 
-const RECALL_DESCRIPTION = 'Read saved global memories and the current project\'s memories.'
+const RECALL_DESCRIPTION = 'Read saved global memories and the current project\'s memories from the live store, including memories saved after the snapshot. Use it for snapshot entries shown only as an index line; inlined snapshot entries need no recall.'
 
 const FORGET_DESCRIPTION = 'Delete one saved memory by name and scope.'
 
@@ -52,6 +52,20 @@ function view(record: MemoryRecord): MemoryView {
 
 function renderMemory(memory: MemoryView): string {
   return `## ${memory.name} [${memory.type}, ${memory.scope}]\n${memory.description}\n\n${memory.content}`
+}
+
+/**
+ * Render one recalled memory, or `[blocked]` in place of its content when its
+ * description or content fails `scan` — a record can reach the store without
+ * the write-time scan (a hand-edited or pre-`dsh-memory`-scan record file),
+ * so recall re-checks before showing the model raw content.
+ * @param memory - the recalled record view.
+ * @param scan - threat scan; a finding on description or content blocks the render.
+ * @returns the rendered memory, with `[blocked]` in place of description and content when blocked.
+ */
+function renderRecalled(memory: MemoryView, scan: (text: string) => MemoryScanFinding | undefined): string {
+  const blocked = scan(memory.description) !== undefined || scan(memory.content) !== undefined
+  return blocked ? `## ${memory.name} [${memory.type}, ${memory.scope}]\n[blocked]` : renderMemory(memory)
 }
 
 function requireAgent(exec: ToolExecution, tool: string): Agent {
@@ -97,12 +111,12 @@ export function registerMemoryTools(ctx: Context, maxRecallResults: number): voi
       description: {
         type: 'string',
         required: true,
-        description: 'One line (at most 256 characters) shown in the memory catalog; make it specific enough to decide whether to recall the memory.',
+        description: 'One line (no line breaks, at most 256 characters) shown in the memory snapshot; make it specific enough to decide whether to recall the memory.',
       },
       content: {
         type: 'string',
         required: true,
-        description: 'The memory itself: the fact, why it matters, and how to apply it.',
+        description: 'A declarative fact that remains true in every future session: the fact, why it matters, and how to apply it. Not a command.',
       },
     },
     output: {
@@ -156,7 +170,7 @@ export function registerMemoryTools(ctx: Context, maxRecallResults: number): voi
         type: 'text',
         text: value.memories.length === 0
           ? 'No saved memories match.'
-          : value.memories.map(renderMemory).join('\n\n'),
+          : value.memories.map(memory => renderRecalled(memory, text => ctx.memory.scan(text))).join('\n\n'),
       }],
     },
     async execute(args, exec) {

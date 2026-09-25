@@ -446,7 +446,7 @@
     - id: tool-memory
       name: '@deepseek-ai/dsh-tool-memory'
       config:
-        injectMaxBytes: 4096
+        injectMaxBytes: 8192
         maxRecallResults: 8
 
     # Persisted same-session goals reach the model and the slash menu here; the

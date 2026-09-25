@@ -87,7 +87,8 @@ describe.skipIf(!process.env.DEEPSEEK_API_KEY)('durable memory with a real model
     const catalogs = catalogEvents(read)
     expect(catalogs).toHaveLength(1)
     expect(catalogs[0]!.index).toBeLessThan(read.findIndex(event => event.type === 'assistant/message'))
-    expect(catalogs[0]!.text).toContain(`${NAME} —`)
+    // The record is small, so it inlines whole rather than appearing as an index line.
+    expect(catalogs[0]!.text).toContain(`## ${NAME} [`)
     // The body was read through memory_recall and the answer carries it.
     expect(toolCalls(read, 'memory_recall').length).toBeGreaterThan(0)
     const result = read.find(event => event.type === 'tool/result')

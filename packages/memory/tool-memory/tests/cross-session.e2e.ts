@@ -9,8 +9,8 @@ import { LOADER_SMOKE_TEST_TIMEOUT_MS, runLoaderSmoke } from '@deepseek-ai/dsh-l
 /**
  * The acceptance bar for durable memory, keyless and through the production
  * headless profile: process A writes a memory, process B over the same
- * harness home sees it in the injected catalog before its first request and
- * reads the body back with `memory_recall`.
+ * harness home sees it inlined in the injected snapshot before its first
+ * request and reads the body back with `memory_recall`.
  */
 const binScript = fileURLToPath(new URL('../../../test-support/loader-smoke/tests/fixtures/headless-driver.ts', import.meta.url))
 const configPath = fileURLToPath(new URL('./fixtures/memory.patch.yml', import.meta.url))
@@ -79,7 +79,10 @@ describe('durable memory across two headless processes', () => {
     const firstAssistantIndex = recallSession.findIndex(event => event.type === 'assistant/message')
     expect(catalogIndex).toBeGreaterThan(-1)
     expect(catalogIndex).toBeLessThan(firstAssistantIndex)
-    expect(JSON.stringify(recallSession[catalogIndex])).toContain('- [user] prefers-pnpm — Uses pnpm, never npm')
+    // The tiny record fits the profile's injectMaxBytes budget whole, so run
+    // B's snapshot inlines the full recall block rather than an index line.
+    expect(JSON.stringify(recallSession[catalogIndex])).toContain('## prefers-pnpm [user, global]')
+    expect(JSON.stringify(recallSession[catalogIndex])).toContain('Always run pnpm, never npm.')
     const recallResult = recallSession.find(event => event.type === 'tool/result')
     expect(JSON.stringify(recallResult)).toContain('Always run pnpm, never npm.')
   }, LOADER_SMOKE_TEST_TIMEOUT_MS * 2)

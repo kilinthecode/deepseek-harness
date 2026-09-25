@@ -1,19 +1,17 @@
-import { afterEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, describe, expect, it } from 'vitest'
 import { Context } from '@deepseek-ai/cordis'
 import AgentRegistry, { agentEvents } from '@deepseek-ai/dsh-agent'
 import type { Agent, PreStepDecision } from '@deepseek-ai/dsh-agent'
 import { createUserMessage } from '@deepseek-ai/dsh-llm'
 import type { ContextFormed } from '@deepseek-ai/dsh-llm'
-import type { MemoryRecord, MemoryVisible } from '@deepseek-ai/dsh-memory'
+import type { MemoryRecord, MemoryScanFinding } from '@deepseek-ai/dsh-memory'
 import { SessionSeq } from '@deepseek-ai/dsh-session'
-import type { Session } from '@deepseek-ai/dsh-session'
 import SessionProjectionRegistry from '@deepseek-ai/dsh-session-projection'
 import SystemPrompt from '@deepseek-ai/dsh-system-prompt'
 import ToolRuntime from '@deepseek-ai/dsh-tools'
 import * as tool from '@deepseek-ai/dsh-tool-memory'
-import { EMPTY_CATALOG_TEXT, renderCatalog } from '@deepseek-ai/dsh-tool-memory'
-import type { MemoryCatalogState } from '@deepseek-ai/dsh-tool-memory'
-import { catalogEvents, cleanupRoots, freshRoot, mountStore, project, sessionAgent, sessionAt } from './helpers.ts'
+import { renderSnapshot, SNAPSHOT_HEADER } from '@deepseek-ai/dsh-tool-memory'
+import { cleanupRoots, freshRoot, mountStore, sessionAgent, sessionAt } from './helpers.ts'
 
 declare module '@deepseek-ai/dsh-llm' {
   interface MessageSourceMap {
@@ -23,106 +21,223 @@ declare module '@deepseek-ai/dsh-llm' {
 
 const SIGNAL = new AbortController().signal
 const contexts: Context[] = []
+const noScan = (): MemoryScanFinding | undefined => undefined
 
 afterEach(async () => {
-  vi.restoreAllMocks()
   await Promise.all(contexts.splice(0).map(ctx => ctx.fiber.dispose()))
   await cleanupRoots()
 })
 
-function record(name: string, type: MemoryRecord['type'], scope: MemoryRecord['scope'], description: string): MemoryRecord {
+function record(
+  name: string,
+  type: MemoryRecord['type'],
+  scope: MemoryRecord['scope'],
+  description: string,
+  content: string,
+): MemoryRecord {
   return {
     name: name as MemoryRecord['name'],
     type,
     scope,
     description,
-    content: 'body',
+    content,
     ...scope === 'project' ? { projectRoot: '/repo' } : {},
     createdAt: '2026-09-19T00:00:00.000Z',
     updatedAt: '2026-09-19T00:00:00.000Z',
   }
 }
 
-describe('renderCatalog', () => {
-  it('returns nothing for an empty store', () => {
-    expect(renderCatalog({ global: [] }, 2048)).toBeUndefined()
-    expect(renderCatalog({ global: [], project: { root: '/repo', records: [] } }, 2048)).toBeUndefined()
+describe('renderSnapshot', () => {
+  it('returns undefined for an empty record list regardless of budget', () => {
+    expect(renderSnapshot([], 2048, noScan)).toBeUndefined()
+    expect(renderSnapshot([], 0, noScan)).toBeUndefined()
   })
 
-  it('lists global before project entries, each section by type rank then name', () => {
-    const visible: MemoryVisible = {
-      global: [
-        record('zeta-ref', 'reference', 'global', 'A dashboard'),
-        record('review-style', 'feedback', 'global', 'Terse reviews'),
-        record('name', 'user', 'global', 'Prefers they/them'),
-        record('alpha-ref', 'reference', 'global', 'A ticket'),
-      ],
-      project: { root: '/repo', records: [record('build', 'project', 'project', 'pnpm run build')] },
-    }
-    expect(renderCatalog(visible, 2048)).toBe([
-      'Saved memories (catalog; call memory_recall to read one):',
-      'Global:',
-      '- [user] name — Prefers they/them',
-      '- [feedback] review-style — Terse reviews',
-      '- [reference] alpha-ref — A ticket',
-      '- [reference] zeta-ref — A dashboard',
-      'Project:',
-      '- [project] build — pnpm run build',
-    ].join('\n'))
+  it('returns undefined when the budget cannot hold the header, even with records present', () => {
+    const records = [record('a', 'user', 'global', 'x'.repeat(200), 'y'.repeat(5000))]
+    expect(renderSnapshot(records, 10, noScan)).toBeUndefined()
+    expect(renderSnapshot(records, Buffer.byteLength(SNAPSHOT_HEADER, 'utf8'), noScan)).toBeUndefined()
   })
 
-  it('cuts from the end within the byte budget and says how many entries were omitted', () => {
-    const visible: MemoryVisible = {
-      global: [record('a', 'user', 'global', 'one'), record('b', 'user', 'global', 'two')],
-      project: { root: '/repo', records: [record('c', 'project', 'project', 'three'), record('d', 'project', 'project', 'four')] },
-    }
-    const full = renderCatalog(visible, 4096)!
-    // One byte short of the full catalog: three entries plus the omission line
-    // would be longer than the full text, so two entries are kept.
-    const cut = renderCatalog(visible, Buffer.byteLength(full, 'utf8') - 1)!
-    expect(cut).toBe([
-      'Saved memories (catalog; call memory_recall to read one):',
-      'Global:',
-      '- [user] a — one',
-      '- [user] b — two',
-      '… 2 more; use memory_recall',
-    ].join('\n'))
-    expect(Buffer.byteLength(cut, 'utf8')).toBeLessThan(Buffer.byteLength(full, 'utf8'))
-    const oneEntry = [
-      'Saved memories (catalog; call memory_recall to read one):',
-      'Global:',
-      '- [user] a — one',
-      '… 3 more; use memory_recall',
+  it('sorts type-first (user, feedback, project, reference), then name, then global before project, and renders exact text', () => {
+    const records = [
+      record('zeta', 'reference', 'project', 'Zeta project desc', 'Zeta project content'),
+      record('alice', 'user', 'global', 'Alice desc', 'Alice content'),
+      record('zeta', 'reference', 'global', 'Zeta global desc', 'Zeta global content'),
+      record('carl', 'feedback', 'global', 'Carl desc', 'Carl content'),
+      record('bob', 'user', 'project', 'Bob desc', 'Bob content'),
+    ]
+    const expected = [
+      SNAPSHOT_HEADER,
+      '## alice [user, global]',
+      'Alice desc',
+      '',
+      'Alice content',
+      '',
+      '## bob [user, project]',
+      'Bob desc',
+      '',
+      'Bob content',
+      '',
+      '## carl [feedback, global]',
+      'Carl desc',
+      '',
+      'Carl content',
+      '',
+      '## zeta [reference, global]',
+      'Zeta global desc',
+      '',
+      'Zeta global content',
+      '',
+      '## zeta [reference, project]',
+      'Zeta project desc',
+      '',
+      'Zeta project content',
     ].join('\n')
-    expect(renderCatalog(visible, Buffer.byteLength(oneEntry, 'utf8'))).toBe(oneEntry)
-    expect(renderCatalog(visible, Buffer.byteLength(oneEntry, 'utf8') - 1)).toBe(
-      'Saved memories (catalog; call memory_recall to read one):\n… 4 more; use memory_recall',
+    expect(renderSnapshot(records, 4096, noScan)).toBe(expected)
+  })
+
+  it('orders same-type names by code unit, not host locale collation', () => {
+    // '-' (U+002D) sorts before 'b' (U+0062) by code unit; a locale that
+    // ignores punctuation (e.g. Thai) would sort 'ab' first instead.
+    const records = [record('ab', 'user', 'global', 'two', 'c2'), record('a-c', 'user', 'global', 'one', 'c1')]
+    expect(renderSnapshot(records, 4096, noScan)).toBe([
+      SNAPSHOT_HEADER,
+      '## a-c [user, global]',
+      'one',
+      '',
+      'c1',
+      '',
+      '## ab [user, global]',
+      'two',
+      '',
+      'c2',
+    ].join('\n'))
+  })
+
+  it('breaks a type-and-name tie by scope (global before project) regardless of input order', () => {
+    const globalTied = record('same-name', 'reference', 'global', 'g desc', 'g content')
+    const projectTied = record('same-name', 'reference', 'project', 'p desc', 'p content')
+    const expected = [
+      SNAPSHOT_HEADER,
+      '## same-name [reference, global]',
+      'g desc',
+      '',
+      'g content',
+      '',
+      '## same-name [reference, project]',
+      'p desc',
+      '',
+      'p content',
+    ].join('\n')
+    expect(renderSnapshot([projectTied, globalTied], 4096, noScan)).toBe(expected)
+    expect(renderSnapshot([globalTied, projectTied], 4096, noScan)).toBe(expected)
+  })
+
+  it('falls back to an index line, with a blank line separating it from a preceding block, when the full block does not fit', () => {
+    const records = [
+      record('a', 'user', 'global', 'short a', 'tiny'),
+      record('b', 'user', 'global', 'short b', 'Y'.repeat(5000)),
+    ]
+    expect(renderSnapshot(records, 4096, noScan)).toBe([
+      SNAPSHOT_HEADER,
+      '## a [user, global]',
+      'short a',
+      '',
+      'tiny',
+      '',
+      '- [user, global] b — short b',
+    ].join('\n'))
+  })
+
+  it('omits entries that do not fit even as an index line, appends the omission line, and shrinks trailing entries to stay within budget', () => {
+    const A = record('a', 'user', 'global', 'one', 'X'.repeat(5000))
+    const B = record('b', 'user', 'global', 'this description is long enough to matter here for the shrink test', 'X'.repeat(5000))
+    const records = [A, B]
+
+    const twoIndex = [
+      SNAPSHOT_HEADER,
+      '- [user, global] a — one',
+      '- [user, global] b — this description is long enough to matter here for the shrink test',
+    ].join('\n')
+    expect(renderSnapshot(records, Buffer.byteLength(twoIndex, 'utf8'), noScan)).toBe(twoIndex)
+
+    // One byte short of both index lines: B's index line (89 bytes) is larger
+    // than an omission line (29 bytes), so dropping it and appending the
+    // omission line nets a smaller total — the one-kept-one-omitted state.
+    const oneIndexOneOmitted = [
+      SNAPSHOT_HEADER,
+      '- [user, global] a — one',
+      '… 1 more; use memory_recall',
+    ].join('\n')
+    expect(renderSnapshot(records, Buffer.byteLength(twoIndex, 'utf8') - 1, noScan)).toBe(oneIndexOneOmitted)
+    expect(renderSnapshot(records, Buffer.byteLength(oneIndexOneOmitted, 'utf8'), noScan)).toBe(oneIndexOneOmitted)
+
+    // One byte short again: A's index line (26 bytes) is smaller than the
+    // omission line growing from "1" to "2" more (still 29 bytes), so
+    // dropping it also nets a smaller total.
+    const zeroKept = [SNAPSHOT_HEADER, '… 2 more; use memory_recall'].join('\n')
+    expect(renderSnapshot(records, Buffer.byteLength(oneIndexOneOmitted, 'utf8') - 1, noScan)).toBe(zeroKept)
+    expect(renderSnapshot(records, Buffer.byteLength(zeroKept, 'utf8'), noScan)).toBe(zeroKept)
+
+    // One byte short of even the fully-omitted fallback: no budget can hold it.
+    expect(renderSnapshot(records, Buffer.byteLength(zeroKept, 'utf8') - 1, noScan)).toBeUndefined()
+  })
+
+  it('shrinks a kept block, not only index lines, when no index line is left to drop', () => {
+    // A's block is kept from the first pass; B is omitted outright (its
+    // content and its description are both too large to fit at all). With no
+    // index line in `items` to drop, the shrink loop must drop A's block too.
+    const A = record('a', 'user', 'global', 'd', 'c')
+    const B = record('b', 'user', 'global', 'x'.repeat(200), 'y'.repeat(5000))
+    const records = [A, B]
+    const blockA = '## a [user, global]\nd\n\nc'
+    const withBlockAOmitted1 = [SNAPSHOT_HEADER, blockA, '… 1 more; use memory_recall'].join('\n')
+    const zeroKept = [SNAPSHOT_HEADER, '… 2 more; use memory_recall'].join('\n')
+
+    expect(renderSnapshot(records, Buffer.byteLength(withBlockAOmitted1, 'utf8'), noScan)).toBe(withBlockAOmitted1)
+    // One byte short: no index line remains to drop, so the shrink loop pops
+    // A's block itself, growing the omission count from 1 to 2.
+    expect(renderSnapshot(records, Buffer.byteLength(withBlockAOmitted1, 'utf8') - 1, noScan)).toBe(zeroKept)
+  })
+
+  it('keeps every emitted text within the UTF-8 byte budget with multibyte content, without splitting a multibyte character', () => {
+    const emoji = record('m', 'user', 'global', 'desc', '😀 multibyte body')
+    const block = '## m [user, global]\ndesc\n\n😀 multibyte body'
+    const full = `${SNAPSHOT_HEADER}\n${block}`
+    const fullBytes = Buffer.byteLength(full, 'utf8')
+    // The block is 72 UTF-8 bytes but only 70 UTF-16 code units: an
+    // implementation counting characters instead of bytes would misjudge this boundary.
+    expect(full.length).not.toBe(fullBytes)
+    expect(renderSnapshot([emoji], fullBytes, noScan)).toBe(full)
+    const oneByteShort = renderSnapshot([emoji], fullBytes - 1, noScan)!
+    expect(oneByteShort).toBe(`${SNAPSHOT_HEADER}\n- [user, global] m — desc`)
+    expect(Buffer.byteLength(oneByteShort, 'utf8')).toBeLessThanOrEqual(fullBytes - 1)
+  })
+
+  it('inlines a 4,096-byte body at maxBytes 8,192 and renders it as an index line only at maxBytes 4,096', () => {
+    const big = record('body4096', 'user', 'global', 'desc', 'z'.repeat(4096))
+    const inlined = renderSnapshot([big], 8192, noScan)!
+    expect(inlined.startsWith(`${SNAPSHOT_HEADER}\n## body4096 [user, global]\ndesc\n\n`)).toBe(true)
+    expect(inlined).toContain('z'.repeat(4096))
+    expect(renderSnapshot([big], 4096, noScan)).toBe(`${SNAPSHOT_HEADER}\n- [user, global] body4096 — desc`)
+  })
+
+  it('renders a scan finding on content as a blocked index line and never inlines it, even with budget to spare', () => {
+    const blockedScan = (text: string): MemoryScanFinding | undefined =>
+      text.includes('SECRET') ? { id: 'test', message: 'blocked' } : undefined
+    const contentBlocked = record('c', 'user', 'global', 'clean desc', 'has a SECRET inside')
+    expect(renderSnapshot([contentBlocked], 4096, blockedScan)).toBe(
+      `${SNAPSHOT_HEADER}\n- [user, global] c — [blocked]`,
     )
   })
 
-  it('orders same-type names by code unit even where the host collation disagrees', () => {
-    // Thai collation ignores punctuation, so it sorts `ab` before `a-c`; code-unit order puts `-` first.
-    const thai = new Intl.Collator('th')
-    const collate = vi.spyOn(String.prototype, 'localeCompare')
-      .mockImplementation(function (this: string, that: string) { return thai.compare(this, that) })
-    try {
-      const visible: MemoryVisible = { global: [record('ab', 'user', 'global', 'two'), record('a-c', 'user', 'global', 'one')] }
-      expect(['ab', 'a-c'].sort((left, right) => left.localeCompare(right))).toEqual(['ab', 'a-c'])
-      expect(renderCatalog(visible, 2048)).toBe([
-        'Saved memories (catalog; call memory_recall to read one):',
-        'Global:',
-        '- [user] a-c — one',
-        '- [user] ab — two',
-      ].join('\n'))
-    } finally {
-      collate.mockRestore()
-    }
-  })
-
-  it('still names the omitted count when even one entry cannot fit', () => {
-    const visible: MemoryVisible = { global: [record('a', 'user', 'global', 'x'.repeat(200))] }
-    expect(renderCatalog(visible, 10)).toBe(
-      'Saved memories (catalog; call memory_recall to read one):\n… 1 more; use memory_recall',
+  it('renders a scan finding on description as a blocked index line too', () => {
+    const blockedScan = (text: string): MemoryScanFinding | undefined =>
+      text.includes('SECRET') ? { id: 'test', message: 'blocked' } : undefined
+    const descriptionBlocked = record('d', 'user', 'global', 'has a SECRET inside', 'clean content')
+    expect(renderSnapshot([descriptionBlocked], 4096, blockedScan)).toBe(
+      `${SNAPSHOT_HEADER}\n- [user, global] d — [blocked]`,
     )
   })
 })
@@ -140,164 +255,146 @@ async function mount(config: tool.Config = { injectMaxBytes: 2048, maxRecallResu
   return { ctx, root, fiber }
 }
 
-function catalogs(session: Session): string[] {
-  return catalogEvents(session.snapshotEvents()).map(event => event.text)
-}
-
-async function fire(
+/** Drive the `agent/pre-step` waterfall directly, bypassing the agent loop. */
+function firePreStep(
   ctx: Context,
   agent: Agent,
-  turn: number,
-  step: number,
-  signal: AbortSignal = SIGNAL,
-  decide: () => Promise<PreStepDecision> = () => Promise.resolve({ kind: 'enter', messages: [] }),
+  signal: AbortSignal,
+  decide: () => Promise<PreStepDecision>,
 ): Promise<PreStepDecision> {
-  const decision = await agentEvents(ctx, agent).waterfall('agent/pre-step', { messages: [], turn, step, signal }, decide)
-  if (decision.kind === 'enter') {
-    for (const message of decision.messages) {
-      agent.session.append('user/message', message, { surfaceOp: 'append' })
-    }
-  }
-  return decision
-}
-
-function appendCompactionSummary(session: Session): void {
-  session.append('compaction/summary', {
-    compactionId: 'compaction-1',
-    summary: [{ type: 'text', text: 'summary' }],
-    shadowedRange: { start: SessionSeq(0), end: SessionSeq(1) },
-    shadowedSeqs: [SessionSeq(0), SessionSeq(1)],
-    shadowedTokenCount: 10,
-    provider: 'mock',
-    model: 'mock',
-  } as never)
+  return agentEvents(ctx, agent).waterfall('agent/pre-step', { messages: [], turn: 1, step: 1, signal }, decide)
 }
 
 const WRITE = { type: 'user', scope: 'global', description: 'Uses pnpm', content: 'Always pnpm.' } as const
 
-describe('catalog injection', () => {
-  it('injects once per session, refreshes at a turn start only when the store changed, and re-injects after compaction', async () => {
-    const { ctx, root } = await mount()
-    const repo = await project(root, 'repo')
-    await ctx.memory.write({ ...WRITE, name: 'prefers-pnpm' })
-    await ctx.memory.write({ ...WRITE, name: 'build', type: 'project', scope: 'project', cwd: repo.cwd, description: 'pnpm run build' })
-    const session = sessionAt(repo.cwd)
-    const agent = sessionAgent(session)
-
-    await fire(ctx, agent, 1, 1)
-    expect(catalogs(session)).toEqual([renderCatalog(await ctx.memory.visible(repo.cwd), 2048)])
-    expect(catalogs(session)[0]).toContain('- [project] build — pnpm run build')
-
-    await fire(ctx, agent, 1, 2)
-    await fire(ctx, agent, 2, 1)
-    expect(catalogs(session)).toHaveLength(1)
-
-    await ctx.memory.write({ ...WRITE, name: 'editor', description: 'Uses Cursor' })
-    await fire(ctx, agent, 2, 2)
-    expect(catalogs(session)).toHaveLength(1)
-    await fire(ctx, agent, 3, 1)
-    expect(catalogs(session)).toHaveLength(2)
-    expect(catalogs(session)[1]).toContain('- [user] editor — Uses Cursor')
-
-    appendCompactionSummary(session)
-    await fire(ctx, agent, 3, 4)
-    expect(catalogs(session)).toHaveLength(3)
-    expect(catalogs(session)[2]).toBe(catalogs(session)[1])
-    expect((ctx.sessionProjections.stateOf(session, 'memoryCatalog') as MemoryCatalogState).lastCatalog).toBe(catalogs(session)[2])
-  })
-
-  it('supersedes the catalog with an explicit empty one at the next turn after the last memory is forgotten', async () => {
+describe('registerCatalogInjection', () => {
+  it('passes a reject decision through untouched', async () => {
     const { ctx } = await mount()
     await ctx.memory.write({ ...WRITE, name: 'prefers-pnpm' })
-    const session = sessionAt(undefined)
-    const agent = sessionAgent(session)
-    await fire(ctx, agent, 1, 1)
-    expect(catalogs(session)).toHaveLength(1)
-
-    await ctx.memory.forget({ name: 'prefers-pnpm', scope: 'global' })
-    // Later steps of the same turn keep the surface; the next turn's first step supersedes it.
-    await fire(ctx, agent, 1, 2)
-    expect(catalogs(session)).toHaveLength(1)
-    await fire(ctx, agent, 2, 1)
-    expect(catalogs(session)).toEqual([catalogs(session)[0], EMPTY_CATALOG_TEXT])
-    expect((ctx.sessionProjections.stateOf(session, 'memoryCatalog') as MemoryCatalogState).lastCatalog).toBe(EMPTY_CATALOG_TEXT)
-
-    // An empty store that already announced itself stays quiet.
-    await fire(ctx, agent, 3, 1)
-    expect(catalogs(session)).toHaveLength(2)
-
-    // A later write replaces the empty catalog like any other change.
-    await ctx.memory.write({ ...WRITE, name: 'editor', description: 'Uses Cursor' })
-    await fire(ctx, agent, 4, 1)
-    expect(catalogs(session)).toHaveLength(3)
-    expect(catalogs(session)[2]).toContain('- [user] editor — Uses Cursor')
+    const agent = sessionAgent(sessionAt(undefined))
+    const decision = await firePreStep(ctx, agent, SIGNAL, () => Promise.resolve<PreStepDecision>({ kind: 'reject' }))
+    expect(decision).toEqual({ kind: 'reject' })
   })
 
-  it('keeps checking every step while nothing has been injected, and shows global entries only without a project root', async () => {
-    const { ctx } = await mount()
-    const session = sessionAt(undefined)
-    const agent = sessionAgent(session)
-    await fire(ctx, agent, 1, 1)
-    expect(catalogs(session)).toEqual([])
-    await ctx.memory.write({ ...WRITE, name: 'prefers-pnpm' })
-    await fire(ctx, agent, 1, 2)
-    expect(catalogs(session)).toEqual([
-      'Saved memories (catalog; call memory_recall to read one):\nGlobal:\n- [user] prefers-pnpm — Uses pnpm',
-    ])
-  })
-
-  it('passes a rejected step and an aborted signal through untouched', async () => {
+  it('passes an aborted-signal decision through untouched, without injecting', async () => {
     const { ctx } = await mount()
     await ctx.memory.write({ ...WRITE, name: 'prefers-pnpm' })
-    const session = sessionAt(undefined)
-    const agent = sessionAgent(session)
-    const rejected = await fire(ctx, agent, 1, 1, SIGNAL, () => Promise.resolve<PreStepDecision>({ kind: 'reject' }))
-    expect(rejected.kind).toBe('reject')
+    const agent = sessionAgent(sessionAt(undefined))
     const aborted = new AbortController()
     aborted.abort()
-    await fire(ctx, agent, 1, 1, aborted.signal)
-    expect(catalogs(session)).toEqual([])
+    const decision = await firePreStep(ctx, agent, aborted.signal, () => Promise.resolve<PreStepDecision>({ kind: 'enter', messages: [] }))
+    expect(decision).toEqual({ kind: 'enter', messages: [] })
   })
 
-  it('registers the projection but never injects when the budget is zero', async () => {
+  it('does not re-inject at a step whose pre-step decision starts a new request series', async () => {
+    const { ctx } = await mount()
+    await ctx.memory.write({ ...WRITE, name: 'prefers-pnpm' })
+    const session = sessionAt(undefined)
+    const agent = sessionAgent(session)
+
+    // First step: nothing taken yet, so the snapshot is injected.
+    const first = await firePreStep(ctx, agent, SIGNAL, () => Promise.resolve<PreStepDecision>({ kind: 'enter', messages: [] }))
+    expect(first.kind).toBe('enter')
+    expect(first.kind === 'enter' && first.messages).toHaveLength(1)
+    if (first.kind === 'enter') {
+      for (const message of first.messages) session.append('user/message', message, { surfaceOp: 'append' })
+    }
+
+    // Second step declares startsRequestSeries: true; this must not be
+    // treated as a fresh conversation start that re-earns an injection.
+    const second = await firePreStep(
+      ctx, agent, SIGNAL,
+      () => Promise.resolve<PreStepDecision>({ kind: 'enter', messages: [], startsRequestSeries: true }),
+    )
+    expect(second).toEqual({ kind: 'enter', messages: [], startsRequestSeries: true })
+  })
+
+  it('registers the projection but never injects when injectMaxBytes is 0', async () => {
     const { ctx } = await mount({ injectMaxBytes: 0, maxRecallResults: 4 })
     await ctx.memory.write({ ...WRITE, name: 'prefers-pnpm' })
     const session = sessionAt(undefined)
-    await fire(ctx, sessionAgent(session), 1, 1)
-    expect(catalogs(session)).toEqual([])
-    expect(ctx.sessionProjections.stateOf(session, 'memoryCatalog')).toEqual({ lastCatalog: null })
+    const agent = sessionAgent(session)
+    const decision = await firePreStep(ctx, agent, SIGNAL, () => Promise.resolve<PreStepDecision>({ kind: 'enter', messages: [] }))
+    expect(decision).toEqual({ kind: 'enter', messages: [] })
+    expect(ctx.sessionProjections.stateOf(session, 'memoryCatalog')).toEqual({ taken: false })
   })
 
-  it('unregisters the catalog projection and the pre-step listener with its fiber', async () => {
-    const { ctx, fiber } = await mount()
-    await ctx.memory.write({ ...WRITE, name: 'prefers-pnpm' })
-    const before = sessionAt(undefined, 'before')
-    await fire(ctx, sessionAgent(before), 1, 1)
-    expect(catalogs(before)).toHaveLength(1)
-    expect(ctx.sessionProjections.stateOf(before, 'memoryCatalog')).toEqual({ lastCatalog: catalogs(before)[0] })
-
-    await fiber.dispose()
-    const after = sessionAt(undefined, 'after')
-    await fire(ctx, sessionAgent(after), 1, 1)
-    expect(catalogs(after)).toEqual([])
-    expect(ctx.sessionProjections.stateOf(after, 'memoryCatalog')).toBeUndefined()
-    expect(ctx.sessionProjections.stateOf(before, 'memoryCatalog')).toBeUndefined()
-  })
-
-  it('folds only its own catalog messages and leaves an already-clear state untouched by compaction', async () => {
+  it('folds step/start to taken exactly once, own tool-memory/snapshot messages to taken, compaction/summary to not-taken only when it was taken, and ignores foreign or unrelated events', async () => {
     const { ctx } = await mount()
     const session = sessionAt(undefined)
-    const before = ctx.sessionProjections.stateOf(session, 'memoryCatalog')
-    appendCompactionSummary(session)
-    expect(ctx.sessionProjections.stateOf(session, 'memoryCatalog')).toBe(before)
+    expect(ctx.sessionProjections.stateOf(session, 'memoryCatalog')).toEqual({ taken: false })
+
+    // step/start: false -> true.
+    session.append('step/start', { turn: 1, step: 1 })
+    expect(ctx.sessionProjections.stateOf(session, 'memoryCatalog')).toEqual({ taken: true })
+    // A second step/start is a no-op (already taken).
+    session.append('step/start', { turn: 1, step: 2 })
+    expect(ctx.sessionProjections.stateOf(session, 'memoryCatalog')).toEqual({ taken: true })
+
+    // compaction/summary: true -> false.
+    session.append('compaction/summary', {
+      compactionId: 'compaction-1',
+      summary: [{ type: 'text', text: 'summary' }],
+      shadowedRange: { start: SessionSeq(0), end: SessionSeq(1) },
+      shadowedSeqs: [SessionSeq(0), SessionSeq(1)],
+      shadowedTokenCount: 10,
+      provider: 'mock',
+      model: 'mock',
+    } as never)
+    expect(ctx.sessionProjections.stateOf(session, 'memoryCatalog')).toEqual({ taken: false })
+    // A compaction that finds it already false is a no-op.
+    session.append('compaction/summary', {
+      compactionId: 'compaction-2',
+      summary: [{ type: 'text', text: 'summary' }],
+      shadowedRange: { start: SessionSeq(0), end: SessionSeq(1) },
+      shadowedSeqs: [SessionSeq(0), SessionSeq(1)],
+      shadowedTokenCount: 10,
+      provider: 'mock',
+      model: 'mock',
+    } as never)
+    expect(ctx.sessionProjections.stateOf(session, 'memoryCatalog')).toEqual({ taken: false })
+
+    // A foreign source kind is ignored.
     session.append('user/message', createUserMessage({
       content: [{ type: 'text', text: 'foreign snapshot' }],
       source: { kind: 'someone-else', form: 'snapshot', sections: [{ name: 'x', text: 'foreign snapshot' }] },
     }), { surfaceOp: 'append' })
+    expect(ctx.sessionProjections.stateOf(session, 'memoryCatalog')).toEqual({ taken: false })
+
+    // A tool-memory message in a non-snapshot form is ignored.
     session.append('user/message', createUserMessage({
-      content: [{ type: 'text', text: 'not a catalog' }],
+      content: [{ type: 'text', text: 'not a snapshot' }],
       source: { kind: 'tool-memory', form: 'notice', summary: 'x' },
     }), { surfaceOp: 'append' })
-    expect(ctx.sessionProjections.stateOf(session, 'memoryCatalog')).toEqual({ lastCatalog: null })
+    expect(ctx.sessionProjections.stateOf(session, 'memoryCatalog')).toEqual({ taken: false })
+
+    // The plugin's own snapshot message: false -> true.
+    session.append('user/message', createUserMessage({
+      content: [{ type: 'text', text: SNAPSHOT_HEADER }],
+      source: { kind: 'tool-memory', form: 'snapshot', sections: [{ name: 'memory-catalog', text: SNAPSHOT_HEADER }] },
+    }), { surfaceOp: 'append' })
+    expect(ctx.sessionProjections.stateOf(session, 'memoryCatalog')).toEqual({ taken: true })
+
+    // An unrelated event type is ignored.
+    session.append('turn/start', { turn: 2 })
+    expect(ctx.sessionProjections.stateOf(session, 'memoryCatalog')).toEqual({ taken: true })
+  })
+
+  it('unregisters the projection and the pre-step listener with its fiber', async () => {
+    const { ctx, fiber } = await mount()
+    await ctx.memory.write({ ...WRITE, name: 'prefers-pnpm' })
+    const before = sessionAt(undefined, 'before')
+    const beforeAgent = sessionAgent(before)
+    const beforeDecision = await firePreStep(ctx, beforeAgent, SIGNAL, () => Promise.resolve<PreStepDecision>({ kind: 'enter', messages: [] }))
+    expect(beforeDecision.kind === 'enter' && beforeDecision.messages).toHaveLength(1)
+    expect(ctx.sessionProjections.stateOf(before, 'memoryCatalog')).toEqual({ taken: false })
+
+    await fiber.dispose()
+    const after = sessionAt(undefined, 'after')
+    const afterAgent = sessionAgent(after)
+    const afterDecision = await firePreStep(ctx, afterAgent, SIGNAL, () => Promise.resolve<PreStepDecision>({ kind: 'enter', messages: [] }))
+    expect(afterDecision).toEqual({ kind: 'enter', messages: [] })
+    expect(ctx.sessionProjections.stateOf(after, 'memoryCatalog')).toBeUndefined()
+    expect(ctx.sessionProjections.stateOf(before, 'memoryCatalog')).toBeUndefined()
   })
 })
