@@ -55,8 +55,8 @@ describe('BootPage', () => {
     const letters = [...el.querySelectorAll<HTMLElement>(`.${css.letter!}`)]
     expect(letters.map(letter => letter.textContent).join('')).toBe('PORTALHARNESS')
     expect(letters.map(letter => letter.style.getPropertyValue('--dsh-letter-delay')))
-      .toEqual(['2180ms', '2280ms', '2380ms', '2480ms', '2580ms', '2680ms',
-        '3020ms', '3100ms', '3180ms', '3260ms', '3340ms', '3420ms', '3500ms'])
+      .toEqual(['2400ms', '2510ms', '2620ms', '2730ms', '2840ms', '2950ms',
+        '3280ms', '3365ms', '3450ms', '3535ms', '3620ms', '3705ms', '3790ms'])
   })
 
   it('reveals the finished brand immediately under reduced motion', () => {
@@ -74,9 +74,9 @@ describe('BootPage', () => {
     const { el } = mount()
     expect(el.querySelector('[data-dsh-boot-spinner]')).toBeNull()
     expect(el.textContent).not.toContain('Loading plugins…')
-    vi.advanceTimersByTime(3580)
+    vi.advanceTimersByTime(3875)
     finishBrand(el)
-    vi.advanceTimersByTime(419)
+    vi.advanceTimersByTime(124)
     expect(el.querySelector('[data-dsh-boot-spinner]')).toBeNull()
     vi.advanceTimersByTime(1)
     expect(el.querySelector('[data-dsh-boot-spinner]')).not.toBeNull()
@@ -147,9 +147,9 @@ describe('BootPage', () => {
     const { el, page } = mount()
     page.dispose()
     expect(el.firstElementChild).not.toBeNull()
-    vi.advanceTimersByTime(3580)
+    vi.advanceTimersByTime(3875)
     finishBrand(el)
-    vi.advanceTimersByTime(219)
+    vi.advanceTimersByTime(224)
     expect(el.firstElementChild?.classList.contains(css.leaving!)).toBe(false)
     vi.advanceTimersByTime(1)
     expect(el.firstElementChild?.classList.contains(css.leaving!)).toBe(true)
@@ -162,9 +162,9 @@ describe('BootPage', () => {
   it('releases every pending timer once it detaches', () => {
     const { el, page } = mount()
     page.dispose()
-    vi.advanceTimersByTime(3580)
+    vi.advanceTimersByTime(3875)
     finishBrand(el)
-    vi.advanceTimersByTime(220 + 400)
+    vi.advanceTimersByTime(700)
     expect(vi.getTimerCount()).toBe(0)
   })
 })

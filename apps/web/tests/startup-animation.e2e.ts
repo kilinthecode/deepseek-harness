@@ -44,7 +44,9 @@ afterAll(async () => {
 it('draws from the center, types in place, and waits for the last letter before revealing the app', async () => {
   const frames = []
   let positions: unknown
-  for (const time of [0, 350, 800, 1300, 1800, 2120, 2430, 3330, 3540]) {
+  // Sampled through the designed sequence: the four mark stages, the beat
+  // after the mark settles, then PORTAL and HARNESS typing one word at a time.
+  for (const time of [0, 350, 800, 1300, 1800, 2120, 2600, 3000, 3400, 3900]) {
     const frame = await page.evaluate((ms) => {
       const boot = document.querySelector('[data-dsh-boot]')!
       for (const animation of boot.getAnimations({ subtree: true })) animation.currentTime = ms

@@ -174,9 +174,9 @@
     ]
   },
   {
-    "time": 2430,
+    "time": 2600,
     "words": [
-      "POR",
+      "PO",
       ""
     ],
     "strokes": [
@@ -203,10 +203,10 @@
     ]
   },
   {
-    "time": 3330,
+    "time": 3000,
     "words": [
       "PORTAL",
-      "HARN"
+      ""
     ],
     "strokes": [
       {
@@ -232,7 +232,36 @@
     ]
   },
   {
-    "time": 3540,
+    "time": 3400,
+    "words": [
+      "PORTAL",
+      "HA"
+    ],
+    "strokes": [
+      {
+        "hidden": 0,
+        "drawing": 0,
+        "finished": 6
+      },
+      {
+        "hidden": 0,
+        "drawing": 0,
+        "finished": 12
+      },
+      {
+        "hidden": 0,
+        "drawing": 0,
+        "finished": 6
+      },
+      {
+        "hidden": 0,
+        "drawing": 0,
+        "finished": 12
+      }
+    ]
+  },
+  {
+    "time": 3900,
     "words": [
       "PORTAL",
       "HARNESS"

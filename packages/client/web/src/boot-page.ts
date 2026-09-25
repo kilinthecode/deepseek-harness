@@ -51,20 +51,20 @@ const STAGES = {
   outer: { delay: 1560, duration: 540 },
 } as const
 
-/** Lettering schedule in ms from mount; CSS runs it without per-letter timers. */
-const LETTER_START_MS = 2180
-const LETTER_STEP_MS = 100
-const PLATE_MS = 2860
-const PLATE_LETTER_START_MS = 3020
-const PLATE_LETTER_STEP_MS = 80
+/** Lettering schedule in ms from mount: the mark settles first, then one word at a time. */
+const LETTER_START_MS = 2400
+const LETTER_STEP_MS = 110
+const PLATE_MS = 3160
+const PLATE_LETTER_START_MS = 3280
+const PLATE_LETTER_STEP_MS = 85
 
 /** Delay after which a boot still running earns the progress spinner and hint. */
 const STATUS_MS = 4000
 /**
- * Shortest brand moment held before the handoff. Typing ends at 3.58s,
+ * Shortest brand moment held before the handoff. Typing ends at 3.875s,
  * followed by a still pause before the application fade.
  */
-const MIN_HOLD_MS = 3800
+const MIN_HOLD_MS = 4100
 /** Pause after the nameplate finishes before fading to the application. */
 const BRAND_SETTLE_MS = 220
 /** Leave fade, matching the dispose transition in the stylesheet. */
