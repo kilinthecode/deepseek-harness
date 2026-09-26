@@ -14,7 +14,7 @@ import type { Branded } from '@deepseek-ai/dsh-brand'
 import { defineDomain, domainTable } from '@deepseek-ai/dsh-storage-domain'
 import type { DomainSpec, DomainTableSpec } from '@deepseek-ai/dsh-storage-domain'
 
-/** Memory kinds, in catalog order: who the user is, how to work, project facts, external pointers. */
+/** Memory kinds, in snapshot order: who the user is, how to work, project facts, external pointers. */
 export const MEMORY_TYPES = ['user', 'feedback', 'project', 'reference'] as const
 
 /** One of {@link MEMORY_TYPES}. */
@@ -32,7 +32,7 @@ export type MemoryScope = (typeof MEMORY_SCOPES)[number]
  */
 export const MEMORY_NAME_RE = /^[a-z0-9][a-z0-9-]{0,63}$/
 
-/** Upper bound of a description, the one-line catalog summary. Protocol constant, not configuration. */
+/** Upper bound of a description, the one-line snapshot summary. Protocol constant, not configuration. */
 export const MEMORY_DESCRIPTION_MAX_CHARS = 256
 
 /**
@@ -68,7 +68,7 @@ export interface MemoryRecord {
   readonly name: MemoryName
   readonly type: MemoryType
   readonly scope: MemoryScope
-  /** One-line catalog summary. */
+  /** One-line snapshot summary. */
   readonly description: string
   readonly content: string
   /** Absolute root of the project the record belongs to; present exactly when `scope` is `project`. */

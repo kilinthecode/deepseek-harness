@@ -3,7 +3,7 @@
  * `project`, and `reference` records kept as one JSON document each under
  * the `memory` storage domain. The store owns validation, the per-scope
  * record caps, and project-root resolution; model-facing tools and the
- * catalog injection live in `@deepseek-ai/dsh-tool-memory`.
+ * snapshot injection live in `@deepseek-ai/dsh-tool-memory`.
  * @module @deepseek-ai/dsh-memory
  */
 
@@ -109,7 +109,7 @@ export interface MemoryWriteRequest {
   readonly name: string
   readonly type: MemoryType
   readonly scope: MemoryScope
-  /** One-line summary shown in the catalog; trimmed, 1 to 256 characters, no U+000A, U+000D, U+2028, or U+2029. */
+  /** One-line summary shown in the snapshot; trimmed, 1 to 256 characters, no U+000A, U+000D, U+2028, or U+2029. */
   readonly description: string
   /** The memory body; trimmed, at most `maxRecordBytes` UTF-8 bytes. */
   readonly content: string

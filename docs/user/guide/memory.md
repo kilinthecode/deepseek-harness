@@ -20,7 +20,7 @@ The model reads a memory the snapshot listed only as an index line, or a memory 
 
 The model decides on its own what is worth keeping. Its instructions tell it to save preferences, feedback, project facts, and references, and never task progress, transient state, secrets, or anything the repository already records.
 
-On the TUI and on the Web `standard`, `cordis`, and `ptc` presets, an unattended review fork runs after every 10 user messages (goal-round messages do not count). The parent conversation does not see the review; the child may only add a new memory name. The `headless`, ACP, and SDK profiles do not run this review. On Web, the review appears as an ordinary subagent row labelled `memory-review`.
+On the TUI and on the Web `standard`, `cordis`, and `ptc` presets, an unattended review fork runs after every 10 user messages (goal-round messages do not count). The parent conversation does not see the review; the child may only add a name that does not exist yet in that scope. The `headless`, ACP, and SDK profiles do not run this review. On Web, the review appears as an ordinary subagent row labelled `memory-review`.
 
 ## Types and scopes
 

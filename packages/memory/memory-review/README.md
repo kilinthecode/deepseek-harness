@@ -9,7 +9,7 @@ English | [中文](README.zh.md)
 
 ## Summary
 
-`dsh-memory-review` starts an unattended in-process fork after enough user-kind turns so the child can save durable memories from the conversation the parent already has. The parent model sees nothing; the child inherits the parent's completed turns, then a review task, and may only add new names. The base bundle and the TUI profile enable it every ten user turns with an eight-step cap; headless, ACP, and SDK disable it; Web remounts it on the `standard`, `cordis`, and `ptc` presets. Choose it when a live process should save memories without changing the parent's request prefix.
+`dsh-memory-review` starts an unattended in-process fork after enough user-kind turns so the child can save durable memories from the conversation the parent already has. The parent model sees nothing; the child inherits the parent's completed turns, then a review task, and may only add a name that does not exist yet in that scope. The base bundle and the TUI profile enable it every ten user turns; headless, ACP, and SDK disable it; Web remounts it on the `standard`, `cordis`, and `ptc` presets. Choose it when a live process should save memories without changing the parent's request prefix.
 
 ## Table of Contents
 

@@ -17,7 +17,7 @@ interface MemoryWriteRequest {
   readonly name: string
   readonly type: MemoryType
   readonly scope: MemoryScope
-  /** One-line summary shown in the catalog; trimmed, 1 to 256 characters, no U+000A, U+000D, U+2028, or U+2029. */
+  /** One-line summary shown in the snapshot; trimmed, 1 to 256 characters, no U+000A, U+000D, U+2028, or U+2029. */
   readonly description: string
   /** The memory body; trimmed, at most `maxRecordBytes` UTF-8 bytes. */
   readonly content: string

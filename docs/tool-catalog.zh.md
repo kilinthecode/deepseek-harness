@@ -45,7 +45,7 @@
 | `@deepseek-ai/dsh-tool-subagent-control` | `interrupt_agent`、`list_agents`、`send_message` | `ctx.tools`、`ctx.subagents`、`ctx.agents and ctx.sessionProjections (list_agents only)` | `tool/call`、`tool/result`、`child session events through ctx.subagents` | - | 这些是控制可继续后台 subagent 的全局命名工具：绑定提供方的 `tool-subagent` 实例注册不同的委派工具；本包注册一次 `send_message` 和 `interrupt_agent`，另由 `list_agents` 通过单独加载的 `/list-agents` 插件提供，其目录行使用 sessionProjections 和实时 Agent 注册表。 |
 | `@deepseek-ai/dsh-tool-jobs` | `job_kill`、`job_list`、`job_output` | `ctx.tools`、`ctx.jobs`、`ctx.systemPrompt` | `tool/call`、`tool/result`、`user/message via agent.inject() for background completion notices` | - | 与任务种类无关的后台任务控制器：后台 bash 命令、PTY 发送和 subagent 都通过相同的 3 个工具读取、列出和终止。加载该插件会挂接控制器，从而启用生产方的 `ctx.jobs.start()`。 |
 | `@deepseek-ai/dsh-experimental-tool-agent-team` | `interrupt_agent`、`list_agents`、`send_message`、`spawn_teammate`、`team_task_create`、`team_task_get`、`team_task_list`、`team_task_update`、`wait_agent` | `ctx.tools`、`ctx.systemPrompt`、`ctx.agentTeams`、`an exact live Team member Agent` | `tool/call`、`team/member`、`team/message/queued`、`team/message/delivered`、`team/task`、`tool/result` | - | 这 9 个工具限定于隐式 Team Lead 与持久 teammate 作用域。随产品发布的 dsh-base bundle 默认禁用该包；文档中的 Agent Teams profile patch 会启用它，并禁用旧 continuable child 的同名控制工具。 |
-| `@deepseek-ai/dsh-tool-memory` | `memory_forget`、`memory_recall`、`memory_write` | `ctx.tools`、`ctx.memory`、`ctx.systemPrompt`、`ctx.sessionProjections`、`owning Agent session` | `tool/call`、`tool/result`、`user/message catalog at pre-step` | - | 这三个工具读写由 dsh-memory 拥有的持久记忆存储；会话工作目录决定项目作用域。注入的目录是 source 为 `tool-memory`、受 `injectMaxBytes` 约束的 user/message，因此本目录记录随产品发布的预算与回忆上限。 |
+| `@deepseek-ai/dsh-tool-memory` | `memory_forget`、`memory_recall`、`memory_write` | `ctx.tools`、`ctx.memory`、`ctx.systemPrompt`、`ctx.sessionProjections`、`owning Agent session` | `tool/call`、`tool/result`、`user/message snapshot at pre-step` | - | 这三个工具读写由 dsh-memory 拥有的持久记忆存储；会话工作目录决定项目作用域。注入的快照是 source 为 `tool-memory` 的 user/message，每次 surface generation 注入一次，并在压缩（compaction）之后重新加入，受 `injectMaxBytes` 约束，因此本目录记录随产品发布的预算与回忆上限。 |
 | `@deepseek-ai/dsh-tool-todo` | `todo_write` | `ctx.tools`、`owning Agent session` | `tool/call`、`todo/write`、`tool/result` | - | todo_write 是会话所有的状态；UI 将最新的 todo/write 事件渲染为检查清单。`allowParallelInProgress` 是没有默认值的必填项，因此本目录明确选择 `true`，对应描述允许同时存在多个 `in_progress` 项。选择 `false` 的部署会获得同一工具，但描述会要求只能有 1 个活动任务。 |
 | `@deepseek-ai/dsh-tool-workflow` | `workflow` | `ctx.tools`、`ctx.workflowEngine`、`ctx.systemPrompt`、`a calling Agent (exec.agent parents the script children)` | `tool/call`、`tool/result` | - | - |
 | `@deepseek-ai/dsh-tool-workspace-dependencies` | `load_workspace_dependencies` | `ctx.tools` | `tool/call`, `tool/result` | - | - |
@@ -2553,7 +2553,7 @@ lsp 工具将提供方选择和语言服务器子进程置于 ctx.lsp 之后，�
 
 ### `memory_recall`
 
-读取已保存的全局记忆和当前项目的记忆。
+从实时存储中读取已保存的全局记忆和当前项目的记忆，包括快照之后保存的记忆。用于回忆快照中仅以索引行列出的条目；已内联的快照条目无需回忆。
 
 ```json
 {

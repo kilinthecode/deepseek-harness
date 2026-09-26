@@ -20,7 +20,7 @@ DeepSeek Harness 为 agent（智能体）保存持久记忆：你是谁、你喜
 
 模型自行决定什么值得保留。它的指令要求它保存偏好、反馈、项目事实和参考资料，绝不保存任务进度、临时状态、密钥，或仓库中已有记录的内容。
 
-在 TUI 以及 Web 的 `standard`、`cordis` 和 `ptc` 预设上，每 10 条用户消息之后会运行一次无人值守的回顾 fork（goal Round 消息不计入）。父对话看不到这次回顾；子会话只能添加新的记忆名称。`headless`、ACP 和 SDK 这些 profile 不运行此回顾。在 Web 上，回顾显示为带 `memory-review` 标签的普通 subagent 行。
+在 TUI 以及 Web 的 `standard`、`cordis` 和 `ptc` 预设上，每 10 条用户消息之后会运行一次无人值守的回顾 fork（goal Round 消息不计入）。父对话看不到这次回顾；子会话只能添加该作用域内尚不存在的名称。`headless`、ACP 和 SDK 这些 profile 不运行此回顾。在 Web 上，回顾显示为带 `memory-review` 标签的普通 subagent 行。
 
 ## 类型与作用域
 

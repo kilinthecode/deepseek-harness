@@ -9,7 +9,7 @@ kind: "package-reference"
 
 ## 概述
 
-`dsh-memory-review` 在足够多条用户类轮次之后启动一次无人值守的进程内 fork，让子 agent（智能体）从父会话已有的对话中保存持久记忆。父模型看不到任何额外内容；子 agent 继承父级已完成轮次，再收到一条回顾任务，并且只能添加新名称。base 组合包与 TUI 配置每十轮用户消息启用它、步骤上限为八；headless、ACP（Agent Client Protocol）和 SDK 将其关闭；Web 在 `standard`、`cordis` 和 `ptc` 预设上按会话重新挂载。当进程仍在运行、且不应改变父请求前缀时选择它。
+`dsh-memory-review` 在足够多条用户类轮次之后启动一次无人值守的进程内 fork，让子 agent（智能体）从父会话已有的对话中保存持久记忆。父模型看不到任何额外内容；子 agent 继承父级已完成轮次，再收到一条回顾任务，并且只能添加该作用域内尚不存在的名称。base 组合包与 TUI 配置每十轮用户消息启用它；headless、ACP（Agent Client Protocol）和 SDK 将其关闭；Web 在 `standard`、`cordis` 和 `ptc` 预设上按会话重新挂载。当进程仍在运行、且不应改变父请求前缀时选择它。
 
 ## 目录
 
