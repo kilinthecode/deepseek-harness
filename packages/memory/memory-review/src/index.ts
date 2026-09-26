@@ -69,17 +69,21 @@ export function apply(ctx: Context, config: Config): void {
 
   const inflight = new Map<SessionId, AbortController>()
   const dispatching = new Set<SessionId>()
-  const warnedMissingDependency = new Set<SessionId>()
+  const warnedMissingDependency = new Set<string>()
   ctx.effect(() => () => {
     for (const controller of inflight.values()) controller.abort()
   }, 'memory-review.abortOnUnload')
 
   ctx.on('agent/disposed', ({ agent }) => {
-    inflight.get(agent.session.id)?.abort()
-    // `startReview`'s own settlement also deletes this entry once `run.result`
-    // rejects from the abort; deleting it here too keeps a disposed parent's
+    const controller = inflight.get(agent.session.id)
+    controller?.abort()
+    // `startReview`'s own settlement also releases this entry once `run.result`
+    // rejects from the abort; releasing it here too keeps a disposed parent's
     // guard cleared immediately instead of waiting on that async settlement.
-    inflight.delete(agent.session.id)
+    // `releaseInflight` only removes the entry if it still belongs to this
+    // controller: a fresh agent re-created on the same (disposed) session id
+    // may already have started its own review and hold a newer entry.
+    releaseInflight(inflight, agent.session.id, controller)
   })
 
   ctx.on('agent/created', ({ agent }) => {
@@ -100,16 +104,41 @@ export function apply(ctx: Context, config: Config): void {
 }
 
 /**
- * Log a missing-dependency error once per parent for the plugin's lifetime,
- * instead of on every due-but-skipped idle notification.
+ * Remove `sessionId`'s in-flight guard entry only if it still belongs to
+ * `controller`. A parent disposed mid-review can be re-created on the same
+ * session id before this review's own settlement runs; that later review
+ * installs its own controller, and an unconditional delete here would clear
+ * its guard entry instead of this review's, letting a third review overlap it.
+ * Exported for direct testing: the in-process fork driver ties a review
+ * child's own cordis scope to its parent's, so disposing the parent always
+ * settles that review's `run.result` before the parent's own `dispose()`
+ * returns, leaving no window to observe a second review's entry surviving
+ * the first's settlement through the full agent loop alone.
+ * @param inflight - the sole one-review-per-parent guard.
+ * @param sessionId - parent session id whose entry may be released.
+ * @param controller - controller identifying the review that owns the entry.
+ */
+export function releaseInflight(
+  inflight: Map<SessionId, AbortController>,
+  sessionId: SessionId,
+  controller: AbortController | undefined,
+): void {
+  if (controller !== undefined && inflight.get(sessionId) === controller) inflight.delete(sessionId)
+}
+
+/**
+ * Log a missing-dependency error once per parent and dependency for the
+ * plugin's lifetime, instead of on every due-but-skipped idle notification.
+ * Keying by dependency keeps a second, distinct missing dependency loud
+ * after the first was already reported for the same parent.
  * @param ctx - plugin context whose logger receives the message.
- * @param parentId - parent session id the warning is scoped to.
- * @param warned - parents that have already been warned.
+ * @param key - parent session id plus the missing dependency the warning is scoped to.
+ * @param warned - parent/dependency pairs that have already been warned.
  * @param message - error text to log the first time.
  */
-function warnMissingDependencyOnce(ctx: Context, parentId: SessionId, warned: Set<SessionId>, message: string): void {
-  if (warned.has(parentId)) return
-  warned.add(parentId)
+function warnMissingDependencyOnce(ctx: Context, key: string, warned: Set<string>, message: string): void {
+  if (warned.has(key)) return
+  warned.add(key)
   ctx.logger.error(message)
 }
 
@@ -126,8 +155,8 @@ function warnMissingDependencyOnce(ctx: Context, parentId: SessionId, warned: Se
  * one-review-per-parent guard.
  * @param dispatching - parents whose review child is being created right
  * now; the `agent/created` restriction gate reads this, not `inflight`.
- * @param warnedMissingDependency - parents already warned about a missing
- * `memory_write` tool or `fork` provider, so the warning logs once.
+ * @param warnedMissingDependency - parent/dependency pairs already warned
+ * about a missing `memory_write` tool or `fork` provider, so each warning logs once.
  */
 async function startReview(
   ctx: Context,
@@ -135,7 +164,7 @@ async function startReview(
   config: Config,
   inflight: Map<SessionId, AbortController>,
   dispatching: Set<SessionId>,
-  warnedMissingDependency: Set<SessionId>,
+  warnedMissingDependency: Set<string>,
 ): Promise<void> {
   if (agent.session.header.parentSession !== undefined) return
   if (inflight.has(agent.session.id)) return
@@ -144,14 +173,14 @@ async function startReview(
   }
   if (ctx.tools.get('memory_write', agent) === undefined) {
     warnMissingDependencyOnce(
-      ctx, agent.session.id, warnedMissingDependency,
+      ctx, `${agent.session.id}:memory_write`, warnedMissingDependency,
       'memory-review: the memory_write tool is not registered; mount @deepseek-ai/dsh-tool-memory before memory-review',
     )
     return
   }
   if (!ctx.subagents.list().includes('fork')) {
     warnMissingDependencyOnce(
-      ctx, agent.session.id, warnedMissingDependency,
+      ctx, `${agent.session.id}:fork`, warnedMissingDependency,
       'memory-review: the fork subagent provider is not registered; mount @deepseek-ai/dsh-subagent-fork-in-process before memory-review',
     )
     return
@@ -172,14 +201,14 @@ async function startReview(
       dispatching.delete(agent.session.id)
     }
     if (run.localAgent === undefined) {
-      inflight.delete(agent.session.id)
+      releaseInflight(inflight, agent.session.id, controller)
       // No waiter owns this run; swallow the settlement so disposal can finish.
       void run.result.catch(() => undefined)
       await run.dispose()
       throw new Error('memory-review requires an in-process fork child')
     }
     const settle = (): void => {
-      inflight.delete(agent.session.id)
+      releaseInflight(inflight, agent.session.id, controller)
       void run.dispose()
     }
     const settleAfterFailure = (error: unknown): void => {
@@ -188,7 +217,7 @@ async function startReview(
     }
     void run.result.then(settle, settleAfterFailure)
   } catch (error: unknown) {
-    inflight.delete(agent.session.id)
+    releaseInflight(inflight, agent.session.id, controller)
     ctx.logger.warn(`memory-review: ${error instanceof Error ? error.message : String(error)}`)
   }
 }

@@ -21,6 +21,7 @@ import {
   REVIEW_LABEL,
   REVIEW_PROMPT,
   dueForReview,
+  releaseInflight,
   reviewWriteTarget,
 } from '../src/index.ts'
 import {
@@ -56,6 +57,46 @@ async function* hangUntilAborted(options: GenerateOptions): AsyncGenerator<Strea
   await new Promise<void>((_resolve, reject) => {
     if (options.signal?.aborted) { reject(new Error('aborted')); return }
     options.signal?.addEventListener('abort', () => { reject(new Error('aborted')) }, { once: true })
+  })
+}
+
+/**
+ * Resolve once `child`'s own live request has been dispatched to the model
+ * (its own `request/header`, not one inherited from the parent's seed).
+ * Waiting for this before aborting a hung child interrupts a genuinely
+ * in-flight call instead of racing ahead of the child's own request-building
+ * microtasks.
+ * @param child - agent whose live request-header to wait for.
+ */
+async function waitForLiveRequestHeader(child: Agent): Promise<void> {
+  const hasLiveRequestHeader = (): boolean => child.session.snapshotEvents()
+    .some(event => event.type === 'request/header' && event.seq >= child.session.inheritedEventCount)
+  if (hasLiveRequestHeader()) return
+  await new Promise<void>((resolve) => {
+    const dispose = child.ctx.on('session/event', (_session, event) => {
+      if (event.type !== 'request/header' || event.seq < child.session.inheritedEventCount) return
+      dispose()
+      resolve()
+    })
+  })
+}
+
+/**
+ * Resolve with the review child agent this plugin starts for `parent`, as
+ * soon as `subagent/start` fires. Unlike `waitForReviewChild` (helpers.ts),
+ * this does not also wait for the child to go idle, so it resolves even for
+ * a child scripted to hang.
+ * @param ctx - context the agents live in.
+ * @param parent - parent whose review child to capture.
+ */
+function waitForReviewChildStart(ctx: Context, parent: Agent): Promise<Agent> {
+  return new Promise((resolve) => {
+    const dispose = ctx.on('subagent/start', (info) => {
+      const child = ctx.agents.get(info.id)
+      if (child?.session.header.parentSession !== parent.session.id) return
+      dispose()
+      resolve(child)
+    })
   })
 }
 
@@ -578,59 +619,155 @@ describe('dsh-memory-review through the agent loop', () => {
     await ctx.fiber.dispose()
   })
 
+  it('reports each missing dependency once per parent: a later-mounted tool-memory does not silence the missing fork provider', async () => {
+    const root = await freshRoot()
+    const ctx = new Context()
+    const errors: string[] = []
+    await mountAgentLoopTestDependencies(ctx)
+    await ctx.plugin(AgentLoop, { agents: [] })
+    await mountStore(ctx, root)
+    await ctx.plugin(SubagentRuntime)
+    ctx.logger.error = ((message: unknown) => {
+      errors.push(String(message))
+    }) as typeof ctx.logger.error
+    await ctx.plugin(MemoryReview, { reviewEveryUserTurns: 1, maxReviewSteps: 8 })
+    ctx.llm.registerAdapter(['mock'], new MockAdapter([textResponse('ok'), textResponse('ok')]))
+    const parent = await ctx.agentLoop.create(SessionId('missing-both-then-one'), { provider: 'mock', model: 'mock' })
+    ask(parent, 'first')
+    await waitForIdle(ctx, parent)
+    expect(errors.filter(message => message.includes('memory_write'))).toHaveLength(1)
+    expect(errors.filter(message => message.includes('fork'))).toHaveLength(0)
+    // Siblings activate concurrently (see apply()'s JSDoc): tool-memory can
+    // arrive after the first due idle already warned about it. The fork
+    // provider is still missing, so the next due idle must report that too.
+    await ctx.plugin(ToolMemory, { injectMaxBytes: 2048, maxRecallResults: 4 })
+    ask(parent, 'second')
+    await waitForIdle(ctx, parent)
+    expect(errors.filter(message => message.includes('fork'))).toHaveLength(1)
+    expect(reviewCatalog(parent.session.snapshotEvents())).toHaveLength(0)
+    await ctx.fiber.dispose()
+  })
+
   it('aborts an in-flight review when its parent is disposed, and a later idle of a brand-new parent starts its own review normally', async () => {
     const root = await freshRoot()
-    const adapter = new MockAdapter([textResponse('ok'), 'hang'])
+    const adapter = new MockAdapter([textResponse('ok'), 'hang', textResponse('ok'), textResponse('Nothing to save.')])
     const { ctx } = await harness(adapter, { reviewEveryUserTurns: 1, maxReviewSteps: 8 }, root)
     const handle = await ctx.agents.create({
       sessionId: SessionId('dispose-abort'),
       agentOptions: { provider: 'mock', model: 'mock' },
     })
     const parent = handle.agent
-    const started = new Promise<Agent>((resolve) => {
-      ctx.on('subagent/start', (info) => {
-        const child = ctx.agents.get(info.id)
-        if (child?.session.header.parentSession === parent.session.id) resolve(child)
-      })
-    })
+    const childP = waitForReviewChildStart(ctx, parent)
     ask(parent, 'go')
     await waitForIdle(ctx, parent)
-    const child = await started
+    const child = await childP
 
     // Wait for the child's own live request to have been dispatched (it
     // consumes the 'hang' script entry) before disposing the parent: right
     // after `subagent/start`, the child's own request-building microtasks
     // have not necessarily run yet, so disposing immediately would race
-    // ahead of them instead of interrupting a genuinely in-flight call. The
-    // inherited seed already carries its own `request/header`, so only a
-    // live one (`seq >= inheritedEventCount`) counts.
-    const hasLiveRequestHeader = (): boolean => child.session.snapshotEvents()
-      .some(event => event.type === 'request/header' && event.seq >= child.session.inheritedEventCount)
-    if (!hasLiveRequestHeader()) {
-      await new Promise<void>((resolve) => {
-        const dispose = child.ctx.on('session/event', (_session, event) => {
-          if (event.type !== 'request/header' || event.seq < child.session.inheritedEventCount) return
-          dispose()
-          resolve()
-        })
-      })
-    }
+    // ahead of them instead of interrupting a genuinely in-flight call.
+    await waitForLiveRequestHeader(child)
 
-    // This exercises the previously untested `agent/disposed` abort path:
-    // the parent's own disposal aborts the in-flight review child through
-    // this plugin's listener (the abort propagates to `child.cancel(...)`
-    // inside the fork driver), ending its hung turn.
+    // The parent's own disposal aborts the in-flight review child through
+    // this plugin's `agent/disposed` listener (the abort propagates to
+    // `child.cancel(...)` inside the fork driver), ending its hung turn.
     await handle.dispose()
     await child.whenIdle()
 
     // A later idle of a brand-new, unrelated parent is unaffected: its own
-    // review starts and completes normally.
+    // review starts and completes normally — proven by its child's own
+    // scripted reply actually landing, not merely by the catalog row that
+    // `startReview` appends up front regardless of how the child later ends.
     const second = await createParent(ctx, 'fresh-after-dispose')
     const secondChildP = waitForReviewChild(ctx, second)
     ask(second, 'go')
     await waitForIdle(ctx, second)
-    await secondChildP
+    const secondChild = await secondChildP
     expect(reviewCatalog(second.session.snapshotEvents())).toHaveLength(1)
+    const secondLive = secondChild.session.snapshotEvents().filter(event => event.seq >= secondChild.session.inheritedEventCount)
+    expect(secondLive.some(event => event.type === 'assistant/message'
+      && event.data.message.content.some(block => block.type === 'text' && block.text === 'Nothing to save.'))).toBe(true)
+  })
+
+  it('releaseInflight only removes an in-flight entry that still belongs to the given controller', () => {
+    // This pins the identity check `releaseInflight` (src/index.ts) makes
+    // before every `inflight.delete`, including inside `agent/disposed` and
+    // `startReview`'s own settlement paths. It is a direct unit test, not a
+    // full agent-loop scenario, because the race it guards against cannot be
+    // driven through the public API here: the in-process fork driver
+    // publishes a review child through `parent.ctx.agents.create(...)`
+    // (`packages/subagent/subagent-in-process-driver/src/index.ts`), which
+    // ties the child's own cordis scope to the parent's — so disposing a
+    // parent (`AgentLoop`'s `dispose()`, `packages/core/agent-loop/src/index.ts`)
+    // always awaits `machine.scope.dispose()`, which cascades to cancel and
+    // settle the child's `run.result` (and thus this plugin's `settle()`)
+    // *before* the parent's own `dispose()` call returns. A second review's
+    // controller can only ever be installed after that same `dispose()`
+    // call returns, so the first review's settlement is always already
+    // complete by then — there is no observable window where a second
+    // controller is live while the first's settlement is still pending.
+    const inflight = new Map<SessionId, AbortController>()
+    const sessionId = SessionId('shared-parent')
+    const first = new AbortController()
+    const second = new AbortController()
+
+    // A stale controller (no longer, or never, the map's owner) is a no-op,
+    // whether the entry belongs to someone else or was already removed.
+    inflight.set(sessionId, second)
+    releaseInflight(inflight, sessionId, first)
+    expect(inflight.get(sessionId)).toBe(second)
+    releaseInflight(inflight, sessionId, undefined)
+    expect(inflight.get(sessionId)).toBe(second)
+
+    // The current owner still releases its own entry normally.
+    releaseInflight(inflight, sessionId, second)
+    expect(inflight.has(sessionId)).toBe(false)
+  })
+
+  it('starts its own review normally on a session id reused by a fresh agent after the earlier one was disposed', async () => {
+    // `ctx.agents.create` rejects a session id still held by a live entry, so
+    // this reuses the id only after the first agent's own disposal fully
+    // resolves (see `scope-lifecycle.spec.ts`'s "reopens ids after the prior
+    // private scope finishes quiescing" for the same create/dispose/create
+    // pattern). The second agent gets a brand-new, empty session under the
+    // same id; the in-flight guard this test pins is keyed purely by session
+    // id, so it does not depend on any session content carrying over. As the
+    // JSDoc on `releaseInflight` explains, disposing `first` also always
+    // settles its own review before `dispose()` returns, so this does not
+    // reach the identity-check branch itself (see the direct unit test
+    // above for that) — it instead covers that reusing a session id, and the
+    // disposed-then-settled review's redundant releases, leave the guard in
+    // a clean state for a normal second review to start and run.
+    const root = await freshRoot()
+    const adapter = new MockAdapter([textResponse('ok'), 'hang', textResponse('ok'), textResponse('Nothing to save.')])
+    const { ctx } = await harness(adapter, { reviewEveryUserTurns: 1, maxReviewSteps: 8 }, root)
+
+    const sessionId = SessionId('reused-session-guard')
+    const first = await ctx.agents.create({ sessionId, agentOptions: { provider: 'mock', model: 'mock' } })
+    const firstChildP = waitForReviewChildStart(ctx, first.agent)
+    ask(first.agent, 'go')
+    await waitForIdle(ctx, first.agent)
+    const firstChild = await firstChildP
+    await waitForLiveRequestHeader(firstChild)
+
+    // Disposing the first agent aborts its in-flight review through
+    // `agent/disposed` and releases the guard entry for `sessionId`.
+    await first.dispose()
+
+    // A fresh agent re-created on the SAME session id starts its own review
+    // cleanly: the guard was released above, so this due idle installs a
+    // new controller and runs to completion normally.
+    const second = await ctx.agents.create({ sessionId, agentOptions: { provider: 'mock', model: 'mock' } })
+    const secondChildP = waitForReviewChildStart(ctx, second.agent)
+    ask(second.agent, 'go')
+    await waitForIdle(ctx, second.agent)
+    const secondChild = await secondChildP
+    await secondChild.whenIdle()
+    expect(reviewCatalog(second.agent.session.snapshotEvents())).toHaveLength(1)
+    const secondLive = secondChild.session.snapshotEvents().filter(event => event.seq >= secondChild.session.inheritedEventCount)
+    expect(secondLive.some(event => event.type === 'assistant/message'
+      && event.data.message.content.some(block => block.type === 'text' && block.text === 'Nothing to save.'))).toBe(true)
   })
 
   it('allows the review child to call memory_recall and read stored content', async () => {
@@ -1025,12 +1162,9 @@ describe('dsh-memory-review through the agent loop', () => {
     // the process-global one every other test in this file uses:
     // `presetScopedHarness` reproduces that exact relationship through the
     // real `@deepseek-ai/dsh-agent-preset-registry`, the same registry the
-    // real preset plugin calls. Before the fix, `startReview` looked up
-    // `memory_write` with `ctx.tools.get('memory_write')` (no scope), which
-    // only ever sees the process-global layer — the tool the preset registers
-    // is invisible there, so the review was silently skipped. Reverting the
-    // fix (dropping the `agent` scope argument back off that lookup) must
-    // make this test fail.
+    // real preset plugin calls. `startReview` looks up `memory_write` with
+    // `ctx.tools.get('memory_write', agent)`, scoped to the agent: the
+    // process-global layer alone cannot see the tool the preset registers.
     const root = await freshRoot()
     const adapter = reviewAdapter([
       toolCallResponse('f1', 'memory_forget', { name: 'prefers-pnpm', scope: 'global' }),
