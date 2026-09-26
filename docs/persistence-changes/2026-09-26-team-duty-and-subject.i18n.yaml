@@ -1,0 +1,28 @@
+# Bilingual-pair consistency record for 2026-09-26-team-duty-and-subject.md (docs/i18n/README.md): per heading
+# section, a hash of its English and Chinese blocks outside code blocks and generated regions.
+# After editing either side, bring the other along and re-record with:
+#   pnpm run verify-translation-pairing --write docs/persistence-changes/2026-09-26-team-duty-and-subject.md
+/:
+  en: 3d5a424ae7d7e46b
+  zh: c22a8e4a62d8cc1a
+/2026-09-26-team-duty-and-subject:
+  en: 57a4820b1b29298c
+  zh: 42fcd4c3aa623a59
+/2026-09-26-team-duty-and-subject/summary:
+  en: 6248aa967e6d2acb
+  zh: 75c6f2b6dd0b9f86
+/2026-09-26-team-duty-and-subject/table-of-contents:
+  en: 6cf314a069ceb451
+  zh: 9adff678e9ecab3b
+/2026-09-26-team-duty-and-subject/declaration:
+  en: 6907136f28e48c90
+  zh: 02f8298485f3d8e7
+/2026-09-26-team-duty-and-subject/compatibility:
+  en: 6903f8eaf56a2722
+  zh: c744138435455884
+/2026-09-26-team-duty-and-subject/verification:
+  en: 26b05ecaf46ebd9e
+  zh: c0ae8d792eca576a
+/2026-09-26-team-duty-and-subject/dev-note:
+  en: b75c8458928b72b9
+  zh: 003ba4e17b4b5269

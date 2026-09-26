@@ -9,7 +9,7 @@ English | [中文](README.zh.md)
 
 ## Summary
 
-`dsh-experimental-agent-team` turns one coding session into a small working team: the session's agent becomes the Lead, creates named teammates for delegated work, exchanges durable messages with them, and tracks shared tasks on a common board. Messages and task state survive crashes, reloads, and interruptions, so an offline teammate receives its queued messages when it resumes. With `roomEnabled` the same roster also runs as a deliberative room: utterances join one attributed transcript, and collective decisions settle only by recorded quorum. It ships no tools — mount `@deepseek-ai/dsh-experimental-tool-agent-team`. It is published under its experimental name and carries no stability promise.
+`dsh-experimental-agent-team` turns one coding session into a small working team: the session's agent becomes the Lead, creates named teammates, exchanges durable messages with them, and tracks shared tasks on a common board. A planner teammate can write and verify the plan while executors carry it out, and the Lead can give the Team a subject. Messages and task state survive crashes and restarts. With `roomEnabled` the roster also runs as a room whose collective decisions settle only by recorded quorum. It ships no tools — mount `@deepseek-ai/dsh-experimental-tool-agent-team`. It is published under its experimental name and carries no stability promise.
 
 ## Table of Contents
 
@@ -64,6 +64,16 @@ The roster shows every member with its role (`lead` or `teammate`) and current s
 
 Only the Lead can create teammates or interrupt them.
 
+### Planner and executor duties
+
+A teammate can be created with a duty, which is fixed for its lifetime and shown in the roster. A `planner` writes the plan as shared tasks, may edit, re-link, or delete a task no one has claimed yet, and verifies submitted work; it never claims or owns a task. An `executor` claims ready tasks, implements them, and submits them; it creates no tasks and verifies no work. A refused action reports `TEAM_DUTY_UNAUTHORIZED`. The Lead and teammates without a duty keep the unrestricted task rules below.
+
+The creation request can also restrict which inherited tools the teammate keeps; the subagent provider applies that restriction to the child and reapplies it whenever the child resumes. The tool package chooses the restriction for each duty.
+
+### Team subject
+
+The Lead can record a subject for its Team, up to 200 characters; the latest subject wins. The subject appears in the Team view the Web panel reads, and the tool package's `/team <subject>` command records it when a user starts a Team.
+
 ### Messages between teammates
 
 Any member can send a message to any other member or to the Lead. A live member receives it immediately; an offline member's messages queue and arrive when it resumes. Messages are never lost and never delivered twice.
@@ -76,7 +86,7 @@ Any member can add a task with a title, details, optional dependencies on other 
 
 Tasks have an owner: a member claims a task to start work, submits the finished work for verification, releases it back, or reopens it; the Lead can assign a task to any member. No member completes its own work: `submit` hands the current revision to a peer, the view then reports `verifying`, and only another member's `verify` verdict with its reason moves the task to `completed` or returns it with the objection recorded. While a submission awaits its verdict, the task cannot be edited, re-scoped, released, reassigned, or deleted; a change of owner clears any earlier verdict, so the next owner's submission needs a fresh one. Every change is compare-and-set: an update based on an outdated copy is rejected, so two members cannot silently overwrite each other's work.
 
-The board wakes the member whose next move depends on the transition: a teammate's `submit` messages the Lead so it can ask a peer to verify, and a `verify` messages the owner with the verdict and its reason. Both notices are durable mailbox messages, so a member mid-turn reads one at its next step and an inactive owner reads it when it next runs.
+The board wakes the member whose next move depends on the transition: a teammate's `submit` messages the Team's active planner so it can verify the work, or the Lead when the Team has no active planner so it can ask a peer, and a `verify` messages the owner with the verdict and its reason. Both notices are durable mailbox messages, so a member mid-turn reads one at its next step and an inactive owner reads it when it next runs.
 
 File hints produce warnings when two in-progress tasks plan to touch overlapping paths — they never block anything. Deleted tasks remain in history but disappear from the active list.
 
@@ -130,7 +140,7 @@ The [Agent Teams Agent Note](../../../.agents/notes/implemented/feature/2026-08-
 
 ### Team identity and roster
 
-Every ordinary runtime root is the implicit Lead of a Team whose `TeamId` equals its `SessionId`; there is no creation event, and durable state begins with the first member, message, or task record. `spawnTeammate()` first appends and flushes a `provisioning` member record, then asks the configured provider to create the reserved child; a provider failure appends a durable `failed` member. A fresh child starts with no Lead history; a fork child captures the Lead's completed-turn prefix once. Recovery reconciles an unterminated provisioning record against the child's independently persisted Session: a matching direct-parent and continuable descriptor plus a recorded initial user message produces `active`, and anything else produces `failed`. If recovery wins a same-process race, the creator accepts the terminal state or reports `TEAM_PROVISIONING_CONFLICT` and drains the child. Names are reserved by the first provisioning record and never reused.
+Every ordinary runtime root is the implicit Lead of a Team whose `TeamId` equals its `SessionId`; there is no creation event, and durable state begins with the first member, message, or task record. `spawnTeammate()` first appends and flushes a `provisioning` member record, then asks the configured provider to create the reserved child; a provider failure appends a durable `failed` member. A fresh child starts with no Lead history; a fork child captures the Lead's completed-turn prefix once. Recovery reconciles an unterminated provisioning record against the child's independently persisted Session: a matching direct-parent and continuable descriptor plus a recorded initial user message produces `active`, and anything else produces `failed`. If recovery wins a same-process race, the creator accepts the terminal state or reports `TEAM_PROVISIONING_CONFLICT` and drains the child. Names are reserved by the first provisioning record and never reused. A duty is recorded on the provisioning record and cannot change afterward; the Team keeps no copy of the tool restriction, which lives in the child's own subagent descriptor.
 
 ### Durable mailbox
 
@@ -140,7 +150,7 @@ Lead delivery calls `Agent.steer()` directly. Teammate delivery uses the continu
 
 ### Shared task board
 
-Tasks are complete versioned snapshots; every mutation carries `expectedRevision`, and a stale caller receives `TEAM_TASK_STALE_REVISION` instead of overwriting a newer value. Numeric `task-<n>` ids require a safe-integer suffix, and id-space exhaustion reports `TEAM_TASK_LIMIT` instead of reusing the final id. Deleted tasks remain tombstones for replay and id stability but do not consume `maxTasks` or appear in `listTasks()`. `writeScopes` are normalized workspace-relative prefixes; views warn on overlap with in-progress tasks but never block claim or authorize writes.
+Tasks are complete versioned snapshots; every mutation carries `expectedRevision`, and a stale caller receives `TEAM_TASK_STALE_REVISION` instead of overwriting a newer value. Numeric `task-<n>` ids require a safe-integer suffix, and id-space exhaustion reports `TEAM_TASK_LIMIT` instead of reusing the final id. Deleted tasks remain tombstones for replay and id stability but do not consume `maxTasks` or appear in `listTasks()`. `writeScopes` are normalized workspace-relative prefixes; views warn on overlap with in-progress tasks but never block claim or authorize writes. Duty checks read the caller's membership, which carries the duty from the durable member record, before the transition runs, so a dutied teammate cannot bypass them through any tool.
 
 ### Waiting and interruption
 
@@ -148,11 +158,11 @@ Tasks are complete versioned snapshots; every mutation carries `expectedRevision
 
 ### Durability model
 
-Team events are appended to the exact live Lead Session and flushed before the operation reports success or wakes waiters. `team/member`, `team/task`, `team/message/queued`, and `team/message/delivered` are log-only: they never enter the conversation surface, so derived model history is untouched by coordination records. Session event `seq` and `time` own ordering and timing; snapshots do not duplicate them. The `./invariant` companion replays each candidate Team event against its committed prefix and rejects invalid transitions before append.
+Team events are appended to the exact live Lead Session and flushed before the operation reports success or wakes waiters. `team/member`, `team/task`, `team/subject`, `team/message/queued`, and `team/message/delivered` are log-only: they never enter the conversation surface, so derived model history is untouched by coordination records. Session event `seq` and `time` own ordering and timing; snapshots do not duplicate them. The `./invariant` companion replays each candidate Team event against its committed prefix and rejects invalid transitions before append.
 
 Native V4 Team event and checkpoint admission reject retired `tool-result` content before it can enter mailbox or room state. Historical conversion belongs to the Session-format migration; the Team projection does not convert old wrappers.
 
-Mailbox projection and checkpoint admission preserve every decoded JSON field of accepted content outside the locally declared validators, including an own `__proto__` key. Local field checks cover `text`, `reasoning`, `image`, and `tool-call`; accepted unknown tags remain opaque. Team projection cache version 5 rebuilds checkpoints from earlier cache versions from the Session log; the Session format version is unchanged.
+Mailbox projection and checkpoint admission preserve every decoded JSON field of accepted content outside the locally declared validators, including an own `__proto__` key. Local field checks cover `text`, `reasoning`, `image`, and `tool-call`; accepted unknown tags remain opaque. Team projection cache version 6 rebuilds checkpoints from earlier cache versions from the Session log; the Session format version is unchanged.
 
 ### Shared room
 
@@ -188,7 +198,7 @@ Read these pages when the package-level contract is not enough. They move from t
 
 ### Browser projection
 
-The `agentTeam` Session projection publishes the Lead Session's durable roster identities and phases, member errors, non-deleted task views, and any `failure` beside the last valid state. Its `apply` replaces only the touched collection; mailbox-only changes retain the client view reference and produce no frame. The [subsystem reference](../../../docs/subsystems/agent-team.md#web-projection) defines the wire types.
+The `agentTeam` Session projection publishes the Lead Session's latest subject, durable roster identities, phases, and duties, member errors, non-deleted task views, and any `failure` beside the last valid state. Its `apply` replaces only the touched collection; mailbox-only changes retain the client view reference and produce no frame, while a subject change republishes it. The [subsystem reference](../../../docs/subsystems/agent-team.md#web-projection) defines the wire types.
 
 The [Web UI](../client-ui-agent-team/README.md) reads the shared Session projections and overlays activity from Session status. Task creation and updates belong to Team agents through the service and model tools. The `./client` export supplies browser-safe roster, task, projection, and room types.
 

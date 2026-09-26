@@ -14,6 +14,7 @@ import { teamProjectionDefinition } from './projection.ts'
 import { TeamRoom } from './room.ts'
 import { TeamRoster } from './roster.ts'
 import { TeamTaskBoard } from './task-board.ts'
+import { requiredText } from './validation.ts'
 import { TeamId, TeamTaskId } from './types.ts'
 import type { SpawnTeammateRequest, TeamMembership } from './roster.ts'
 import type {
@@ -224,6 +225,35 @@ export class TeamService extends TypertRemoteService {
   }
 
   /**
+   * Record the Team subject in the Lead log; the latest record wins.
+   * @param caller - exact live Team Lead.
+   * @param subject - subject text, trimmed and at most 200 characters.
+   */
+  async setSubject(caller: Agent, subject: string): Promise<void> {
+    const membership = this.roster.membership(caller)
+    if (membership.role !== 'lead') {
+      throw new TeamError('only the Team Lead can set the Team subject', 'TEAM_LEAD_REQUIRED')
+    }
+    const text = requiredText(subject, 'subject', 200)
+    const root = membership.root
+    await this.journal.transact(root.id, async () => {
+      await this.journal.appendAndFlush(root, 'team/subject', { version: 1, teamId: TeamId(root.id), subject: text })
+    })
+  }
+
+  /**
+   * Read the latest Team subject without throwing, for prompt assembly. A Team
+   * whose projection rejected a record keeps its last valid subject.
+   * @param agent - candidate exact live Agent.
+   * @returns the subject, or undefined for a non-member or before the Lead records one.
+   */
+  subjectOf(agent: Agent): string | undefined {
+    const membership = this.roster.tryMembership(agent)
+    if (membership === undefined) return undefined
+    return this.ctx.sessionProjections.stateOf(membership.root.session, 'agentTeam')?.subject
+  }
+
+  /**
    * Queue one durable peer message, then attempt immediate delivery.
    * @param caller - exact live sending Team member.
    * @param request - target name, content, and pre-queue cancellation.
@@ -311,8 +341,21 @@ export class TeamService extends TypertRemoteService {
     view: TeamTaskView,
   ): { readonly target: string; readonly text: string } | undefined {
     if (request.action === 'submit') {
-      // The Lead assigns the verifier, and only another member may verify.
       if (membership.role === 'lead') return undefined
+      // A planner verifies submissions, so it is asked directly; without one
+      // the Lead assigns the verifier, and only another member may verify.
+      const planner = this.journal.state(membership.root).members
+        .find(member => member.duty === 'planner' && member.phase === 'active')
+      if (planner !== undefined) {
+        return {
+          target: planner.name,
+          text: [
+            `Team task ${view.id} (revision ${String(view.revision)}) awaits your verdict:`,
+            `${membership.name} submitted it. Judge the work itself, then call team_task_update`,
+            `with action "verify", expected_revision ${String(view.revision)}, a verdict, and a reason.`,
+          ].join(' '),
+        }
+      }
       return {
         target: 'lead',
         text: [

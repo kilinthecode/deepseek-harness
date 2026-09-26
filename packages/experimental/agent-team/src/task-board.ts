@@ -44,6 +44,9 @@ export class TeamTaskBoard {
    */
   async create(membership: TeamMembership, request: CreateTeamTaskRequest): Promise<TeamTaskView> {
     const { root } = membership
+    if (membership.duty === 'executor') {
+      throw new TeamError('an executor cannot create tasks; ask the planner to add the work to the plan', 'TEAM_DUTY_UNAUTHORIZED')
+    }
     return this.journal.transact(root.id, async () => {
       const state = this.journal.state(root)
       const active = state.tasks.filter(task => task.status !== 'deleted').length
@@ -125,9 +128,17 @@ export class TeamTaskBoard {
       const authorizeOwner = (): void => {
         if (!lead && !owner) throw new TeamError('task mutation requires its owner or Team Lead', 'TEAM_TASK_UNAUTHORIZED')
       }
+      // A planner revises its plan until an executor claims the task.
+      const authorizePlanRevision = (): void => {
+        if (membership.duty === 'planner' && current.ownerId === undefined && current.status === 'pending') return
+        authorizeOwner()
+      }
       let next: TeamTaskSnapshot
       switch (request.action) {
         case 'claim':
+          if (membership.duty === 'planner') {
+            throw new TeamError('a planner cannot claim tasks; executors claim and implement them', 'TEAM_DUTY_UNAUTHORIZED')
+          }
           if (current.ownerId !== undefined && current.ownerId !== caller.id) {
             throw new TeamError(`team task "${current.id}" is owned by another member`, 'TEAM_TASK_ALREADY_CLAIMED')
           }
@@ -143,7 +154,7 @@ export class TeamTaskBoard {
           next = this.withoutVerification(this.withoutOwner({ ...current, status: 'pending' }))
           break
         case 'edit':
-          authorizeOwner()
+          authorizePlanRevision()
           this.refuseWhileAwaitingVerdict(current)
           if (request.subject === undefined && request.description === undefined && request.writeScopes === undefined) {
             throw new TeamError('task edit requires subject, description, or write_scopes', 'TEAM_INVALID_ARGUMENT')
@@ -158,7 +169,7 @@ export class TeamTaskBoard {
           }
           break
         case 'set_dependencies':
-          authorizeOwner()
+          authorizePlanRevision()
           this.refuseWhileAwaitingVerdict(current)
           if (request.blockedBy === undefined) throw new TeamError('set_dependencies requires blocked_by', 'TEAM_INVALID_ARGUMENT')
           next = { ...current, blockedBy: this.dependencies(request.blockedBy, state, current.id) }
@@ -179,6 +190,9 @@ export class TeamTaskBoard {
           }
           break
         case 'verify': {
+          if (membership.duty === 'executor') {
+            throw new TeamError('an executor cannot verify tasks; the planner verifies submissions', 'TEAM_DUTY_UNAUTHORIZED')
+          }
           if (!awaitingVerification(current) || current.verification === undefined) {
             throw new TeamError('only a submitted task can be verified', 'TEAM_TASK_INVALID_TRANSITION')
           }
@@ -224,11 +238,14 @@ export class TeamTaskBoard {
           }
           if (!taskReady(state, current)) throw new TeamError(`team task "${current.id}" is blocked`, 'TEAM_TASK_BLOCKED')
           const assignee = resolveActiveMember(root, state, request.owner)
+          if (state.members.find(member => member.id === assignee.id)?.duty === 'planner') {
+            throw new TeamError('a planner cannot own tasks; reassign the task to an executor', 'TEAM_DUTY_UNAUTHORIZED')
+          }
           next = this.withoutVerification({ ...current, status: 'in_progress', ownerId: assignee.id })
           break
         }
         case 'delete': {
-          authorizeOwner()
+          authorizePlanRevision()
           this.refuseWhileAwaitingVerdict(current)
           const dependent = state.tasks.find(task =>
             task.status !== 'deleted' && task.id !== current.id && task.blockedBy.includes(current.id))

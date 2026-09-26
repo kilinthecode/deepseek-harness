@@ -9,8 +9,8 @@
   en: b28084855adcdabd
   zh: 59e3d49c3d63baf9
 /deepseek-ai-dsh-experimental-agent-team/summary:
-  en: 1ae018140388e64d
-  zh: 3476f2eb9ca6e496
+  en: e89b20095de534ca
+  zh: 8617eb15862d0bb9
 /deepseek-ai-dsh-experimental-agent-team/table-of-contents:
   en: d152484eb41ac6b4
   zh: 09388d293f9be9cb
@@ -26,12 +26,18 @@
 /deepseek-ai-dsh-experimental-agent-team/use-this-package/teammates:
   en: 72563c75c7ed82ef
   zh: 29ee3e6018f1b5fc
+/deepseek-ai-dsh-experimental-agent-team/use-this-package/planner-and-executor-duties:
+  en: 153a57982a328e81
+  zh: d2275dac5411f389
+/deepseek-ai-dsh-experimental-agent-team/use-this-package/team-subject:
+  en: 5dd5e078e7dc5317
+  zh: f762ee576b742b94
 /deepseek-ai-dsh-experimental-agent-team/use-this-package/messages-between-teammates:
   en: 2c45b2c18c8317e7
   zh: d4ab2259f976b19d
 /deepseek-ai-dsh-experimental-agent-team/use-this-package/shared-task-board:
-  en: e6874012b22b14b6
-  zh: 6820632b2db750f5
+  en: fa941cbc621a5043
+  zh: f165b066ec263b83
 /deepseek-ai-dsh-experimental-agent-team/use-this-package/waiting-and-interruption:
   en: f8e38ccf6295b375
   zh: 44f008e23613c0af
@@ -48,20 +54,20 @@
   en: b9bc91bfad03e875
   zh: 208a6df19d9c53dc
 /deepseek-ai-dsh-experimental-agent-team/understand-the-implementation/team-identity-and-roster:
-  en: 85f97723e45e43de
-  zh: def66721e21339cc
+  en: 3f8b64d1798be80b
+  zh: 735f03deca314f7c
 /deepseek-ai-dsh-experimental-agent-team/understand-the-implementation/durable-mailbox:
   en: 26041ce90cc48a35
   zh: 677d85f22969f941
 /deepseek-ai-dsh-experimental-agent-team/understand-the-implementation/shared-task-board:
-  en: 2dc37ba97a8a7178
-  zh: 96bd24033030e19d
+  en: 10e6eda69fd5f5b2
+  zh: 6d5025335edf182d
 /deepseek-ai-dsh-experimental-agent-team/understand-the-implementation/waiting-and-interruption:
   en: 3becd36b407aac95
   zh: c9e4895ee59696bb
 /deepseek-ai-dsh-experimental-agent-team/understand-the-implementation/durability-model:
-  en: 745513a44985f874
-  zh: 5d0e95c219642d82
+  en: faff53b4e11d523e
+  zh: 2bc254037f8153cb
 /deepseek-ai-dsh-experimental-agent-team/understand-the-implementation/shared-room:
   en: 2c46b6ea12b76091
   zh: 97228cd4e53c97ec
@@ -72,8 +78,8 @@
   en: 2bbfd4ffbaeedd00
   zh: d1afb5d320b469a1
 /deepseek-ai-dsh-experimental-agent-team/further-exploration/browser-projection:
-  en: 2fc60d982974f6a9
-  zh: ba905f2ad11a292c
+  en: a0880b46fc210a5f
+  zh: f62143a70b9f831a
 /deepseek-ai-dsh-experimental-agent-team/model-experience:
   en: 215e7ba838619b7b
   zh: a311da3843709f90

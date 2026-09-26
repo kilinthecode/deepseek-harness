@@ -13,6 +13,7 @@ import SubagentService from '@deepseek-ai/dsh-subagent'
 import { deliverSubagentPrompt, type HostPromptDeliverer } from '@deepseek-ai/dsh-subagent/internal'
 import * as SubagentFork from '@deepseek-ai/dsh-subagent-fork-in-process'
 import * as SubagentSpawn from '@deepseek-ai/dsh-subagent-spawn-in-process'
+import { defineTool } from '@deepseek-ai/dsh-tools'
 import { MockAdapter, textResponse } from '../../../core/agent-loop/tests/mock-adapter.ts'
 import TeamService, { TeamError, TeamId, TeamMessageId, TeamTaskId } from '../src/index.ts'
 import { TeamRuntimeLifecycle } from '../src/lifecycle.ts'
@@ -2168,5 +2169,232 @@ describe('Team mailbox and waiting', () => {
     expect(durable(second.lead).members[0]).toMatchObject({
       phase: 'failed', error: 'settled elsewhere',
     })
+  })
+})
+
+describe('Teammate duties', () => {
+  /** Spawn one teammate with a duty and optional inherited-tool restriction. */
+  function spawnWithDuty(
+    ctx: Context,
+    lead: Agent,
+    name: string,
+    duty: 'planner' | 'executor' | undefined,
+    options: { toolFilter?: { allow?: string[]; deny?: string[] }; provider?: string } = {},
+  ) {
+    return ctx.agentTeams.spawnTeammate(lead, {
+      name,
+      description: `${name} responsibility`,
+      prompt: content(`${name} initial`),
+      context: 'fresh',
+      provider: options.provider ?? 'spawn',
+      ...duty === undefined ? {} : { duty },
+      ...options.toolFilter === undefined ? {} : { toolFilter: options.toolFilter },
+      signal: SIGNAL,
+    })
+  }
+
+  function registerGlobalTool(ctx: Context, name: string): void {
+    ctx.tools.register(defineTool({
+      name,
+      description: `${name} fixture`,
+      parameters: {},
+      output: {
+        schema: { type: 'string' },
+        render: (_args, value) => [{ type: 'text', text: value }],
+      },
+      execute: () => Promise.resolve(name),
+    }))
+  }
+
+  it('records the duty durably, reports it on every roster surface, and keeps undutied teammates plain', async () => {
+    const { ctx, lead } = await setup(['hang', 'hang', 'hang'])
+    const planner = await spawnWithDuty(ctx, lead, 'planner', 'planner')
+    const executor = await spawnWithDuty(ctx, lead, 'executor', 'executor')
+    const helper = await spawnWithDuty(ctx, lead, 'helper', undefined)
+
+    expect(planner.member.duty).toBe('planner')
+    expect(executor.member.duty).toBe('executor')
+    expect(helper.member).not.toHaveProperty('duty')
+    // Provisioning and settlement both carry the duty, so recovery keeps it.
+    expect(durable(lead).members.map(member => [member.name, member.phase, member.duty])).toEqual([
+      ['planner', 'active', 'planner'],
+      ['executor', 'active', 'executor'],
+      ['helper', 'active', undefined],
+    ])
+    const provisioning = (await storedEvents(ctx, lead.id)).flatMap(event => event.type === 'team/member'
+      && event.data.member.phase === 'provisioning' ? [event.data.member.duty] : [])
+    expect(provisioning).toEqual(['planner', 'executor', undefined])
+    expect(ctx.agentTeams.listMembers(lead).map(member => member.duty)).toEqual([undefined, 'planner', 'executor', undefined])
+    expect(ctx.sessionProjections.snapshot(lead.session).values['agentTeam']).toMatchObject({
+      members: [{ role: 'lead' }, { name: 'planner', duty: 'planner' }, { name: 'executor', duty: 'executor' }, { name: 'helper' }],
+    })
+    const plannerAgent = await waitRunning(ctx, planner.member.id)
+    expect(ctx.agentTeams.membership(plannerAgent).duty).toBe('planner')
+  })
+
+  it('hands the requested tool restriction to the child and its durable descriptor', async () => {
+    const { ctx, lead } = await setup(['hang', 'hang'])
+    registerGlobalTool(ctx, 'read')
+    registerGlobalTool(ctx, 'write')
+    const planner = await spawnWithDuty(ctx, lead, 'planner', 'planner', { toolFilter: { allow: ['read'] } })
+    const helper = await spawnWithDuty(ctx, lead, 'helper', undefined)
+    const plannerAgent = await waitRunning(ctx, planner.member.id)
+    const helperAgent = await waitRunning(ctx, helper.member.id)
+
+    expect(ctx.tools.get('read', plannerAgent)).toBeDefined()
+    expect(ctx.tools.get('write', plannerAgent)).toBeUndefined()
+    expect(ctx.tools.get('write', helperAgent)).toBeDefined()
+    const descriptor = plannerAgent.session.snapshotEvents().find(event => event.type === 'subagent/descriptor')
+    expect(descriptor?.data).toMatchObject({ toolFilter: { allow: ['read'] } })
+  })
+
+  it('confines task actions to each dutied teammate while the Lead and undutied teammates keep the full rules', async () => {
+    const { ctx, lead } = await setup([
+      'hang', 'hang', 'hang',
+      textResponse('planner noted a submission'),
+      textResponse('executor noted a verdict'),
+      textResponse('lead noted a submission'),
+      textResponse('executor noted a verdict'),
+    ])
+    const planner = await waitRunning(ctx, (await spawnWithDuty(ctx, lead, 'planner', 'planner')).member.id)
+    const executor = await waitRunning(ctx, (await spawnWithDuty(ctx, lead, 'executor', 'executor')).member.id)
+    const helper = await waitRunning(ctx, (await spawnWithDuty(ctx, lead, 'helper', undefined)).member.id)
+    const refused = (code: string): unknown => expect.objectContaining({ code })
+
+    await expect(ctx.agentTeams.createTask(executor, { subject: 'extra', description: 'extra' }))
+      .rejects.toEqual(refused('TEAM_DUTY_UNAUTHORIZED'))
+    const planned = await ctx.agentTeams.createTask(planner, { subject: 'build', description: 'build it' })
+    const helperTask = await ctx.agentTeams.createTask(helper, { subject: 'helper', description: 'helper' })
+    const leadTask = await ctx.agentTeams.createTask(lead, { subject: 'lead', description: 'lead' })
+
+    // The planner revises unclaimed work; nobody else but the owner or Lead may.
+    const edited = await ctx.agentTeams.updateTask(planner, {
+      taskId: planned.id, expectedRevision: planned.revision, action: 'edit', description: 'build it well',
+    })
+    const linked = await ctx.agentTeams.updateTask(planner, {
+      taskId: leadTask.id, expectedRevision: leadTask.revision, action: 'set_dependencies', blockedBy: [planned.id],
+    })
+    await expect(ctx.agentTeams.updateTask(executor, {
+      taskId: planned.id, expectedRevision: edited.revision, action: 'edit', description: 'mine now',
+    })).rejects.toEqual(refused('TEAM_TASK_UNAUTHORIZED'))
+    await expect(ctx.agentTeams.updateTask(planner, {
+      taskId: planned.id, expectedRevision: edited.revision, action: 'claim',
+    })).rejects.toEqual(refused('TEAM_DUTY_UNAUTHORIZED'))
+    await expect(ctx.agentTeams.updateTask(lead, {
+      taskId: planned.id, expectedRevision: edited.revision, action: 'reassign', owner: 'planner',
+    })).rejects.toEqual(refused('TEAM_DUTY_UNAUTHORIZED'))
+
+    const claimed = await ctx.agentTeams.updateTask(executor, {
+      taskId: planned.id, expectedRevision: edited.revision, action: 'claim',
+    })
+    // Claimed work leaves the plan: the planner no longer edits or deletes it.
+    await expect(ctx.agentTeams.updateTask(planner, {
+      taskId: planned.id, expectedRevision: claimed.revision, action: 'edit', description: 'rewrite',
+    })).rejects.toEqual(refused('TEAM_TASK_UNAUTHORIZED'))
+    await expect(ctx.agentTeams.updateTask(planner, {
+      taskId: planned.id, expectedRevision: claimed.revision, action: 'delete',
+    })).rejects.toEqual(refused('TEAM_TASK_UNAUTHORIZED'))
+    const submitted = await ctx.agentTeams.updateTask(executor, {
+      taskId: planned.id, expectedRevision: claimed.revision, action: 'submit',
+    })
+    await expect(ctx.agentTeams.updateTask(helper, {
+      taskId: helperTask.id, expectedRevision: helperTask.revision, action: 'claim',
+    })).resolves.toMatchObject({ status: 'in_progress' })
+    const approved = await ctx.agentTeams.updateTask(planner, {
+      taskId: planned.id, expectedRevision: submitted.revision, action: 'verify', verdict: 'approved', reason: 'built',
+    })
+    expect(approved.status).toBe('completed')
+
+    // An executor never verifies, even another member's submission.
+    const unlinked = await ctx.agentTeams.updateTask(lead, {
+      taskId: leadTask.id, expectedRevision: linked.revision, action: 'reassign', owner: 'executor',
+    })
+    const leadSubmitted = await ctx.agentTeams.updateTask(executor, {
+      taskId: leadTask.id, expectedRevision: unlinked.revision, action: 'submit',
+    })
+    await expect(ctx.agentTeams.updateTask(executor, {
+      taskId: leadTask.id, expectedRevision: leadSubmitted.revision, action: 'verify', verdict: 'approved', reason: 'fine',
+    })).rejects.toEqual(refused('TEAM_DUTY_UNAUTHORIZED'))
+    await expect(ctx.agentTeams.updateTask(helper, {
+      taskId: leadTask.id, expectedRevision: leadSubmitted.revision, action: 'verify', verdict: 'approved', reason: 'fine',
+    })).resolves.toMatchObject({ status: 'completed' })
+
+    const spare = await ctx.agentTeams.createTask(planner, { subject: 'spare', description: 'spare' })
+    await expect(ctx.agentTeams.updateTask(planner, {
+      taskId: spare.id, expectedRevision: spare.revision, action: 'delete',
+    })).resolves.toMatchObject({ status: 'deleted' })
+  })
+
+  it('asks the active planner, not the Lead, to verify a submission', async () => {
+    const { ctx, lead } = await setup(['hang', 'hang', textResponse('planner verified')])
+    const planner = await waitRunning(ctx, (await spawnWithDuty(ctx, lead, 'planner', 'planner')).member.id)
+    const executor = await waitRunning(ctx, (await spawnWithDuty(ctx, lead, 'executor', 'executor')).member.id)
+    const task = await ctx.agentTeams.createTask(planner, { subject: 'build', description: 'build' })
+    const claimed = await ctx.agentTeams.updateTask(executor, { taskId: task.id, expectedRevision: 1, action: 'claim' })
+    const submitted = await ctx.agentTeams.updateTask(executor, {
+      taskId: task.id, expectedRevision: claimed.revision, action: 'submit',
+    })
+
+    const asked = steered(ctx, planner.id)
+    expect(asked).toHaveLength(1)
+    expect(asked[0]).toContain(`Team task ${task.id} (revision ${String(submitted.revision)}) awaits your verdict`)
+    expect(asked[0]).toContain('executor submitted it')
+    expect(asked[0]).toContain(`expected_revision ${String(submitted.revision)}`)
+    expect(steered(ctx, lead.id)).toEqual([])
+  })
+
+  it('falls back to the Lead when the only planner failed to start', async () => {
+    const { ctx, lead } = await setup(['hang', textResponse('lead noted the submission')])
+    await expect(spawnWithDuty(ctx, lead, 'planner', 'planner', { provider: 'missing' })).rejects.toThrow()
+    const executor = await waitRunning(ctx, (await spawnWithDuty(ctx, lead, 'executor', 'executor')).member.id)
+    const task = await ctx.agentTeams.createTask(lead, { subject: 'build', description: 'build' })
+    const claimed = await ctx.agentTeams.updateTask(executor, { taskId: task.id, expectedRevision: 1, action: 'claim' })
+    await ctx.agentTeams.updateTask(executor, { taskId: task.id, expectedRevision: claimed.revision, action: 'submit' })
+
+    expect(durable(lead).members.find(member => member.name === 'planner')).toMatchObject({ phase: 'failed', duty: 'planner' })
+    const notices = steered(ctx, lead.id)
+    expect(notices).toHaveLength(1)
+    expect(notices[0]).toContain('awaiting a peer verdict')
+  })
+})
+
+describe('Team subject', () => {
+  it('records the latest Lead subject in the Lead log and its client view', async () => {
+    const { ctx, lead } = await setup(['hang', 'hang'])
+    expect(ctx.agentTeams.subjectOf(lead)).toBeUndefined()
+    await ctx.agentTeams.setSubject(lead, '  Ship the parser  ')
+    await ctx.agentTeams.setSubject(lead, 'Ship the lexer')
+    const teammate = await waitRunning(ctx, (await spawn(ctx, lead, 'helper')).member.id)
+
+    expect(ctx.agentTeams.subjectOf(lead)).toBe('Ship the lexer')
+    expect(ctx.agentTeams.subjectOf(teammate)).toBe('Ship the lexer')
+    // A provider-owned child of the Lead is outside the roster and reads no subject.
+    const ordinary = await ctx.subagents.startContinuable({
+      provider: 'spawn',
+      label: 'ordinary child',
+      request: { prompt: content('stay'), parent: lead },
+      signal: SIGNAL,
+    })
+    expect(ctx.agentTeams.subjectOf(await waitRunning(ctx, ordinary.childId))).toBeUndefined()
+    expect((await storedEvents(ctx, lead.id)).flatMap(event => event.type === 'team/subject' ? [event.data] : []))
+      .toEqual([
+        { version: 1, teamId: TeamId(lead.id), subject: 'Ship the parser' },
+        { version: 1, teamId: TeamId(lead.id), subject: 'Ship the lexer' },
+      ])
+    expect(ctx.sessionProjections.snapshot(lead.session).values['agentTeam']).toMatchObject({ subject: 'Ship the lexer' })
+  })
+
+  it('refuses a subject from a teammate and an empty or oversized subject', async () => {
+    const { ctx, lead } = await setup(['hang'])
+    const teammate = await waitRunning(ctx, (await spawn(ctx, lead, 'helper')).member.id)
+    await expect(ctx.agentTeams.setSubject(teammate, 'mine')).rejects.toMatchObject({ code: 'TEAM_LEAD_REQUIRED' })
+    await expect(ctx.agentTeams.setSubject(lead, '   ')).rejects.toMatchObject({
+      code: 'TEAM_INVALID_ARGUMENT', message: 'subject must be non-empty',
+    })
+    await expect(ctx.agentTeams.setSubject(lead, 'x'.repeat(201))).rejects.toMatchObject({
+      code: 'TEAM_INVALID_ARGUMENT', message: 'subject exceeds 200 characters',
+    })
+    await expect(ctx.agentTeams.setSubject(lead, 'x'.repeat(200))).resolves.toBeUndefined()
+    expect(ctx.agentTeams.subjectOf(lead)).toBe('x'.repeat(200))
   })
 })

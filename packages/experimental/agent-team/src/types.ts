@@ -43,6 +43,14 @@ export function TeamMessageId(id: string): TeamMessageId {
 /** Durable teammate lifecycle. */
 export type TeamMemberPhase = 'provisioning' | 'active' | 'failed'
 
+/**
+ * Work a teammate was created for. A `planner` writes and revises the shared
+ * task plan and verifies submissions; an `executor` claims ready tasks and
+ * submits its work. The Team service refuses task actions outside a dutied
+ * teammate's duty; a teammate without a duty keeps the unrestricted task rules.
+ */
+export type TeamDuty = 'planner' | 'executor'
+
 /** Whole durable value written on every teammate lifecycle change. */
 export interface TeamMemberSnapshot {
   readonly id: SessionId
@@ -50,6 +58,8 @@ export interface TeamMemberSnapshot {
   readonly description: string
   readonly provider: string
   readonly context: 'fresh' | 'fork'
+  /** Immutable duty chosen at creation; absent for a teammate created without one. */
+  readonly duty?: TeamDuty
   /**
    * Resolved child `agentOptions.provider` for this teammate. A teammate holds
    * no live Agent between turns, so the roster reads its route here instead of
@@ -72,6 +82,8 @@ export interface TeamMemberView {
   readonly description?: string
   readonly provider?: string
   readonly context?: 'fresh' | 'fork'
+  /** Teammate duty; absent on the Lead row and on teammates created without one. */
+  readonly duty?: TeamDuty
   readonly model?: string
   readonly diagnostics: string[]
 }
@@ -143,6 +155,8 @@ export interface TeamMemberProjection {
   readonly role: 'lead' | 'teammate'
   /** Durable lifecycle; the Lead row is always `active`. Turn activity comes from Session status. */
   readonly phase: TeamMemberPhase
+  /** Teammate duty; absent on the Lead row and on teammates created without one. */
+  readonly duty?: TeamDuty
   readonly error?: string
 }
 
@@ -152,6 +166,8 @@ export interface TeamMemberProjection {
  * record; members and tasks then stay at the last valid state.
  */
 export interface TeamProjection {
+  /** Latest subject the Lead recorded for the Team; absent until one is set. */
+  readonly subject?: string
   readonly members: TeamMemberProjection[]
   readonly tasks: TeamTaskView[]
   readonly failure?: string
@@ -547,5 +563,7 @@ declare module '@deepseek-ai/dsh-session/types' {
     'room/review': { version: 1; teamId: TeamId; review: RoomReviewSnapshot }
     /** Durable record that one decision revision left reviewers unresponsive. */
     'room/review-timeout': { version: 1; teamId: TeamId; timeout: RoomReviewTimeoutSnapshot }
+    /** Whole Team subject recorded by the Lead; the latest record wins. */
+    'team/subject': { version: 1; teamId: TeamId; subject: string }
   }
 }

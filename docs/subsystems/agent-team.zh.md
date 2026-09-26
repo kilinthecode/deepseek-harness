@@ -9,6 +9,16 @@
 `TeamId` 是具有独立[品牌](core.zh.md#branded-ids)的 Root `SessionId`。`TeamTaskId` 在 Team 内按 `task-<n>` 单调分配；`TeamMessageId` 是全局随机值。teammate 的 Session id 始终是持久身份，而 `name` 是不可变的模型／UI 标签。
 
 ```ts type-equiv
+/**
+ * Work a teammate was created for. A `planner` writes and revises the shared
+ * task plan and verifies submissions; an `executor` claims ready tasks and
+ * submits its work. The Team service refuses task actions outside a dutied
+ * teammate's duty; a teammate without a duty keeps the unrestricted task rules.
+ */
+type TeamDuty = 'planner' | 'executor'
+```
+
+```ts type-equiv
 /** Whole durable value written on every teammate lifecycle change. */
 interface TeamMemberSnapshot {
   readonly id: SessionId
@@ -16,6 +26,8 @@ interface TeamMemberSnapshot {
   readonly description: string
   readonly provider: string
   readonly context: 'fresh' | 'fork'
+  /** Immutable duty chosen at creation; absent for a teammate created without one. */
+  readonly duty?: TeamDuty
   /**
    * Resolved child `agentOptions.provider` for this teammate. A teammate holds
    * no live Agent between turns, so the roster reads its route here instead of
@@ -30,7 +42,7 @@ interface TeamMemberSnapshot {
 }
 ```
 
-每个 member 都从 `provisioning` 开始，并且只到达一个终态 roster phase：`active` 或 `failed`。roster 的 `running`／`inactive` 状态单独派生，绝不会重写该记录。`agentProvider` 与 `agentModel` 记录该 teammate 解析后的路由，因此当该 teammate 的 Agent 不存活时，roster 行与房间参与者仍会报告它就座时使用的模型。
+每个 member 都从 `provisioning` 开始，并且只到达一个终态 roster phase：`active` 或 `failed`。roster 的 `running`／`inactive` 状态单独派生，绝不会重写该记录。`agentProvider` 与 `agentModel` 记录该 teammate 解析后的路由，因此当该 teammate 的 Agent 不存活时，roster 行与房间参与者仍会报告它就座时使用的模型。`duty` 记录在第一条 provisioning 记录上，投影会拒绝之后对它的任何改动。`planner` 创建任务、修订尚无人 claim 的任务并验证提交，但从不 claim 或拥有任务；`executor` claim 并提交任务，但既不创建也不验证任务；被拒绝的操作报告 `TEAM_DUTY_UNAUTHORIZED`。分工对应的工具限制不是 Team 记录：subagent provider 把它保存在 teammate 自己的 descriptor 中。
 
 ## 持久 mailbox
 
@@ -88,7 +100,7 @@ interface TeamTaskSnapshot {
 
 ## Web 投影
 
-Lead Session 通过 `SessionProjectionMap.agentTeam` 发布持久 roster 行与未删除任务视图。`failure` 在最后有效状态旁报告被拒绝的持久记录。成员活动来自 Session 状态；模型标签来自各成员的 `modelSelection` 投影。已提交但仍在等待裁决的 revision 在任务视图中报告为 `verifying`；同行记录裁决后，`verification` 给出验证者、裁决与理由。
+Lead Session 通过 `SessionProjectionMap.agentTeam` 发布最新主题、持久 roster 行与未删除任务视图。主题来自仅日志的 `team/subject` 事件，以最新记录为准；`setSubject` 只为 Lead 写入它，即使 roster 与任务不变，主题变化也会重新发布该视图。`failure` 在最后有效状态旁报告被拒绝的持久记录。成员活动来自 Session 状态；模型标签来自各成员的 `modelSelection` 投影。已提交但仍在等待裁决的 revision 在任务视图中报告为 `verifying`；同行记录裁决后，`verification` 给出验证者、裁决与理由。
 
 ```ts type-equiv
 /** One durable roster row published through the `agentTeam` Session projection. */
@@ -98,6 +110,8 @@ interface TeamMemberProjection {
   readonly role: 'lead' | 'teammate'
   /** Durable lifecycle; the Lead row is always `active`. Turn activity comes from Session status. */
   readonly phase: TeamMemberPhase
+  /** Teammate duty; absent on the Lead row and on teammates created without one. */
+  readonly duty?: TeamDuty
   readonly error?: string
 }
 ```
@@ -127,6 +141,8 @@ interface TeamTaskView {
  * record; members and tasks then stay at the last valid state.
  */
 interface TeamProjection {
+  /** Latest subject the Lead recorded for the Team; absent until one is set. */
+  readonly subject?: string
   readonly members: TeamMemberProjection[]
   readonly tasks: TeamTaskView[]
   readonly failure?: string
@@ -228,6 +244,21 @@ listMembers(agent: Agent): TeamMemberView[]
  * @returns the active roster row.
  */
 async spawnTeammate(caller: Agent, request: SpawnTeammateRequest): Promise<SpawnTeammateResult>
+
+/**
+ * Record the Team subject in the Lead log; the latest record wins.
+ * @param caller - exact live Team Lead.
+ * @param subject - subject text, trimmed and at most 200 characters.
+ */
+async setSubject(caller: Agent, subject: string): Promise<void>
+
+/**
+ * Read the latest Team subject without throwing, for prompt assembly. A Team
+ * whose projection rejected a record keeps its last valid subject.
+ * @param agent - candidate exact live Agent.
+ * @returns the subject, or undefined for a non-member or before the Lead records one.
+ */
+subjectOf(agent: Agent): string | undefined
 
 /**
  * Queue one durable peer message, then attempt immediate delivery.

@@ -82,6 +82,7 @@ const teamMemberSnapshotSchema = z.object({
   description: z.string(),
   provider: z.string(),
   context: z.enum(['fresh', 'fork']),
+  duty: z.enum(['planner', 'executor']).optional(),
   agentProvider: z.string().optional(),
   agentModel: z.string().optional(),
   phase: z.enum(['provisioning', 'active', 'failed']),
@@ -196,6 +197,12 @@ const roomReviewTimeoutEventSchema = z.object({
   timeout: roomReviewTimeoutSnapshotSchema,
 }).strict() as z.ZodType<SessionEventMap['room/review-timeout']>
 
+const teamSubjectEventSchema = z.object({
+  version: z.literal(1),
+  teamId: teamIdSchema,
+  subject: z.string(),
+}).strict() as z.ZodType<SessionEventMap['team/subject']>
+
 /**
  * Current Team state selected by durable Team identity. Every applied Team
  * event produces a new state object and replaces only the collection it
@@ -203,6 +210,8 @@ const roomReviewTimeoutEventSchema = z.object({
  */
 export interface TeamState {
   readonly id: TeamId
+  /** Latest subject the Lead recorded; absent until the first `team/subject`. */
+  readonly subject?: string
   readonly members: readonly TeamMemberSnapshot[]
   readonly tasks: readonly TeamTaskSnapshot[]
   readonly messages: readonly TeamMessageSnapshot[]
@@ -253,6 +262,7 @@ declare module '@deepseek-ai/dsh-session-projection/types' {
 
 const teamProjectionEntrySchema = z.object({
   id: teamIdSchema,
+  subject: z.string().optional(),
   members: z.array(teamMemberSnapshotSchema),
   tasks: z.array(teamTaskSnapshotSchema),
   messages: z.array(teamMessageSnapshotSchema),
@@ -276,6 +286,7 @@ export type TeamEventType =
   | 'room/proposal'
   | 'room/review'
   | 'room/review-timeout'
+  | 'team/subject'
 
 /** One event owned by the Team domain. */
 type TeamSessionEvent = SessionEvent<TeamEventType>
@@ -294,6 +305,7 @@ export function isTeamEvent(event: SessionEvent): event is TeamSessionEvent {
     || event.type === 'room/proposal'
     || event.type === 'room/review'
     || event.type === 'room/review-timeout'
+    || event.type === 'team/subject'
 }
 
 /** Current logical payload version of every Team-owned event type. */
@@ -306,6 +318,7 @@ const CURRENT_TEAM_EVENT_VERSIONS: Record<TeamEventType, number> = {
   'room/proposal': 1,
   'room/review': 1,
   'room/review-timeout': 1,
+  'team/subject': 1,
 }
 
 /** Decode one persisted Team value and retain the schema failure as its cause. */
@@ -336,6 +349,8 @@ function parseCurrentTeamEvent(event: TeamSessionEvent): TeamSessionEvent {
       return { ...event, data: parsePersisted(event.type, roomReviewEventSchema, event.data) }
     case 'room/review-timeout':
       return { ...event, data: parsePersisted(event.type, roomReviewTimeoutEventSchema, event.data) }
+    case 'team/subject':
+      return { ...event, data: parsePersisted(event.type, teamSubjectEventSchema, event.data) }
     /* v8 ignore next 2 -- TeamEventType is closed and every member is handled above. */
     default:
       return event
@@ -412,7 +427,12 @@ function applyCurrentTeamEvent(state: TeamProjectionState, event: TeamSessionEve
       if (prior === undefined) {
         if (member.phase !== 'provisioning') throw new Error(`teammate "${member.name}" must begin provisioning`)
       } else {
-        if (prior.name !== member.name || prior.provider !== member.provider || prior.context !== member.context) {
+        if (
+          prior.name !== member.name
+          || prior.provider !== member.provider
+          || prior.context !== member.context
+          || prior.duty !== member.duty
+        ) {
           throw new Error(`teammate "${member.id}" changed immutable identity fields`)
         }
         if (prior.phase !== 'provisioning' || member.phase === 'provisioning') {
@@ -528,6 +548,12 @@ function applyCurrentTeamEvent(state: TeamProjectionState, event: TeamSessionEve
       }
       return { ...state, roomTimeouts: [...state.roomTimeouts, timeout] }
     }
+    case 'team/subject': {
+      // The writer trims and bounds the subject before append, so an empty
+      // value can only come from a foreign or corrupted log.
+      if (event.data.subject.trim().length === 0) throw new Error('team subject is empty')
+      return { ...state, subject: event.data.subject }
+    }
     /* v8 ignore next 2 -- TeamEventType is closed and every member is handled above. */
     default:
       return state
@@ -539,6 +565,7 @@ const teamMemberProjectionSchema = z.object({
   name: z.string(),
   role: z.enum(['lead', 'teammate']),
   phase: z.enum(['provisioning', 'active', 'failed']),
+  duty: z.enum(['planner', 'executor']).optional(),
   error: z.string().optional(),
 }).strict() as z.ZodType<TeamMemberProjection>
 
@@ -562,6 +589,7 @@ const teamTaskViewSchema = z.object({
 }).strict() as z.ZodType<TeamTaskView>
 
 const teamProjectionSchema = z.object({
+  subject: z.string().optional(),
   members: z.array(teamMemberProjectionSchema),
   tasks: z.array(teamTaskViewSchema),
   failure: z.string().optional(),
@@ -579,10 +607,12 @@ function buildTeamProjection(state: TeamProjectionState): TeamProjection {
       name: member.name,
       role: 'teammate',
       phase: member.phase,
+      ...member.duty === undefined ? {} : { duty: member.duty },
       ...member.error === undefined ? {} : { error: member.error },
     })
   }
   return {
+    ...state.subject === undefined ? {} : { subject: state.subject },
     members,
     tasks: state.tasks
       .filter(task => task.status !== 'deleted')
@@ -593,7 +623,9 @@ function buildTeamProjection(state: TeamProjectionState): TeamProjection {
 
 /**
  * Durable client view of one Team state. Mailbox-only state changes reuse the
- * previous view reference, so the live drive publishes nothing for them.
+ * previous view reference, so the live drive publishes nothing for them. A
+ * subject change keeps both collection references, so the cached view is
+ * rebuilt whenever its subject differs from the state's.
  * A failure is terminal: later events retain the failed state reference and
  * do not republish its view.
  * @param state - current Team state.
@@ -607,7 +639,7 @@ export function teamProjectionView(state: TeamProjectionState): TeamProjection {
     teamProjectionViews.set(state.members, byTasks)
   }
   let view = byTasks.get(state.tasks)
-  if (view === undefined) {
+  if (view === undefined || view.subject !== state.subject) {
     view = buildTeamProjection(state)
     byTasks.set(state.tasks, view)
   }
@@ -616,11 +648,11 @@ export function teamProjectionView(state: TeamProjectionState): TeamProjection {
 
 /**
  * Team projection selected by the projected Session identity; the wire view
- * carries durable roster and task state only, and room state stays Host-side.
+ * carries the durable subject, roster, and task state only, and room state stays Host-side.
  */
 export const teamProjectionDefinition = {
   key: 'agentTeam',
-  stateVersion: 5,
+  stateVersion: 6,
   stateSchema: teamProjectionEntrySchema,
   init: header => emptyTeamState(header.id),
   apply: applyProjectionEvent,
