@@ -169,6 +169,8 @@ These limits define when unattended review is a poor fit. They are current packa
 - **Process-lifetime only** — reviews run only while the process lives, so the headless, ACP, and SDK bundles disable the plugin.
 - **Ordinary Web row** — Web shows an ordinary subagent row labelled `memory-review`.
 - **Parallel new-name writes** — two parallel `memory_write` calls with the same new name in one step can both pass the add-only check.
+- **Parent-write race** — a parent `memory_write` that lands between the child's add-only check and the child's own `memory_write` of the same name can be overwritten by the child.
+- **`memory_recall` and failed calls also reset the interval** — every parent `tool/call` named `memory_write`, `memory_recall`, or `memory_forget` resets `turnsSinceReset` to `0`, whether or not the call succeeds, so a parent that calls a memory tool every turn defers reviews indefinitely.
 - **Routed digest reviews** — review on a cheaper routed model is deferred.
 
 <a id="dev-note"></a>

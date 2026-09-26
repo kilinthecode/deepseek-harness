@@ -1,9 +1,11 @@
 import { afterEach, describe, expect, it } from 'vitest'
 import { Context } from '@deepseek-ai/cordis'
 import Loader from '@deepseek-ai/cordis-plugin-loader'
-import { createUserMessage } from '@deepseek-ai/dsh-llm'
+import { createUserMessage, LlmAdapter } from '@deepseek-ai/dsh-llm'
+import type { GenerateOptions, StreamChunk } from '@deepseek-ai/dsh-llm'
 import { GoalId } from '@deepseek-ai/dsh-goal'
 import { SessionId } from '@deepseek-ai/dsh-session'
+import type { SessionEvent } from '@deepseek-ai/dsh-session'
 import { defineContentToolFixture } from '@deepseek-ai/dsh-tools'
 import SubagentRuntime from '@deepseek-ai/dsh-subagent'
 import type { SubagentProvider } from '@deepseek-ai/dsh-subagent'
@@ -40,6 +42,65 @@ afterEach(async () => {
 })
 
 import type { Agent } from '@deepseek-ai/dsh-agent'
+
+async function* chunksOf(chunks: StreamChunk[]): AsyncGenerator<StreamChunk> {
+  for (const chunk of chunks) yield chunk
+}
+
+/** Stream one chunk then hang until `options.signal` aborts, like the shared MockAdapter's 'hang' marker. */
+async function* hangUntilAborted(options: GenerateOptions): AsyncGenerator<StreamChunk> {
+  yield { type: 'block-start', index: 0, blockType: 'text' }
+  yield { type: 'text-delta', index: 0, text: 'partial' }
+  await new Promise<void>((_resolve, reject) => {
+    if (options.signal?.aborted) { reject(new Error('aborted')); return }
+    options.signal?.addEventListener('abort', () => { reject(new Error('aborted')) }, { once: true })
+  })
+}
+
+/**
+ * An adapter that gives the parent, the review child (identified by carrying
+ * {@link REVIEW_PROMPT}), and one other named session their own independent
+ * per-session-id script queues — unlike a plain `MockAdapter`'s single global
+ * FIFO, which cannot serve three concurrently live agents in call order. The
+ * child's queue may hang forever on its last entry; the other two may not.
+ * @param parentId - the parent's session id; always answered `ok`.
+ * @param otherId - the other known session id (e.g. a sibling agent).
+ * @param otherTurns - that session's scripted responses, in order.
+ * @param childTurns - the review child's scripted responses, in order; the
+ * literal string `'hang'` in the last position hangs until aborted.
+ * @returns an adapter that records every request it receives.
+ */
+function threeWayAdapter(
+  parentId: SessionId,
+  otherId: SessionId,
+  otherTurns: StreamChunk[][],
+  childTurns: (StreamChunk[] | 'hang')[],
+): LlmAdapter & { requests: GenerateOptions[] } {
+  const otherQueue = [...otherTurns]
+  const childQueue = [...childTurns]
+  let childSessionId: string | undefined
+  return new (class extends LlmAdapter {
+    requests: GenerateOptions[] = []
+
+    override stream(options: GenerateOptions): AsyncIterable<StreamChunk> {
+      this.requests.push(options)
+      const id = String(options.sessionId ?? 'unknown')
+      if (id === String(parentId)) return chunksOf(textResponse('ok'))
+      if (id === String(otherId)) {
+        const next = otherQueue.shift()
+        if (next === undefined) throw new Error('threeWayAdapter: other-session script exhausted')
+        return chunksOf(next)
+      }
+      if (childSessionId === undefined && includesReviewPrompt(options)) childSessionId = id
+      if (id === childSessionId) {
+        const next = childQueue.shift()
+        if (next === undefined) throw new Error('threeWayAdapter: child script exhausted')
+        return next === 'hang' ? hangUntilAborted(options) : chunksOf(next)
+      }
+      return chunksOf(textResponse('ok'))
+    }
+  })()
+}
 
 async function turns(ctx: Context, parent: Agent, count: number): Promise<void> {
   for (let index = 0; index < count; index += 1) {
@@ -406,13 +467,23 @@ describe('dsh-memory-review through the agent loop', () => {
       && result.data.message.content.some(block => block.type === 'text' && block.text.includes(REVIEW_DENY_OVERWRITE))).toBe(true)
   })
 
-  it('installs the restriction on any agent created while its parent has a review in flight, not only the fork run\'s own local agent', async () => {
+  it('does not restrict a sibling agent created after the review child\'s start() has returned, only the review child\'s own first tool call', async () => {
     const root = await freshRoot()
-    const adapter = new MockAdapter([
-      textResponse('ok'),
-      'hang',
-      toolCallResponse('f1', 'memory_forget', { name: 'prefers-pnpm', scope: 'global' }),
-    ])
+    const parentId = SessionId('dispatch-window')
+    const siblingId = SessionId('unrelated-sibling')
+    // A per-session-routed adapter, not a plain `MockAdapter`: three agents
+    // (the parent, the review child, and the sibling created below) are
+    // live at once, and the child's second step hangs so the review stays
+    // genuinely in flight (`inflight` still holds the parent) while the
+    // sibling is created and driven — the scenario the old, over-broad gate
+    // would have wrongly restricted. A single global FIFO script cannot
+    // serve three concurrently live agents in call order.
+    const adapter = threeWayAdapter(
+      parentId,
+      siblingId,
+      [toolCallResponse('f2', 'memory_forget', { name: 'prefers-pnpm', scope: 'global' }), textResponse('done')],
+      [toolCallResponse('f1', 'memory_forget', { name: 'prefers-pnpm', scope: 'global' }), 'hang'],
+    )
     const { ctx } = await harness(adapter, { reviewEveryUserTurns: 1, maxReviewSteps: 8 }, root)
     await ctx.memory.write({
       name: 'prefers-pnpm',
@@ -421,7 +492,99 @@ describe('dsh-memory-review through the agent loop', () => {
       description: 'Uses pnpm',
       content: 'Use pnpm.',
     })
-    const parent = await createParent(ctx, 'generic-gate')
+    const parent = await createParent(ctx, String(parentId))
+    const started = new Promise<Agent>((resolve) => {
+      ctx.on('subagent/start', (info) => {
+        const found = ctx.agents.get(info.id)
+        if (found?.session.header.parentSession === parent.session.id) resolve(found)
+      })
+    })
+    ask(parent, 'go')
+    await waitForIdle(ctx, parent)
+    const child = await started
+
+    // Wait for the child's own tool result (its first call, denied) before
+    // asserting on it or touching the sibling below.
+    const childResult = await new Promise<SessionEvent>((resolve) => {
+      const existing = child.session.snapshotEvents().find(event => event.type === 'tool/result')
+      if (existing !== undefined) { resolve(existing); return }
+      const dispose = child.ctx.on('session/event', (_session, event) => {
+        if (event.type !== 'tool/result') return
+        dispose()
+        resolve(event)
+      })
+    })
+
+    // The review child's own first call is still restricted: memory_forget
+    // is denied, and the record survives.
+    expect(childResult.type === 'tool/result' && childResult.data.message.isError).toBe(true)
+    expect(childResult.type === 'tool/result'
+      && childResult.data.message.content.some(block => block.type === 'text' && block.text.includes(REVIEW_DENY_OVERWRITE))).toBe(true)
+    expect((await ctx.memory.visible(undefined)).global.some(record => record.name === 'prefers-pnpm')).toBe(true)
+
+    // A sibling agent created afterward, sharing the same parentSession,
+    // WHILE the review is still genuinely in flight (the child hangs on its
+    // second step), is NOT restricted: `dispatching` was cleared right
+    // after `start()` returned, long before now, so this sibling's own
+    // `agent/created` never saw the parent in `dispatching`. Its own
+    // memory_forget of the same record actually runs.
+    const handle = await ctx.agents.create({
+      sessionId: siblingId,
+      parentAgent: parent,
+      meta: { parentSession: parent.session.id, origin: 'subagent' },
+      agentOptions: { provider: 'mock', model: 'mock' },
+    })
+    const sibling = handle.agent
+    sibling.followup(createUserMessage({
+      content: [{ type: 'text', text: 'forget it' }],
+      source: { kind: 'user' },
+    }))
+    await sibling.whenIdle()
+    const siblingResult = sibling.session.snapshotEvents().find(event => event.type === 'tool/result')
+    expect(siblingResult?.type === 'tool/result' && siblingResult.data.message.isError).toBe(false)
+    expect((await ctx.memory.visible(undefined)).global.some(record => record.name === 'prefers-pnpm')).toBe(false)
+
+    // Clean up the still-hung review child.
+    child.cancel({ kind: 'parent' })
+    await child.whenIdle()
+  })
+
+  it('logs the missing-dependency error once per parent even after a second due idle, not on every idle', async () => {
+    const root = await freshRoot()
+    const ctx = new Context()
+    const errors: string[] = []
+    await mountAgentLoopTestDependencies(ctx)
+    await ctx.plugin(AgentLoop, { agents: [] })
+    await mountStore(ctx, root)
+    await ctx.plugin(SubagentRuntime)
+    await ctx.plugin(Fork, { providerName: 'fork' })
+    ctx.logger.error = ((message: unknown) => {
+      errors.push(String(message))
+    }) as typeof ctx.logger.error
+    await ctx.plugin(MemoryReview, { reviewEveryUserTurns: 1, maxReviewSteps: 8 })
+    ctx.llm.registerAdapter(['mock'], new MockAdapter([textResponse('ok'), textResponse('ok')]))
+    const parent = await ctx.agentLoop.create(SessionId('no-tool-memory-twice'), { provider: 'mock', model: 'mock' })
+    ask(parent, 'first')
+    await waitForIdle(ctx, parent)
+    expect(errors.filter(message => message.includes('memory_write'))).toHaveLength(1)
+    // Still due (memory_write never registers, so the count never resets):
+    // a second idle notification must not log a second error.
+    ask(parent, 'second')
+    await waitForIdle(ctx, parent)
+    expect(errors.filter(message => message.includes('memory_write'))).toHaveLength(1)
+    expect(reviewCatalog(parent.session.snapshotEvents())).toHaveLength(0)
+    await ctx.fiber.dispose()
+  })
+
+  it('aborts an in-flight review when its parent is disposed, and a later idle of a brand-new parent starts its own review normally', async () => {
+    const root = await freshRoot()
+    const adapter = new MockAdapter([textResponse('ok'), 'hang'])
+    const { ctx } = await harness(adapter, { reviewEveryUserTurns: 1, maxReviewSteps: 8 }, root)
+    const handle = await ctx.agents.create({
+      sessionId: SessionId('dispose-abort'),
+      agentOptions: { provider: 'mock', model: 'mock' },
+    })
+    const parent = handle.agent
     const started = new Promise<Agent>((resolve) => {
       ctx.on('subagent/start', (info) => {
         const child = ctx.agents.get(info.id)
@@ -430,30 +593,88 @@ describe('dsh-memory-review through the agent loop', () => {
     })
     ask(parent, 'go')
     await waitForIdle(ctx, parent)
-    // The real review child now hangs mid-turn, so the review stays in
-    // flight for `parent`. Restriction install is gated on `parentSession`
-    // and the inflight map, not on identity with this run's own local
-    // agent: an unrelated agent created with the same `parentSession` while
-    // the review is in flight must be restricted too.
-    const reviewChild = await started
-    const handle = await ctx.agents.create({
-      sessionId: SessionId('unrelated-child'),
-      parentAgent: parent,
-      meta: { parentSession: parent.session.id, origin: 'subagent' },
-      agentOptions: { provider: 'mock', model: 'mock' },
+    const child = await started
+
+    // Wait for the child's own live request to have been dispatched (it
+    // consumes the 'hang' script entry) before disposing the parent: right
+    // after `subagent/start`, the child's own request-building microtasks
+    // have not necessarily run yet, so disposing immediately would race
+    // ahead of them instead of interrupting a genuinely in-flight call. The
+    // inherited seed already carries its own `request/header`, so only a
+    // live one (`seq >= inheritedEventCount`) counts.
+    const hasLiveRequestHeader = (): boolean => child.session.snapshotEvents()
+      .some(event => event.type === 'request/header' && event.seq >= child.session.inheritedEventCount)
+    if (!hasLiveRequestHeader()) {
+      await new Promise<void>((resolve) => {
+        const dispose = child.ctx.on('session/event', (_session, event) => {
+          if (event.type !== 'request/header' || event.seq < child.session.inheritedEventCount) return
+          dispose()
+          resolve()
+        })
+      })
+    }
+
+    // This exercises the previously untested `agent/disposed` abort path:
+    // the parent's own disposal aborts the in-flight review child through
+    // this plugin's listener (the abort propagates to `child.cancel(...)`
+    // inside the fork driver), ending its hung turn.
+    await handle.dispose()
+    await child.whenIdle()
+
+    // A later idle of a brand-new, unrelated parent is unaffected: its own
+    // review starts and completes normally.
+    const second = await createParent(ctx, 'fresh-after-dispose')
+    const secondChildP = waitForReviewChild(ctx, second)
+    ask(second, 'go')
+    await waitForIdle(ctx, second)
+    await secondChildP
+    expect(reviewCatalog(second.session.snapshotEvents())).toHaveLength(1)
+  })
+
+  it('allows the review child to call memory_recall and read stored content', async () => {
+    const root = await freshRoot()
+    const adapter = reviewAdapter([
+      toolCallResponse('r1', 'memory_recall', { query: 'pnpm' }),
+      textResponse('Nothing to save.'),
+    ])
+    const { ctx } = await harness(adapter, { reviewEveryUserTurns: 1, maxReviewSteps: 8 }, root)
+    await ctx.memory.write({
+      name: 'prefers-pnpm',
+      type: 'user',
+      scope: 'global',
+      description: 'Uses pnpm',
+      content: 'Use pnpm, never npm.',
     })
-    const unrelated = handle.agent
-    unrelated.followup(createUserMessage({
-      content: [{ type: 'text', text: 'try forget' }],
-      source: { kind: 'user' },
-    }))
-    await unrelated.whenIdle()
-    const result = unrelated.session.snapshotEvents().find(event => event.type === 'tool/result')
-    expect(result?.type === 'tool/result' && result.data.message.isError).toBe(true)
+    const parent = await createParent(ctx, 'recall-allowed')
+    const childP = waitForReviewChild(ctx, parent)
+    ask(parent, 'go')
+    await waitForIdle(ctx, parent)
+    const child = await childP
+    const live = child.session.snapshotEvents().filter(event => event.seq >= child.session.inheritedEventCount)
+    const result = live.find(event => event.type === 'tool/result')
+    expect(result?.type === 'tool/result' && result.data.message.isError).toBe(false)
     expect(result?.type === 'tool/result'
-      && result.data.message.content.some(block => block.type === 'text' && block.text.includes(REVIEW_DENY_OVERWRITE))).toBe(true)
-    reviewChild.cancel({ kind: 'parent' })
-    await reviewChild.whenIdle()
+      && result.data.message.content.some(block => block.type === 'text' && block.text.includes('Use pnpm, never npm.'))).toBe(true)
+  })
+
+  it('inherits the parent\'s snapshot in its seed and does not inject a second one on its own first step', async () => {
+    const root = await freshRoot()
+    const adapter = reviewAdapter([textResponse('Nothing to save.')])
+    const { ctx } = await harness(adapter, { reviewEveryUserTurns: 1, maxReviewSteps: 8 }, root)
+    await ctx.memory.write({
+      name: 'prefers-pnpm', type: 'user', scope: 'global', description: 'Uses pnpm', content: 'Use pnpm.',
+    })
+    const parent = await createParent(ctx, 'snapshot-once')
+    const childP = waitForReviewChild(ctx, parent)
+    ask(parent, 'go')
+    await waitForIdle(ctx, parent)
+    const child = await childP
+    const isSnapshot = (event: { type: string; data?: unknown }): boolean =>
+      event.type === 'user/message' && (event as { data: { source: { kind: string } } }).data.source.kind === 'tool-memory'
+    const inherited = child.session.snapshotEvents().filter(event => event.seq < child.session.inheritedEventCount && isSnapshot(event))
+    expect(inherited).toHaveLength(1)
+    const own = child.session.snapshotEvents().filter(event => event.seq >= child.session.inheritedEventCount && isSnapshot(event))
+    expect(own).toHaveLength(0)
   })
 
   it('rejects the child step after maxReviewSteps', async () => {

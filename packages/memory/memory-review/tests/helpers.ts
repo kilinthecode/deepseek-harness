@@ -8,7 +8,7 @@ import { Context } from '@deepseek-ai/cordis'
 import type { Agent } from '@deepseek-ai/dsh-agent'
 import AgentLoop from '@deepseek-ai/dsh-agent-loop'
 import { mountAgentLoopTestDependencies } from '@deepseek-ai/dsh-agent-loop-testkit'
-import { createUserMessage, type GenerateOptions } from '@deepseek-ai/dsh-llm'
+import { createUserMessage, type GenerateOptions, type LlmAdapter } from '@deepseek-ai/dsh-llm'
 import { SessionId } from '@deepseek-ai/dsh-session'
 import type { SessionEvent } from '@deepseek-ai/dsh-session'
 import MemoryStore from '@deepseek-ai/dsh-memory'
@@ -192,13 +192,14 @@ export function waitForReviewChild(ctx: Context, parent: Agent): Promise<Agent> 
 
 /**
  * Mount the real loop, store, memory tools, fork provider, and memory-review.
- * @param adapter - scripted model.
+ * @param adapter - scripted model; a plain `MockAdapter` or any other `LlmAdapter`
+ * (e.g. one that routes per session id for a scenario with several concurrently live agents).
  * @param config - review configuration.
  * @param root - json storage root.
  * @returns the booted context and the memory-review fiber.
  */
 export async function harness(
-  adapter: MockAdapter,
+  adapter: LlmAdapter,
   config: Config,
   root: string,
 ): Promise<{ ctx: Context; reviewFiber: Awaited<ReturnType<Context['plugin']>> }> {

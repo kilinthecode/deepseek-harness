@@ -169,6 +169,8 @@ Unattended memory review may only add a new name.
 - **仅限进程存活期间**——回顾只在进程存活时运行，因此 headless、ACP 和 SDK 组合包禁用该插件。
 - **普通 Web 行**——Web 显示带 `memory-review` 标签的普通 subagent 行。
 - **并行的新名称写入**——同一步骤中两次并行的、使用同一新名称的 `memory_write` 调用都可以通过仅添加检查。
+- **父级写入竞态**——若父级的 `memory_write` 落在子会话的仅添加检查与子会话对同一名称的 `memory_write` 之间，会被子会话覆盖。
+- **`memory_recall` 与失败调用同样会重置间隔**——每次名为 `memory_write`、`memory_recall` 或 `memory_forget` 的父级 `tool/call` 都会将 `turnsSinceReset` 重置为 `0`，无论调用是否成功，因此每轮都调用记忆工具的父级会无限期推迟回顾。
 - **路由到更便宜模型的摘要回顾**——使用更便宜路由模型的回顾被延期。
 
 <a id="dev-note"></a>
