@@ -1,0 +1,49 @@
+# Bilingual-pair consistency record for 2026-09-25-frozen-memory-snapshot-and-review.md (docs/i18n/README.md): per heading
+# section, a hash of its English and Chinese blocks outside code blocks and generated regions.
+# After editing either side, bring the other along and re-record with:
+#   pnpm run verify-translation-pairing --write .agents/notes/implemented/feature/2026-09-25-frozen-memory-snapshot-and-review.md
+/agent-note-frozen-memory-snapshot-and-unattended-review:
+  en: f4b0cf857116d960
+  zh: 389c28016038d91a
+/agent-note-frozen-memory-snapshot-and-unattended-review/problem:
+  en: 9e91120412265c3d
+  zh: 216b1aaaf49e2c6b
+/agent-note-frozen-memory-snapshot-and-unattended-review/decision:
+  en: 315a955df6c05d2f
+  zh: a2ca83246a5762ca
+/agent-note-frozen-memory-snapshot-and-unattended-review/alternatives-considered:
+  en: 6119e2aff3b6be5a
+  zh: 6119e2aff3b6be5a
+/agent-note-frozen-memory-snapshot-and-unattended-review/alternatives-considered/why-not-refresh-the-catalog-at-every-turn-start:
+  en: b1a3fc774aeb70ea
+  zh: 459a0845a0d39afa
+/agent-note-frozen-memory-snapshot-and-unattended-review/alternatives-considered/why-not-put-memory-in-the-system-prompt:
+  en: 0f019cacbd2247bf
+  zh: 62ec54bf918c1d48
+/agent-note-frozen-memory-snapshot-and-unattended-review/alternatives-considered/why-not-prepend-the-snapshot-before-the-claimed-user-message:
+  en: 5d2f53b5f7f8ca99
+  zh: 55b9ad9af0f98f30
+/agent-note-frozen-memory-snapshot-and-unattended-review/alternatives-considered/why-not-group-snapshots-under-global-and-project-headers:
+  en: 4e40e87dea22c8b6
+  zh: d3b89f2fccd9b0ae
+/agent-note-frozen-memory-snapshot-and-unattended-review/alternatives-considered/why-not-make-threat-patterns-a-config-field:
+  en: 15e879e3dcfc034e
+  zh: 56b5f25c85571da6
+/agent-note-frozen-memory-snapshot-and-unattended-review/alternatives-considered/why-not-quarantine-a-record-when-snapshot-or-recall-scan-fails:
+  en: cc077e1684a236e4
+  zh: 5d6d471387db26f8
+/agent-note-frozen-memory-snapshot-and-unattended-review/alternatives-considered/why-not-pass-toolfilter-persona-or-a-routed-model-to-the-review-child:
+  en: fdea90fd37c7bf95
+  zh: 090d29a250bcdff7
+/agent-note-frozen-memory-snapshot-and-unattended-review/alternatives-considered/why-not-a-pre-compaction-flush-a-memoryprovider-abc-a-routed-digest-review-or-llm-search-summarization:
+  en: 133141f46ac197fc
+  zh: 5d8fe41f6d89d7a7
+/agent-note-frozen-memory-snapshot-and-unattended-review/consequences:
+  en: 6d1ca593be84682c
+  zh: 39f70242d914cb7f
+/agent-note-frozen-memory-snapshot-and-unattended-review/deferred:
+  en: a084165e8ab6b324
+  zh: c6d300796ff19fca
+/agent-note-frozen-memory-snapshot-and-unattended-review/testing:
+  en: 2b6dbf1d1bd286ed
+  zh: 4dfc711405716037

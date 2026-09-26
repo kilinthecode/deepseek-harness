@@ -3,14 +3,14 @@
 # After editing either side, bring the other along and re-record with:
 #   pnpm run verify-translation-pairing --write docs/subsystems/memory.md
 /memory:
-  en: ca08d37c722125ec
-  zh: 774fde62a6a89ee7
+  en: 9ec69e8e3d768b91
+  zh: 3387b44ec6ec6425
 /memory/records:
-  en: 49f6c1966476be62
-  zh: 61513c36d33cf134
+  en: ca4bd24a1018d6a4
+  zh: 6ecc857ee59172aa
 /memory/requests-and-results:
   en: 39a65796a0ec2a73
   zh: a7b166c2b8e6f20f
 /memory/catalog-projection:
-  en: 9d12970d63e0d074
-  zh: a3b7852c950850c9
+  en: 9a7b56162dca26ce
+  zh: ee693746a8ba31ce

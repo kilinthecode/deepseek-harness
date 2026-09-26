@@ -11,8 +11,8 @@ import {
 const HIGH = ReasoningEffortId('high')
 const OFF = ReasoningEffortId('off')
 
-/** The catalog header `dsh-tool-memory` injects; its presence in a request is what run B asserts on. */
-const CATALOG_HEADER = 'Saved memories (catalog; call memory_recall to read one):'
+/** The snapshot header `dsh-tool-memory` injects; its presence in a request is what run B asserts on. */
+const CATALOG_HEADER = 'Saved memories (snapshot):'
 
 function toolCall(id: string, name: string, args: object): StreamChunk[] {
   const encoded = JSON.stringify(args)
@@ -38,7 +38,7 @@ function text(reply: string): StreamChunk[] {
 /**
  * Keyless headless-agent adapter for the cross-session memory smoke. A task
  * starting with `remember:` writes one global memory; any other task recalls
- * `pnpm` when the request carries the injected catalog and otherwise answers
+ * `pnpm` when the request carries the injected snapshot and otherwise answers
  * `NO CATALOG`. A tool result is echoed back as the final answer.
  */
 class MemoryMockAdapter extends LlmAdapter {
@@ -58,8 +58,6 @@ class MemoryMockAdapter extends LlmAdapter {
   }
 
   async * stream(options: GenerateOptions): AsyncIterable<StreamChunk> {
-    // The catalog lands after a tool result on the step that follows the first
-    // write, so the result is not always the last message.
     const toolResult = options.messages.findLast(message => message.role === 'tool')
     if (toolResult !== undefined) {
       const toolText = toolResult.content.filter(block => block.type === 'text').map(block => block.text).join('')

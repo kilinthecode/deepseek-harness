@@ -1,0 +1,14 @@
+# Opt-in session search. Shipped profiles keep the SQLite index at
+# `openAt: never` and do not mount the model-facing tools. This overlay
+# opens a durable derived index under the harness home at startup and
+# mounts `@deepseek-ai/dsh-tool-session-query`. It does not add LLM
+# summarization.
+
+- id: session-query-sqlite
+  config:
+    path: !!js dshHomePath('session-search.db')
+    openAt: startup
+
+- insert:
+    - id: tool-session-query
+      name: '@deepseek-ai/dsh-tool-session-query'

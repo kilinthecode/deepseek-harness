@@ -17,6 +17,7 @@ import * as StorageDomain from '@deepseek-ai/dsh-storage-domain'
 import * as StorageJson from '@deepseek-ai/dsh-storage-json'
 import SystemPrompt from '@deepseek-ai/dsh-system-prompt'
 import * as ToolMemory from '@deepseek-ai/dsh-tool-memory'
+import { SNAPSHOT_MIN_BYTES } from '@deepseek-ai/dsh-tool-memory'
 import ToolRuntime from '@deepseek-ai/dsh-tools'
 
 let root: string | undefined
@@ -90,11 +91,28 @@ describe('dsh-tool-memory real Loader composition through cordis.yml', () => {
     expect(ctx.memory).toBeDefined()
   }, 30_000)
 
+  it('loads with injectMaxBytes: 0 (tools stay available, no snapshot is ever injected)', async () => {
+    const ctx = await boot(['    injectMaxBytes: 0', '    maxRecallResults: 3'])
+    const names = ctx.tools.schemas().map(schema => schema.name)
+    expect(names).toEqual(expect.arrayContaining(['memory_write', 'memory_recall', 'memory_forget']))
+  }, 30_000)
+
+  it('loads with injectMaxBytes exactly at SNAPSHOT_MIN_BYTES', async () => {
+    const ctx = await boot([`    injectMaxBytes: ${String(SNAPSHOT_MIN_BYTES)}`, '    maxRecallResults: 3'])
+    expect(ctx.memory).toBeDefined()
+  }, 30_000)
+
   it.each([
     { label: 'injectMaxBytes is omitted', configLines: ['    maxRecallResults: 3'], failure: /injectMaxBytes/ },
     { label: 'maxRecallResults is omitted', configLines: ['    injectMaxBytes: 2048'], failure: /maxRecallResults/ },
     { label: 'maxRecallResults is zero', configLines: ['    injectMaxBytes: 2048', '    maxRecallResults: 0'], failure: /maxRecallResults/ },
     { label: 'injectMaxBytes is negative', configLines: ['    injectMaxBytes: -1', '    maxRecallResults: 3'], failure: /injectMaxBytes/ },
+    { label: 'injectMaxBytes is 10 (positive but below SNAPSHOT_MIN_BYTES)', configLines: ['    injectMaxBytes: 10', '    maxRecallResults: 3'], failure: /injectMaxBytes/ },
+    {
+      label: 'injectMaxBytes is one less than SNAPSHOT_MIN_BYTES',
+      configLines: [`    injectMaxBytes: ${String(SNAPSHOT_MIN_BYTES - 1)}`, '    maxRecallResults: 3'],
+      failure: /injectMaxBytes/,
+    },
   ])('fails loading when $label', async ({ configLines, failure }) => {
     await expect(boot(configLines)).rejects.toThrow(failure)
   }, 30_000)

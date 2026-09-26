@@ -2,11 +2,11 @@
 
 [English](memory.md) | 中文
 
-持久记忆存储 [`@deepseek-ai/dsh-memory`](../../packages/memory/memory/README.zh.md) 与其工具消费者 [`@deepseek-ai/dsh-tool-memory`](../../packages/memory/tool-memory/README.zh.md) 共享的类型。[第一方持久记忆 Agent Note](../../.agents/notes/implemented/feature/2026-09-19-first-party-durable-memory.zh.md) 拥有设计决策；本页记录 [`packages/memory/memory/src/index.ts`](../../packages/memory/memory/src/index.ts) 中精确的请求与结果类型，以及 [`src/domain.ts`](../../packages/memory/memory/src/domain.ts) 中的记录布局。
+持久记忆存储 [`@deepseek-ai/dsh-memory`](../../packages/memory/memory/README.zh.md) 与其工具消费者 [`@deepseek-ai/dsh-tool-memory`](../../packages/memory/tool-memory/README.zh.md) 共享的类型。[第一方持久记忆 Agent Note](../../.agents/notes/implemented/feature/2026-09-19-first-party-durable-memory.zh.md) 负责存储与工具拆分；[冻结快照与回顾说明](../../.agents/notes/implemented/feature/2026-09-25-frozen-memory-snapshot-and-review.zh.md) 负责冻结、扫描和回顾 fork。本页记录 [`packages/memory/memory/src/index.ts`](../../packages/memory/memory/src/index.ts) 中精确的请求与结果类型，以及 [`src/domain.ts`](../../packages/memory/memory/src/domain.ts) 中的记录布局。`scanMemoryText` 与 `MemoryStore.scan` 位于 [`src/scan.ts`](../../packages/memory/memory/src/scan.ts)；当该服务 JSDoc 变更时，下方生成的 Cordis API 区块由操作方重新生成。
 
 ## 记录
 
-一条记忆就是一条记录：匹配 `^[a-z0-9][a-z0-9-]{0,63}$` 的 `name`，取值为 `user`、`feedback`、`project` 或 `reference` 的 `type`，取值为 `global` 或 `project` 的 `scope`，最多 256 个字符的 `description`，不超过存储 `maxRecordBytes` 的 `content`，仅当作用域为 `project` 时存在、至多 32,767 个字符的 `projectRoot`，以及绝不会到达模型的 ISO-8601 UTC `createdAt` 与 `updatedAt` 日期时间。`MemoryName`（全局表的键）与 `ProjectMemoryKey`（`<project slug>__<name>`）是[品牌化 id](core.zh.md#branded-ids)。每个存储根据自己的 `maxRecordBytes` 构建 `memory` 存储 domain 规范；该 domain 以逐记录布局声明 `global` 与 `project` 两张表，对未通过 zod schema 的记录采用 `backup-and-skip`；在 JSON 后端上，每条记录是保存 `{ "version": 1, "record": … }` 的 `<root>/memory/<table>/<key>.json`。
+一条记忆就是一条记录：匹配 `^[a-z0-9][a-z0-9-]{0,63}$` 的 `name`，取值为 `user`、`feedback`、`project` 或 `reference` 的 `type`，取值为 `global` 或 `project` 的 `scope`，最多 256 个字符的 `description`（写入要求单行：U+000A、U+000D、U+2028 和 U+2029 以 `invalid-description` 失败；持久 zod schema 不拒绝这些换行，因此手工编辑的多行文件仍会加载），不超过存储 `maxRecordBytes` 的 `content`，仅当作用域为 `project` 时存在、至多 32,767 个字符的 `projectRoot`，以及绝不会到达模型的 ISO-8601 UTC `createdAt` 与 `updatedAt` 日期时间。`write` 在序列化之前用 `scanMemoryText` 先扫描描述再扫描内容；发现为 `blocked-content`。快照和回忆把扫描发现渲染为 `[blocked]`，并且不把文件改名为 `.bak`。
 
 ## 请求与结果
 
@@ -17,7 +17,7 @@ interface MemoryWriteRequest {
   readonly name: string
   readonly type: MemoryType
   readonly scope: MemoryScope
-  /** One-line summary shown in the catalog; trimmed, at most {@link MEMORY_DESCRIPTION_MAX_CHARS}. */
+  /** One-line summary shown in the snapshot; trimmed, 1 to 256 characters, no U+000A, U+000D, U+2028, or U+2029. */
   readonly description: string
   /** The memory body; trimmed, at most `maxRecordBytes` UTF-8 bytes. */
   readonly content: string
@@ -74,19 +74,25 @@ interface MemoryVisible {
 每次拒绝都是 `MemoryError`，其 `code` 说明原因，其消息面向模型书写。
 
 ```ts type-equiv
-/** Why a store operation was rejected. */
+/**
+ * Why a store operation was rejected.
+ * `blocked-content` is a write-time scan finding; `project-key-collision`
+ * means this project's key already holds another project's record.
+ */
 type MemoryErrorCode =
   | 'invalid-name'
   | 'invalid-description'
   | 'invalid-content'
   | 'over-cap'
+  | 'blocked-content'
+  | 'project-key-collision'
   | 'project-root-unavailable'
   | 'not-found'
 ```
 
 ## 目录投影
 
-`dsh-tool-memory` 注册 `memoryCatalog` 会话投影，其状态为 `{ lastCatalog: string | null }`：本插件最近一次注入的目录文本，由其自身 `snapshot` 形式、source kind 为 `tool-memory` 的 `user/message` 事件折叠而来，并在 `compaction/summary` 时重置为 `null`。`agent/pre-step` 监听器在投影值为 `null` 且存储有可见记录时，或某轮第一步渲染出与之不同的目录时注入；在目录已送达模型之后被清空的存储渲染为显式的空目录 `EMPTY_CATALOG_TEXT`。该决定读取投影以及存储当前的可见记录；每份注入的目录都是一条已记录的 `user/message`，因此回放可以从日志重建每个模型请求。
+`dsh-tool-memory` 注册 `memoryCatalog` 会话投影，`stateVersion: 3`，状态为 `{ taken: boolean; stepPending: boolean }`，`init: () => ({ taken: false, stepPending: false })`。`step/start` 只折叠为 `stepPending: true`，因为 `agent/request`/`prepareCall` 期间的取消既不提交系统提示词也不提交该步骤的消息；待定期间有一条 `user/message` 落盘则折叠为 `{ taken: true, stepPending: false }`，本插件自己的快照消息无条件折叠为同一状态，`step/end` 将待定状态折回 `false`，`compaction/summary` 将两者都折为 `false`。前置的 `agent/pre-step` 监听器先 `await next()`，然后在 `taken` 为 false 时每个 surface generation 至多注入一次：它通过 `renderSnapshot` 和 `MemoryStore.scan` 渲染 `visible(cwd)`，并在已认领的用户批次之后追加一条带 source 的 `user/message`。该第一步时为空的存储不注入。每份注入的快照都是一条已记录的 `user/message`，因此回放可以从日志重建每个模型请求。
 
 <!-- BEGIN GENERATED cordis-surface (gen-cordis-catalog.ts) — do not edit between markers -->
 
@@ -119,6 +125,13 @@ async resolveProjectRoot(cwd: string | undefined): Promise<string | undefined>
 async visible(cwd: string | undefined): Promise<MemoryVisible>
 
 /**
+ * Scan one memory description or body using the store's fixed threat checks.
+ * @param text - raw description or content.
+ * @returns the first finding, or `undefined` when the text is allowed.
+ */
+scan(text: string): MemoryScanFinding | undefined
+
+/**
  * Insert or replace one record durably. Writes and forgets of one store run
  * one at a time in call order, from the project-root lookup to the durable
  * put, so overlapping calls never exceed the cap and a same-name overlap
@@ -126,8 +139,10 @@ async visible(cwd: string | undefined): Promise<MemoryVisible>
  * counts the records this process has loaded or written.
  * @param request - the memory to store.
  * @returns whether the record was created or updated, and the stored record.
- * @throws {@link MemoryError} for an invalid name, description, or content, a
- * project scope without a project root, or a cap reached in the target scope.
+ * @throws {@link MemoryError} for an invalid name, description, or content,
+ * blocked description or content, a project scope without a project root, a
+ * project key occupied by another project's record, or a cap reached in the
+ * target scope.
  */
 async write(request: MemoryWriteRequest): Promise<MemoryWriteResult>
 
@@ -144,7 +159,8 @@ async recall(request: MemoryRecallRequest): Promise<MemoryRecord[]>
  * Delete one record durably, in the same one-at-a-time call order as writes.
  * @param request - name, scope, and working directory.
  * @throws {@link MemoryError} when the name is invalid, the project root is
- * unavailable, or no such record exists in the scope.
+ * unavailable, no such record exists in the scope, or a project key is
+ * occupied by another project's record.
  */
 async forget(request: MemoryForgetRequest): Promise<void>
 ```

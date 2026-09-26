@@ -321,6 +321,7 @@
     { "path": "./packages/goal/tool-goal" },
     { "path": "./packages/memory/memory" },
     { "path": "./packages/memory/tool-memory" },
+    { "path": "./packages/memory/memory-review" },
     { "path": "./packages/goal/goal-round-driver" },
     { "path": "./packages/goal/command-goal" },
     { "path": "./packages/feedback/command-feedback" },

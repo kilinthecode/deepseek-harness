@@ -1503,11 +1503,17 @@ export const SERVICE_API: readonly ServiceApiEntry[] = [
         returns: 'the visible records in stored order.',
       },
       {
+        signature: 'scan(text: string): MemoryScanFinding | undefined',
+        description: 'Scan one memory description or body using the store\'s fixed threat checks.',
+        parameters: [{ name: 'text', description: 'raw description or content.' }],
+        returns: 'the first finding, or `undefined` when the text is allowed.',
+      },
+      {
         signature: 'async write(request: MemoryWriteRequest): Promise<MemoryWriteResult>',
         description: 'Insert or replace one record durably. Writes and forgets of one store run one at a time in call order, from the project-root lookup to the durable put, so overlapping calls never exceed the cap and a same-name overlap reports `created` for the earlier call and keeps its `createdAt`. The cap counts the records this process has loaded or written.',
         parameters: [{ name: 'request', description: 'the memory to store.' }],
         returns: 'whether the record was created or updated, and the stored record.',
-        throws: ['{@link MemoryError} for an invalid name, description, or content, a project scope without a project root, or a cap reached in the target scope.'],
+        throws: ['{@link MemoryError} for an invalid name, description, or content, blocked description or content, a project scope without a project root, a project key occupied by another project\'s record, or a cap reached in the target scope.'],
       },
       {
         signature: 'async recall(request: MemoryRecallRequest): Promise<MemoryRecord[]>',
@@ -1519,7 +1525,7 @@ export const SERVICE_API: readonly ServiceApiEntry[] = [
         signature: 'async forget(request: MemoryForgetRequest): Promise<void>',
         description: 'Delete one record durably, in the same one-at-a-time call order as writes.',
         parameters: [{ name: 'request', description: 'name, scope, and working directory.' }],
-        throws: ['{@link MemoryError} when the name is invalid, the project root is unavailable, or no such record exists in the scope.'],
+        throws: ['{@link MemoryError} when the name is invalid, the project root is unavailable, no such record exists in the scope, or a project key is occupied by another project\'s record.'],
       },
     ],
   },
@@ -5674,6 +5680,10 @@ export const TYPE_API: readonly TypeApiEntry[] = [
   {
     name: 'MemoryRecord',
     declaration: 'export interface MemoryRecord {\n    readonly name: MemoryName;\n    readonly type: MemoryType;\n    readonly scope: MemoryScope;\n    readonly description: string;\n    readonly content: string;\n    readonly projectRoot?: string | undefined;\n    readonly createdAt: string;\n    readonly updatedAt: string;\n}',
+  },
+  {
+    name: 'MemoryScanFinding',
+    declaration: 'export interface MemoryScanFinding {\n    readonly id: string;\n    readonly message: string;\n}',
   },
   {
     name: 'MemoryScope',

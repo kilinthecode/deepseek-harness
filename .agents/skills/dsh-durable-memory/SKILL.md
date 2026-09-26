@@ -1,18 +1,20 @@
 ---
 name: dsh-durable-memory
-description: Use when changing @deepseek-ai/dsh-memory or @deepseek-ai/dsh-tool-memory, the TOOL_MEMORY prompt section, the memory tool schemas, the catalog injection, the memory snapshot scenarios or e2e suites, or when a plugin or test must consume ctx.memory in deepseek-harness, to order the model-visible text freeze, the unit, lib-mode, snapshot, and real-model lanes, and the documentation updates so the recorded corpus is refreshed exactly once.
+description: Use when changing @deepseek-ai/dsh-memory, @deepseek-ai/dsh-tool-memory, or @deepseek-ai/dsh-memory-review, the TOOL_MEMORY prompt section, the memory tool schemas, the snapshot injection, scan.ts, the memory snapshot or memory-review scenarios or e2e suites, or when a plugin or test must consume ctx.memory in deepseek-harness, to order the model-visible text freeze, the unit, lib-mode, snapshot, and real-model lanes, and the documentation updates so the recorded corpus is refreshed exactly once.
 ---
 
 # DSH durable memory
 
-Work on first-party durable memory touches two packages, the recorded system prompt and tool schemas of every composition that mounts the tools, and the keyless store fixtures. This skill orders that work; the contracts stay in their owners.
+Work on first-party durable memory touches three packages, the recorded system prompt and tool schemas of every composition that mounts the tools, and the keyless store fixtures. This skill orders that work; the contracts stay in their owners.
 
 ## Read the owners first
 
 - [`packages/memory/memory/README.md`](../../../packages/memory/memory/README.md) — the store: config, record layout, scopes, `ctx.memory` operations, error codes, limitations.
-- [`packages/memory/tool-memory/README.md`](../../../packages/memory/tool-memory/README.md) — the tools, the catalog, and the verbatim model-visible text under Model Experience.
+- [`packages/memory/tool-memory/README.md`](../../../packages/memory/tool-memory/README.md) — the tools, the snapshot, and the verbatim model-visible text under Model Experience.
+- [`packages/memory/memory-review/README.md`](../../../packages/memory/memory-review/README.md) — the unattended review fork, its interval, and the child task.
 - [`docs/subsystems/memory.md`](../../../docs/subsystems/memory.md) — request and result types and the generated `ctx.memory` API.
-- [The implemented Agent Note](../../notes/implemented/feature/2026-09-19-first-party-durable-memory.md) — why the design is what it is and what it rejected; keep it current when a fact it states changes.
+- [The implemented Agent Note](../../notes/implemented/feature/2026-09-19-first-party-durable-memory.md) — store and tools split; keep it current when a fact it states changes.
+- [Frozen snapshot and review](../../notes/implemented/feature/2026-09-25-frozen-memory-snapshot-and-review.md) — freeze, scan, inline budget, and the review fork.
 - [`docs/user/guide/memory.md`](../../../docs/user/guide/memory.md) — what users are told; a behavior change that users can see updates it in the same change.
 
 ## Where the pieces live
@@ -20,17 +22,20 @@ Work on first-party durable memory touches two packages, the recorded system pro
 | Piece | Location |
 |---|---|
 | Store, domain, project identity | `packages/memory/memory/src/` |
-| Tools, catalog injection, prompt section | `packages/memory/tool-memory/src/` |
-| Base bundle rows `memory` and `tool-memory` | `packages/bundle/base/cordis.patch.yml`; Web disables the host-plane tools in `packages/bundle/web-app/cordis.patch.yml` and the `standard`, `ptc`, and `cordis` preset declarations in `packages/bundle/web-app/presets/<id>.patch.yml` mount them |
+| Scan | `packages/memory/memory/src/scan.ts` |
+| Tools, snapshot injection, prompt section | `packages/memory/tool-memory/src/` |
+| Review | `packages/memory/memory-review/src/` |
+| Review tests | `packages/memory/memory-review/tests/` (`review.spec.ts`, `loader-composition.spec.ts`, `cache.e2e.ts`, `bundles.spec.ts`) |
+| Base bundle rows `memory`, `tool-memory`, and `memory-review` | `packages/bundle/base/cordis.patch.yml`; Web disables the host-plane tools and review in `packages/bundle/web-app/cordis.patch.yml` and the `standard`, `ptc`, and `cordis` preset declarations in `packages/bundle/web-app/presets/<id>.patch.yml` mount them |
 | Prompt position | `TOOL_MEMORY` in `packages/core/system-prompt/src/index.ts` |
 | Catalog source kind | the attribution-only `tool-memory` member of `MessageSourceMap` in `packages/memory/tool-memory/src/catalog.ts`, acknowledged by `docs/persistence-changes/2026-09-24-memory-catalog-source.md`; a change to it follows the [persistence-type cookbook](../../../docs/cookbook/reviewing-persistence-type-changes.md) |
-| Keyless recorded scenarios | `snapshots/session/memory-catalog-recall/` (seeded global store, recall, write; owns the composition and header sidecars), `snapshots/session/memory-project-forget/` (project-scope write, catalog with a `Project:` section, forget; shares that composition), and `snapshots/sdk/memory-catalog-refresh/` (two SDK turns: the catalog refreshes at the second turn after a write, and the `memory-catalog-compaction` fixture plugin in `packages/test-support/session-snapshot/tests/fixtures/` compacts it away after `memory_recall` so the next step re-injects it; borrows the `compaction-recovery` header sidecars) |
+| Keyless recorded scenarios | `snapshots/session/memory-catalog-recall/` (seeded global store, recall, write; owns the composition and header sidecars), `snapshots/session/memory-project-forget/` (project-scope write, forget; shares that composition), `snapshots/sdk/memory-catalog-refresh/` (two SDK turns: the first-step snapshot is not refreshed after a write; the `memory-catalog-compaction` fixture plugin in `packages/test-support/session-snapshot/tests/fixtures/` compacts it away after `memory_recall` so the next step re-injects it; borrows the `compaction-recovery` header sidecars), and `snapshots/session/memory-review-fork/` (unattended review child; wait for the child turn) |
 | Keyless two-process suites | `packages/memory/tool-memory/tests/cross-session.e2e.ts`, `packages/memory/memory/tests/publish.two-process.e2e.ts` |
-| Real-model suite | `packages/memory/tool-memory/tests/real-model.e2e.ts` |
+| Real-model suite | `packages/memory/tool-memory/tests/real-model.e2e.ts`, `packages/memory/memory-review/tests/cache.e2e.ts` |
 
 ## Freeze model-visible text before anything else
 
-The prompt section, the three tool descriptions and parameter descriptions, the catalog header, the omission line, and the empty-catalog line are quoted by the `system-prompt*.expected.md` and `tool-schemas*.expected.json` sidecars of every recorded composition that mounts `tool-memory` under `snapshots/session`, `snapshots/sdk`, `snapshots/acp`, and `snapshots/web`, and verbatim by the tool-memory README pair. The tool names alone are also pinned by the Python SDK projection under `scripts/snapshots/python-sdk-single-exe/`. Settle the wording, update the README pair, then refresh the corpus once; a second wording edit costs a second refresh of about a hundred files.
+The prompt section, the three tool descriptions and parameter descriptions, the snapshot header, and the omission line are quoted by the `system-prompt*.expected.md` and `tool-schemas*.expected.json` sidecars of every recorded composition that mounts `tool-memory` under `snapshots/session`, `snapshots/sdk`, `snapshots/acp`, and `snapshots/web`, and verbatim by the tool-memory README pair. The tool names alone are also pinned by the Python SDK projection under `scripts/snapshots/python-sdk-single-exe/`. Settle the wording, update the README pair, then refresh the corpus once; a second wording edit costs a second refresh of about a hundred files. Freeze remains one refresh. A `memory-review` scenario must not rewrite those prompt or tool-schema sidecars.
 
 Two pinned sets stay out of a refresh on purpose: `snapshots/web/cordis-tool-round` declares `retired-tools` coverage, so its fixture and sidecars are a frozen historical composition, and `snapshots/web/minimal-preset` composes the `minimal` preset, which has no memory tools.
 
@@ -92,3 +97,4 @@ Declare `memory` in the plugin's `inject`, pass the owning session's `header.cwd
 - Restate the record schema, config values, error codes, or prompt text here; link the owners above.
 - Add a session event or an invariant companion for memory mutations; the tool call and result already log every mutation, and the Agent Note records why.
 - Land a Web card for the memory tools without the GIF the repository requires for product-visible GUI changes; the generic tool row is the documented current presentation.
+- Rewrite `system-prompt*.expected.md` or `tool-schemas*.expected.json` sidecars when adding or refreshing a `memory-review` scenario.

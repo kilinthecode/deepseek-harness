@@ -305,7 +305,8 @@ Every package below exports a Cordis plugin that a bundle patch can name in a Lo
 | Package | Config | Description |
 |---|---|---|
 | `@deepseek-ai/dsh-memory` | yes | Durable agent memory store (ctx.memory): cross-session user, feedback, project, and reference records over the domain data form for the DeepSeek Harness |
-| `@deepseek-ai/dsh-tool-memory` | yes | Model-facing memory_write, memory_recall, and memory_forget tools, the injected memory catalog, and the remember-when prompt section over ctx.memory for the DeepSeek Harness |
+| `@deepseek-ai/dsh-memory-review` | yes | Cache-parity unattended memory review: a fork child that may only add new memories, started from the parent idle notification in the DeepSeek Harness |
+| `@deepseek-ai/dsh-tool-memory` | yes | Model-facing memory_write, memory_recall, and memory_forget tools, the injected memory snapshot, and the remember-when prompt section over ctx.memory for the DeepSeek Harness |
 
 ## plan
 

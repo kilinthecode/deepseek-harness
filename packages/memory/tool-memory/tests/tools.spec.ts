@@ -1,4 +1,4 @@
-import { readdir } from 'node:fs/promises'
+import { mkdir, readdir, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
 import { Context } from '@deepseek-ai/cordis'
@@ -122,6 +122,44 @@ describe('memory tools', () => {
     )
     const outside = await call(ctx, 'memory_recall', { query: 'build' })
     expect(text(outside)).toBe('No saved memories match.')
+  })
+
+  it('renders [blocked] for a recalled record whose content fails scan, alongside a clean record in the same result', async () => {
+    // `write` scans before storing, so a blocked record can only reach the
+    // store by another path: a hand-edited or pre-scan record file, seeded
+    // here directly under the store's on-disk layout before the store opens.
+    const root = await freshRoot()
+    await mkdir(join(root, 'memory', 'global'), { recursive: true })
+    await writeFile(
+      join(root, 'memory', 'global', 'blocked-memory.json'),
+      JSON.stringify({
+        version: 1,
+        record: {
+          name: 'blocked-memory',
+          type: 'user',
+          scope: 'global',
+          description: 'looks clean',
+          content: 'has a zero width\u200Bspace inside',
+          createdAt: '2026-09-19T00:00:00.000Z',
+          updatedAt: '2026-09-19T00:00:00.000Z',
+        },
+      }),
+    )
+    const ctx = new Context()
+    contexts.push(ctx)
+    await ctx.plugin(SystemPrompt)
+    await ctx.plugin(ToolRuntime)
+    await ctx.plugin(SessionProjectionRegistry)
+    await mountStore(ctx, root)
+    await ctx.plugin(tool, { injectMaxBytes: 2048, maxRecallResults: 4 })
+
+    await call(ctx, 'memory_write', { name: 'clean-memory', type: 'user', scope: 'global', description: 'clean desc', content: 'clean content' })
+    const result = await call(ctx, 'memory_recall', {})
+    expect(result.isError).toBe(false)
+    const rendered = text(result)
+    expect(rendered).toContain('## blocked-memory [user, global]\n[blocked]')
+    expect(rendered).not.toContain('zero width')
+    expect(rendered).toContain('## clean-memory [user, global]\nclean desc\n\nclean content')
   })
 
   it('forgets a memory and reports a missing one', async () => {

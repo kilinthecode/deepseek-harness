@@ -9,7 +9,7 @@ English | [中文](README.zh.md)
 
 ## Summary
 
-`dsh-memory` keeps an agent's memories across sessions. Each memory is one small record with a name, a type (`user`, `feedback`, `project`, or `reference`), a scope (`global` or `project`), a one-line description, and its content, stored as one readable JSON file under the harness home. The store validates every write, caps how many memories each scope may hold, and resolves the current project from the session's working directory so project memories stay with their repository. Mount it wherever agents should remember things; `dsh-tool-memory` gives the model the tools and the catalog.
+`dsh-memory` keeps an agent's memories across sessions. Each memory is one small record with a name, a type (`user`, `feedback`, `project`, or `reference`), a scope (`global` or `project`), a one-line description, and its content, stored as one readable JSON file under the harness home. The store validates every write, scans description and content for injection and secrets, caps how many memories each scope may hold, and resolves the current project from the session's working directory. Mount it wherever agents should remember things; `dsh-tool-memory` gives the model the tools and the catalog.
 
 ## Table of Contents
 
@@ -53,13 +53,13 @@ Both caps are required with no default: a composition that omits either fails at
 |---|---|---|
 | `maxRecords` | required | Most records in the global scope and, separately, in each project; a write past the cap fails |
 | `maxRecordBytes` | required | UTF-8 byte cap on one record's content |
-| `projectRootMarkers` | `['.git']` | Directory entries that identify a project root while walking up from the session working directory |
+| `projectRootMarkers` | `['.git']` | Directory entries that identify a project root while walking up from the session working directory; an explicit empty list stays empty |
 
 The generated [configuration catalog](../../../docs/config-catalog.md#deepseek-aidsh-memory) is the exhaustive source for the accepted fields. Route the `memory` domain to another backend with `dsh-storage-domain`'s `routes` (for example `memory: sqlite`); the store has no backend field of its own.
 
 ### Where memories live
 
-With the JSON backend, every memory is one file: `<root>/memory/global/<name>.json` for global records and `<root>/memory/project/<slug>__<name>.json` for project records, where `<slug>` is the project directory's sanitized basename plus eight hex characters of the root path's hash. Each file holds `{ "version": 1, "record": { … } }` and is safe to read or edit by hand. When the store opens, a file that no longer parses or breaks a field bound is moved aside as `<name>.json.bak.<timestamp>`, and the other memories stay available. The bounds cover every field: the name pattern, the 256-character description, content within the current `maxRecordBytes` (so lowering the cap moves larger records aside), a project root of at most 32,767 characters, and ISO-8601 UTC timestamps.
+With the JSON backend, every memory is one file: `<root>/memory/global/<name>.json` for global records and `<root>/memory/project/<slug>__<name>.json` for project records, where `<slug>` is the project directory's sanitized basename plus eight hex characters of the root path's hash. Each file holds `{ "version": 1, "record": { … } }` and is safe to read or edit by hand. When the store opens, a file that no longer parses or breaks a field bound is moved aside as `<name>.json.bak.<timestamp>`, and the other memories stay available. The bounds cover every field: the name pattern, the 256-character description, content within the current `maxRecordBytes` (so lowering the cap moves larger records aside), a project root of at most 32,767 characters, and ISO-8601 UTC timestamps. A write requires the description to be a single line; a hand-edited file that contains a line break still loads and is not quarantined.
 
 ### Scopes and the project root
 
@@ -67,7 +67,11 @@ A `global` memory is visible in every session under the same harness home. A `pr
 
 ### What each operation does
 
-`write` validates the name (lowercase kebab-case, 1 to 64 characters), trims the description (at most 256 characters) and content (at most `maxRecordBytes`), enforces the scope's cap over the records this process has loaded or written, and inserts or replaces the record durably before returning whether it was `created` or `updated`. `recall` matches a case-insensitive substring against name, description, and content across the visible records and returns the newest first, then by name, then global before project, capped by the caller's limit. `forget` deletes one record and fails with `not-found` when there is none. `visible` returns every global record plus the current project's records. Every rejection is a `MemoryError` with a stable `code` and a message written for the model.
+`write` validates the name (lowercase kebab-case, 1 to 64 characters), trims the description to a single line of 1 to 256 characters (U+000A, U+000D, U+2028, and U+2029 fail with `invalid-description` and `description must be a single line of 1 to 256 characters after trimming`), trims the content (at most `maxRecordBytes`), scans description then content and rejects a finding as `blocked-content`, enforces the scope's cap over the records this process has loaded or written (`over-cap` names the scope as `global` or `project` only: `the project scope already holds <count> memories (cap <max>); forget one before writing`), and inserts or replaces the record durably before returning whether it was `created` or `updated`. A project write whose key already holds a record with a different `projectRoot` fails with `project-key-collision` and `cannot write project memory "<name>": another project's record already occupies this key`, and leaves that record unchanged. `recall` matches a case-insensitive substring against name, description, and content across the visible records and returns the newest first, then by name, then global before project, capped by the caller's limit. `forget` deletes one record and fails with `not-found` when there is none; a project forget of a key occupied by another project's record fails with `project-key-collision` and `cannot forget project memory "<name>": another project's record occupies this key`, and leaves that record unchanged. `visible` returns every global record plus the current project's records. `scan` returns the same finding as `scanMemoryText`. Every rejection is a `MemoryError` with a stable `code` and a message written for the model.
+
+### Write-time scan
+
+Before a record is serialized, `write` runs `scan` on the trimmed description and then on the trimmed content. The checks are fixed in code, not a Config field. Raw text first: C0 controls other than tab and newline, every C1 control, and the invisible or bidirectional set U+200B, U+200C, U+200D, U+2060, U+2062–U+2064, U+FEFF, U+202A–U+202E, U+2066–U+2069 fail with `blocked-content` and `Blocked: content contains invisible unicode character U+XXXX (possible injection).` (uppercase hex, at least four digits). A copy is then NFKC-normalized (stored bytes stay unchanged), truncated to 65,536 UTF-16 code units, and tested against threat patterns adapted from [Hermes Agent `tools/threat_patterns.py`](https://github.com/NousResearch/hermes-agent/blob/4c286ae7a0dcb86e70a7ad8c23c0f05c89e33ec3/tools/threat_patterns.py) (classic injection, role hijack, system-prompt leak, exfiltration, persistence, hardcoded secrets; not C2/promptware or Hermes-specific groups); a match fails with `Blocked: content matches threat pattern <id>.` `MemoryStore.scan` is that same check for catalog and recall consumers. The durable zod schema does not reject line breaks in `description`, so a hand-edited multi-line file still loads.
 
 -----
 
@@ -85,6 +89,7 @@ This section explains the design decisions behind the store and points at the co
 - **Human-editable records.** One pretty-printed JSON document per memory keeps the store inspectable with any editor and diffable by hand.
 - **Explicit scope, never a guessed root.** Project identity comes only from the session working directory and the configured markers; a missing root is a loud error, not a silent fallback to global.
 - **Timestamps stay in the store.** `createdAt` and `updatedAt` order recall results and never reach the model, so recorded sessions replay byte-for-byte.
+- **Write-time scan is a security invariant.** Invisible unicode and threat-pattern checks live in `src/scan.ts`, not Config, so a composition cannot turn them off.
 
 ### Source map
 
@@ -93,6 +98,7 @@ This section explains the design decisions behind the store and points at the co
 | [`src/index.ts`](src/index.ts) | `MemoryStore` service (`ctx.memory`), `Config`, request and result types, `MemoryError` |
 | [`src/domain.ts`](src/domain.ts) | The per-store builders of the zod record schema and the `memory` domain spec, and the branded name and key types |
 | [`src/project.ts`](src/project.ts) | Project-root discovery and the path-safe project key |
+| [`src/scan.ts`](src/scan.ts) | Invisible-unicode and threat-pattern scan (`scanMemoryText`, `MemoryStore.scan`) |
 
 ### Lifecycle
 
@@ -142,6 +148,7 @@ These limits define when the store is a poor fit. They are current package const
 - **No in-repository store** — project memories live under the harness home keyed by the project root, so they are not committed with the repository or shared through git.
 - **Project identity is the absolute root path** — a project record stores its root and is keyed by a slug derived from it, so moving or renaming the repository directory orphans its project memories; sessions inside the new path see none of them until they are written again.
 - **Content caps are bytes** — `maxRecordBytes` counts UTF-8 bytes, so scripts with multibyte characters fit fewer characters than ASCII.
+- **Scan false positives** — a legitimate sentence that looks like injection, exfiltration, or a quoted 20-character secret is rejected at write; the pattern set is fixed in code, so changing it is a source change, not a Config edit.
 
 <a id="dev-note"></a>
 ### Dev Note

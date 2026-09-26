@@ -13,13 +13,12 @@ import { ask, catalogEvents, cleanupRoots, freshRoot, mountStore, waitForIdle } 
 /**
  * Key-gated smoke: a REAL model drives the REAL memory tools over a real
  * store, then a second harness over the same storage root, with none of the
- * first session's transcript, receives the catalog before its first request
- * and answers from memory. Every assertion reads the world (session log,
+ * first session's transcript, receives the snapshot with the memory inlined
+ * before its first request and answers from it. Every assertion reads the world (session log,
  * record file), never the model's prose alone.
  */
 
-const PERSONA = 'You are a coding assistant. Keep replies terse. Before answering any question about the user\'s '
-  + 'preferences, call memory_recall first and answer from what it returns.'
+const PERSONA = 'You are a coding assistant. Keep replies terse.'
 const MODEL = { provider: 'deepseek-official', model: 'deepseek-v4-flash' }
 const NAME = 'prefers-pnpm'
 
@@ -52,7 +51,7 @@ function finalText(log: readonly SessionEvent[]): string {
 }
 
 describe.skipIf(!process.env.DEEPSEEK_API_KEY)('durable memory with a real model', () => {
-  it('writes a memory in one session and recalls it in a fresh session over the same store', async () => {
+  it('writes a memory in one session and answers from the inlined snapshot in a fresh session over the same store', async () => {
     const root = await freshRoot()
 
     const first = await harness(root)
@@ -80,18 +79,17 @@ describe.skipIf(!process.env.DEEPSEEK_API_KEY)('durable memory with a real model
 
     const second = await harness(root)
     const reader = await second.agentLoop.create(SessionId('memory-e2e-recall'), MODEL)
-    ask(reader, 'Which package manager do I prefer for installs? Check your saved memories before answering, then answer in one line.')
+    ask(reader, 'Which package manager do I prefer for installs? Answer in one line.')
     await waitForIdle(second, reader)
 
     const read = reader.session.snapshotEvents()
     const catalogs = catalogEvents(read)
     expect(catalogs).toHaveLength(1)
     expect(catalogs[0]!.index).toBeLessThan(read.findIndex(event => event.type === 'assistant/message'))
-    expect(catalogs[0]!.text).toContain(`${NAME} —`)
-    // The body was read through memory_recall and the answer carries it.
-    expect(toolCalls(read, 'memory_recall').length).toBeGreaterThan(0)
-    const result = read.find(event => event.type === 'tool/result')
-    expect(JSON.stringify(result?.data.message.content)).toMatch(/pnpm/i)
+    // The record is small, so it inlines whole with its body rather than appearing as an index line.
+    expect(catalogs[0]!.text).toContain(`## ${NAME} [`)
+    expect(catalogs[0]!.text).toMatch(/pnpm/i)
+    // The inlined body is enough to answer; whether the model also calls memory_recall is its choice.
     expect(finalText(read)).toMatch(/pnpm/i)
   }, 180_000)
 })

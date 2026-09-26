@@ -625,14 +625,14 @@ const TOOL_PACKAGES: ToolPackage[] = [
     dir: 'tool-memory',
     source: 'packages/memory/tool-memory/src/tools.ts',
     requires: ['ctx.tools', 'ctx.memory', 'ctx.systemPrompt', 'ctx.sessionProjections', 'owning Agent session'],
-    writes: ['tool/call', 'tool/result', 'user/message catalog at pre-step'],
+    writes: ['tool/call', 'tool/result', 'user/message snapshot at pre-step'],
     async mount(ctx) {
       // Schema harvest never opens the store; the tools only need the service key present.
       ctx.provide('memory', {} as MemoryStore)
       await ctx.plugin(ToolMemory, { injectMaxBytes: 4096, maxRecallResults: 8 })
     },
     note:
-      'The three tools read and write the durable memory store owned by dsh-memory; the session working directory selects the project scope. The injected catalog is a user/message with the `tool-memory` source, bounded by `injectMaxBytes`, so the catalog states the shipped budget and recall cap.',
+      'The three tools read and write the durable memory store owned by dsh-memory; the session working directory selects the project scope. The injected snapshot is a user/message with the `tool-memory` source, injected once per surface generation and re-added after compaction, bounded by `injectMaxBytes`, so the catalog states the shipped budget and recall cap.',
   },
   {
     pkg: '@deepseek-ai/dsh-tool-todo',

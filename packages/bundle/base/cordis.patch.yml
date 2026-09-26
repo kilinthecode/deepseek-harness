@@ -446,8 +446,17 @@
     - id: tool-memory
       name: '@deepseek-ai/dsh-tool-memory'
       config:
-        injectMaxBytes: 4096
+        injectMaxBytes: 8192
         maxRecallResults: 8
+
+    # Unattended add-only memory review: starts an in-process fork child from
+    # the parent's idle notification, every 10 user-kind turns, capped at 8
+    # child steps. Requires `tool-memory` above and the fork provider.
+    - id: memory-review
+      name: '@deepseek-ai/dsh-memory-review'
+      config:
+        reviewEveryUserTurns: 10
+        maxReviewSteps: 8
 
     # Persisted same-session goals reach the model and the slash menu here; the
     # domain, driver, and `/goal` command are above.
