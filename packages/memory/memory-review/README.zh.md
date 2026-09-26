@@ -90,7 +90,7 @@ base 组合包在 `tool-memory` 之后立即启用它，配置为 `reviewEveryUs
 
 ### 触发与限制
 
-复盘到期时，若 `ctx.tools.get('memory_write')` 为 undefined，或 `ctx.subagents.list()` 中没有 `'fork'`，`startReview` 会调用 `ctx.logger.error` 记录并跳过本次复盘。无效的 `memory_write` 参数（缺少字符串 `name`，或 `scope` 不是 `global` 或 `project`）会以覆盖理由拒绝。下游 `tools/pre-execute` 的拒绝原样返回。
+复盘到期时，若空闲父级看到的 `ctx.tools.get('memory_write', agent)` 为 undefined，或 `ctx.subagents.list()` 中没有 `'fork'`，`startReview` 会调用 `ctx.logger.error` 记录并跳过本次复盘。无效的 `memory_write` 参数（缺少字符串 `name`，或 `scope` 不是 `global` 或 `project`）会以覆盖理由拒绝。下游 `tools/pre-execute` 的拒绝原样返回。
 
 ### 没有不变量配套插件
 

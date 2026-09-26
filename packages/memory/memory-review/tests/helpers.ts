@@ -4,10 +4,13 @@
 import { mkdir, mkdtemp, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+import { pathToFileURL } from 'node:url'
 import { Context } from '@deepseek-ai/cordis'
+import Loader from '@deepseek-ai/cordis-plugin-loader'
 import type { Agent } from '@deepseek-ai/dsh-agent'
 import AgentLoop from '@deepseek-ai/dsh-agent-loop'
 import { mountAgentLoopTestDependencies } from '@deepseek-ai/dsh-agent-loop-testkit'
+import AgentPresets from '@deepseek-ai/dsh-agent-preset-registry'
 import { createUserMessage, type GenerateOptions, type LlmAdapter } from '@deepseek-ai/dsh-llm'
 import { SessionId } from '@deepseek-ai/dsh-session'
 import type { SessionEvent } from '@deepseek-ai/dsh-session'
@@ -225,4 +228,80 @@ export async function harness(
  */
 export async function createParent(ctx: Context, id: string, cwd?: string): Promise<Agent> {
   return ctx.agentLoop.create(SessionId(id), { provider: 'mock', model: 'mock' }, cwd === undefined ? {} : { cwd })
+}
+
+/**
+ * Mount the real loop, store, and fork provider on the process-global context,
+ * but `tool-memory` and `memory-review` inside a real
+ * `@deepseek-ai/dsh-agent-preset-registry` revision instead — the same
+ * mechanism the Web `standard` preset uses to compose both per session
+ * (`packages/bundle/web-app/presets/standard.patch.yml`): `AgentPresetRegistry.mount()`
+ * binds the agent's own scope key as a child of the revision's scope key
+ * (`packages/preset/agent-preset-registry/src/index.ts`'s `join()`), so every
+ * registration the revision's plugins make lands in an ancestor layer instead
+ * of the global one. This reproduces the exact scope relationship a
+ * preset-mounted `tool-memory`/`memory-review` sees, without a full
+ * Loader/cordis.yml boot (`loader-composition.spec.ts` exercises that path).
+ *
+ * The revision's own two rows resolve through `ctx.loader.builtins` (`cordis:`
+ * names), not real package specifiers: `EntryTree.import()`
+ * (`vendor/loader/src/config/tree.ts`) resolves a bare specifier by dynamic
+ * `import()` from the Loader package's own location, not from `ctx.baseUrl`,
+ * so a real package name would only resolve by chance of hoisting. Every
+ * other Loader-booted test in this package (`loader-composition.spec.ts`)
+ * uses the same builtins convention for the same reason.
+ * @param adapter - scripted model.
+ * @param config - review configuration mounted inside the preset revision.
+ * @param root - json storage root.
+ * @param presetId - the preset identity to register and later mount per agent.
+ * @returns the booted context; disposing it (via {@link cleanup}) tears down the revision too.
+ */
+export async function presetScopedHarness(
+  adapter: LlmAdapter,
+  config: Config,
+  root: string,
+  presetId: string,
+): Promise<{ ctx: Context }> {
+  const ctx = new Context()
+  contexts.push(ctx)
+  await mountAgentLoopTestDependencies(ctx)
+  await ctx.plugin(AgentLoop, { agents: [] })
+  await mountStore(ctx, root)
+  await ctx.plugin(SubagentRuntime)
+  await ctx.plugin(Fork, { providerName: 'fork' })
+  await ctx.plugin(Loader)
+  ctx.baseUrl = `${pathToFileURL(root).href}/`
+  Object.assign(ctx.loader.builtins, {
+    'tool-memory': ToolMemory,
+    'memory-review': MemoryReview,
+  })
+  await ctx.plugin(AgentPresets, { default: presetId })
+  await ctx.agentPresets.register({
+    id: presetId,
+    plugins: [
+      { id: 'tool-memory', name: 'cordis:tool-memory', config: { injectMaxBytes: 2048, maxRecallResults: 4 } },
+      { id: 'memory-review', name: 'cordis:memory-review', config },
+    ],
+  })
+  ctx.llm.registerAdapter(['mock'], adapter)
+  return { ctx }
+}
+
+/**
+ * Create a parent agent whose own scope is bound to a preset revision during
+ * setup, before publication — the same point `@deepseek-ai/dsh-agent-preset`'s
+ * managed Agents bind theirs (`AgentPresetRegistry.mount()` called from the
+ * factory's `setup` callback, before the agent's first turn can run).
+ * @param ctx - context booted by {@link presetScopedHarness}.
+ * @param id - session id.
+ * @param presetId - preset revision to mount on this agent's own scope.
+ * @returns the published parent, already bound to the revision.
+ */
+export async function createPresetParent(ctx: Context, id: string, presetId: string): Promise<Agent> {
+  const handle = await ctx.agents.create({
+    sessionId: SessionId(id),
+    agentOptions: { provider: 'mock', model: 'mock' },
+    setup: async (agentCtx) => { await ctx.agentPresets.mount(agentCtx, presetId) },
+  })
+  return handle.agent
 }

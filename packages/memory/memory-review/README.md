@@ -90,7 +90,7 @@ The plugin is a function/namespace plugin: it exports `name` / `inject` / `Confi
 
 ### Trigger and restriction
 
-When a review becomes due, `startReview` logs `ctx.logger.error` and skips it if `ctx.tools.get('memory_write')` is undefined or `'fork'` is absent from `ctx.subagents.list()`. Invalid `memory_write` arguments (a missing string `name` or a `scope` other than `global` or `project`) are denied with the overwrite reason. A downstream `tools/pre-execute` deny is returned unchanged.
+When a review becomes due, `startReview` logs `ctx.logger.error` and skips it if `ctx.tools.get('memory_write', agent)` is undefined for the idle parent or `'fork'` is absent from `ctx.subagents.list()`. Invalid `memory_write` arguments (a missing string `name` or a `scope` other than `global` or `project`) are denied with the overwrite reason. A downstream `tools/pre-execute` deny is returned unchanged.
 
 ### No invariant companion
 

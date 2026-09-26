@@ -27,10 +27,12 @@ import {
   ask,
   cleanup,
   createParent,
+  createPresetParent,
   freshRoot,
   harness,
   includesReviewPrompt,
   mountStore,
+  presetScopedHarness,
   reviewAdapter,
   reviewCatalog,
   waitForIdle,
@@ -1015,5 +1017,59 @@ describe('dsh-memory-review through the agent loop', () => {
     expect(errors.some(message => message.includes('fork'))).toBe(true)
     expect(reviewCatalog(parent.session.snapshotEvents())).toHaveLength(0)
     await ctx.fiber.dispose()
+  })
+
+  it('starts a review, restricts the child, and persists a new-name write when tool-memory and memory-review are mounted per agent by a real preset revision (not the process-global scope)', async () => {
+    // `@deepseek-ai/dsh-agent-preset` (Web's standard/cordis/ptc presets)
+    // mounts `tool-memory` and `memory-review` in the AGENT's own scope, not
+    // the process-global one every other test in this file uses:
+    // `presetScopedHarness` reproduces that exact relationship through the
+    // real `@deepseek-ai/dsh-agent-preset-registry`, the same registry the
+    // real preset plugin calls. Before the fix, `startReview` looked up
+    // `memory_write` with `ctx.tools.get('memory_write')` (no scope), which
+    // only ever sees the process-global layer — the tool the preset registers
+    // is invisible there, so the review was silently skipped. Reverting the
+    // fix (dropping the `agent` scope argument back off that lookup) must
+    // make this test fail.
+    const root = await freshRoot()
+    const adapter = reviewAdapter([
+      toolCallResponse('f1', 'memory_forget', { name: 'prefers-pnpm', scope: 'global' }),
+      toolCallResponse('n1', 'memory_write', {
+        name: 'likes-terse', type: 'user', scope: 'global', description: 'Terse answers', content: 'The user prefers terse answers.',
+      }),
+      textResponse('Nothing else to save.'),
+    ])
+    const { ctx } = await presetScopedHarness(adapter, { reviewEveryUserTurns: 1, maxReviewSteps: 8 }, root, 'preset-under-test')
+    await ctx.memory.write({
+      name: 'prefers-pnpm', type: 'user', scope: 'global', description: 'Uses pnpm', content: 'Use pnpm.',
+    })
+    const parent = await createPresetParent(ctx, 'preset-scoped-parent', 'preset-under-test')
+    const childP = waitForReviewChild(ctx, parent)
+    ask(parent, 'go')
+    await waitForIdle(ctx, parent)
+
+    // The review actually started: a preset-scoped `agent/created` listener
+    // (registered inside `memory-review`'s `apply()`, mounted on the
+    // revision's own ancestor scope) fired for this descendant child — the
+    // fork provider's `applyChildComposition` joins every child's own scope
+    // to the same revision the parent is bound to
+    // (`packages/subagent/subagent/src/child-agent.ts`), which is what makes
+    // that ancestor-scoped listener observe the child at all.
+    const child = await childP
+    expect(reviewCatalog(parent.session.snapshotEvents())).toHaveLength(1)
+
+    // The restriction installed on the child's own first tool call: an
+    // immediate `memory_forget` is denied carrying the verbatim overwrite reason.
+    const live = child.session.snapshotEvents().filter(event => event.seq >= child.session.inheritedEventCount)
+    const forgetResult = live.find(event => event.type === 'tool/result')
+    expect(forgetResult?.type === 'tool/result' && forgetResult.data.message.isError).toBe(true)
+    expect(forgetResult?.type === 'tool/result'
+      && forgetResult.data.message.content.some(block => block.type === 'text' && block.text.includes(REVIEW_DENY_OVERWRITE))).toBe(true)
+
+    // A new-name write persists to the process-wide store, and the denied
+    // forget left the pre-existing record untouched.
+    const visible = await ctx.memory.visible(undefined)
+    expect(visible.global.some(record => record.name === 'prefers-pnpm')).toBe(true)
+    expect(visible.global.some(record => record.name === 'likes-terse' && record.content.includes('terse'))).toBe(true)
   })
 })

@@ -142,7 +142,7 @@ async function startReview(
   if (!dueForReview(ctx.sessionProjections.stateOf(agent.session, 'memoryReview'), config.reviewEveryUserTurns)) {
     return
   }
-  if (ctx.tools.get('memory_write') === undefined) {
+  if (ctx.tools.get('memory_write', agent) === undefined) {
     warnMissingDependencyOnce(
       ctx, agent.session.id, warnedMissingDependency,
       'memory-review: the memory_write tool is not registered; mount @deepseek-ai/dsh-tool-memory before memory-review',
