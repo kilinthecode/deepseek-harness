@@ -93,18 +93,29 @@ function blockedIndexLine(record: MemoryRecord): string {
   return `- [${record.type}, ${record.scope}] ${record.name} — [blocked]`
 }
 
+/**
+ * Render items as blocks first, then the index-line group, each group in
+ * the given (sorted) order — never interleaved, so a later, lower-priority
+ * record whose block fits never renders before an earlier, higher-priority
+ * record that only fit as an index line. Reordering blocks before index
+ * lines only removes blank separators, never adds bytes, so every budget
+ * check during the greedy fill (which measures this same function's
+ * output) stays sound.
+ * @param items - candidate blocks and index lines, in sorted record order.
+ * @param omitted - count for the trailing omission line; `0` omits it.
+ * @returns the header, the block group, the index-line group, and the omission line.
+ */
 function compose(items: readonly SnapshotItem[], omitted: number): string {
+  const blocks = items.filter((item): item is Extract<SnapshotItem, { kind: 'block' }> => item.kind === 'block')
+  const indexLines = items.filter((item): item is Extract<SnapshotItem, { kind: 'index' }> => item.kind === 'index')
   const parts: string[] = [SNAPSHOT_HEADER]
-  let previous: SnapshotItem['kind'] | undefined
-  for (const item of items) {
-    if (item.kind === 'block') {
-      if (previous !== undefined) parts.push('')
-      parts.push(item.text)
-    } else {
-      if (previous === 'block') parts.push('')
-      parts.push(item.text)
-    }
-    previous = item.kind
+  blocks.forEach((item, index) => {
+    if (index > 0) parts.push('')
+    parts.push(item.text)
+  })
+  if (indexLines.length > 0) {
+    if (blocks.length > 0) parts.push('')
+    for (const item of indexLines) parts.push(item.text)
   }
   if (omitted > 0) parts.push(`… ${omitted} more; use memory_recall`)
   return parts.join('\n')

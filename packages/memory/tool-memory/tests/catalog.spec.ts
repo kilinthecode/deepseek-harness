@@ -240,6 +240,25 @@ describe('renderSnapshot', () => {
       `${SNAPSHOT_HEADER}\n- [user, global] d — [blocked]`,
     )
   })
+
+  it('renders every fitting block before the index-line group, even when a higher-priority record only fits as an index line and a lower-priority record\'s block fits', () => {
+    // 'a' (user, higher priority) is processed first by the greedy fill and
+    // only fits as an index line; 'b' (feedback, lower priority) is
+    // processed second and its block fits. The documented grammar is
+    // blocks, then the index-line group — never interleaved in fill order.
+    const big = record('a', 'user', 'global', 'short a desc', 'X'.repeat(5000))
+    const small = record('b', 'feedback', 'global', 'short b desc', 'tiny')
+    const expected = [
+      SNAPSHOT_HEADER,
+      '## b [feedback, global]',
+      'short b desc',
+      '',
+      'tiny',
+      '',
+      '- [user, global] a — short a desc',
+    ].join('\n')
+    expect(renderSnapshot([big, small], Buffer.byteLength(expected, 'utf8'), noScan)).toBe(expected)
+  })
 })
 
 async function mount(config: tool.Config = { injectMaxBytes: 2048, maxRecallResults: 4 }) {
