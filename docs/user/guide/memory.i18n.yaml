@@ -3,20 +3,20 @@
 # After editing either side, bring the other along and re-record with:
 #   pnpm run verify-translation-pairing --write docs/user/guide/memory.md
 /remember-across-sessions:
-  en: 39c7b8eb192c9fb9
-  zh: be5a5004d9c8ede2
+  en: 1d680becf0a60adb
+  zh: 47d8aaf27c2d7a94
 /remember-across-sessions/how-the-agent-uses-memory:
-  en: d1610705dae68a81
-  zh: 9f063da4dcb33827
+  en: c4c509445a2331a2
+  zh: ac7d6e07f060125e
 /remember-across-sessions/types-and-scopes:
   en: b7f9281e40fb7c6a
   zh: 182cdcdc10a002e6
 /remember-across-sessions/inspect-edit-or-delete-memories:
-  en: 92fe3414b800e0c4
-  zh: 6b7259f85081c394
+  en: 3bcaeed75aa0a4b3
+  zh: 20d47f84182d814b
 /remember-across-sessions/configure-or-turn-it-off:
-  en: 9447bbc08d46dcf8
-  zh: b83750d7639a0726
+  en: bf501609a524a64e
+  zh: 599a8fff8d44c65b
 /remember-across-sessions/limitations:
-  en: 5df6ea29d0308b87
-  zh: 2b6310002940406b
+  en: 73d1f63217b332d1
+  zh: c8df3e1b95f1ec4c
