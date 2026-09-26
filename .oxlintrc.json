@@ -352,6 +352,17 @@
       "plugins": [
         "typescript"
       ]
+    },
+    {
+      "files": [
+        "packages/api/authorization-controller/src/index.ts"
+      ],
+      "rules": {
+        "typescript/require-await": "off" // @Remote methods reject rather than throw; this scaffold's bodies await nothing until a follow-up implements them.
+      },
+      "plugins": [
+        "typescript"
+      ]
     }
   ]
 }
