@@ -4,5 +4,7 @@ profile: headless
 composition: memory-review-fork
 recording: authored
 header:
-  class: memory-review-fork
+  class: default
   pin: true
+  systemPromptSource: text-turn
+  toolSchemasSource: text-turn

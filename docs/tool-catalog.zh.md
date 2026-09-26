@@ -2620,7 +2620,7 @@ lsp 工具将提供方选择和语言服务器子进程置于 ctx.lsp 之后，�
 
 来源：[`packages/memory/tool-memory/src/tools.ts`](../packages/memory/tool-memory/src/tools.ts)
 
-这三个工具读写由 dsh-memory 拥有的持久记忆存储；会话工作目录决定项目作用域。注入的目录是 source 为 `tool-memory`、受 `injectMaxBytes` 约束的 user/message，因此本目录记录随产品发布的预算与回忆上限。
+这三个工具读写由 dsh-memory 拥有的持久记忆存储；会话工作目录决定项目作用域。注入的快照是 source 为 `tool-memory` 的 user/message，每次 surface generation 注入一次，并在压缩（compaction）之后重新加入，受 `injectMaxBytes` 约束，因此本目录记录随产品发布的预算与回忆上限。
 
 <a id="deepseek-aidsh-tool-todo"></a>
 
