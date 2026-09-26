@@ -316,68 +316,86 @@ describe('registerCatalogInjection', () => {
     const agent = sessionAgent(session)
     const decision = await firePreStep(ctx, agent, SIGNAL, () => Promise.resolve<PreStepDecision>({ kind: 'enter', messages: [] }))
     expect(decision).toEqual({ kind: 'enter', messages: [] })
-    expect(ctx.sessionProjections.stateOf(session, 'memoryCatalog')).toEqual({ taken: false })
+    expect(ctx.sessionProjections.stateOf(session, 'memoryCatalog')).toEqual({ taken: false, stepPending: false })
   })
 
-  it('folds step/start to taken exactly once, own tool-memory/snapshot messages to taken, compaction/summary to not-taken only when it was taken, and ignores foreign or unrelated events', async () => {
+  it('folds step/start to pending only, a committed message while pending to taken, this plugin\'s own snapshot message to taken regardless of pending, step/end to not-pending, compaction/summary to neither, and ignores foreign or unrelated events otherwise', async () => {
     const { ctx } = await mount()
     const session = sessionAt(undefined)
-    expect(ctx.sessionProjections.stateOf(session, 'memoryCatalog')).toEqual({ taken: false })
+    const compactionSummary = (compactionId: string): Parameters<typeof session.append>[1] => ({
+      compactionId,
+      summary: [{ type: 'text', text: 'summary' }],
+      shadowedRange: { start: SessionSeq(0), end: SessionSeq(1) },
+      shadowedSeqs: [SessionSeq(0), SessionSeq(1)],
+      shadowedTokenCount: 10,
+      provider: 'mock',
+      model: 'mock',
+    }) as never
+    expect(ctx.sessionProjections.stateOf(session, 'memoryCatalog')).toEqual({ taken: false, stepPending: false })
 
-    // step/start: false -> true.
+    // step/start: not taken yet, only pending — cancellation during
+    // agent/request/prepareCall commits neither the system prompt nor the
+    // step's messages, so `step/start` alone must not spend the opportunity.
     session.append('step/start', { turn: 1, step: 1 })
-    expect(ctx.sessionProjections.stateOf(session, 'memoryCatalog')).toEqual({ taken: true })
-    // A second step/start is a no-op (already taken).
-    session.append('step/start', { turn: 1, step: 2 })
-    expect(ctx.sessionProjections.stateOf(session, 'memoryCatalog')).toEqual({ taken: true })
+    expect(ctx.sessionProjections.stateOf(session, 'memoryCatalog')).toEqual({ taken: false, stepPending: true })
+    // A second step/start while pending (not yet taken) is a no-op re-set.
+    session.append('step/start', { turn: 1, step: 1 })
+    expect(ctx.sessionProjections.stateOf(session, 'memoryCatalog')).toEqual({ taken: false, stepPending: true })
 
-    // compaction/summary: true -> false.
-    session.append('compaction/summary', {
-      compactionId: 'compaction-1',
-      summary: [{ type: 'text', text: 'summary' }],
-      shadowedRange: { start: SessionSeq(0), end: SessionSeq(1) },
-      shadowedSeqs: [SessionSeq(0), SessionSeq(1)],
-      shadowedTokenCount: 10,
-      provider: 'mock',
-      model: 'mock',
-    } as never)
-    expect(ctx.sessionProjections.stateOf(session, 'memoryCatalog')).toEqual({ taken: false })
-    // A compaction that finds it already false is a no-op.
-    session.append('compaction/summary', {
-      compactionId: 'compaction-2',
-      summary: [{ type: 'text', text: 'summary' }],
-      shadowedRange: { start: SessionSeq(0), end: SessionSeq(1) },
-      shadowedSeqs: [SessionSeq(0), SessionSeq(1)],
-      shadowedTokenCount: 10,
-      provider: 'mock',
-      model: 'mock',
-    } as never)
-    expect(ctx.sessionProjections.stateOf(session, 'memoryCatalog')).toEqual({ taken: false })
+    // step/end with no message ever having committed (the step was
+    // rejected, or cancelled before any message landed): pending clears,
+    // taken stays false, so the opportunity is still available.
+    session.append('step/end', { turn: 1, step: 1 })
+    expect(ctx.sessionProjections.stateOf(session, 'memoryCatalog')).toEqual({ taken: false, stepPending: false })
 
-    // A foreign source kind is ignored.
+    // A message while NOT pending, and not this plugin's own snapshot, is ignored.
     session.append('user/message', createUserMessage({
       content: [{ type: 'text', text: 'foreign snapshot' }],
       source: { kind: 'someone-else', form: 'snapshot', sections: [{ name: 'x', text: 'foreign snapshot' }] },
     }), { surfaceOp: 'append' })
-    expect(ctx.sessionProjections.stateOf(session, 'memoryCatalog')).toEqual({ taken: false })
+    expect(ctx.sessionProjections.stateOf(session, 'memoryCatalog')).toEqual({ taken: false, stepPending: false })
 
-    // A tool-memory message in a non-snapshot form is ignored.
+    // step/start again, then a committed message while pending — any
+    // source kind, not only this plugin's own — proves the step's
+    // messages survived cancellation: taken, no longer pending.
+    session.append('step/start', { turn: 2, step: 1 })
+    expect(ctx.sessionProjections.stateOf(session, 'memoryCatalog')).toEqual({ taken: false, stepPending: true })
+    session.append('user/message', createUserMessage({
+      content: [{ type: 'text', text: 'claimed' }],
+      source: { kind: 'user' },
+    }), { surfaceOp: 'append' })
+    expect(ctx.sessionProjections.stateOf(session, 'memoryCatalog')).toEqual({ taken: true, stepPending: false })
+
+    // A second step/start is a no-op (already taken).
+    session.append('step/start', { turn: 2, step: 2 })
+    expect(ctx.sessionProjections.stateOf(session, 'memoryCatalog')).toEqual({ taken: true, stepPending: false })
+
+    // compaction/summary: taken and pending both reset.
+    session.append('compaction/summary', compactionSummary('compaction-1'))
+    expect(ctx.sessionProjections.stateOf(session, 'memoryCatalog')).toEqual({ taken: false, stepPending: false })
+    // A compaction that finds both already false is a no-op.
+    session.append('compaction/summary', compactionSummary('compaction-2'))
+    expect(ctx.sessionProjections.stateOf(session, 'memoryCatalog')).toEqual({ taken: false, stepPending: false })
+
+    // A tool-memory message in a non-snapshot form, while not pending, is ignored.
     session.append('user/message', createUserMessage({
       content: [{ type: 'text', text: 'not a snapshot' }],
       source: { kind: 'tool-memory', form: 'notice', summary: 'x' },
     }), { surfaceOp: 'append' })
-    expect(ctx.sessionProjections.stateOf(session, 'memoryCatalog')).toEqual({ taken: false })
+    expect(ctx.sessionProjections.stateOf(session, 'memoryCatalog')).toEqual({ taken: false, stepPending: false })
 
-    // The plugin's own snapshot message: false -> true.
+    // The plugin's own snapshot message sets taken regardless of pending: a
+    // fork child's seed can carry the parent's snapshot message without the
+    // parent's step/start rows.
     session.append('user/message', createUserMessage({
       content: [{ type: 'text', text: SNAPSHOT_HEADER }],
       source: { kind: 'tool-memory', form: 'snapshot', sections: [{ name: 'memory-catalog', text: SNAPSHOT_HEADER }] },
     }), { surfaceOp: 'append' })
-    expect(ctx.sessionProjections.stateOf(session, 'memoryCatalog')).toEqual({ taken: true })
+    expect(ctx.sessionProjections.stateOf(session, 'memoryCatalog')).toEqual({ taken: true, stepPending: false })
 
     // An unrelated event type is ignored.
-    session.append('turn/start', { turn: 2 })
-    expect(ctx.sessionProjections.stateOf(session, 'memoryCatalog')).toEqual({ taken: true })
+    session.append('turn/start', { turn: 3 })
+    expect(ctx.sessionProjections.stateOf(session, 'memoryCatalog')).toEqual({ taken: true, stepPending: false })
   })
 
   it('unregisters the projection and the pre-step listener with its fiber', async () => {
@@ -387,7 +405,7 @@ describe('registerCatalogInjection', () => {
     const beforeAgent = sessionAgent(before)
     const beforeDecision = await firePreStep(ctx, beforeAgent, SIGNAL, () => Promise.resolve<PreStepDecision>({ kind: 'enter', messages: [] }))
     expect(beforeDecision.kind === 'enter' && beforeDecision.messages).toHaveLength(1)
-    expect(ctx.sessionProjections.stateOf(before, 'memoryCatalog')).toEqual({ taken: false })
+    expect(ctx.sessionProjections.stateOf(before, 'memoryCatalog')).toEqual({ taken: false, stepPending: false })
 
     await fiber.dispose()
     const after = sessionAt(undefined, 'after')

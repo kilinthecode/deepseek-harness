@@ -71,7 +71,7 @@ kind: "package-reference"
 
 - **带贪心字节预算的快照。** 注入的上下文在放得进剩余 `injectMaxBytes` 时内联回忆块，否则发索引行，否则省略该记录，然后丢掉末尾的索引行直到完整文本落在预算内。快照在每次表面生成（surface generation）拍摄一次，后续轮次不刷新。
 - **模型可见即已记录。** 快照是一条普通的 `user/message`，每次写入都是带 `tool/result` 的 `tool/call`，因此回放无需读取存储即可从会话日志重建每个模型请求。
-- **由投影记录拍摄机会是否已用。** `memoryCatalog` 投影为 `stateVersion: 2`，状态为 `{ taken: boolean }`。它将 `step/start` 与本插件自己的快照消息折叠为 `{ taken: true }`，将 `compaction/summary` 折叠为 `{ taken: false }`。表面生成的第一个步骤之后，监听器不再读取存储。
+- **由投影记录拍摄机会是否已用，且只有消息真正落盘才算数。** `memoryCatalog` 投影为 `stateVersion: 3`，状态为 `{ taken: boolean; stepPending: boolean }`。`step/start` 只将该步骤标记为待定（pending）而非已拍摄，因为 `agent/request`/`prepareCall` 期间的取消既不提交系统提示词也不提交该步骤的消息；待定期间有一条 `user/message` 落盘，或本插件自己的快照消息（无条件），都会标记为已拍摄，`step/end` 则清除待定状态。`compaction/summary` 会同时清除两者。表面生成的第一个步骤之后，监听器不再读取存储。
 - **不新增会话事件。** 存储是跨会话状态而非会话状态；工具调用已经记录了每次变更，因此本包不声明 `SessionEventMap` 成员。不发布不变量配套插件，因为本包不拥有任何会话事件，也没有自己的持久数据；快照投影只折叠已有的事件类型。
 
 ### 源码地图
@@ -89,7 +89,7 @@ kind: "package-reference"
 
 ### 注入机制
 
-监听器以前置方式注册在 `agent/pre-step` 上，先等待链上其余部分完成（因此该链中的 `compaction/summary` 可在同一步将 `taken` 折回 `false`），再把快照追加到 `enter` 决定中。它每个步骤运行一次，而不是每次重试运行一次。若 `state.taken` 为真或 `injectMaxBytes` 为 `0`，它原样返回该决定且不读取存储。否则它对 `visible(cwd)` 运行 `renderSnapshot`，并在已声明的用户批次和运行时上下文之后追加一条用户角色消息。`memoryCatalog` 投影为 `stateVersion: 2`，状态为 `{ taken: boolean }`，`init: () => ({ taken: false })`。它将 `step/start` 折叠为 `{ taken: true }`，将 `source.kind === 'tool-memory'` 且 `form === 'snapshot'` 的本插件 `user/message` 折叠为 `{ taken: true }`（fork 子会话的种子可能带有父会话的快照而没有父会话的 `step/start` 行），将 `compaction/summary` 折叠为 `{ taken: false }`。快照消息携带 `source: { kind: 'tool-memory', form: 'snapshot', sections: [{ name: 'memory-catalog', text }] }`。`tool-memory` kind 仅用于归属：未安装本插件的读取方会保留该消息及其 source 字段。
+监听器以前置方式注册在 `agent/pre-step` 上，先等待链上其余部分完成（因此该链中的 `compaction/summary` 可在同一步将 `taken` 折回 `false`），再把快照追加到 `enter` 决定中。它每个步骤运行一次，而不是每次重试运行一次。若 `state.taken` 为真或 `injectMaxBytes` 为 `0`，它原样返回该决定且不读取存储。否则它对 `visible(cwd)` 运行 `renderSnapshot`，并在已声明的用户批次和运行时上下文之后追加一条用户角色消息。`memoryCatalog` 投影为 `stateVersion: 3`，状态为 `{ taken: boolean; stepPending: boolean }`，`init: () => ({ taken: false, stepPending: false })`。`step/start` 在 `agent/request`/`prepareCall` 解析路由之前记录，而该异步阶段的取消既不提交系统提示词也不提交该步骤的消息，因此它只折叠为 `stepPending: true`，从不直接折叠为 `taken`。待定期间有一条 `user/message` 落盘则折叠为 `{ taken: true, stepPending: false }`；`source.kind === 'tool-memory'` 且 `form === 'snapshot'` 的本插件 `user/message` 无条件折叠为同一状态，与 `stepPending` 无关（fork 子会话的种子可能带有父会话的快照而没有父会话的 `step/start` 行）；`step/end` 将待定状态折回 `false`；`compaction/summary` 将 `taken` 与 `stepPending` 都折为 `false`。快照消息携带 `source: { kind: 'tool-memory', form: 'snapshot', sections: [{ name: 'memory-catalog', text }] }`。`tool-memory` kind 仅用于归属：未安装本插件的读取方会保留该消息及其 source 字段。
 
 ### 呈现
 

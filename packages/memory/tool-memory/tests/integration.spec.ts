@@ -135,6 +135,49 @@ describe('memory tools through the agent loop', () => {
     expect(JSON.stringify(result?.data.message.content)).toContain('Lead with the verdict.')
   })
 
+  it('still injects the snapshot on a retry turn after the first step is cancelled before any message committed', async () => {
+    const root = await freshRoot()
+    const seeded = new Context()
+    contexts.push(seeded)
+    await mountStore(seeded, root)
+    await seeded.memory.write({ name: 'review-style', type: 'feedback', scope: 'global', description: 'Terse reviews', content: 'Lead with the verdict.' })
+    await seeded.fiber.dispose()
+    contexts.splice(contexts.indexOf(seeded), 1)
+
+    const adapter = new MockAdapter([textResponse('the retry answer')])
+    const ctx = await harness(adapter, root)
+    const agent = await ctx.agentLoop.create(SessionId('it-cancel-first-step'), AGENT_OPTIONS)
+
+    // Cancel synchronously from the first step/start session-event listener,
+    // before agent/request/prepareCall ever resolve: cancellation during
+    // that async phase commits neither the system prompt nor the step's
+    // messages (docs/architecture.md, agent loop section), so `step/start`
+    // alone must not spend the injection opportunity, or the session would
+    // never get a snapshot until compaction.
+    let cancelledFirstStep = false
+    const dispose = ctx.on('session/event', (session, event) => {
+      if (session !== agent.session || event.type !== 'step/start' || cancelledFirstStep) return
+      cancelledFirstStep = true
+      agent.cancel({ kind: 'user' })
+    })
+
+    ask(agent, 'how should I review?')
+    await waitForIdle(ctx, agent)
+    dispose()
+    expect(cancelledFirstStep).toBe(true)
+    expect(agent.session.snapshotEvents().some(event => event.type === 'assistant/message')).toBe(false)
+    expect(adapter.requests).toHaveLength(0)
+    expect(catalogEvents(agent.session.snapshotEvents())).toHaveLength(0)
+
+    // The retry turn's first (real) step still injects the snapshot: the
+    // cancelled step never durably logged it, so the opportunity survives.
+    ask(agent, 'how should I review?')
+    await waitForIdle(ctx, agent)
+    const catalogs = catalogEvents(agent.session.snapshotEvents())
+    expect(catalogs).toHaveLength(1)
+    expect(catalogs[0]!.text).toContain('review-style')
+  })
+
   it('does not re-inject at turn 2, even after a memory_write in turn 1', async () => {
     const root = await freshRoot()
     const seeded = new Context()

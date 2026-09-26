@@ -1,9 +1,11 @@
 /**
  * The memory snapshot: visible records inlined or indexed within a byte
  * budget, injected as a durable user-role message once per conversation
- * surface generation. `memoryCatalog` folds `step/start` and this plugin's
- * own snapshot messages to `{ taken: true }` and `compaction/summary` to
- * `{ taken: false }`. Replay rebuilds every model request from the log.
+ * surface generation. `memoryCatalog` folds `step/start` to a pending step,
+ * a committed `user/message` while pending (or this plugin's own snapshot
+ * message unconditionally) to `{ taken: true }`, `step/end` to not-pending,
+ * and `compaction/summary` to `{ taken: false, stepPending: false }`.
+ * Replay rebuilds every model request from the log.
  * @module @deepseek-ai/dsh-tool-memory/src/catalog
  */
 
@@ -36,6 +38,14 @@ declare module '@deepseek-ai/dsh-session-projection/types' {
 
 const memoryCatalogStateSchema = zod.object({
   taken: zod.boolean(),
+  /**
+   * A step has logged `step/start` but its `agent/request`/`prepareCall`
+   * route resolution has not yet committed a `user/message`: cancellation
+   * during that async phase commits neither the system prompt nor the
+   * step's accepted messages, so this stays the only record that a step
+   * began until either a message actually lands or the step ends.
+   */
+  stepPending: zod.boolean(),
 })
 
 /** Folded snapshot-injection state. */
@@ -174,18 +184,35 @@ export function renderSnapshot(
 export function registerCatalogInjection(ctx: Context, maxBytes: number): void {
   ctx.sessionProjections.register({
     key: 'memoryCatalog',
-    stateVersion: 2,
+    stateVersion: 3,
     stateSchema: memoryCatalogStateSchema,
-    init: () => ({ taken: false }),
+    init: () => ({ taken: false, stepPending: false }),
     apply: (state, event) => {
-      if (event.type === 'step/start') return state.taken ? state : { taken: true }
+      // `step/start` logs before `agent/request`/`prepareCall` resolve the
+      // route; cancellation during that async phase commits neither the
+      // system prompt nor the step's messages (docs/architecture.md, agent
+      // loop section). Marking `taken` here, before any message is known to
+      // have landed, would spend the opportunity on a step whose snapshot
+      // was never durably logged.
+      if (event.type === 'step/start') return state.taken ? state : { ...state, stepPending: true }
+      if (event.type === 'step/end') return state.stepPending ? { ...state, stepPending: false } : state
       if (event.type === 'user/message') {
         const source = event.data.source
-        if (source.kind !== 'tool-memory' || source.form !== 'snapshot') return state
-        return state.taken ? state : { taken: true }
+        // This plugin's own snapshot message marks the opportunity taken
+        // regardless of `stepPending`: a fork child's seed can carry the
+        // parent's snapshot message without the parent's `step/start` rows.
+        if (source.kind === 'tool-memory' && source.form === 'snapshot') {
+          return state.taken ? state : { taken: true, stepPending: false }
+        }
+        // Any other committed message (the claimed user message, runtime
+        // context, …) proves the pending step's messages survived
+        // cancellation, so the snapshot opportunity for this step is truly
+        // spent now, whether or not it injected anything.
+        if (state.stepPending) return { taken: true, stepPending: false }
+        return state
       }
       if (event.type === 'compaction/summary') {
-        return state.taken ? { taken: false } : state
+        return state.taken || state.stepPending ? { taken: false, stepPending: false } : state
       }
       return state
     },

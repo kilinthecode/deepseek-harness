@@ -10,7 +10,7 @@ Status: implemented
 
 ## Decision
 
-可见记忆的一份快照作为带 source 的 `user/message`，在一次 surface generation 的第一步加入，并在压缩（compaction）之后再次加入。`memoryCatalog` 投影为 `stateVersion: 2`，状态为 `{ taken: boolean }`。它将 `step/start` 以及本插件自身 `source.kind === 'tool-memory'` 且 `form === 'snapshot'` 的 `user/message` 折叠为 `{ taken: true }`，并将 `compaction/summary` 折叠为 `{ taken: false }`。无论是否实际注入，都会设置 `taken`，因此第一步时存储为空的会话在压缩之前不会得到快照；其间的写入由工具结果确认。前置的 `agent/pre-step` 监听器先 `await next()`，再把快照追加在已认领的用户消息和运行时上下文之后。恢复会从日志重新折叠 `taken`。继承父级快照消息的 fork 子会话会折叠出 `taken === true`，不再注入第二份。
+可见记忆的一份快照作为带 source 的 `user/message`，在一次 surface generation 的第一步加入，并在压缩（compaction）之后再次加入。`memoryCatalog` 投影为 `stateVersion: 3`，状态为 `{ taken: boolean; stepPending: boolean }`。`step/start` 在 `agent/request`/`prepareCall` 解析路由之前记录，而该异步阶段的取消既不提交系统提示词也不提交该步骤的消息，因此它只折叠为 `stepPending: true`；待定期间有一条 `user/message` 落盘则折叠为 `{ taken: true, stepPending: false }`，本插件自己的快照消息无条件折叠为同一状态，`step/end` 将待定状态折回 `false`，`compaction/summary` 将 `taken` 与 `stepPending` 都折为 `false`。无论是否实际注入，都会设置 `taken`，因此第一步时存储为空的会话在压缩之前不会得到快照；其间的写入由工具结果确认。前置的 `agent/pre-step` 监听器先 `await next()`，再把快照追加在已认领的用户消息和运行时上下文之后。恢复会从日志重新折叠 `taken` 与 `stepPending`。继承父级快照消息的 fork 子会话会折叠出 `taken === true`，不再注入第二份。
 
 快照标题为 `Saved memories (snapshot):`。可见记录按类型顺序 `user`、`feedback`、`project`、`reference` 展平，再按名称，再以全局先于项目。每条记录在其回忆块的 UTF-8 字节放入剩余 `injectMaxBytes` 时内联该块，否则输出索引行，否则省略；大于剩余预算的单条记录只出现在索引中。描述或内容未通过 `scan` 时变为 `- [<type>, <scope>] <name> — [blocked]`，从不内联。随附的 `injectMaxBytes` 为 8192；`0` 关闭注入；正数且低于 `SNAPSHOT_MIN_BYTES` 时加载失败。
 

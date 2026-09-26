@@ -92,7 +92,7 @@ type MemoryErrorCode =
 
 ## 目录投影
 
-`dsh-tool-memory` 注册 `memoryCatalog` 会话投影，`stateVersion: 2`，状态为 `{ taken: boolean }`，`init: () => ({ taken: false })`。它将 `step/start` 折叠为 `{ taken: true }`，将本插件自身 `source.kind === 'tool-memory'` 且 `form === 'snapshot'` 的 `user/message` 折叠为 `{ taken: true }`，将 `compaction/summary` 折叠为 `{ taken: false }`。前置的 `agent/pre-step` 监听器先 `await next()`，然后在 `taken` 为 false 时每个 surface generation 至多注入一次：它通过 `renderSnapshot` 和 `MemoryStore.scan` 渲染 `visible(cwd)`，并在已认领的用户批次之后追加一条带 source 的 `user/message`。该第一步时为空的存储不注入。每份注入的快照都是一条已记录的 `user/message`，因此回放可以从日志重建每个模型请求。
+`dsh-tool-memory` 注册 `memoryCatalog` 会话投影，`stateVersion: 3`，状态为 `{ taken: boolean; stepPending: boolean }`，`init: () => ({ taken: false, stepPending: false })`。`step/start` 只折叠为 `stepPending: true`，因为 `agent/request`/`prepareCall` 期间的取消既不提交系统提示词也不提交该步骤的消息；待定期间有一条 `user/message` 落盘则折叠为 `{ taken: true, stepPending: false }`，本插件自己的快照消息无条件折叠为同一状态，`step/end` 将待定状态折回 `false`，`compaction/summary` 将两者都折为 `false`。前置的 `agent/pre-step` 监听器先 `await next()`，然后在 `taken` 为 false 时每个 surface generation 至多注入一次：它通过 `renderSnapshot` 和 `MemoryStore.scan` 渲染 `visible(cwd)`，并在已认领的用户批次之后追加一条带 source 的 `user/message`。该第一步时为空的存储不注入。每份注入的快照都是一条已记录的 `user/message`，因此回放可以从日志重建每个模型请求。
 
 <!-- BEGIN GENERATED cordis-surface (gen-cordis-catalog.ts) — do not edit between markers -->
 
