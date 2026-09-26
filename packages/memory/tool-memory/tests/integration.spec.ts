@@ -1,4 +1,4 @@
-import { mkdtemp, readdir, rm } from 'node:fs/promises'
+import { mkdir, mkdtemp, readdir, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
@@ -176,6 +176,38 @@ describe('memory tools through the agent loop', () => {
     const catalogs = catalogEvents(agent.session.snapshotEvents())
     expect(catalogs).toHaveLength(1)
     expect(catalogs[0]!.text).toContain('review-style')
+  })
+
+  it('renders a blocked entry in the first-step snapshot as an index line, never the body', async () => {
+    const root = await freshRoot()
+    // `write` scans before storing, so a blocked record can only reach the
+    // store by another path: a hand-edited or pre-scan record file, seeded
+    // here directly under the store's on-disk layout before the store opens.
+    await mkdir(join(root, 'memory', 'global'), { recursive: true })
+    await writeFile(
+      join(root, 'memory', 'global', 'blocked-memory.json'),
+      JSON.stringify({
+        version: 1,
+        record: {
+          name: 'blocked-memory',
+          type: 'user',
+          scope: 'global',
+          description: 'looks clean',
+          content: 'has a zero width\u200Bspace inside',
+          createdAt: '2026-09-19T00:00:00.000Z',
+          updatedAt: '2026-09-19T00:00:00.000Z',
+        },
+      }),
+    )
+    const adapter = new MockAdapter([textResponse('Hello.')])
+    const ctx = await harness(adapter, root)
+    const agent = await ctx.agentLoop.create(SessionId('it-blocked-snapshot'), AGENT_OPTIONS)
+    ask(agent, 'hi')
+    await waitForIdle(ctx, agent)
+    const catalogs = catalogEvents(agent.session.snapshotEvents())
+    expect(catalogs).toHaveLength(1)
+    expect(catalogs[0]!.text).toContain('- [user, global] blocked-memory — [blocked]')
+    expect(catalogs[0]!.text).not.toContain('zero width')
   })
 
   it('does not re-inject at turn 2, even after a memory_write in turn 1', async () => {

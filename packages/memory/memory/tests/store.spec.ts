@@ -373,6 +373,35 @@ describe('MemoryStore over the json backend', () => {
     expect(files).not.toContain('broken.json')
   })
 
+  it('opens a hand-written record whose description spans multiple lines: visible, no backup', async () => {
+    // The single-line-description rule (no U+000A, U+000D, U+2028, U+2029)
+    // is a write()-time guard, not a durable schema constraint: the domain
+    // schema only bounds the description's length, so a hand-edited file
+    // that predates or bypasses that guard still opens normally.
+    const root = await freshRoot()
+    const dir = join(root, 'memory', 'global')
+    await mkdir(dir, { recursive: true })
+    await writeFile(join(dir, 'multiline-desc.json'), JSON.stringify({
+      version: 1,
+      record: {
+        name: 'multiline-desc',
+        type: 'user',
+        scope: 'global',
+        description: 'line one\nline two',
+        content: 'still valid',
+        createdAt: '2026-09-18T00:00:00.000Z',
+        updatedAt: '2026-09-18T00:00:00.000Z',
+      },
+    }))
+    const ctx = await open(root)
+    const visible = await ctx.memory.visible(undefined)
+    expect(visible.global.map(record => record.name)).toEqual(['multiline-desc'])
+    expect(visible.global[0]?.description).toBe('line one\nline two')
+    const files = await readdir(dir)
+    expect(files).toContain('multiline-desc.json')
+    expect(files.some(file => file.includes('.bak'))).toBe(false)
+  })
+
   it('backs up and skips a stored record whose content exceeds the configured byte cap', async () => {
     const root = await freshRoot()
     const dir = join(root, 'memory', 'global')

@@ -328,6 +328,41 @@ describe('registerCatalogInjection', () => {
     expect(second).toEqual({ kind: 'enter', messages: [], startsRequestSeries: true })
   })
 
+  it('injects on the same decision when downstream next() compacts away an already-taken state', async () => {
+    const { ctx } = await mount()
+    await ctx.memory.write({ ...WRITE, name: 'prefers-pnpm' })
+    const session = sessionAt(undefined)
+    const agent = sessionAgent(session)
+
+    // Make the session already "taken" via a committed message while pending.
+    session.append('step/start', { turn: 1, step: 1 })
+    session.append('user/message', createUserMessage({
+      content: [{ type: 'text', text: 'claimed' }],
+      source: { kind: 'user' },
+    }), { surfaceOp: 'append' })
+    expect(ctx.sessionProjections.stateOf(session, 'memoryCatalog')).toEqual({ taken: true, stepPending: false })
+
+    // Downstream next() appends a compaction/summary during its own
+    // processing — as the real compaction plugin does, deeper in the same
+    // agent/pre-step chain — resetting taken to false before control
+    // returns to this (prepended, outermost) listener. Reading state AFTER
+    // await next(), not before, must still see this reset and inject.
+    const decision = await firePreStep(ctx, agent, SIGNAL, () => {
+      session.append('compaction/summary', {
+        compactionId: 'compaction-1',
+        summary: [{ type: 'text', text: 'summary' }],
+        shadowedRange: { start: SessionSeq(0), end: SessionSeq(1) },
+        shadowedSeqs: [SessionSeq(0), SessionSeq(1)],
+        shadowedTokenCount: 10,
+        provider: 'mock',
+        model: 'mock',
+      } as never)
+      return Promise.resolve<PreStepDecision>({ kind: 'enter', messages: [] })
+    })
+    expect(decision.kind).toBe('enter')
+    expect(decision.kind === 'enter' && decision.messages).toHaveLength(1)
+  })
+
   it('registers the projection but never injects when injectMaxBytes is 0', async () => {
     const { ctx } = await mount({ injectMaxBytes: 0, maxRecallResults: 4 })
     await ctx.memory.write({ ...WRITE, name: 'prefers-pnpm' })
