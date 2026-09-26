@@ -376,7 +376,7 @@ describe('registerCatalogInjection', () => {
   it('folds step/start to pending only, a committed message while pending to taken, this plugin\'s own snapshot message to taken regardless of pending, step/end to not-pending, compaction/summary to neither, and ignores foreign or unrelated events otherwise', async () => {
     const { ctx } = await mount()
     const session = sessionAt(undefined)
-    const compactionSummary = (compactionId: string): Parameters<typeof session.append>[1] => ({
+    const compactionSummary = (compactionId: string): never => ({
       compactionId,
       summary: [{ type: 'text', text: 'summary' }],
       shadowedRange: { start: SessionSeq(0), end: SessionSeq(1) },
