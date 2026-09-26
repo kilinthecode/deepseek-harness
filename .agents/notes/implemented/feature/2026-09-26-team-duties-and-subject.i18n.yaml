@@ -1,0 +1,22 @@
+# Bilingual-pair consistency record for 2026-09-26-team-duties-and-subject.md (docs/i18n/README.md): per heading
+# section, a hash of its English and Chinese blocks outside code blocks and generated regions.
+# After editing either side, bring the other along and re-record with:
+#   pnpm run verify-translation-pairing --write .agents/notes/implemented/feature/2026-09-26-team-duties-and-subject.md
+/agent-note-planner-and-executor-duties-and-a-team-subject:
+  en: ef988c61c0f533aa
+  zh: 35227ea286ed75bf
+/agent-note-planner-and-executor-duties-and-a-team-subject/problem:
+  en: b5eef50ab975ecec
+  zh: 206435779c7d7e94
+/agent-note-planner-and-executor-duties-and-a-team-subject/decision:
+  en: d78a5b616aeb20de
+  zh: 611670ab52cbcda5
+/agent-note-planner-and-executor-duties-and-a-team-subject/alternatives-considered:
+  en: 4ea9cfa030d8a06b
+  zh: 43da12f879010dc5
+/agent-note-planner-and-executor-duties-and-a-team-subject/testing:
+  en: 69b4e20795cf1a02
+  zh: 5ee8b07631b9f34f
+/agent-note-planner-and-executor-duties-and-a-team-subject/consequences:
+  en: 7fdfccc13ec06a92
+  zh: f7b9c2beffbe09f9
