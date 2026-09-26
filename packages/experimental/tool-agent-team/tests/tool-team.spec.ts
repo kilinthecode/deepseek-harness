@@ -21,6 +21,8 @@ import { resolveAdapterOptions } from '@deepseek-ai/dsh-llm-deepseek'
 import { serialize } from '@deepseek-ai/dsh-llm-deepseek/src/serialize.ts'
 import type { GenerateOptions } from '@deepseek-ai/dsh-llm'
 import { MockAdapter, textResponse, toolCallResponse } from '../../../core/agent-loop/tests/mock-adapter.ts'
+import CommandRuntime from '@deepseek-ai/dsh-commands'
+import SessionTitleService from '@deepseek-ai/dsh-session-title'
 import TeamService from '../../agent-team/src/index.ts'
 import * as toolTeam from '../src/index.ts'
 
@@ -856,5 +858,206 @@ describe('dsh-tool-team', () => {
     const childId = spawnedChildId(ctx, lead, result)
     await vi.waitFor(() => { expect(ctx.agents.get(childId)).toBeUndefined() }, { timeout: 5_000 })
     expect(ctx.agentTeams.listMembers(lead)[1]).toMatchObject({ provider: 'team-fresh' })
+  })
+})
+
+describe('teammate duties and the /team command', () => {
+  const IDENTITY = '<system-reminder>\nYou are teammate "{name}".\nYour Team Lead is named "lead".\nUse list_agents({}) to find your teammates and their names.\nTo message your Team Lead, use send_message({ target: "lead", message: "..." }).\nTo message another teammate, use send_message({ target: "<teammate name>", message: "..." }).'
+  const PLANNER = 'You plan and verify; you cannot change files or run commands. Read the workspace, then write the plan with team_task_create: one task per independently verifiable change, with blocked_by for ordering and write_scopes for the files it will touch. Revise unclaimed tasks with team_task_update edit, set_dependencies, or delete. Message the Lead when the plan is ready. When a task awaits your verdict, check the work itself in the workspace, then record approved or rejected with a reason using team_task_update action "verify".'
+  const EXECUTOR = 'You execute planned tasks. Take a ready, unowned task with team_task_update action "claim" at its current revision, implement it within its write_scopes, then hand it over with action "submit". Do not create or verify tasks; message the planner when the plan is missing work. After a rejection, rework the task and submit it again. Take the next ready task until none is left, then report to the Lead.'
+  const SUBJECT_POLICY = 'The user started this Agent Team with the subject "Ship the parser". The Lead runs the plan-then-execute flow: spawn one teammate with duty "planner" to write the plan as shared tasks; when the planner reports the plan, spawn teammates with duty "executor" to claim ready tasks, implement them, and submit them; the planner verifies each submission. The Lead waits for the required teammates, then answers the user when every task is completed.'
+  const GLOBAL_TOOLS = ['read', 'grep', 'glob', 'write', 'edit', 'bash', 'workflow']
+
+  function identity(name: string, extra: readonly string[] = []): string {
+    return `${[IDENTITY.replace('{name}', name), ...extra].join('\n')}\n</system-reminder>\n\n`
+  }
+
+  function registerGlobalTools(ctx: Context): void {
+    for (const name of GLOBAL_TOOLS) {
+      ctx.tools.register(defineContentToolFixture({
+        name,
+        description: `${name} fixture`,
+        parameters: {},
+        execute: () => Promise.resolve([{ type: 'text', text: name }]),
+      }))
+    }
+  }
+
+  /** Initial user text blocks recorded in one teammate Session. */
+  function initialPrompt(child: Agent): string[] {
+    const initial = child.session.snapshotEvents().find(event => event.type === 'user/message'
+      && event.data.source.kind === 'user')
+    return initial?.type === 'user/message'
+      ? initial.data.content.flatMap(block => block.type === 'text' ? [block.text] : [])
+      : []
+  }
+
+  async function inheritedTools(ctx: Context, agent: Agent): Promise<string[]> {
+    return (await assembly(ctx, agent)).tools.map(schema => schema.name)
+      .filter(name => GLOBAL_TOOLS.includes(name)).sort()
+  }
+
+  it('gives each dutied teammate its duty instructions and leaves plain teammates plain', async () => {
+    const { ctx, lead } = await setup(['hang', 'hang', 'hang'])
+    const plain = await execute(ctx, lead, 'spawn_teammate', { name: 'plain', description: 'plain', prompt: 'help' })
+    await ctx.agentTeams.setSubject(lead, 'Ship the parser')
+    const planner = await execute(ctx, lead, 'spawn_teammate', {
+      name: 'planner', description: 'plan', prompt: 'plan it', duty: 'planner',
+    })
+    const executor = await execute(ctx, lead, 'spawn_teammate', {
+      name: 'builder', description: 'build', prompt: 'build it', duty: 'executor',
+    })
+    expect(JSON.parse(text(planner))).toMatchObject({ member: { target: 'planner', role: 'teammate', duty: 'planner' } })
+    expect((JSON.parse(text(plain)) as { member: object }).member).not.toHaveProperty('duty')
+
+    const plainChild = await waitRunning(ctx, spawnedChildId(ctx, lead, plain))
+    const plannerChild = await waitRunning(ctx, spawnedChildId(ctx, lead, planner))
+    const executorChild = await waitRunning(ctx, spawnedChildId(ctx, lead, executor))
+    // A teammate without a duty keeps the exact pre-duty reminder.
+    expect(initialPrompt(plainChild)).toEqual([identity('plain'), 'help'])
+    expect(initialPrompt(plannerChild)).toEqual([identity('planner', ['Your duty is "planner".', PLANNER]), 'plan it'])
+    expect(initialPrompt(executorChild)).toEqual([identity('builder', ['Your duty is "executor".', EXECUTOR]), 'build it'])
+    const listed = JSON.parse(text(await execute(ctx, lead, 'list_agents', {}))) as { target: string; duty?: string }[]
+    expect(listed.map(row => [row.target, row.duty])).toEqual([
+      ['lead', undefined], ['plain', undefined], ['planner', 'planner'], ['builder', 'executor'],
+    ])
+  })
+
+  it('keeps a planner to the read tools the Lead can see and refuses its writes at execution', async () => {
+    const { ctx, lead } = await setup(['hang', 'hang'])
+    registerGlobalTools(ctx)
+    const planner = await execute(ctx, lead, 'spawn_teammate', {
+      name: 'planner', description: 'plan', prompt: 'plan it', duty: 'planner',
+    })
+    const executor = await execute(ctx, lead, 'spawn_teammate', {
+      name: 'builder', description: 'build', prompt: 'build it', duty: 'executor',
+    })
+    const plannerChild = await waitRunning(ctx, spawnedChildId(ctx, lead, planner))
+    const executorChild = await waitRunning(ctx, spawnedChildId(ctx, lead, executor))
+
+    // read_image, skill, and the web tools are absent from this composition,
+    // so the default list narrows to what the Lead can see.
+    expect(await inheritedTools(ctx, plannerChild)).toEqual(['glob', 'grep', 'read'])
+    expect(await inheritedTools(ctx, executorChild)).toEqual([...GLOBAL_TOOLS].sort())
+    expect((await assembly(ctx, plannerChild)).tools.map(schema => schema.name).filter(name => TOOL_NAMES.includes(name)).sort())
+      .toEqual(TOOL_NAMES)
+    const write = await execute(ctx, plannerChild, 'write', {})
+    expect(write.isError).toBe(true)
+    expect((await execute(ctx, executorChild, 'write', {})).isError).toBe(false)
+    const descriptor = plannerChild.session.snapshotEvents().find(event => event.type === 'subagent/descriptor')
+    expect(descriptor?.data).toMatchObject({ toolFilter: { allow: ['read', 'grep', 'glob'] } })
+  })
+
+  it('applies configured duty instructions and tool lists, including an empty list', async () => {
+    const { ctx, lead, fiber } = await setup(['hang', 'hang'])
+    registerGlobalTools(ctx)
+    await fiber.dispose()
+    await ctx.plugin(toolTeam, {
+      duties: { planner: { tools: [] }, executor: { instructions: 'Build only.', tools: ['bash', 'missing'] } },
+    })
+    const planner = await execute(ctx, lead, 'spawn_teammate', {
+      name: 'planner', description: 'plan', prompt: 'plan it', duty: 'planner',
+    })
+    const executor = await execute(ctx, lead, 'spawn_teammate', {
+      name: 'builder', description: 'build', prompt: 'build it', duty: 'executor',
+    })
+    const plannerChild = await waitRunning(ctx, spawnedChildId(ctx, lead, planner))
+    const executorChild = await waitRunning(ctx, spawnedChildId(ctx, lead, executor))
+    expect(await inheritedTools(ctx, plannerChild)).toEqual([])
+    expect(await inheritedTools(ctx, executorChild)).toEqual(['bash'])
+    expect(initialPrompt(plannerChild)[0]).toContain(PLANNER)
+    expect(initialPrompt(executorChild)[0]).toBe(identity('builder', ['Your duty is "executor".', 'Build only.']))
+  })
+
+  it('adds the subject policy to every member\'s Team section once the Lead records a subject', async () => {
+    const { ctx, lead } = await setup(['hang'])
+    const plain = await execute(ctx, lead, 'spawn_teammate', { name: 'plain', description: 'plain', prompt: 'help' })
+    const child = await waitRunning(ctx, spawnedChildId(ctx, lead, plain))
+    const before = renderPrompt(await assembly(ctx, lead))
+    expect(before).not.toContain('plan-then-execute')
+
+    await ctx.agentTeams.setSubject(lead, 'Ship the parser')
+    const leadPrompt = renderPrompt(await assembly(ctx, lead))
+    expect(leadPrompt).toContain(SUBJECT_POLICY)
+    expect(leadPrompt.startsWith(before.slice(0, before.indexOf('Agent Teams is available')))).toBe(true)
+    // The section is uniform, so a teammate renders the Lead's prompt byte for byte.
+    expect(renderPrompt(await assembly(ctx, child))).toBe(leadPrompt)
+  })
+
+  it('refuses blank duty instructions at load, including a direct apply', async () => {
+    const { ctx, fiber } = await setup([])
+    await fiber.dispose()
+    expect(() => { toolTeam.apply(ctx, { duties: { executor: { instructions: '  ' } } }) })
+      .toThrow('tool-agent-team: duties.executor.instructions must be non-empty')
+    await expect(ctx.plugin(toolTeam, { duties: { planner: { instructions: '' } } })).rejects
+      .toThrow('tool-agent-team: duties.planner.instructions must be non-empty')
+  })
+
+  async function withCommands(script: ConstructorParameters<typeof MockAdapter>[0], title = true) {
+    const context = await setup(script)
+    await context.ctx.plugin(CommandRuntime)
+    if (title) await context.ctx.plugin(SessionTitleService, { fallbackMaxWords: 6, fallbackMaxBytes: 80, maxTitleBytes: 80 })
+    return context
+  }
+
+  it('starts a Team from /team: subject, pinned title, then the subject alone as the user turn', async () => {
+    const { ctx, lead, adapter } = await withCommands([textResponse('planning now')])
+    const execution = await ctx.commands.execute(lead, '/team   Ship the parser  ', [], SIGNAL)
+    expect(execution?.result).toEqual({ kind: 'success', text: 'Agent Team started.' })
+    await lead.whenIdle()
+
+    expect(ctx.agentTeams.subjectOf(lead)).toBe('Ship the parser')
+    const events = lead.session.snapshotEvents()
+    const subjectSeq = events.findIndex(event => event.type === 'team/subject')
+    const titleSeq = events.findIndex(event => event.type === 'session/title')
+    const turnSeq = events.findIndex(event => event.type === 'turn/start')
+    expect(subjectSeq).toBeGreaterThanOrEqual(0)
+    expect(subjectSeq).toBeLessThan(titleSeq)
+    expect(titleSeq).toBeLessThan(turnSeq)
+    expect(events[titleSeq]?.data).toMatchObject({ title: 'Ship the parser', source: { kind: 'user' } })
+
+    const request = adapter.requests[0]!
+    const userTexts = request.messages.filter(message => message.role === 'user')
+      .map(message => ({ kind: message.source?.kind, text: message.content.flatMap(block => block.type === 'text' ? [block.text] : []).join('') }))
+    expect(userTexts).toEqual([{ kind: 'user', text: 'Ship the parser' }])
+    // The flow reaches the Lead through its Team section, recorded with the request.
+    const system = request.messages.filter(message => message.role === 'system')
+      .flatMap(message => message.content.flatMap(block => block.type === 'text' ? [block.text] : [])).join('')
+    expect(system).toContain(SUBJECT_POLICY)
+  })
+
+  it('refuses /team without a subject, from a teammate, beyond the subject bound, or without the title service', async () => {
+    const { ctx, lead } = await withCommands(['hang'])
+    const helper = await execute(ctx, lead, 'spawn_teammate', { name: 'helper', description: 'help', prompt: 'help' })
+    const teammate = await waitRunning(ctx, spawnedChildId(ctx, lead, helper))
+    expect((await ctx.commands.execute(lead, '/team   ', [], SIGNAL))?.result)
+      .toEqual({ kind: 'error', text: 'Usage: /team <subject>' })
+    expect((await ctx.commands.execute(teammate, '/team mine', [], SIGNAL))?.result)
+      .toEqual({ kind: 'error', text: 'Only the Team Lead conversation can start an Agent Team.' })
+    expect((await ctx.commands.execute(lead, `/team ${'x'.repeat(201)}`, [], SIGNAL))?.result)
+      .toEqual({ kind: 'error', text: 'subject exceeds 200 characters' })
+    expect(ctx.agentTeams.subjectOf(lead)).toBeUndefined()
+
+    const untitled = await withCommands([], false)
+    expect((await untitled.ctx.commands.execute(untitled.lead, '/team Ship', [], SIGNAL))?.result)
+      .toEqual({ kind: 'error', text: '/team needs the session-title service to name the conversation.' })
+    expect(untitled.ctx.agentTeams.subjectOf(untitled.lead)).toBeUndefined()
+    expect(untitled.lead.session.snapshotEvents().some(event => event.type === 'turn/start')).toBe(false)
+  })
+
+  it('fails /team loudly when recording the subject fails for a reason other than a Team refusal', async () => {
+    const { ctx, lead } = await withCommands([])
+    vi.spyOn(ctx.agentTeams, 'setSubject').mockRejectedValue(new Error('flush failed'))
+    await expect(ctx.commands.execute(lead, '/team Ship', [], SIGNAL)).rejects.toThrow('flush failed')
+    expect(lead.session.snapshotEvents().some(event => event.type === 'session/title')).toBe(false)
+    expect(lead.session.snapshotEvents().some(event => event.type === 'turn/start')).toBe(false)
+  })
+
+  it('withdraws /team with the plugin', async () => {
+    const { ctx, lead, fiber } = await withCommands([])
+    expect(ctx.commands.list(lead).map(command => command.name)).toContain('team')
+    await fiber.dispose()
+    expect(ctx.commands.list(lead).map(command => command.name)).not.toContain('team')
+    expect(await ctx.commands.execute(lead, '/team Ship', [], SIGNAL)).toBeUndefined()
   })
 })

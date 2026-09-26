@@ -25,7 +25,7 @@ This package lets the model create named teammates, send them messages, inspect 
 <a id="use-this-package"></a>
 ## Use this package
 
-Add this package on top of `@deepseek-ai/dsh-experimental-agent-team` when the model should run a team through tools. Once mounted, every team member — the Lead and each teammate — gets the same nine tools plus the same coordination policy. `spawn_teammate` prefixes the initial task with the teammate’s role and name.
+Add this package on top of `@deepseek-ai/dsh-experimental-agent-team` when the model should run a team through tools. Once mounted, every team member — the Lead and each teammate — gets the same nine tools plus the same coordination policy. `spawn_teammate` prefixes the initial task with the teammate’s role and name, and with its duty instructions when the Lead gives it a `planner` or `executor` duty. The `/team <subject>` command starts a Team on one subject.
 
 ### When to choose it
 
@@ -33,7 +33,7 @@ Choose it when the model should create and coordinate teammates by itself rather
 
 ### Smallest working example
 
-The smallest addition to an existing composition is the two-package fragment from the [agent-team README](../agent-team/README.md#smallest-working-setup): durable session storage, the team domain package, and this package. The plugin itself takes two optional settings:
+The smallest addition to an existing composition is the two-package fragment from the [agent-team README](../agent-team/README.md#smallest-working-setup): durable session storage, the team domain package, and this package. The plugin itself takes only optional settings:
 
 ```yaml
 - id: tool-agent-team
@@ -47,16 +47,26 @@ The smallest addition to an existing composition is the two-package fragment fro
 |---|---|---|
 | `freshProvider` | `spawn` | Provider that starts fresh teammates |
 | `forkProvider` | `fork` | Provider that starts fork teammates |
+| `duties.planner.instructions` | read-only planning and verification text | Instructions added to a planner's first message |
+| `duties.planner.tools` | `read`, `read_image`, `grep`, `glob`, `skill`, `web_search`, `web_fetch` | Inherited tools a planner keeps |
+| `duties.executor.instructions` | claim, implement, and submit text | Instructions added to an executor's first message |
+| `duties.executor.tools` | `all` | Inherited tools an executor keeps |
 
 The generated [configuration catalog](../../../docs/config-catalog.md#deepseek-aidsh-experimental-tool-agent-team) is the exhaustive source for every accepted field and its JSDoc.
 
 Try it by asking the Lead model: "create a teammate named reviewer to check the diff, then send reviewer the change summary". The model calls the creation tool and then the messaging tool.
 
+A duty's `tools` value is `all` or a list of inherited tool names. A list keeps only the listed tools the Lead can see, so a name the composition lacks is ignored and never widens access; an empty list keeps no inherited tool. The teammate's own Team tools are always kept. The duty keys are fixed names that `spawn_teammate` and the `/team` flow use; only their values are deployment settings, and blank instructions fail at load.
+
+### Start a Team from a subject
+
+Run `/team <subject>` in a Lead conversation, or type the subject into the Web start strip, which sends the same command. The command records the subject on the Team, names the conversation after it, and sends the subject to the Lead as the user's message. From then on every member's Team section names the subject and the plan-then-execute flow: the Lead spawns one `planner`, which writes the plan as shared tasks; once the plan exists, the Lead spawns `executor` teammates that claim, implement, and submit ready tasks, and the planner verifies each submission. A teammate conversation, an empty subject, a subject over 200 characters, and a composition without the session-title service are refused with a command error.
+
 ### What the model can do
 
 The nine tools group into four capabilities:
 
-- **Create a teammate** — `spawn_teammate` takes a name, a description, and the initial task; only the Lead can call it.
+- **Create a teammate** — `spawn_teammate` takes a name, a description, the initial task, and an optional `planner` or `executor` duty; only the Lead can call it.
 - **Send messages** — `send_message` steers a running member at its nearest step boundary, starts or resumes an inactive member.
 - **See and wait** — `list_agents` returns each member’s `target` and availability; `wait_agent` waits for the next team change; `interrupt_agent` stops a teammate's current turn (Lead only).
 - **Manage the task board** — `team_task_create`, `team_task_list`, `team_task_get`, and `team_task_update` add, browse, read, and update shared tasks. `team_task_update` carries the lifecycle: claim, edit, set_dependencies, `submit` to hand your own finished work to peer verification, `verify` to record a verdict and reason on a peer's submission, and reopen, reassign, release, and delete.
@@ -96,7 +106,7 @@ The [Agent Teams Agent Note](../../../.agents/notes/implemented/feature/2026-08-
 
 ### Policy and tools
 
-One `team:policy` section on the member scope states the shared coordination rules; the fixed text and the nine tool registrations are declared in [`src/index.ts`](src/index.ts). The nine tool schemas are registered in scopes recognized as Team members at publication. Scoped registrations with the same names as the legacy global continuable-subagent controls shadow those globals for team members only.
+One `team:policy` section on the member scope states the shared coordination rules and, once the Team has a subject, the subject paragraph; the fixed text, the nine tool registrations, and the `/team` command are declared in [`src/index.ts`](src/index.ts). A dutied spawn passes its duty and a tool restriction built from the duty's `tools` to the Team service, which records the duty and forwards the restriction to the subagent provider. `/team` registers through `ctx.inject(['commands'])`, so it exists only in compositions with a command registry. The nine tool schemas are registered in scopes recognized as Team members at publication. Scoped registrations with the same names as the legacy global continuable-subagent controls shadow those globals for team members only.
 
 ### Scoped registration and teardown
 
@@ -125,15 +135,15 @@ Read these pages when the package-level contract is not enough. They move from t
 
 #### What the model sees
 
-One shared system policy states the explicit-delegation requirement, shared-cwd behavior, filesystem stale-version recovery, Bash/formatter/codegen risk, task and write-scope coordination, peer verification of submitted tasks, Steer delivery, the no-retry mailbox rule, and the Lead's duty to wait before answering. `spawn_teammate` accepts `provider`, `model`, and `reasoning_effort`, and the `model` description asks for a model that fits the teammate's responsibility, so a caller seats each teammate on the route that responsibility needs; omitting them inherits the caller's own route. A route that does not declare the requested reasoning effort is refused before any child exists, naming the efforts the route does declare; the refused name stays free, so a corrected retry seats the teammate. The check resolves the teammate's effective route, which is the caller's overrides merged over its own. All nine Team schemas are identical for Leads and teammates; execution enforces Lead-only operations. `spawn_teammate` prefixes its initial user message with `<system-reminder>\nYou are teammate "<name>".\nYour Team Lead is named "lead".\nUse list_agents({}) to find your teammates and their names.\nTo message your Team Lead, use send_message({ target: "lead", message: "..." }).\nTo message another teammate, use send_message({ target: "<teammate name>", message: "..." }).\n</system-reminder>`, followed by a blank line and the task. The prefix contains no Team id and works when runtime context is disabled. Forks inherit history without an additional Lead identity message.
+One shared system policy states the explicit-delegation requirement, shared-cwd behavior, filesystem stale-version recovery, Bash/formatter/codegen risk, task and write-scope coordination, peer verification of submitted tasks, Steer delivery, the no-retry mailbox rule, and the Lead's duty to wait before answering. `spawn_teammate` accepts `provider`, `model`, and `reasoning_effort`, and the `model` description asks for a model that fits the teammate's responsibility, so a caller seats each teammate on the route that responsibility needs; omitting them inherits the caller's own route. A route that does not declare the requested reasoning effort is refused before any child exists, naming the efforts the route does declare; the refused name stays free, so a corrected retry seats the teammate. The check resolves the teammate's effective route, which is the caller's overrides merged over its own. All nine Team schemas are identical for Leads and teammates; execution enforces Lead-only operations and duty rules. Once the Lead records a subject, every member's Team section ends with `The user started this Agent Team with the subject "<subject>".` followed by the plan-then-execute flow the Lead runs. `spawn_teammate` prefixes its initial user message with `<system-reminder>\nYou are teammate "<name>".\nYour Team Lead is named "lead".\nUse list_agents({}) to find your teammates and their names.\nTo message your Team Lead, use send_message({ target: "lead", message: "..." }).\nTo message another teammate, use send_message({ target: "<teammate name>", message: "..." }).\n</system-reminder>`, followed by a blank line and the task. For a dutied teammate, `Your duty is "<duty>".` and the duty's configured instructions come before `</system-reminder>`. The prefix contains no Team id and works when runtime context is disabled. Forks inherit history without an additional Lead identity message.
 
 #### Token effect
 
-Fixed policy and schema cost on every Team member request. The initial identity text follows ordinary history through later steps, cold recovery, and compaction; the plugin neither scans for it nor reinserts it. Tool calls add compact JSON roster, task, wait, or receipt results. Peer content is retained by the Team domain in the target's history.
+Fixed policy and schema cost on every Team member request, plus about 90 tokens of subject paragraph in a Team with a subject. Duty instructions cost about 100 tokens once, in the teammate's first message. The initial identity text follows ordinary history through later steps, cold recovery, and compaction; the plugin neither scans for it nor reinserts it. Tool calls add compact JSON roster, task, wait, or receipt results. Peer content is retained by the Team domain in the target's history.
 
 #### KV Cache effect
 
-With the same provider/model, shared system policy, and tool schemas, a fork retains the parent request prefix and appends the initial task with its identity prefix. Tool results and peer messages append after the reusable request prefix. Sessions recorded with identity inside the system prompt can change that prefix on their first request under this layout; actual provider cache hits remain best-effort.
+With the same provider/model, shared system policy, and tool schemas, a fork retains the parent request prefix and appends the initial task with its identity prefix. Tool results and peer messages append after the reusable request prefix. Sessions recorded with identity inside the system prompt can change that prefix on their first request under this layout; actual provider cache hits remain best-effort. The subject paragraph is identical for every member, so it keeps fork prefixes equal; `/team` records it before the Lead's first request, while a subject recorded later changes each member's Team section once. A duty whose `tools` is a list changes that teammate's tool schemas, so its request prefix differs from the Lead's from the start.
 
 ## Known Limitations and Deferred Work
 
@@ -144,6 +154,8 @@ With the same provider/model, shared system policy, and tool schemas, a fork ret
 These limits describe what the policy and tools cannot guarantee for a team. They are current package constraints, not a comparison with other collaboration surfaces.
 
 - **Prompt policy is coordination, not confinement** — it cannot stop Bash or external processes from writing overlapping files.
+- **A planner is read-only only through its tool list** — the default list keeps no write, shell, or workflow tool; a deployment that sets planner `tools` to `all` or lists such a tool lets the planner change files.
+- **No `/team` in one-shot headless runs** — the headless runner sends its task as a user message, not a command, so it starts no Team with a subject.
 - **No autonomous team creation** — ordinary tasks do not trigger delegation unless the user explicitly requests it.
 - **No Web controls** — browser roster and task-board presentation is outside this runtime package.
 - **Experimental prototype with no stability promise** — the package is public, but its schemas can change freely while it incubates.

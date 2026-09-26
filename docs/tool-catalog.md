@@ -2319,6 +2319,14 @@ Create one named, durable teammate. Only the Team Lead may call this tool.
     "reasoning_effort": {
       "type": "string",
       "description": "Reasoning effort for this teammate, named as the target model declares it. Defaults to your own setting."
+    },
+    "duty": {
+      "type": "string",
+      "description": "planner writes and revises the shared task plan and verifies submitted work; executor claims ready tasks, implements them, and submits them. Omit for a teammate without a duty.",
+      "enum": [
+        "planner",
+        "executor"
+      ]
     }
   },
   "required": [

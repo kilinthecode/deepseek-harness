@@ -3,30 +3,135 @@
 import type { Context } from '@deepseek-ai/cordis'
 import z from '@deepseek-ai/schemastery'
 import type { Agent, AgentOptions } from '@deepseek-ai/dsh-agent'
-import { ReasoningEffortId } from '@deepseek-ai/dsh-llm'
-import { TeamTaskId } from '@deepseek-ai/dsh-experimental-agent-team'
-import type { TeamMemberView } from '@deepseek-ai/dsh-experimental-agent-team'
+import { CommandDefinitionId } from '@deepseek-ai/dsh-commands'
+import type { CommandResult } from '@deepseek-ai/dsh-commands'
+import { createUserMessage, ReasoningEffortId } from '@deepseek-ai/dsh-llm'
+import type {} from '@deepseek-ai/dsh-session-title'
+import { TeamError, TeamTaskId } from '@deepseek-ai/dsh-experimental-agent-team'
+import type { TeamDuty, TeamMemberView } from '@deepseek-ai/dsh-experimental-agent-team'
 import { defineTool } from '@deepseek-ai/dsh-tools'
-import type { InferValue, ValueSchemaSpec } from '@deepseek-ai/dsh-tools'
+import type { InferValue, ToolRestriction, ValueSchemaSpec } from '@deepseek-ai/dsh-tools'
 
 /** Cordis plugin name. */
 export const name = 'tool-agent-team'
 /** Services required by the Team tool plugin. */
 export const inject = ['agents', 'agentTeams', 'tools', 'systemPrompt']
 
-/** Tool routing configuration. */
+/**
+ * Inherited tools a teammate with one duty keeps: `all`, or only the named
+ * global tools. Named tools the Lead cannot see are dropped at creation, so a
+ * list never widens access, and an empty list keeps no inherited tool. The
+ * teammate's own Team tools are always kept.
+ */
+export type DutyTools = 'all' | string[]
+
+/** Instructions and tool access for teammates created with one duty. */
+export interface DutyConfig {
+  /** Model-facing instructions added to the teammate's first message. */
+  readonly instructions?: string
+  /** Inherited tools the teammate keeps. */
+  readonly tools?: DutyTools
+}
+
+/** Tool routing and duty configuration. */
 export interface Config {
   /** Continuable-subagent provider used for fresh teammates. */
   readonly freshProvider?: string
   /** Continuable-subagent provider used for completed-prefix fork teammates. */
   readonly forkProvider?: string
+  /**
+   * Instructions and tool access per duty. The keys are the fixed duty names
+   * `spawn_teammate` accepts and the `/team` kickoff requests; only their values vary.
+   */
+  readonly duties?: DutiesConfig
+}
+
+/** Configuration of each fixed duty. */
+export interface DutiesConfig {
+  /**
+   * Teammates that write and revise the shared task plan and verify submitted
+   * work. Their default tools are the read-only inherited tools.
+   */
+  readonly planner?: DutyConfig
+  /** Teammates that claim, implement, and submit planned tasks. They keep every inherited tool by default. */
+  readonly executor?: DutyConfig
+}
+
+const PLANNER_INSTRUCTIONS = 'You plan and verify; you cannot change files or run commands. Read the workspace, then write the plan with team_task_create: one task per independently verifiable change, with blocked_by for ordering and write_scopes for the files it will touch. Revise unclaimed tasks with team_task_update edit, set_dependencies, or delete. Message the Lead when the plan is ready. When a task awaits your verdict, check the work itself in the workspace, then record approved or rejected with a reason using team_task_update action "verify".'
+
+const EXECUTOR_INSTRUCTIONS = 'You execute planned tasks. Take a ready, unowned task with team_task_update action "claim" at its current revision, implement it within its write_scopes, then hand it over with action "submit". Do not create or verify tasks; message the planner when the plan is missing work. After a rejection, rework the task and submit it again. Take the next ready task until none is left, then report to the Lead.'
+
+/** Read-only inherited tools a planner keeps by default. */
+const PLANNER_TOOLS = ['read', 'read_image', 'grep', 'glob', 'skill', 'web_search', 'web_fetch']
+
+function dutySchema(instructions: string, tools: DutyTools): z<DutyConfig> {
+  return z.object({
+    instructions: z.string().default(instructions),
+    tools: z.union([z.const('all' as const), z.array(z.string())]).default(tools),
+  })
 }
 
 /** Loader schema for the opt-in Team tool plugin. */
 export const Config: z<Config> = z.object({
   freshProvider: z.string().default('spawn'),
   forkProvider: z.string().default('fork'),
+  duties: z.object({
+    planner: dutySchema(PLANNER_INSTRUCTIONS, PLANNER_TOOLS),
+    executor: dutySchema(EXECUTOR_INSTRUCTIONS, 'all'),
+  }),
 })
+
+/** Duty configuration with every value resolved. */
+interface ResolvedDuty {
+  readonly instructions: string
+  readonly tools: DutyTools
+}
+
+/** Plugin configuration with every value resolved. */
+interface ResolvedConfig {
+  readonly freshProvider: string
+  readonly forkProvider: string
+  readonly duties: Readonly<Record<TeamDuty, ResolvedDuty>>
+}
+
+/**
+ * Fill omitted values with the schema defaults, which a direct `apply()`
+ * bypasses, and refuse blank duty instructions at load.
+ */
+function resolveConfig(config: Config): ResolvedConfig {
+  const duty = (name: TeamDuty, value: DutyConfig | undefined, instructions: string, tools: DutyTools): ResolvedDuty => {
+    const resolved = { instructions: value?.instructions ?? instructions, tools: value?.tools ?? tools }
+    if (resolved.instructions.trim().length === 0) {
+      throw new Error(`tool-agent-team: duties.${name}.instructions must be non-empty`)
+    }
+    return resolved
+  }
+  return {
+    freshProvider: config.freshProvider ?? 'spawn',
+    forkProvider: config.forkProvider ?? 'fork',
+    duties: {
+      planner: duty('planner', config.duties?.planner, PLANNER_INSTRUCTIONS, PLANNER_TOOLS),
+      executor: duty('executor', config.duties?.executor, EXECUTOR_INSTRUCTIONS, 'all'),
+    },
+  }
+}
+
+/**
+ * Restrict a dutied teammate to the configured inherited tools the Lead can
+ * see, so a configured name never widens what the child could reach.
+ */
+function dutyToolFilter(ctx: Context, lead: Agent, tools: DutyTools): ToolRestriction | undefined {
+  if (tools === 'all') return undefined
+  return { allow: tools.filter(tool => ctx.tools.get(tool, lead) !== undefined) }
+}
+
+/**
+ * Policy paragraph shared by every member of a Team with a subject. It names
+ * the subject and the flow the Lead runs for it.
+ */
+function subjectPolicy(subject: string): string {
+  return `The user started this Agent Team with the subject "${subject}". The Lead runs the plan-then-execute flow: spawn one teammate with duty "planner" to write the plan as shared tasks; when the planner reports the plan, spawn teammates with duty "executor" to claim ready tasks, implement them, and submit them; the planner verifies each submission. The Lead waits for the required teammates, then answers the user when every task is completed.`
+}
 
 /** Model-facing collaboration guidance shared by Lead and teammates. */
 const POLICY = `Agent Teams is available in this session, but create teammates only when the user explicitly asks to use Agent Teams or teammates.
@@ -55,6 +160,7 @@ const MEMBER_VIEW_SCHEMA = {
     description: { type: 'string' },
     provider: { type: 'string' },
     context: { type: 'string', enum: ['fresh', 'fork'] },
+    duty: { type: 'string', enum: ['planner', 'executor'] },
     model: { type: 'string' },
     diagnostics: { type: 'array', required: true, items: { type: 'string' } },
   },
@@ -171,8 +277,21 @@ function callingAgent(agent: Agent | undefined, toolName: string): Agent {
   return agent
 }
 
+/** Compose a teammate's first-message reminder: its identity, then its duty instructions when it has a duty. */
+function teammateReminder(name: string, duty: TeamDuty | undefined, config: ResolvedConfig): string {
+  const lines = [
+    `You are teammate "${name}".`,
+    'Your Team Lead is named "lead".',
+    'Use list_agents({}) to find your teammates and their names.',
+    'To message your Team Lead, use send_message({ target: "lead", message: "..." }).',
+    'To message another teammate, use send_message({ target: "<teammate name>", message: "..." }).',
+    ...duty === undefined ? [] : [`Your duty is "${duty}".`, config.duties[duty].instructions],
+  ]
+  return `<system-reminder>\n${lines.join('\n')}\n</system-reminder>\n\n`
+}
+
 /** Register the complete Team tool set in one exact Agent scope. */
-function install(agent: Agent, ctx: Context, config: Required<Config>): () => void {
+function install(agent: Agent, ctx: Context, config: ResolvedConfig): () => void {
   const scoped = agent.ctx
   const disposers: Array<() => unknown> = []
   const register = (disposer: () => unknown): void => { disposers.push(disposer) }
@@ -180,7 +299,12 @@ function install(agent: Agent, ctx: Context, config: Required<Config>): () => vo
     register(scoped.systemPrompt.section({
       name: 'team:policy',
       order: scoped.systemPrompt.getSectionOrder('TEAM_POLICY'),
-      text: POLICY,
+      // Every member of one Team reads the same subject, so the section stays
+      // uniform across the Lead and its fork teammates.
+      text: () => {
+        const subject = ctx.agentTeams.subjectOf(agent)
+        return subject === undefined ? POLICY : `${POLICY}\n\n${subjectPolicy(subject)}`
+      },
     }))
 
     register(scoped.tools.register(defineTool({
@@ -207,11 +331,18 @@ function install(agent: Agent, ctx: Context, config: Required<Config>): () => vo
           type: 'string',
           description: 'Reasoning effort for this teammate, named as the target model declares it. Defaults to your own setting.',
         },
+        duty: {
+          type: 'string',
+          enum: ['planner', 'executor'],
+          description: 'planner writes and revises the shared task plan and verifies submitted work; executor claims ready tasks, implements them, and submits them. Omit for a teammate without a duty.',
+        },
       },
       output: jsonOutput(SPAWN_VALUE_SCHEMA),
       async execute(args, exec) {
         const agent = callingAgent(exec.agent, 'spawn_teammate')
         const context = args.context ?? 'fresh'
+        const duty = args.duty
+        const toolFilter = duty === undefined ? undefined : dutyToolFilter(ctx, agent, config.duties[duty].tools)
         const agentOptions: AgentOptions = {
           ...args.provider === undefined ? {} : { provider: args.provider },
           ...args.model === undefined ? {} : { model: args.model },
@@ -221,20 +352,14 @@ function install(agent: Agent, ctx: Context, config: Required<Config>): () => vo
           name: args.name,
           description: args.description,
           prompt: [
-            { type: 'text', text: `<system-reminder>
-You are teammate "${args.name.trim()}".
-Your Team Lead is named "lead".
-Use list_agents({}) to find your teammates and their names.
-To message your Team Lead, use send_message({ target: "lead", message: "..." }).
-To message another teammate, use send_message({ target: "<teammate name>", message: "..." }).
-</system-reminder>
-
-` },
+            { type: 'text', text: teammateReminder(args.name.trim(), duty, config) },
             { type: 'text', text: args.prompt },
           ],
           context,
           provider: context === 'fork' ? config.forkProvider : config.freshProvider,
           ...Object.keys(agentOptions).length === 0 ? {} : { agentOptions },
+          ...duty === undefined ? {} : { duty },
+          ...toolFilter === undefined ? {} : { toolFilter },
           signal: exec.signal,
         })
         return { member: modelMember(result.member) }
@@ -431,12 +556,45 @@ To message another teammate, use send_message({ target: "<teammate name>", messa
   }
 }
 
+/**
+ * Start an Agent Team on one subject: record it, which adds the subject policy
+ * to every member's Team section, name the conversation after it, and wake the
+ * Lead with the subject as the user's message.
+ */
+async function startTeam(ctx: Context, agent: Agent, rawInput: string): Promise<CommandResult> {
+  const subject = rawInput.trim()
+  if (subject.length === 0) return { kind: 'error', text: 'Usage: /team <subject>' }
+  if (ctx.agentTeams.tryMembership(agent)?.role !== 'lead') {
+    return { kind: 'error', text: 'Only the Team Lead conversation can start an Agent Team.' }
+  }
+  const titles = ctx.get('sessionTitle')
+  if (titles === undefined) {
+    return { kind: 'error', text: '/team needs the session-title service to name the conversation.' }
+  }
+  try {
+    await ctx.agentTeams.setSubject(agent, subject)
+  } catch (error: unknown) {
+    if (error instanceof TeamError) return { kind: 'error', text: error.message }
+    throw error
+  }
+  titles.rename(agent.session, subject)
+  agent.steer(createUserMessage({ content: [{ type: 'text', text: subject }], source: { kind: 'user' } }))
+  return { kind: 'success', text: 'Agent Team started.' }
+}
+
 /** Install Team tools in every live or subsequently published Team member scope. */
 export function apply(ctx: Context, config: Config = {}): void {
-  const resolved: Required<Config> = {
-    freshProvider: config.freshProvider ?? 'spawn',
-    forkProvider: config.forkProvider ?? 'fork',
-  }
+  const resolved = resolveConfig(config)
+  // The command activates only when a command registry is composed.
+  ctx.inject(['commands'], (commandCtx) => {
+    commandCtx.commands.register({
+      definitionId: CommandDefinitionId('@deepseek-ai/dsh-experimental-tool-agent-team/team'),
+      name: 'team',
+      description: 'Start an Agent Team with a planner and executors for a subject',
+      input: { hint: 'subject' },
+      handler: ({ agent, rawInput }) => startTeam(ctx, agent, rawInput),
+    })
+  })
   const installed = new Map<Agent, () => void>()
   const maybeInstall = (agent: Agent): void => {
     if (installed.has(agent) || ctx.agentTeams.tryMembership(agent) === undefined) return
