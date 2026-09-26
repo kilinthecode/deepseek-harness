@@ -170,6 +170,8 @@ flowchart LR
   cfg --> plugin_dsh_base_tool_todo
   plugin_dsh_base_tool_memory["tool-memory<br/>@deepseek-ai/dsh-tool-memory"]
   cfg --> plugin_dsh_base_tool_memory
+  plugin_dsh_base_memory_review["memory-review<br/>@deepseek-ai/dsh-memory-review"]
+  cfg --> plugin_dsh_base_memory_review
   plugin_dsh_base_tool_goal["tool-goal<br/>@deepseek-ai/dsh-tool-goal"]
   cfg --> plugin_dsh_base_tool_goal
   plugin_dsh_base_tool_ralph["tool-ralph<br/>@deepseek-ai/dsh-tool-ralph"]
@@ -283,6 +285,7 @@ flowchart LR
 | `image-offload` | `@deepseek-ai/dsh-compaction-image-offload` |
 | `tool-todo` | `@deepseek-ai/dsh-tool-todo` |
 | `tool-memory` | `@deepseek-ai/dsh-tool-memory` |
+| `memory-review` | `@deepseek-ai/dsh-memory-review` |
 | `tool-goal` | `@deepseek-ai/dsh-tool-goal` |
 | `tool-ralph` | `@deepseek-ai/dsh-tool-ralph` |
 | `repeat-tool-reminder` | `@deepseek-ai/dsh-repeat-tool-reminder` |

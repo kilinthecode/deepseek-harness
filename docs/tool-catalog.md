@@ -2542,7 +2542,7 @@ Source: [`packages/memory/tool-memory/src/tools.ts`](../packages/memory/tool-mem
 
 ### `memory_recall`
 
-Read saved global memories and the current project's memories.
+Read saved global memories and the current project's memories from the live store, including memories saved after the snapshot. Use it for snapshot entries shown only as an index line; inlined snapshot entries need no recall.
 
 ```json
 {
@@ -2590,11 +2590,11 @@ Save one durable memory for future sessions.
     },
     "description": {
       "type": "string",
-      "description": "One line (at most 256 characters) shown in the memory catalog; make it specific enough to decide whether to recall the memory."
+      "description": "One line (no line breaks, at most 256 characters) shown in the memory snapshot; make it specific enough to decide whether to recall the memory."
     },
     "content": {
       "type": "string",
-      "description": "The memory itself: the fact, why it matters, and how to apply it."
+      "description": "A declarative fact that remains true in every future session: the fact, why it matters, and how to apply it. Not a command."
     }
   },
   "required": [

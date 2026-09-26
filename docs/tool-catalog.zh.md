@@ -2601,11 +2601,11 @@ lsp 工具将提供方选择和语言服务器子进程置于 ctx.lsp 之后，�
     },
     "description": {
       "type": "string",
-      "description": "One line (at most 256 characters) shown in the memory catalog; make it specific enough to decide whether to recall the memory."
+      "description": "One line (no line breaks, at most 256 characters) shown in the memory snapshot; make it specific enough to decide whether to recall the memory."
     },
     "content": {
       "type": "string",
-      "description": "The memory itself: the fact, why it matters, and how to apply it."
+      "description": "A declarative fact that remains true in every future session: the fact, why it matters, and how to apply it. Not a command."
     }
   },
   "required": [
