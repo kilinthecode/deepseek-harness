@@ -8,6 +8,7 @@ import { SlotRegistry } from '@deepseek-ai/dsh-client-ui-renderer/client'
 import { RemoteError } from '@deepseek-ai/dsh-client-test-runtime'
 import type { TypertRemoteContribution } from '@deepseek-ai/dsh-typert-protocol'
 import { TeamAction, type TeamActionInjected } from '../src/client/TeamAction.tsx'
+import { TeamSubjectSeat, type TeamSubjectInjected } from '../src/client/TeamSubjectSeat.tsx'
 import { inject, mountAgentTeamUi } from '../src/client/mount.ts'
 import { apply as nodeApply } from '../src/index.ts'
 
@@ -34,6 +35,8 @@ async function bench(options: {
   addressed?: boolean
   registrationFailure?: boolean
   roomFailure?: boolean
+  /** Settled `commands.execute` value: an execution, `undefined` for an unknown command, or a carrier failure. */
+  command?: { kind: 'success' } | { kind: 'error'; text: string } | 'unknown' | 'failure'
 } = {}) {
   const ctx = new Context()
   const calls: { method: string; args: unknown[] }[] = []
@@ -73,6 +76,17 @@ async function bench(options: {
     roomPropose: answer('agentTeams/roomPropose', { id: PROPOSAL }),
     roomEscalate: answer('agentTeams/roomEscalate', { id: PROPOSAL }),
   })
+  ctx.provide('remote.commands', {
+    execute: (...args: unknown[]) => {
+      calls.push({ method: 'commands/execute', args })
+      const command = options.command ?? { kind: 'success' }
+      if (command === 'failure') return Promise.resolve(failure)
+      return Promise.resolve({
+        ok: true as const,
+        value: command === 'unknown' ? undefined : { commandId: 'command-1', result: command },
+      })
+    },
+  })
   const navigation: unknown[] = []
   let mainSessionId = options.addressed === true ? CHILD : SESSION
   ctx.provide('sessions', {
@@ -107,7 +121,10 @@ async function bench(options: {
   await ctx.plugin(SlotRegistry).await()
   const collapseHeader = ctx.slots.register({
     name: 'root',
-    children: { 'conversation.session.header.actions': { kind: 'list', scope: 'session' } },
+    children: {
+      'conversation.session.header.actions': { kind: 'list', scope: 'session' },
+      'conversation.input.dock': { kind: 'list', scope: 'session' },
+    },
   } as never, () => null)
   if (options.registrationFailure === true) {
     vi.spyOn(ctx.slots, 'inject').mockImplementationOnce(() => { throw new Error('slot registration failed') })
@@ -125,6 +142,16 @@ async function bench(options: {
   }
   const entry = () => ctx.slots.entries('conversation.session.header.actions')
     .find(candidate => candidate.component === TeamAction)
+  const startEntry = () => ctx.slots.entries('conversation.input.dock')
+    .find(candidate => candidate.component === TeamSubjectSeat)
+  const startTeam = (sessionId: SessionId): TeamSubjectInjected['startTeam'] => {
+    // Session-scoped entries receive the conversation id their slot instance renders.
+    const inject = startEntry()!.inject! as (id: SessionId) => Record<string, unknown>
+    const injected = inject(sessionId)
+    const start = injected['startTeam']
+    if (typeof start !== 'function') throw new Error('Team start strip lacks its injected startTeam callback')
+    return start as TeamSubjectInjected['startTeam']
+  }
   const actions = (): TeamActionInjected => {
     const injected = entry()!.inject!()
     return {
@@ -144,6 +171,8 @@ async function bench(options: {
     navigation,
     remote,
     entry,
+    startEntry,
+    startTeam,
     actions,
     collapseHeader,
     select: (sessionId: SessionId) => { mainSessionId = sessionId },
@@ -168,6 +197,7 @@ describe('ui-team browser plugin', () => {
 
     await b.fiber.dispose()
     expect(b.entry()).toBeUndefined()
+    expect(b.startEntry()).toBeUndefined()
     expect(b.remote.disposeMount).toHaveBeenCalledOnce()
     expect(t('empty')).toBe('empty')
   })
@@ -247,6 +277,29 @@ describe('ui-team browser plugin', () => {
     } as never, () => null)
     await Promise.resolve()
     expect(b.entry()).toBeDefined()
+  })
+
+  it('registers the start strip in the composer dock ahead of the Todo and Goal cards', async () => {
+    const b = await bench()
+    expect(b.startEntry()).toMatchObject({
+      options: { id: 'agent-team-subject', order: -10 },
+      locale: 'agent-team',
+    })
+  })
+
+  it('starts a Team through the /team command of the conversation it was injected for', async () => {
+    const b = await bench()
+    await expect(b.startTeam(SESSION)('Ship the parser')).resolves.toEqual({ kind: 'started' })
+    expect(b.calls).toEqual([{ method: 'commands/execute', args: [SESSION, '/team Ship the parser', []] }])
+  })
+
+  it.each([
+    [{ kind: 'error', text: 'subject exceeds 200 characters' }, { kind: 'refused', text: 'subject exceeds 200 characters' }],
+    ['unknown', { kind: 'unavailable' }],
+    ['failure', { kind: 'refused', text: 'offline' }],
+  ] as const)('maps the command outcome %j to %j', async (command, expected) => {
+    const b = await bench({ command })
+    await expect(b.startTeam(SESSION)('Ship')).resolves.toEqual(expected)
   })
 
   it('keeps the node half inert', () => {

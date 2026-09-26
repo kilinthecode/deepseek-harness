@@ -9,7 +9,7 @@ kind: "package-reference"
 
 ## 概述
 
-本包向 Web 会话页头添加 Agent Teams action，让用户检查 roster 与共享任务板、在启用 room 时跟随并引导该 Team 的 room，并打开 teammate 会话。它从 Session store 读取 Lead Session 的 `agentTeam` 投影，Host 投影 frame 使其保持最新；它通过生成式 `agentTeams/room*` Remote method 读取 room，并让 child history 导航继续使用稳定的 addressed-subagent 路径。通过实验性的 Agent Teams 或 room bundle 选择本包。这个面板不扩展稳定 API Proxy、不存储 Team 状态，也不注册面向模型的输入。
+本包向 Web 会话页头添加 Agent Teams action，让用户检查 roster 与共享任务板、跟随并引导该 Team 的 room、打开 teammate 会话；并在新会话输入框上方提供一条启动栏，用一行主题启动 Team。它读取 Lead Session 的 `agentTeam` 投影，Host 投影 frame 使其保持最新；它通过生成式 `agentTeams/room*` Remote method 读取 room，并让 child history 导航继续使用 addressed-subagent 路径。通过实验性的 Agent Teams 或 room bundle 选择本包。它不存储 Team 状态，也不注册面向模型的输入。
 
 ## 目录
 
@@ -27,11 +27,15 @@ kind: "package-reference"
 
 通过 [`@deepseek-ai/dsh-experimental-agent-team-profile`](../agent-team-profile/README.zh.md) 启用本包。这个组合包同时提供团队服务、工具与 Web 界面。Web Client loader 挂载 `/client` export；root Host export 不执行行为，本包也没有用户配置字段。
 
+### 以主题启动 Team
+
+新会话在输入框上方显示 Agent Team 启动栏，包含主题输入框与“启动团队”按钮。启动时会向 Host 发送 `/team <subject>`：会话以主题命名，主题成为第一条用户消息，Lead 开始由 planner 与 executor 执行的先规划后执行流程。启动栏只出现在空白 Lead 会话的主视图中，会话一旦开始就会消失，包括发送了一条普通首条消息之后。拒绝结果（例如主题超过 200 个字符）会显示在启动栏内，已输入的主题保留以便重试。
+
 ### 检查并导航 roster
 
 面板从共享 Session store 展示 Lead Session 的 roster 与任务板。面板保持打开时，任务和成员更新会直接出现。打开面板不发起投影请求。会话或 Session 列表正在加载时，面板显示加载提示；加载结束后仍无 Team 值时，显示不可用提示。
 
-Roster 行展示持久名称与阶段。provisioning 和 running 成员使用共享 ongoing loading，inactive 成员使用人物图标，failed 成员使用 error 红点。实时 Session 状态提供运行活动；共享 `modelSelection` 投影在可用时提供模型。当前会话带有“当前会话”标签且不可选择。在 teammate 会话中选择 Lead 会直接打开 Lead Session。选择 active teammate 会打开其普通 continuable 子会话地址。Host 在打开历史时校验 parent、child 与 mode；后续人类提示词使用同一 addressed-subagent 会话。
+Team 有主题时，面板在 roster 上方显示该主题。Roster 行展示持久名称与阶段；以分工创建的 teammate 还会带有“规划者”或“执行者”标签。provisioning 和 running 成员使用共享 ongoing loading，inactive 成员使用人物图标，failed 成员使用 error 红点。实时 Session 状态提供运行活动；共享 `modelSelection` 投影在可用时提供模型。当前会话带有“当前会话”标签且不可选择。在 teammate 会话中选择 Lead 会直接打开 Lead Session。选择 active teammate 会打开其普通 continuable 子会话地址。Host 在打开历史时校验 parent、child 与 mode；后续人类提示词使用同一 addressed-subagent 会话。
 
 ### 读取 room
 
@@ -51,7 +55,7 @@ Roster 行展示持久名称与阶段。provisioning 和 running 成员使用共
 <details>
 <summary>实现细节——点击展开</summary>
 
-Client export 先挂载生成式 `agentTeams` room Remote contribution，再通过 Cordis effect 注册 locale dictionary 与一个 conversation-header slot。Dispose plugin fiber 会移除这两项 registration 并卸载该 Remote namespace；registration 失败时，会先卸载该 namespace，再传播错误。
+Client export 先挂载生成式 `agentTeams` room Remote contribution，再通过 Cordis effect 注册 locale dictionary、一个 conversation-header slot 与一个 `conversation.input.dock` 条目。该 dock 条目排在 Todo 与 Goal 卡片之前；只有当其 Session 为空白、没有 subagent address、尚未尝试发送提示词且被主视图保留时才会渲染；它通过 `commands/execute` 启动 Team，并读取处理器的错误文本，Session face 的 `command()` 不会返回该文本。Dispose plugin fiber 会移除这两项 registration 并卸载该 Remote namespace；registration 失败时，会先卸载该 namespace，再传播错误。
 
 面板渲染在会话容器外，并保持在视口范围内。成员卡片在静止、选中和悬停状态下均使用共享 elevation 描边绘制轮廓。悬停触发按钮 150ms 后打开面板；指针离开触发按钮和面板后，经过 120ms 宽限关闭。点击触发按钮会固定面板并将焦点移入其中。点击外部或按 Escape 可关闭面板；仅当焦点原本位于面板内时，Escape 才将焦点返回触发按钮。页头较窄时触发按钮折叠为图标，只响应点击打开。组件从 `useSessions`、`useSessionStatus` 与 `useSession` 座位派生每一个 roster 行与任务行：Lead 身份来自当前 Session 的 subagent address，Team 视图来自 `projectionsBySession[lead].values.agentTeam`，成员活动来自 Session 状态并以列表摘要为后备，model 来自 `projectionsBySession[member].values.modelSelection.next`。每个 roster 行只选择自己的运行状态。一个注入回调通过当前与目标 Session 的 id 打开 roster Session；room 回调在每次调用 `agentTeams/room*` 之前把当前会话解析为其 Lead。room 区块只在挂载期间跟随 `agentTeams/roomStream`，并在面板关闭时中止该 stream。切换会话会关闭面板并清除导航失败。
 
@@ -59,6 +63,7 @@ Client export 先挂载生成式 `agentTeams` room Remote contribution，再通�
 |---|---|
 | [`src/client/mount.ts`](src/client/mount.ts) | room Remote 挂载、locale、导航与 slot registration |
 | [`src/client/TeamAction.tsx`](src/client/TeamAction.tsx) | 由投影派生的 roster 与任务板、由 Remote 支撑的 room 区块及面板交互状态 |
+| [`src/client/TeamSubjectSeat.tsx`](src/client/TeamSubjectSeat.tsx) | 空白会话输入框上方的启动栏 |
 | [`src/client/locales.ts`](src/client/locales.ts) | 中英文 panel 文案 |
 | [`src/index.ts`](src/index.ts) | 不执行行为的 Host entry |
 
@@ -79,7 +84,7 @@ Client export 先挂载生成式 `agentTeams` room Remote contribution，再通�
 <a id="model-experience"></a>
 ## 模型体验
 
-无直接影响，因为该浏览器面板不注册面向模型的输入。其 room 控件调用 Host 的 room 操作；由此产生的每条参与者提示词都由这些操作负责，并记录在 `room/*` 与 mailbox 事件中；面板绝不记录立场。
+无直接影响，因为该浏览器包不注册面向模型的输入。启动栏发送 Host 的 `/team` 命令，由其处理器记录主题并把主题作为用户消息发送。其 room 控件调用 Host 的 room 操作；由此产生的每条参与者提示词都由这些操作负责，并记录在 `room/*` 与 mailbox 事件中；面板绝不记录立场。
 
 #### KV Cache 影响
 

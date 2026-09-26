@@ -1,0 +1,5 @@
+- text: Agent Team
+- textbox "Team subject":
+  - /placeholder: Subject for a planner to split into tasks and executors to complete
+  - text: Add a changelog entry for the parser
+- button "Start team"

@@ -209,7 +209,7 @@
    so the current-conversation tag drops one step in size. The 999 shrink
    factor collapses the tag (block display re-enables text-overflow) before
    the member name gives up any width. */
-.currentTag {
+.memberTag {
   display: inline-block;
   flex: 0 999 auto;
   min-width: 0;
@@ -475,4 +475,12 @@
 .roomControls select {
   flex: 1;
   min-width: 0;
+}
+
+.subject {
+  margin: 0 0 0 4px;
+  color: var(--dsw-alias-label-secondary);
+  font-size: 13px;
+  line-height: 20px;
+  overflow-wrap: anywhere;
 }
