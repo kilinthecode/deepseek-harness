@@ -20,19 +20,69 @@ function mount() {
 }
 
 /** The status block only joins the card once boot outlasts the brand moment. */
-const STATUS_MS = 3400
+const STATUS_MS = 4300
 /** Reduced motion shows the brand complete from mount, so the status follows sooner. */
 const REDUCED_STATUS_MS = 500
 /** Hold used where the host reports no animations (jsdom), then the leave fade. */
-const FALLBACK_HOLD_MS = 3340
-const LEAVE_MS = 560
-const SETTLE_REST_MS = 360
+const FALLBACK_HOLD_MS = 4095
+const LEAVE_MS = 400
+const SETTLE_REST_MS = 220
 const MAX_SETTLE_MS = 4800
 
-/** Read an element's inline animation window, in ms from the first animation frame. */
-function scheduled(el: HTMLElement | SVGElement): { start: number; end: number } {
+interface Timing { start: number; end: number }
+
+/** Read the plate's inline animation window, in ms from the first animation frame. */
+function scheduled(el: HTMLElement): Timing {
   const start = Number.parseFloat(el.style.animationDelay)
   return { start, end: start + Number.parseFloat(el.style.animationDuration) }
+}
+
+/** Read a window a page sets as custom properties, which its descendants and pseudo-elements inherit. */
+function windowOf(el: HTMLElement, delay: string, duration: string): Timing {
+  const start = Number.parseFloat(el.style.getPropertyValue(delay))
+  return { start, end: start + Number.parseFloat(el.style.getPropertyValue(duration)) }
+}
+
+const strokeWindow = (layer: HTMLElement): Timing => windowOf(layer, '--dsh-stroke-delay', '--dsh-stroke-duration')
+const keystroke = (letter: HTMLElement): Timing => windowOf(letter, '--dsh-letter-delay', '--dsh-letter-step')
+
+type Point = readonly [number, number]
+
+/** Convert a PortalMark frame point (160–864) to percent of the 96px mark box, to two decimals. */
+function framePoint([x, y]: Point): Point {
+  return [Math.round((x - 160) / 7.04 * 100) / 100, Math.round((y - 160) / 7.04 * 100) / 100]
+}
+
+/**
+ * Recover one laid-out stroke's endpoints and thickness from the fixed
+ * position, length, and rotation of its outer element, and the cap the
+ * drawn inner element extends past each endpoint. The mark box is square,
+ * so left, top, and width percentages share one unit.
+ */
+function strokeGeometry(edge: HTMLElement): { from: Point; to: Point; width: string; caps: string[] } {
+  const left = Number.parseFloat(edge.style.left)
+  const top = Number.parseFloat(edge.style.top)
+  const length = Number.parseFloat(edge.style.width)
+  const angle = Number.parseFloat(/rotate\((.+)rad\)/.exec(edge.style.transform)![1]!)
+  const round = (value: number): number => Math.round(value * 100) / 100
+  return {
+    from: [round(left), round(top)],
+    to: [round(left + length * Math.cos(angle)), round(top + length * Math.sin(angle))],
+    width: edge.style.height,
+    caps: [(edge.firstElementChild as HTMLElement).style.marginLeft, (edge.firstElementChild as HTMLElement).style.marginRight],
+  }
+}
+
+const OUTER: readonly Point[] = [[512, 172], [806.4, 342], [806.4, 682], [512, 852], [217.6, 682], [217.6, 342]]
+const INNER: readonly Point[] = [[512, 369.2], [635.6, 440.6], [635.6, 583.4], [512, 654.8], [388.4, 583.4], [388.4, 440.6]]
+
+/** Each side of a closed cell as two halves drawn from its vertices to its midpoint. */
+function halves(cell: readonly Point[]): Array<[Point, Point]> {
+  return cell.flatMap((vertex, index): Array<[Point, Point]> => {
+    const next = cell[(index + 1) % cell.length]!
+    const midpoint: Point = [(vertex[0] + next[0]) / 2, (vertex[1] + next[1]) / 2]
+    return [[vertex, midpoint], [next, midpoint]]
+  })
 }
 
 /** Report one controllable brand animation, as a host with Web Animations would. */
@@ -76,98 +126,76 @@ describe('BootPage', () => {
   it('draws the brand before any plugin state arrives', () => {
     const { el } = mount()
     expect(el.firstElementChild?.getAttribute('data-dsh-boot')).toBe('')
-    expect(el.querySelector('svg')?.getAttribute('viewBox')).toBe('160 160 704 704')
+    expect(el.querySelector(`.${css.mark!}`)?.getAttribute('aria-hidden')).toBe('true')
     expect(el.textContent).toContain('PORTAL')
     expect(el.textContent).toContain('HARNESS')
     expect(el.querySelector('[role="img"]')?.getAttribute('aria-label')).toBe('Portal Harness')
   })
 
-  it('opens the mark as three stacked stage layers, the outer one settling onto the spokes', () => {
+  it('draws the mark from the centre outward, each stroke continuing where the last stage ended', () => {
     const { el } = mount()
     const mark = el.querySelector(`.${css.mark!}`)!
-    const stages = [...mark.children] as SVGElement[]
-    // Each stage is an outer <svg>, the element Chromium can composite.
-    expect(stages.map(stage => stage.tagName)).toEqual(['svg', 'svg', 'svg'])
-    expect(stages.every(stage => stage.classList.contains(css.stage!))).toBe(true)
-    expect(stages.map(stage => stage.getAttribute('viewBox'))).toEqual(Array(3).fill('160 160 704 704'))
-    // Spokes, the inner cell, then the six lifts with the outer cell they join.
-    const sixLines = Array<string>(6).fill('line')
-    expect(stages.map(stage => [...stage.children].map(part => part.tagName)))
-      .toEqual([sixLines, ['polygon'], [...sixLines, 'polygon']])
-    expect(stages.map(scheduled)).toEqual([
-      { start: 240, end: 960 }, { start: 420, end: 1140 }, { start: 600, end: 1320 },
+    const layers = [...mark.children] as HTMLElement[]
+    expect(layers.every(layer => layer.classList.contains(css.stage!))).toBe(true)
+    const geometry = layers.map(layer => [...layer.children].map((edge) => {
+      // The outer element holds the fixed placement; only the inner one animates.
+      expect(edge.classList.contains(css.edge!)).toBe(true)
+      expect(edge.firstElementChild?.classList.contains(css.stroke!)).toBe(true)
+      return strokeGeometry(edge as HTMLElement)
+    }))
+    // Every stroke reaches half its thickness past both endpoints, as SVG
+    // round caps do, so the two halves of a side overlap at its midpoint.
+    const drawn = (strokes: Array<[Point, Point]>, width: string, cap: string) =>
+      strokes.map(([from, to]) => ({ from: framePoint(from), to: framePoint(to), width, caps: [cap, cap] }))
+    expect(geometry).toEqual([
+      // Spokes from the centre to the inner vertices, the inner cell, the
+      // lifts from the inner to the outer vertices, then the outer cell.
+      drawn(INNER.map(vertex => [[512, 512], vertex]), '1.9px', '-0.95px'),
+      drawn(halves(INNER), '1.9px', '-0.95px'),
+      drawn(INNER.map((vertex, index) => [vertex, OUTER[index]!]), '1.9px', '-0.95px'),
+      drawn(halves(OUTER), '2.25px', '-1.125px'),
     ])
-    // The outer cell's corners are the spoke tips, so it settles inward onto
-    // them; the spokes and inner cell open outward from the centre.
-    expect(stages.map(stage => stage.classList.contains(css.stageSettle!))).toEqual([false, false, true])
-    // Stage translucency rides on stroke-opacity, which the reveal keyframe's
-    // own opacity would otherwise overwrite.
-    expect(stages.some(stage => stage.getAttribute('opacity') !== null)).toBe(false)
-    expect(mark.getAttribute('aria-hidden')).toBe('true')
+    // Each stage starts as the one before it finishes.
+    expect(layers.map(strokeWindow)).toEqual([
+      { start: 120, end: 600 }, { start: 600, end: 1000 }, { start: 1000, end: 1560 }, { start: 1560, end: 2100 },
+    ])
   })
 
-  it('schedules the lettering in the stylesheet rather than on main-thread timers', () => {
+  it('types the wordmark, then the nameplate, one glyph per keystroke in the stylesheet', () => {
     const { el } = mount()
-    const letters = [...el.querySelectorAll<HTMLElement>(`.${css.letter!}`)]
-    expect(letters.map(letter => letter.textContent).join('')).toBe('PORTAL')
-    expect(letters.map(letter => letter.style.animationDelay))
-      .toEqual(['1460ms', '1580ms', '1700ms', '1820ms', '1940ms', '2060ms'])
-    expect(letters.every(letter => letter.style.animationDuration === '420ms')).toBe(true)
-    // The caret lasts until the last letter is in place.
-    expect(scheduled(el.querySelector<HTMLElement>(`.${css.caret!}`)!)).toEqual({ start: 1160, end: 2480 })
-    expect(scheduled(el.querySelector<HTMLElement>(`.${css.plate!}`)!)).toEqual({ start: 2420, end: 2980 })
+    const [word, plate] = [...el.querySelector('[role="img"]')!.lastElementChild!.children] as HTMLElement[]
+    const typed = (parent: HTMLElement) => [...parent.children].map(letter => ({
+      glyph: letter.textContent,
+      letter: letter.classList.contains(css.letter!),
+      ...keystroke(letter as HTMLElement),
+    }))
+    const keystrokes = (text: string, start: number, step: number) => Array.from(text, (glyph, index) => ({
+      glyph, letter: true, start: start + index * step, end: start + (index + 1) * step,
+    }))
+    expect(word?.classList.contains(css.word!)).toBe(true)
+    expect(typed(word!)).toEqual(keystrokes('PORTAL', 2400, 110))
+    expect(plate?.classList.contains(css.plate!)).toBe(true)
+    expect(scheduled(plate!)).toEqual({ start: 3160, end: 3340 })
+    expect(typed(plate!)).toEqual(keystrokes('HARNESS', 3280, 85))
     // Only the status reveal waits on a timer; no step of the brand does.
     expect(vi.getTimerCount()).toBe(1)
   })
 
-  it('carries the caret from before the first letter past each letter as it appears', () => {
-    // Lay the row out as a browser would: letter i spans [10i, 10i + 8], and
-    // the 2px caret sits 4px past the last letter.
-    vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockImplementation(function (this: HTMLElement): DOMRect {
-      const caret = this.classList.contains(css.caret!)
-      const left = caret ? 62 : 10 * [...this.parentElement?.children ?? []].indexOf(this)
-      const width = caret ? 2 : 8
-      return { x: left, y: 0, left, top: 0, width, height: 14, right: left + width, bottom: 14, toJSON: () => ({}) }
-    })
-    const animate = vi.fn<HTMLElement['animate']>()
-    HTMLElement.prototype.animate = animate
-    try {
-      mount()
-    } finally {
-      Reflect.deleteProperty(HTMLElement.prototype, 'animate')
-      vi.restoreAllMocks()
-    }
-    expect(animate).toHaveBeenCalledOnce()
-    const [keyframes, options] = animate.mock.calls[0]!
-    const frames = keyframes as Keyframe[]
-    // Waits before P (0 - 4 - 2 = -6px, relative to its 62px home), then lands
-    // 4px past each letter, ending at home.
-    expect([...new Set(frames.map(frame => frame.transform))]).toEqual([
-      'translateX(-68px)', 'translateX(-50px)', 'translateX(-40px)', 'translateX(-30px)',
-      'translateX(-20px)', 'translateX(-10px)', 'translateX(0px)',
-    ])
-    // Each hop starts as its letter appears: P at 1460ms, 300ms after the caret.
-    expect(options).toEqual({ delay: 1160, duration: 960, fill: 'both' })
-    expect(frames[1]?.offset).toBeCloseTo(300 / 960)
-    expect(frames[2]?.offset).toBeCloseTo(360 / 960)
-    expect(frames.at(-1)?.offset).toBeCloseTo(1)
-  })
-
   it('lands each brand phase before the next begins, then holds the complete lockup', async () => {
     const { el, page } = mount()
-    const stages = [...el.querySelectorAll<SVGElement>(`.${css.stage!}`)].map(scheduled)
-    const letters = [...el.querySelectorAll<HTMLElement>(`.${css.letter!}`)].map(scheduled)
-    const caret = scheduled(el.querySelector<HTMLElement>(`.${css.caret!}`)!)
-    const plate = scheduled(el.querySelector<HTMLElement>(`.${css.plate!}`)!)
-    const first = letters[0]!
-    const last = letters.at(-1)!
-    // Typing starts only after the last mark stage has finished its reveal.
-    expect(first.start).toBeGreaterThanOrEqual(Math.max(...stages.map(stage => stage.end)))
-    // The nameplate follows the last letter no sooner than another letter
-    // would, and it settles last.
-    expect(plate.start).toBeGreaterThanOrEqual(last.start + letters[1]!.start - first.start)
-    const lockup = Math.max(...[...stages, ...letters, caret, plate].map(step => step.end))
-    expect(plate.end).toBe(lockup)
+    const mark = [...el.querySelectorAll<HTMLElement>(`.${css.stage!}`)].map(strokeWindow)
+    const [word, nameplate] = [...el.querySelector('[role="img"]')!.lastElementChild!.children] as HTMLElement[]
+    const wordLetters = [...word!.children].map(letter => keystroke(letter as HTMLElement))
+    const plateLetters = [...nameplate!.children].map(letter => keystroke(letter as HTMLElement))
+    const plate = scheduled(nameplate!)
+    const markEnd = Math.max(...mark.map(stage => stage.end))
+    // The finished mark holds for a beat before the first keystroke.
+    expect(wordLetters[0]!.start).toBeGreaterThan(markEnd)
+    // The nameplate arrives after the wordmark's last keystroke and types on itself.
+    expect(plate.start).toBeGreaterThanOrEqual(wordLetters.at(-1)!.end)
+    expect(plateLetters[0]!.start).toBeGreaterThanOrEqual(plate.start)
+    const lockup = Math.max(...[...mark, ...wordLetters, plate, ...plateLetters].map(step => step.end))
+    expect(plateLetters.at(-1)!.end).toBe(lockup)
     // The progress status never interrupts the sequence.
     await vi.advanceTimersByTimeAsync(lockup)
     expect(el.querySelector('[data-dsh-boot-spinner]')).toBeNull()

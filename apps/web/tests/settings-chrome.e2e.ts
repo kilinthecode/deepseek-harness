@@ -335,14 +335,17 @@ describe('web e2e: settings modal and General preferences', () => {
         const boot = element.closest('[data-dsh-boot]')
         if (boot === null) throw new Error('loading hint is detached from the boot page')
         // The hint joins the card after the brand sequence ends, so every mark
-        // stage layer and wordmark letter has finished its reveal; a brand that
-        // was re-attached replays from opacity 0 instead.
+        // stroke (mark > stage > edge > stroke) is fully drawn and every letter
+        // of both words is typed; a brand that was re-attached replays from an
+        // undrawn mark and hidden letters instead.
+        const lengths = (parts: Iterable<Element>): number[] =>
+          [...parts].map(part => new DOMMatrix(getComputedStyle(part).transform).a)
         const opacities = (parts: Iterable<Element>): string[] => [...parts].map(part => getComputedStyle(part).opacity)
         return {
           attr: document.body.hasAttribute('data-ds-dark-theme'),
           background: getComputedStyle(boot).backgroundColor,
           colorScheme: getComputedStyle(document.documentElement).colorScheme,
-          stages: opacities(boot.querySelectorAll('svg')),
+          strokes: lengths(boot.querySelectorAll('[aria-hidden="true"] > div > div > div')),
           letters: opacities([...boot.querySelectorAll('span')].filter(part => part.textContent !== '')),
         }
       })
@@ -350,8 +353,8 @@ describe('web e2e: settings modal and General preferences', () => {
         attr: true,
         background: 'rgb(21, 21, 23)',
         colorScheme: 'dark',
-        stages: Array<string>(3).fill('1'),
-        letters: Array<string>(6).fill('1'),
+        strokes: Array<number>(36).fill(1),
+        letters: Array<string>(13).fill('1'),
       })
     } finally {
       releaseBundles()

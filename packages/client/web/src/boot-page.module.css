@@ -7,8 +7,6 @@
   --dsh-boot-label-inverted: #f9fafb;
   --dsh-boot-border: rgb(0 0 0 / 10%);
   --dsh-boot-brand: #0f1115;
-  /* One easing for every arrival: a long, soft settle into place. */
-  --dsh-boot-ease-out: cubic-bezier(0.16, 1, 0.3, 1);
 
   /* Fixed overlay: the mounted application arrives beneath this page while
      the brand moment runs, and the leave fade reveals it. It starts below the
@@ -18,7 +16,7 @@
   position: fixed;
   inset: var(--dsh-windows-titlebar-height, 0) 0 0;
   /* Above every application layer (menus, toasts, and tooltips use 1100) for
-     the page's lifetime (~4s at boot), and below the WebWorker preview's
+     the page's lifetime (~4.5s at boot), and below the WebWorker preview's
      pre-boot source chooser (1200), which must stay usable over this page. */
   z-index: 1150;
   display: grid;
@@ -27,6 +25,8 @@
   /* Composited from the first frame, so the leave fade starts without
      re-rastering the overlay while the application mounts beneath it. */
   will-change: opacity;
+  /* Plugin-delivered fonts must not change the lettering's width mid-typing. */
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
 }
 
 :global(body[data-ds-dark-theme]) .boot {
@@ -52,10 +52,10 @@
   display: flex;
   flex-direction: column;
   align-items: center;
-  gap: 20px;
+  gap: 18px;
 }
 
-/* The three stage layers stack over one 96px box. */
+/* The four stage layers stack over one 96px box. */
 .mark {
   position: relative;
   width: 96px;
@@ -63,28 +63,30 @@
   color: var(--dsw-alias-label-primary, var(--dsh-boot-label-primary));
 }
 
-/* Each stage opens from the mark's centre to full size as it fades in. Only
-   opacity and transform animate, and each stage is an outer <svg>, so the
-   compositor runs the reveal while plugins load on the main thread. Stage
-   translucency rides on `stroke-opacity`, which this keyframe leaves alone.
-   The stages, letters, caret, and plate take their delay and duration
-   inline from the brand schedule in boot-page.ts. */
+/* Each stage layer carries its strokes' delay and duration from the brand
+   schedule in boot-page.ts. */
 .stage {
   position: absolute;
   inset: 0;
-  width: 100%;
-  height: 100%;
-  overflow: visible;
-  opacity: 0;
-  animation: dsh-boot-stage-in var(--dsh-boot-ease-out) both;
 }
 
-/* The outer cell's corners are the spoke tips. Growing from the centre, it
-   would sit inside the already full-length spokes, whose tips would poke
-   past it; settling inward from just outside keeps every corner at or
-   beyond its spoke tip. */
-.stageSettle {
-  animation-name: dsh-boot-stage-settle;
+/* Position, rotation, and thickness of one stroke, fixed for the whole
+   drawing; the origin is the stroke's first endpoint. */
+.edge {
+  position: absolute;
+  transform-origin: 0 50%;
+}
+
+/* A stroke advances only along its own axis, from the first endpoint to the
+   second, on `transform` alone so the compositor draws it. Its width is left
+   to the negative inline margins that extend it into round end caps. */
+.stroke {
+  height: 100%;
+  border-radius: 999px;
+  corner-shape: round;
+  background: currentColor;
+  transform-origin: left center;
+  animation: dsh-boot-draw var(--dsh-stroke-duration) cubic-bezier(0.45, 0, 0.25, 1) var(--dsh-stroke-delay) both;
 }
 
 .row {
@@ -96,17 +98,17 @@
 .word {
   display: inline-flex;
   align-items: center;
-  gap: 0.22em;
   font-size: 15px;
   line-height: 24px;
   font-weight: 600;
-  letter-spacing: 0.2em;
+  letter-spacing: 0.24em;
   color: var(--dsw-alias-label-primary, var(--dsh-boot-label-primary));
 }
 
 /* The nameplate matches the sidebar artwork: knocked-out glyphs on a filled
    plate. Tracking adds a trailing gap after the last glyph, so the right
-   padding is pulled in to keep the word centred between the rounded ends. */
+   padding is pulled in to keep the word centred between the rounded ends.
+   Its delay and duration come from the brand schedule in boot-page.ts. */
 .plate {
   display: inline-flex;
   align-items: center;
@@ -120,26 +122,29 @@
   font-weight: 700;
   letter-spacing: 0.16em;
   opacity: 0;
-  animation: dsh-boot-plate-in var(--dsh-boot-ease-out) both;
+  animation: dsh-boot-fade-in ease both;
 }
 
-/* Letters exist from mount, so the row never reflows as they arrive; each
-   one rises into place on opacity and transform alone. */
+/* Whole glyphs appear in place at their keystroke; hidden glyphs still
+   reserve their width. */
 .letter {
+  position: relative;
+  display: inline-block;
   opacity: 0;
-  animation: dsh-boot-letter-in var(--dsh-boot-ease-out) both;
+  animation: dsh-boot-fade-in var(--dsh-letter-step) steps(1, start) var(--dsh-letter-delay) both;
 }
 
-/* The caret fades in before the first letter, holds steady while the word
-   types, and fades out as the last letter settles, just before the
-   nameplate lands; one continuous opacity animation, no stepped blink. */
-.caret {
-  width: 2px;
-  height: 14px;
-  border-radius: 1px;
-  background-color: var(--dsw-alias-label-secondary, var(--dsh-boot-label-secondary));
+/* The caret stands after the glyph just typed for exactly one keystroke. */
+.letter::after {
+  content: '';
+  position: absolute;
+  right: 0;
+  top: 20%;
+  width: 1px;
+  height: 60%;
+  background: currentColor;
   opacity: 0;
-  animation: dsh-boot-caret ease-in-out both;
+  animation: dsh-boot-caret var(--dsh-letter-step) steps(1, end) var(--dsh-letter-delay);
 }
 
 /* Admitted by the page only once boot outlasts the brand moment. It hangs
@@ -154,7 +159,7 @@
   gap: 12px;
   margin-top: 28px;
   translate: -50% 0;
-  animation: dsh-boot-status-in 400ms ease both;
+  animation: dsh-boot-fade-in 400ms ease both;
 }
 
 .hint {
@@ -164,7 +169,7 @@
   color: var(--dsw-alias-label-tertiary, var(--dsh-boot-label-tertiary));
 }
 
-.static .stage,
+.static .stroke,
 .static .letter,
 .static .plate,
 .static .status {
@@ -172,59 +177,30 @@
   opacity: 1;
 }
 
-.static .caret {
+.static .letter::after {
   animation: none;
 }
 
 .leaving {
   opacity: 0;
-  transition: opacity 560ms cubic-bezier(0.4, 0, 0.2, 1);
+  transition: opacity 400ms cubic-bezier(0.4, 0, 0.2, 1);
   /* The application beneath becomes interactive as the fade begins. */
   pointer-events: none;
 }
 
-/* The brand dissolves ahead of the page while drifting gently forward on the
-   same easing, so the handoff reads as the page opening onto the ready
-   application rather than a cut; the brand is mostly gone before the
-   application shows through. */
-.leaving .card {
-  opacity: 0;
-  transform: scale(1.03);
-  transition:
-    opacity 320ms cubic-bezier(0.4, 0, 0.2, 1),
-    transform 560ms cubic-bezier(0.4, 0, 0.2, 1);
+@keyframes dsh-boot-draw {
+  from { transform: scaleX(0); }
+  to { transform: scaleX(1); }
 }
 
-@keyframes dsh-boot-stage-in {
-  from { opacity: 0; transform: scale(0.6); }
-  to { opacity: 1; transform: none; }
-}
-
-@keyframes dsh-boot-stage-settle {
-  from { opacity: 0; transform: scale(1.06); }
-  to { opacity: 1; transform: none; }
-}
-
-@keyframes dsh-boot-letter-in {
-  from { opacity: 0; transform: translateY(6px); }
-  to { opacity: 1; transform: none; }
-}
-
-@keyframes dsh-boot-plate-in {
-  from { opacity: 0; transform: translateX(-4px) scale(0.94); }
-  to { opacity: 1; transform: none; }
-}
-
-@keyframes dsh-boot-status-in {
+@keyframes dsh-boot-fade-in {
   from { opacity: 0; }
   to { opacity: 1; }
 }
 
 @keyframes dsh-boot-caret {
-  0% { opacity: 0; }
-  11% { opacity: 1; }
-  86% { opacity: 1; }
-  100% { opacity: 0; }
+  from { opacity: 1; }
+  to { opacity: 0; }
 }
 
 /* Registering the arc angle makes it transitionable, so each loader entry

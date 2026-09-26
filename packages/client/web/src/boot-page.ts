@@ -6,11 +6,9 @@
 import type { LoaderEntryState } from './loader-status.ts'
 import stylesheet from './boot-page.module.css'
 
-const SVG_NS = 'http://www.w3.org/2000/svg' as const
-
 type BootClass =
-  | 'boot' | 'static' | 'leaving' | 'card' | 'brand' | 'mark' | 'stage' | 'stageSettle' | 'row' | 'word'
-  | 'letter' | 'caret' | 'plate' | 'status' | 'spinner' | 'hint' | 'failed' | 'failedTitle' | 'failedItem'
+  | 'boot' | 'static' | 'leaving' | 'card' | 'brand' | 'mark' | 'stage' | 'edge' | 'stroke' | 'row' | 'word'
+  | 'letter' | 'plate' | 'status' | 'spinner' | 'hint' | 'failed' | 'failedTitle' | 'failedItem'
 
 /** Generated class names; the stylesheet beside this module defines every class it reads. */
 const css = stylesheet as Readonly<Record<BootClass, string>>
@@ -19,8 +17,11 @@ const css = stylesheet as Readonly<Record<BootClass, string>>
  * Tesseract geometry in the PortalMark 160–864 frame, mirrored here because
  * the boot page mounts before the UI package tree and stays dependency-free.
  */
-const CENTER = 512
-const OUTER_VERTICES: ReadonlyArray<readonly [number, number]> = [
+type Vertex = readonly [number, number]
+const FRAME_ORIGIN = 160
+const FRAME_SIZE = 704
+const CENTER: Vertex = [512, 512]
+const OUTER_VERTICES: ReadonlyArray<Vertex> = [
   [512, 172],
   [806.4, 342],
   [806.4, 682],
@@ -28,7 +29,7 @@ const OUTER_VERTICES: ReadonlyArray<readonly [number, number]> = [
   [217.6, 682],
   [217.6, 342],
 ]
-const INNER_VERTICES: ReadonlyArray<readonly [number, number]> = [
+const INNER_VERTICES: ReadonlyArray<Vertex> = [
   [512, 369.2],
   [635.6, 440.6],
   [635.6, 583.4],
@@ -36,61 +37,68 @@ const INNER_VERTICES: ReadonlyArray<readonly [number, number]> = [
   [388.4, 583.4],
   [388.4, 440.6],
 ]
-const LIFT_EDGES: ReadonlyArray<readonly [number, number, number, number]> = [
-  [512, 172, 512, 369.2],
-  [806.4, 342, 635.6, 440.6],
-  [806.4, 682, 635.6, 583.4],
-  [512, 852, 512, 654.8],
-  [217.6, 682, 388.4, 583.4],
-  [217.6, 342, 388.4, 440.6],
-]
+/** Stroke thickness in px; the outer cell is heavier than the lines inside it. */
+const STROKE_PX = 1.9
+const OUTER_STROKE_PX = 2.25
 
-/** Startup lettering: the typed wordmark and the nameplate that lands beside it. */
-const WORD = 'PORTAL'
-const PLATE = 'HARNESS'
+/** One line drawn from its first endpoint toward its second. */
+type Stroke = readonly [from: Vertex, to: Vertex, width: number]
+
+/** Draw each side of a closed cell as two halves meeting at its midpoint. */
+function sides(vertices: ReadonlyArray<Vertex>, width: number): Stroke[] {
+  return vertices.flatMap((vertex, index) => {
+    const next = vertices[(index + 1) % vertices.length] ?? vertex
+    const midpoint: Vertex = [(vertex[0] + next[0]) / 2, (vertex[1] + next[1]) / 2]
+    return [[vertex, midpoint, width], [next, midpoint, width]] as const
+  })
+}
 
 /**
  * Brand schedule in ms from the first animation frame. Every step is a CSS
  * animation whose delay and duration are set inline from these values, so
  * the compositor runs the whole sequence and plugin loading on the main
- * thread cannot delay or bunch its steps. Each phase starts once the one
- * before it is mostly in place. The lead-in keeps the first frames still
- * while the document finishes its first paint; the spokes and inner cell then
- * open outward from the centre, and the outer cell settles onto the spoke
- * tips from just outside them, so the spokes never cross it.
+ * thread cannot delay or bunch its steps. The mark draws alone from the
+ * centre outward: spokes to the inner cell, the inner cell, lifts to the
+ * outer vertices, then the outer cell, finishing at 2100ms.
  */
-const STAGE_DELAY_MS = [240, 420, 600] as const
-const STAGE_MS = 720
-/** The caret appears once the mark has visibly settled and waits before the first letter. */
-const CARET_DELAY_MS = 1160
-/** Typing starts once the last mark stage has finished its reveal. */
-const LETTER_DELAY_MS = 1460
-/** One letter rises at a time: each is about 85% in place when the next starts. */
-const LETTER_STEP_MS = 120
-const LETTER_MS = 420
-/** Time the caret takes to hop past a letter as that letter appears. */
-const CARET_HOP_MS = 60
-/**
- * The caret lasts until the last letter is in place; its keyframes fade it
- * in before the first letter and out as the last one settles, just before
- * the nameplate lands.
- */
-const CARET_MS = LETTER_DELAY_MS + (WORD.length - 1) * LETTER_STEP_MS + LETTER_MS - CARET_DELAY_MS
-/** Easing shared with every arrival in the stylesheet (`--dsh-boot-ease-out`). */
-const EASE_OUT = 'cubic-bezier(0.16, 1, 0.3, 1)'
-/** The nameplate lands last; its end (~2980ms) completes the brand sequence. */
-const PLATE_DELAY_MS = 2420
-const PLATE_MS = 560
+const STAGES: ReadonlyArray<{ delay: number; duration: number; strokes: readonly Stroke[] }> = [
+  { delay: 120, duration: 480, strokes: INNER_VERTICES.map(vertex => [CENTER, vertex, STROKE_PX] as const) },
+  { delay: 600, duration: 400, strokes: sides(INNER_VERTICES, STROKE_PX) },
+  {
+    delay: 1000,
+    duration: 560,
+    strokes: INNER_VERTICES.map((vertex, index) => [vertex, OUTER_VERTICES[index] ?? vertex, STROKE_PX] as const),
+  },
+  { delay: 1560, duration: 540, strokes: sides(OUTER_VERTICES, OUTER_STROKE_PX) },
+]
+
+/** Startup lettering: both words type one glyph per keystroke in their final positions. */
+const WORD = 'PORTAL'
+const PLATE = 'HARNESS'
+/** The wordmark types after a beat on the finished mark. */
+const WORD_START_MS = 2400
+const WORD_STEP_MS = 110
+/** The nameplate fades in after the wordmark's last keystroke, then its lettering types. */
+const PLATE_DELAY_MS = 3160
+const PLATE_MS = 180
+const PLATE_START_MS = 3280
+const PLATE_STEP_MS = 85
+/** The nameplate's last keystroke ends at 3875ms, completing the brand sequence. */
+const BRAND_END_MS = PLATE_START_MS + PLATE.length * PLATE_STEP_MS
 /** Rest between the settled brand and the leave fade. */
-const SETTLE_REST_MS = 360
+const SETTLE_REST_MS = 220
 /** Hold from mount used where the host cannot report animation progress. */
-const FALLBACK_HOLD_MS = PLATE_DELAY_MS + PLATE_MS + SETTLE_REST_MS
+const FALLBACK_HOLD_MS = BRAND_END_MS + SETTLE_REST_MS
 /** Longest wait for the brand animations to finish once the application is ready. */
 const MAX_SETTLE_MS = 4800
-/** Leave fade, matching the `.leaving` transitions in the stylesheet. */
-const LEAVE_MS = 560
-/** Delay after which a boot still running earns the progress spinner and hint; later than the brand sequence. */
-const STATUS_MS = 3400
+/** Leave fade, matching the `.leaving` transition in the stylesheet. */
+const LEAVE_MS = 400
+/**
+ * Delay after which a boot still running earns the progress spinner and hint.
+ * It trails the brand sequence far enough that a late first frame still
+ * finishes the typing before the status appears.
+ */
+const STATUS_MS = 4300
 /**
  * Status delay under reduced motion, where the brand is complete from mount:
  * a slow boot reports progress promptly, and a fast one still shows no spinner.
@@ -110,51 +118,53 @@ function div(className: string, text?: string): HTMLDivElement {
   return el
 }
 
-/** Create an SVG element with the given attributes. */
-function svgElement<K extends keyof SVGElementTagNameMap>(tag: K, attributes: Record<string, string | number>): SVGElementTagNameMap[K] {
-  const el = document.createElementNS(SVG_NS, tag)
-  for (const [name, value] of Object.entries(attributes)) el.setAttribute(name, String(value))
-  return el
+/** Convert one PortalMark frame coordinate or length to a percentage of the mark box. */
+function percent(value: number): string {
+  return `${String(value / FRAME_SIZE * 100)}%`
 }
 
 /**
- * Place one element's stylesheet animation on the brand schedule.
- * @param el - Element whose class names the animation.
- * @param delay - Start in ms from the first animation frame.
- * @param duration - Animation length in ms.
+ * Lay out one stroke at its fixed position, rotation, and thickness. The
+ * outer element never moves; the inner element grows from the first endpoint
+ * along that axis on `transform` alone, so the drawing composites while
+ * plugins load on the main thread. The inner element reaches half its
+ * thickness past both endpoints, as the mark's SVG round line caps do, so two
+ * halves meeting mid-side overlap instead of pinching to a gap.
  */
-function schedule(el: HTMLElement | SVGElement, delay: number, duration: number): void {
-  el.style.animationDelay = `${String(delay)}ms`
-  el.style.animationDuration = `${String(duration)}ms`
+function strokeElement([from, to, width]: Stroke): HTMLDivElement {
+  const dx = to[0] - from[0]
+  const dy = to[1] - from[1]
+  const edge = div(css.edge)
+  edge.style.left = percent(from[0] - FRAME_ORIGIN)
+  edge.style.top = percent(from[1] - FRAME_ORIGIN)
+  edge.style.width = percent(Math.hypot(dx, dy))
+  edge.style.height = `${String(width)}px`
+  edge.style.marginTop = `${String(-width / 2)}px`
+  edge.style.transform = `rotate(${String(Math.atan2(dy, dx))}rad)`
+  const line = div(css.stroke)
+  line.style.marginLeft = `${String(-width / 2)}px`
+  line.style.marginRight = `${String(-width / 2)}px`
+  edge.append(line)
+  return edge
 }
 
 /**
- * Create one mark stage as its own `<svg>` layer. Chromium composites
- * opacity and transform animations on an outer `<svg>` element but runs them
- * on the main thread for shapes inside one, so each stage is a separate
- * layer over the same viewBox.
- * @param delay - Reveal start in ms from the first animation frame.
- * @param parts - Stroked shapes drawn by this stage.
- * @param settles - Whether the stage settles inward onto the mark instead of opening from its centre.
- * @returns the stage layer, hidden until its delay passes.
+ * Lay out one word whose glyphs appear one keystroke at a time. Hidden glyphs
+ * keep their width, so the row never reflows. Each keystroke window is set as
+ * custom properties because the caret that follows the glyph is its `::after`
+ * pseudo-element, which inline styles cannot reach.
  */
-function stage(delay: number, parts: readonly SVGElement[], settles = false): SVGSVGElement {
-  const layer = svgElement('svg', {
-    viewBox: '160 160 704 704',
-    fill: 'none',
-    stroke: 'currentColor',
-    'stroke-linecap': 'round',
-    'stroke-linejoin': 'round',
-  })
-  layer.setAttribute('class', settles ? `${css.stage} ${css.stageSettle}` : css.stage)
-  schedule(layer, delay, STAGE_MS)
-  layer.append(...parts)
-  return layer
-}
-
-/** Render one polygon's vertices as an SVG `points` list. */
-function points(vertices: ReadonlyArray<readonly [number, number]>): string {
-  return vertices.map(([x, y]) => `${String(x)},${String(y)}`).join(' ')
+function typedWord(className: string, text: string, start: number, step: number): HTMLDivElement {
+  const word = div(className)
+  for (const [index, glyph] of Array.from(text).entries()) {
+    const letter = document.createElement('span')
+    letter.className = css.letter
+    letter.textContent = glyph
+    letter.style.setProperty('--dsh-letter-delay', `${String(start + index * step)}ms`)
+    letter.style.setProperty('--dsh-letter-step', `${String(step)}ms`)
+    word.append(letter)
+  }
+  return word
 }
 
 /** Kernel-owned page mounted below the application's root element. */
@@ -188,8 +198,7 @@ export class BootPage {
     this.root.dataset.dshBoot = ''
     if (this.reduced) this.root.classList.add(css.static)
     this.card = div(css.card)
-    const { brand, letters, caret } = this.buildBrand()
-    this.brand = brand
+    this.brand = this.buildBrand()
     this.status = div(css.status)
     this.spinner = div(css.spinner)
     this.spinner.dataset.dshBootSpinner = ''
@@ -198,7 +207,6 @@ export class BootPage {
     this.card.append(this.brand)
     this.root.append(this.card)
     container.append(this.root)
-    if (!this.reduced) this.followTyping(letters, caret)
     this.updateProgress()
     // A boot that outlasts the brand moment owes the reader progress; one that
     // finishes inside it never shows a spinner at all.
@@ -297,7 +305,7 @@ export class BootPage {
   }
 
   /** Build the tesseract mark, the typed wordmark, and the nameplate beside it. */
-  private buildBrand(): { brand: HTMLDivElement; letters: HTMLSpanElement[]; caret: HTMLSpanElement } {
+  private buildBrand(): HTMLDivElement {
     const brand = div(css.brand)
     // The lettering is brand artwork drawn glyph by glyph, so the row carries
     // one name rather than letting a reader spell it out.
@@ -305,94 +313,25 @@ export class BootPage {
     brand.setAttribute('aria-label', 'Portal Harness')
     brand.append(this.buildMark())
     const row = div(css.row)
-    const word = div(css.word)
-    const letters = Array.from(WORD, (letter, i) => {
-      const span = document.createElement('span')
-      span.className = css.letter
-      span.textContent = letter
-      schedule(span, LETTER_DELAY_MS + i * LETTER_STEP_MS, LETTER_MS)
-      return span
-    })
-    const caret = document.createElement('span')
-    caret.className = css.caret
-    schedule(caret, CARET_DELAY_MS, CARET_MS)
-    word.append(...letters, caret)
-    const plate = div(css.plate, PLATE)
-    schedule(plate, PLATE_DELAY_MS, PLATE_MS)
-    row.append(word, plate)
+    const plate = typedWord(css.plate, PLATE, PLATE_START_MS, PLATE_STEP_MS)
+    plate.style.animationDelay = `${String(PLATE_DELAY_MS)}ms`
+    plate.style.animationDuration = `${String(PLATE_MS)}ms`
+    row.append(typedWord(css.word, WORD, WORD_START_MS, WORD_STEP_MS), plate)
     brand.append(row)
-    return { brand, letters, caret }
+    return brand
   }
 
-  /**
-   * Carry the caret along the typing: it waits before the first letter, then
-   * hops past each letter as that letter appears, ending in its laid-out place
-   * after the word. The hops animate `transform` alone, so they composite like
-   * the rest of the brand. Positions are measured once from the laid-out row;
-   * letters hold their space while hidden, so the measurements stay valid.
-   * Hosts without Web Animations leave the caret in its laid-out place.
-   * @param letters - Wordmark letters in typing order.
-   * @param caret - Caret laid out after the last letter.
-   */
-  private followTyping(letters: readonly HTMLSpanElement[], caret: HTMLSpanElement): void {
-    const first = letters[0]
-    const last = letters.at(-1)
-    if (typeof caret.animate !== 'function' || first === undefined || last === undefined) return
-    const home = caret.getBoundingClientRect()
-    // The caret sits `gap` past a letter's box, as it does after the last one.
-    const gap = home.left - last.getBoundingClientRect().right
-    const shift = (x: number): string => `translateX(${String(x - home.left)}px)`
-    const duration = LETTER_DELAY_MS + (letters.length - 1) * LETTER_STEP_MS + CARET_HOP_MS - CARET_DELAY_MS
-    const at = (ms: number): number => (ms - CARET_DELAY_MS) / duration
-    let from = shift(first.getBoundingClientRect().left - gap - home.width)
-    const keyframes: Keyframe[] = [{ offset: 0, transform: from }]
-    for (const [i, letter] of letters.entries()) {
-      const appears = LETTER_DELAY_MS + i * LETTER_STEP_MS
-      const to = shift(letter.getBoundingClientRect().right + gap)
-      keyframes.push(
-        { offset: at(appears), transform: from, easing: EASE_OUT },
-        { offset: at(appears + CARET_HOP_MS), transform: to },
-      )
-      from = to
-    }
-    caret.animate(keyframes, { delay: CARET_DELAY_MS, duration, fill: 'both' })
-  }
-
-  /** Build the mark as three stacked stage layers revealed from the centre outward. */
+  /** Build the mark as one layer per drawing stage over the same 96px box. */
   private buildMark(): HTMLDivElement {
     const mark = div(css.mark)
     mark.setAttribute('aria-hidden', 'true')
-    const spokes = OUTER_VERTICES.map(([x, y]) => svgElement('line', {
-      // One ray per outer vertex; the inner cell's spokes lie along these.
-      x1: CENTER, y1: CENTER, x2: x, y2: y,
-      'stroke-width': 1.9,
-      'stroke-opacity': 0.9,
-      'vector-effect': 'non-scaling-stroke',
-    }))
-    const inner = svgElement('polygon', {
-      points: points(INNER_VERTICES),
-      'stroke-width': 1.9,
-      'stroke-opacity': 0.9,
-      'vector-effect': 'non-scaling-stroke',
-    })
-    // Each lift lies along a spoke and adds no visible shape of its own, so
-    // the lifts open with the outer cell whose vertices they join.
-    const lifts = LIFT_EDGES.map(([x1, y1, x2, y2]) => svgElement('line', {
-      x1, y1, x2, y2,
-      'stroke-width': 1.5,
-      'stroke-opacity': 0.7,
-      'vector-effect': 'non-scaling-stroke',
-    }))
-    const outer = svgElement('polygon', {
-      points: points(OUTER_VERTICES),
-      'stroke-width': 2.25,
-      'vector-effect': 'non-scaling-stroke',
-    })
-    mark.append(
-      stage(STAGE_DELAY_MS[0], spokes),
-      stage(STAGE_DELAY_MS[1], [inner]),
-      stage(STAGE_DELAY_MS[2], [...lifts, outer], true),
-    )
+    for (const { delay, duration, strokes } of STAGES) {
+      const layer = div(css.stage)
+      layer.style.setProperty('--dsh-stroke-delay', `${String(delay)}ms`)
+      layer.style.setProperty('--dsh-stroke-duration', `${String(duration)}ms`)
+      layer.append(...strokes.map(strokeElement))
+      mark.append(layer)
+    }
     return mark
   }
 
