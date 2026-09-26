@@ -1,5 +1,5 @@
 ---
-description: "The memory group map: the durable cross-session memory store and its model-facing tools and catalog, for users and maintainers navigating the group."
+description: "The memory group map: the durable cross-session memory store, its model-facing tools and catalog, and a cache-parity background review, for users and maintainers navigating the group."
 kind: "package-group"
 ---
 
@@ -9,7 +9,7 @@ English | [中文](README.zh.md)
 
 ## Summary
 
-The memory group lets an agent keep facts across sessions: who the user is and how they like to work, feedback on how to do the work, durable facts about a project, and pointers to external resources. One package owns the store, one JSON document per memory under the harness home; the other gives the model three tools and a catalog of saved memories at the start of every session. Nothing here talks to a vendor memory service, needs an embedding model, or runs in the background.
+The memory group lets an agent keep facts across sessions: who the user is and how they like to work, feedback on how to do the work, durable facts about a project, and pointers to external resources. One package owns the store, one JSON document per memory under the harness home; one gives the model three tools and a snapshot of saved memories at conversation start and after compaction; the third starts a cache-parity background review on the base/TUI profile and Web `standard`, `cordis`, and `ptc` presets. Nothing here talks to a vendor memory service or needs an embedding model.
 
 ## Table of Contents
 
@@ -22,10 +22,13 @@ The memory group lets an agent keep facts across sessions: who the user is and h
 <a id="packages"></a>
 ## Packages
 
+The store and tools are joined by an unattended cache-parity review, enabled on the base/TUI composition and the Web `standard`, `cordis`, and `ptc` presets.
+
 | Package | Role | ctx key |
 |---|---|---|
 | [`memory`](memory/README.md) | Durable global and per-project memory records over the storage domain form: write, recall, forget, and the records visible from a working directory | `ctx.memory` |
 | [`tool-memory`](tool-memory/README.md) | Model tools `memory_write`, `memory_recall`, `memory_forget`, the injected memory catalog, and the prompt section that says when to remember | registers on `ctx.tools` |
+| [`memory-review`](memory-review/README.md) | Unattended cache-parity fork that may only add new memories; starts when the parent is idle after enough user-kind turns | registers on `ctx.sessionProjections` |
 
 -----
 

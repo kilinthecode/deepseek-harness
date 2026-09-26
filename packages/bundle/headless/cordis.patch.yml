@@ -32,3 +32,6 @@
 
 - id: hmr
   disabled: true
+
+- id: memory-review
+  disabled: true

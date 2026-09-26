@@ -2071,7 +2071,7 @@ export interface ReconnectConfig {
 ## `@deepseek-ai/dsh-memory`
 
 - `inject`: `storageDomain`
-- `source`: [`packages/memory/memory/src/index.ts:46`](../packages/memory/memory/src/index.ts)
+- `source`: [`packages/memory/memory/src/index.ts:50`](../packages/memory/memory/src/index.ts)
 
 ```ts config-catalog
 /** Store configuration. Invalid values fail plugin load. */
@@ -2091,12 +2091,38 @@ export interface Config {
   /**
    * Directory entries that identify a project root while walking upward from
    * the session working directory. Mirrors the `agent-instructions` default so
-   * both plugins agree on what the project is.
+   * both plugins agree on what the project is. Omitted in a composition, the
+   * schemastery field default is `['.git']`; an explicit empty list stays empty.
    */
   projectRootMarkers?: string[]
 }
 ```
 <!-- END GENERATED config-catalog:@deepseek-ai/dsh-memory -->
+
+<!-- BEGIN GENERATED config-catalog:@deepseek-ai/dsh-memory-review -->
+<a id="deepseek-aidsh-memory-review"></a>
+
+## `@deepseek-ai/dsh-memory-review`
+
+- `inject`: `memory` · `tools` · `subagents` · `sessionProjections` · `agents`
+- `source`: [`packages/memory/memory-review/src/index.ts:33`](../packages/memory/memory-review/src/index.ts)
+
+```ts config-catalog
+/** Review-interval configuration. Invalid values fail plugin load. */
+export interface Config {
+  /**
+   * User-kind parent messages between reviews. `0` disables reviews while the
+   * plugin stays mounted; a negative value fails load.
+   */
+  reviewEveryUserTurns: number
+  /**
+   * Inclusive cap on the review child's `agent/pre-step` `step`. Step
+   * `maxReviewSteps + 1` is rejected. Values below `1` fail load.
+   */
+  maxReviewSteps: number
+}
+```
+<!-- END GENERATED config-catalog:@deepseek-ai/dsh-memory-review -->
 
 <!-- BEGIN GENERATED config-catalog:@deepseek-ai/dsh-message-feedback -->
 <a id="deepseek-aidsh-message-feedback"></a>
@@ -3652,14 +3678,15 @@ export interface Config {
 ## `@deepseek-ai/dsh-tool-memory`
 
 - `inject`: `memory` · `tools` · `sessionProjections` · `systemPrompt`
-- `source`: [`packages/memory/tool-memory/src/index.ts:30`](../packages/memory/tool-memory/src/index.ts)
+- `source`: [`packages/memory/tool-memory/src/index.ts:31`](../packages/memory/tool-memory/src/index.ts)
 
 ```ts config-catalog
 /** Model-facing memory configuration. Invalid values fail plugin load. */
 export interface Config {
   /**
-   * UTF-8 byte budget of the injected catalog. `0` disables injection while
-   * the tools stay available; a positive budget that cuts entries adds a line
+   * UTF-8 byte budget of the injected snapshot. `0` disables injection while
+   * the tools stay available; a positive budget below {@link SNAPSHOT_MIN_BYTES}
+   * fails load; a budget that cuts entries adds a line
    * saying how many were omitted.
    */
   injectMaxBytes: number

@@ -1,5 +1,5 @@
 ---
-description: "memory 组地图：跨会话的持久记忆存储及其面向模型的工具与目录，供浏览本组的用户与维护者阅读。"
+description: "memory 组地图：跨会话的持久记忆存储、面向模型的工具与目录，以及 cache-parity 后台回顾，供浏览本组的用户与维护者阅读。"
 kind: "package-group"
 ---
 
@@ -9,7 +9,7 @@ kind: "package-group"
 
 ## 概述
 
-memory 组让 agent（智能体）跨会话保留事实：用户是谁、偏好怎样的工作方式，关于如何做事的反馈，关于某个项目的持久事实，以及指向外部资源的指针。一个包拥有存储，在 harness home 下为每条记忆保存一个 JSON 文档；另一个包向模型提供三个工具，并在每个会话开始时注入已保存记忆的目录。这里没有任何东西会连接厂商记忆服务、需要嵌入模型或在后台运行。
+memory 组让 agent（智能体）跨会话保留事实：用户是谁、偏好怎样的工作方式，关于如何做事的反馈，关于某个项目的持久事实，以及指向外部资源的指针。一个包拥有存储，在 harness home 下为每条记忆保存一个 JSON 文档；一个包向模型提供三个工具，并在对话开始时和压缩（compaction）之后注入已保存记忆的快照；第三个包在 base/TUI 配置以及 Web 的 `standard`、`cordis` 和 `ptc` 预设上启动 cache-parity 后台回顾。这里没有任何东西会连接厂商记忆服务或需要嵌入模型。
 
 ## 目录
 
@@ -22,10 +22,13 @@ memory 组让 agent（智能体）跨会话保留事实：用户是谁、偏好�
 <a id="packages"></a>
 ## 包
 
+存储与工具之外还有无人值守的 cache-parity 回顾，在 base/TUI 组合以及 Web 的 `standard`、`cordis` 和 `ptc` 预设上启用。
+
 | 包 | 职责 | ctx 键 |
 |---|---|---|
 | [`memory`](memory/README.zh.md) | 基于存储 domain 数据形式的持久全局与项目级记忆记录：写入、回忆、遗忘，以及某个工作目录可见的记录 | `ctx.memory` |
 | [`tool-memory`](tool-memory/README.zh.md) | 模型工具 `memory_write`、`memory_recall`、`memory_forget`，注入的记忆目录，以及说明何时记忆的提示词段落 | 注册到 `ctx.tools` |
+| [`memory-review`](memory-review/README.zh.md) | 无人值守的 cache-parity fork，只能添加新记忆；父级在足够多条用户类轮次后进入 `idle` 时启动 | 注册到 `ctx.sessionProjections` |
 
 -----
 

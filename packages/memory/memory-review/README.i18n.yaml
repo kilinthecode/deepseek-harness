@@ -1,0 +1,94 @@
+# Bilingual-pair consistency record for README.md (docs/i18n/README.md): per heading
+# section, a hash of its English and Chinese blocks outside code blocks and generated regions.
+# After editing either side, bring the other along and re-record with:
+#   pnpm run verify-translation-pairing --write packages/memory/memory-review/README.md
+/:
+  en: 4a71d6b52f179c54
+  zh: a4495951a5a723da
+/deepseek-ai-dsh-memory-review:
+  en: eceff5e54d6c56ac
+  zh: fa232ad45cd5cb53
+/deepseek-ai-dsh-memory-review/summary:
+  en: bbb82c07d947cfd7
+  zh: 1bb870146fd37e1f
+/deepseek-ai-dsh-memory-review/table-of-contents:
+  en: d152484eb41ac6b4
+  zh: 09388d293f9be9cb
+/deepseek-ai-dsh-memory-review/use-this-package:
+  en: dd7a2ee3f58fdeb8
+  zh: 9410b7c2339ea470
+/deepseek-ai-dsh-memory-review/use-this-package/when-to-choose-it:
+  en: 30f68371c101f8ce
+  zh: fd1baad7baa47ad4
+/deepseek-ai-dsh-memory-review/use-this-package/minimal-configuration:
+  en: e8bcc45393ade545
+  zh: 5982ed1dbd6dc176
+/deepseek-ai-dsh-memory-review/use-this-package/what-the-parent-and-the-child-see:
+  en: c1b8f330a9699043
+  zh: 9de5114052c24719
+/deepseek-ai-dsh-memory-review/use-this-package/where-it-is-mounted:
+  en: 5802baacb98e5181
+  zh: 969b1cb52de7ce9e
+/deepseek-ai-dsh-memory-review/understand-the-implementation:
+  en: 471b67aeb2d5e1ce
+  zh: 7c97b9880e45dda2
+/deepseek-ai-dsh-memory-review/understand-the-implementation/design-philosophy:
+  en: ccb0075af64caa76
+  zh: 03bd03cd58a10bcc
+/deepseek-ai-dsh-memory-review/understand-the-implementation/source-map:
+  en: 2a325c0ebcb41ef7
+  zh: 4003527d66db04b7
+/deepseek-ai-dsh-memory-review/understand-the-implementation/export-list:
+  en: 7397c0567670d7cd
+  zh: 1bac68451641faa1
+/deepseek-ai-dsh-memory-review/understand-the-implementation/trigger-and-restriction:
+  en: 830700721368804e
+  zh: 470d1b23a299c191
+/deepseek-ai-dsh-memory-review/understand-the-implementation/no-invariant-companion:
+  en: fda930f60e63efa2
+  zh: 411710e3318431af
+/deepseek-ai-dsh-memory-review/further-exploration:
+  en: 66d696918c5329e4
+  zh: bfda75c258d2d8c7
+/deepseek-ai-dsh-memory-review/model-experience:
+  en: 215e7ba838619b7b
+  zh: a311da3843709f90
+/deepseek-ai-dsh-memory-review/model-experience/review-child-task:
+  en: 6f42a89221e84324
+  zh: 7f33fb502068675b
+/deepseek-ai-dsh-memory-review/model-experience/review-child-task/what-the-model-sees:
+  en: 80572362d1e70a7b
+  zh: 2c801db4ceaa03cf
+/deepseek-ai-dsh-memory-review/model-experience/review-child-task/what-the-model-sees/verbatim-text-for-this-field:
+  en: f310d13f2c5a4d6a
+  zh: 602c9de780dffcb0
+/deepseek-ai-dsh-memory-review/model-experience/review-child-task/token-effect:
+  en: 7372b42af7757828
+  zh: 03bd64b9a966c53d
+/deepseek-ai-dsh-memory-review/model-experience/review-child-task/kv-cache-effect:
+  en: e2b008da7b8c70a6
+  zh: fa499f1fb7f49528
+/deepseek-ai-dsh-memory-review/model-experience/denied-tool-results:
+  en: 79e361fdb2489ae3
+  zh: df710c443b0e970d
+/deepseek-ai-dsh-memory-review/model-experience/denied-tool-results/what-the-model-sees:
+  en: be7393ef6be206a2
+  zh: f8dc2497c7537f88
+/deepseek-ai-dsh-memory-review/model-experience/denied-tool-results/what-the-model-sees/verbatim-text-for-other-tools:
+  en: d7fb8bbdd4dd348d
+  zh: caa336e2fa87e024
+/deepseek-ai-dsh-memory-review/model-experience/denied-tool-results/what-the-model-sees/verbatim-text-for-forget-or-overwrite:
+  en: 1e43ceb6872f6067
+  zh: 997025f4b75d30c6
+/deepseek-ai-dsh-memory-review/model-experience/denied-tool-results/token-effect:
+  en: 71faa580623ff7a8
+  zh: 2e7b3bed2bf476ae
+/deepseek-ai-dsh-memory-review/model-experience/denied-tool-results/kv-cache-effect:
+  en: fae81d2bda483f45
+  zh: a35ba28db2d1da0b
+/deepseek-ai-dsh-memory-review/known-limitations-and-deferred-work:
+  en: da7ec04f24c9b134
+  zh: 4fd2858f4f5b24b7
+/deepseek-ai-dsh-memory-review/known-limitations-and-deferred-work/dev-note:
+  en: de97413e10b36ee4
+  zh: 3364004f392ebef7

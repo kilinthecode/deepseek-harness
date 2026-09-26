@@ -138,6 +138,11 @@
             config:
               injectMaxBytes: 8192
               maxRecallResults: 8
+          - id: memory-review
+            name: '@deepseek-ai/dsh-memory-review'
+            config:
+              reviewEveryUserTurns: 10
+              maxReviewSteps: 8
           - id: tool-web
             name: '@deepseek-ai/dsh-tool-web'
             config:
