@@ -85,7 +85,7 @@ kind: "package-reference"
 
 ### 导出列表
 
-本插件是函数/命名空间插件：它导出 `name` / `inject` / `Config` / `apply`，没有默认导出，因此 Loader 会保留其注入元数据（[事后分析 0001](../../../docs/postmortem/0001-acp-default-export-drops-inject.zh.md)）。具名导出 `SNAPSHOT_HEADER`、`SNAPSHOT_MIN_BYTES` 和 `renderSnapshot` 分别是快照首行、最小的正 `injectMaxBytes`（该标题加上七位省略行的 UTF-8 字节数），以及带预算的渲染函数。
+本插件是函数/命名空间插件：它导出 `name` / `inject` / `Config` / `apply`，没有默认导出，因此 Loader 会保留其注入元数据（[事故复盘（postmortem） 0001](../../../docs/postmortem/0001-acp-default-export-drops-inject.zh.md)）。具名导出 `SNAPSHOT_HEADER`、`SNAPSHOT_MIN_BYTES` 和 `renderSnapshot` 分别是快照首行、最小的正 `injectMaxBytes`（该标题加上七位省略行的 UTF-8 字节数），以及带预算的渲染函数。
 
 ### 注入机制
 

@@ -28,7 +28,7 @@ memory 组让 agent（智能体）跨会话保留事实：用户是谁、偏好�
 |---|---|---|
 | [`memory`](memory/README.zh.md) | 基于存储 domain 数据形式的持久全局与项目级记忆记录：写入、回忆、遗忘，以及某个工作目录可见的记录 | `ctx.memory` |
 | [`tool-memory`](tool-memory/README.zh.md) | 模型工具 `memory_write`、`memory_recall`、`memory_forget`，注入的记忆目录，以及说明何时记忆的提示词段落 | 注册到 `ctx.tools` |
-| [`memory-review`](memory-review/README.zh.md) | 无人值守的 cache-parity fork，只能添加新记忆；父级在足够多条用户类轮次后进入 `idle` 时启动 | 注册到 `ctx.sessionProjections` |
+| [`memory-review`](memory-review/README.zh.md) | 无人值守的 cache-parity fork，只能添加新记忆；父级在足够多条用户类轮次后进入 idle 时启动 | 注册到 `ctx.sessionProjections` |
 
 -----
 

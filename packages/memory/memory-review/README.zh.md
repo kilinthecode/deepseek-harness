@@ -9,7 +9,7 @@ kind: "package-reference"
 
 ## 概述
 
-`dsh-memory-review` 在足够多条用户类轮次之后启动一次无人值守的进程内 fork，让子 agent（智能体）从父会话已有的对话中保存持久记忆。父模型看不到任何额外内容；子 agent 继承父级已完成轮次，再收到一条回顾任务，并且只能添加该作用域内尚不存在的名称。base 组合包与 TUI 配置每十轮用户消息启用它；headless、ACP（Agent Client Protocol）和 SDK 将其关闭；Web 在 `standard`、`cordis` 和 `ptc` 预设上按会话重新挂载。当进程仍在运行、且不应改变父请求前缀时选择它。
+`dsh-memory-review` 在足够多条用户类轮次之后启动一次无人值守的进程内 fork，让子 agent（智能体）从父会话已有的对话中保存持久记忆。父模型看不到任何额外内容；子 agent 继承父级已完成轮次，再收到一条回顾任务，并且只能添加该作用域内尚不存在的名称。base 组合包与 TUI 配置每十轮用户消息启用它；headless、ACP（Agent Client Protocol）和 SDK 将其关闭；Web 在 `standard`、`cordis` 和 `ptc` 预设上重新挂载。当进程仍在运行、且不应改变父请求前缀时选择它。
 
 ## 目录
 
@@ -29,11 +29,11 @@ kind: "package-reference"
 
 ### 何时选择
 
-当仍在运行的交互进程应从对话中保存持久记忆、且不应改变父请求前缀或等待新会话时选择它。对于进程可能在父级刚进入 `idle` 就退出的 headless、ACP 和 SDK 自动化，以及省略 `dsh-tool-memory` 或 `fork` 提供方的组合，请保持关闭。`reviewEveryUserTurns: 0` 使插件保持挂载但永不启动子会话。
+当仍在运行的交互进程应从对话中保存持久记忆、且不应改变父请求前缀或等待新会话时选择它。对于进程可能在父级刚进入 idle 就退出的 headless、ACP 和 SDK 自动化，以及省略 `dsh-tool-memory` 或 `fork` 提供方的组合，请保持关闭。`reviewEveryUserTurns: 0` 使插件保持挂载但永不启动子会话。
 
 ### 最小配置
 
-两个字段均为必填且无默认值；省略任一字段、将 `reviewEveryUserTurns` 设为小于 `0`，或将 `maxReviewSteps` 设为小于 `1` 的组合会在加载时失败。若到期时 `memory_write` 或 `fork` 提供方缺失，本次复盘会记录一条指明缺失项的错误并且不启动；同级插件并发激活，因此无法在加载时检查它们的注册。
+两个字段均为必填且无默认值；省略任一字段、将 `reviewEveryUserTurns` 设为小于 `0`，或将 `maxReviewSteps` 设为小于 `1` 的组合会在加载时失败。若到期时 `memory_write` 或 `fork` 提供方缺失，本次回顾会记录一条指明缺失项的错误并且不启动；同级插件并发激活，因此无法在加载时检查它们的注册。
 
 ```yaml
 - name: '@deepseek-ai/dsh-memory-review'
@@ -69,7 +69,7 @@ base 组合包在 `tool-memory` 之后立即启用它，配置为 `reviewEveryUs
 
 ### 设计理念
 
-- **按 `idle` 触发，而不是工具。** 全局 `agent/status` 监听器在 `status` 为 `idle` 时启动回顾，并且不等待子会话。当 `reviewEveryUserTurns` 为 `0`、当 `agent.session.header.parentSession` 已设置（不对任何子会话做嵌套回顾）、当该父级已有进行中的回顾、或当 `turnsSinceReset` 低于间隔时，跳过启动。
+- **按 idle 触发，而不是工具。** 全局 `agent/status` 监听器在 `status` 为 `idle` 时启动回顾，并且不等待子会话。当 `reviewEveryUserTurns` 为 `0`、当 `agent.session.header.parentSession` 已设置（不对任何子会话做嵌套回顾）、当该父级已有进行中的回顾、或当 `turnsSinceReset` 低于间隔时，跳过启动。
 - **在父日志上统计用户类轮次。** `memoryReview` 投影为 `stateVersion: 1`，状态为 `{ turnsSinceReset: number }`，`init: () => ({ turnsSinceReset: 0 })`。它将 `source.kind === 'user'` 的 `user/message` 折叠为加一，并将名为 `memory_write`、`memory_recall` 或 `memory_forget` 的 `tool/call`，以及 `label === 'memory-review'` 的 `subagent/catalog`，折叠为 `{ turnsSinceReset: 0 }`。`source.kind === 'goal'` 的消息不计入。恢复会从父日志重建计数。
 - **Cache-parity fork。** 启动方式为 `ctx.agents.withInitiator(parent, () => ctx.subagents.start('fork', { parent, prompt: [{ type: 'text', text: REVIEW_PROMPT }], label: 'memory-review', signal }))`，并省略 `toolFilter`、`persona` 和 `agentOptions`，因此子会话的首次请求保持父级的路由、工具和 persona。启动要求 `run.localAgent`；否则记录警告、dispose（资源释放）该 run，并且不将父级保持为待处理。
 - **无竞态限制。** 全局 `agent/created` 监听器在该父级处于待回顾且 `created.agent.session.header.parentSession` 为该父级时，在 `agents.create` 于 `start()` 返回之前等待的串行 `agent/created` 期间，在 `created.agent.ctx` 上调用 `installReviewRestrictions`，因此子会话的第一次工具调用已被守卫。`tools/pre-execute` 先 `await next()`，然后允许 `memory_recall`，仅当可见记录中没有该 `name` 与 `scope` 时允许 `memory_write`，并以 `{ kind: 'deny', reason }` 拒绝 `memory_forget` 和所有其他名称。当 `step > maxReviewSteps` 时，`agent/pre-step` 返回 `{ kind: 'reject' }`。
@@ -90,7 +90,7 @@ base 组合包在 `tool-memory` 之后立即启用它，配置为 `reviewEveryUs
 
 ### 触发与限制
 
-复盘到期时，若空闲父级看到的 `ctx.tools.get('memory_write', agent)` 为 undefined，或 `ctx.subagents.list()` 中没有 `'fork'`，`startReview` 会调用 `ctx.logger.error` 记录并跳过本次复盘。无效的 `memory_write` 参数（缺少字符串 `name`，或 `scope` 不是 `global` 或 `project`）会以覆盖理由拒绝。下游 `tools/pre-execute` 的拒绝原样返回。
+回顾到期时，若空闲父级看到的 `ctx.tools.get('memory_write', agent)` 为 undefined，或 `ctx.subagents.list()` 中没有 `'fork'`，`startReview` 会调用 `ctx.logger.error` 记录并跳过本次回顾。无效的 `memory_write` 参数（缺少字符串 `name`，或 `scope` 不是 `global` 或 `project`）会以覆盖理由拒绝。下游 `tools/pre-execute` 的拒绝原样返回。
 
 ### 没有不变量配套插件
 
