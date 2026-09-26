@@ -2,6 +2,7 @@ import { afterEach, describe, expect, it } from 'vitest'
 import { Context } from '@deepseek-ai/cordis'
 import Loader from '@deepseek-ai/cordis-plugin-loader'
 import { createUserMessage } from '@deepseek-ai/dsh-llm'
+import { GoalId } from '@deepseek-ai/dsh-goal'
 import { SessionId } from '@deepseek-ai/dsh-session'
 import { defineContentToolFixture } from '@deepseek-ai/dsh-tools'
 import SubagentRuntime from '@deepseek-ai/dsh-subagent'
@@ -33,12 +34,6 @@ import {
   waitForIdle,
   waitForReviewChild,
 } from './helpers.ts'
-
-declare module '@deepseek-ai/dsh-llm' {
-  interface MessageSourceMap {
-    goal: { kind: 'goal'; goalId: string; revision: number; round: number }
-  }
-}
 
 afterEach(async () => {
   await cleanup()
@@ -243,7 +238,7 @@ describe('dsh-memory-review through the agent loop', () => {
     await waitForIdle(ctx, parent)
     parent.followup(createUserMessage({
       content: [{ type: 'text', text: 'goal round' }],
-      source: { kind: 'goal', goalId: 'g1', revision: 1, round: 1 },
+      source: { kind: 'goal', goalId: GoalId('g1'), revision: 1, round: 1 },
     }))
     await waitForIdle(ctx, parent)
     expect(reviewCatalog(parent.session.snapshotEvents())).toHaveLength(0)

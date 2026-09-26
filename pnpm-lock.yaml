@@ -9942,6 +9942,9 @@ importers:
       '@deepseek-ai/dsh-agent-loop-testkit':
         specifier: workspace:*
         version: link:../../test-support/agent-loop-testkit
+      '@deepseek-ai/dsh-goal':
+        specifier: workspace:*
+        version: link:../../goal/goal
       '@deepseek-ai/dsh-llm':
         specifier: workspace:*
         version: link:../../llm/llm
@@ -14193,6 +14196,9 @@ importers:
       '@deepseek-ai/dsh-memory':
         specifier: workspace:*
         version: link:../../packages/memory/memory
+      '@deepseek-ai/dsh-memory-review':
+        specifier: workspace:*
+        version: link:../../packages/memory/memory-review
       '@deepseek-ai/dsh-message-feedback':
         specifier: workspace:*
         version: link:../../packages/feedback/message-feedback

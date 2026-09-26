@@ -69,6 +69,7 @@
     "@deepseek-ai/dsh-llm-retry": "workspace:*",
     "@deepseek-ai/dsh-mcp-client": "workspace:*",
     "@deepseek-ai/dsh-memory": "workspace:*",
+    "@deepseek-ai/dsh-memory-review": "workspace:*",
     "@deepseek-ai/dsh-output-retention": "workspace:*",
     "@deepseek-ai/dsh-permission-presets": "workspace:*",
     "@deepseek-ai/dsh-persona": "workspace:*",
