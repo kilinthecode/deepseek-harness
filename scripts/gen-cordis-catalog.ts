@@ -507,6 +507,7 @@ export const LINK_MAP: Readonly<Record<string, string>> = {
   MemoryVisible: 'memory.md',
   MemoryRecord: 'memory.md',
   MemoryErrorCode: 'memory.md',
+  MemoryScanFinding: 'memory.md',
   CommandDefinition: 'commands.md',
   CommandDescriptor: 'commands.md',
   CommandFileReceiptResolver: 'commands.md',
