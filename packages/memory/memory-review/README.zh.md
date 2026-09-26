@@ -33,7 +33,7 @@ kind: "package-reference"
 
 ### 最小配置
 
-两个字段均为必填且无默认值；省略任一字段、将 `reviewEveryUserTurns` 设为小于 `0`，或将 `maxReviewSteps` 设为小于 `1` 的组合会在加载时失败。若到期时 `memory_write` 或 `fork` 提供方缺失，本次回顾会记录一条指明缺失项的错误并且不启动；同级插件并发激活，因此无法在加载时检查它们的注册。
+两个字段均为必填且无默认值；省略任一字段、将 `reviewEveryUserTurns` 设为小于 `0`，或将 `maxReviewSteps` 设为小于 `1` 的组合会在加载时失败。若到期时 `memory_write` 或 `fork` 提供方缺失，本次回顾会记录一条指明缺失项的错误（在插件生命周期内，每个父级与每个依赖各记录一次）并且不启动；同级插件并发激活，因此无法在加载时检查它们的注册。
 
 ```yaml
 - name: '@deepseek-ai/dsh-memory-review'
@@ -73,7 +73,7 @@ base 组合包在 `tool-memory` 之后立即启用它，配置为 `reviewEveryUs
 - **在父日志上统计用户类轮次。** `memoryReview` 投影为 `stateVersion: 1`，状态为 `{ turnsSinceReset: number }`，`init: () => ({ turnsSinceReset: 0 })`。它将 `source.kind === 'user'` 的 `user/message` 折叠为加一，并将名为 `memory_write`、`memory_recall` 或 `memory_forget` 的 `tool/call`，以及 `label === 'memory-review'` 的 `subagent/catalog`，折叠为 `{ turnsSinceReset: 0 }`。`source.kind === 'goal'` 的消息不计入。恢复会从父日志重建计数。
 - **Cache-parity fork。** 启动方式为 `ctx.agents.withInitiator(parent, () => ctx.subagents.start('fork', { parent, prompt: [{ type: 'text', text: REVIEW_PROMPT }], label: 'memory-review', signal }))`，并省略 `toolFilter`、`persona` 和 `agentOptions`，因此子会话的首次请求保持父级的路由、工具和 persona。启动要求 `run.localAgent`；否则记录警告、dispose（资源释放）该 run，并且不将父级保持为待处理。
 - **无竞态限制。** 全局 `agent/created` 监听器在该父级处于待回顾且 `created.agent.session.header.parentSession` 为该父级时，在 `agents.create` 于 `start()` 返回之前等待的串行 `agent/created` 期间，在 `created.agent.ctx` 上调用 `installReviewRestrictions`，因此子会话的第一次工具调用已被守卫。`tools/pre-execute` 先 `await next()`，然后允许 `memory_recall`，仅当可见记录中没有该 `name` 与 `scope` 时允许 `memory_write`，并以 `{ kind: 'deny', reason }` 拒绝 `memory_forget` 和所有其他名称。当 `step > maxReviewSteps` 时，`agent/pre-step` 返回 `{ kind: 'reject' }`。
-- **释放。** 进行中的回顾在该父级的 `agent/disposed` 时中止，也在插件 fiber dispose 时中止（`ctx.effect`）。成功启动后，`void run.result.finally(() => run.dispose())` 删除待处理标记并 dispose 子会话。
+- **释放。** 进行中的回顾在该父级的 `agent/disposed` 时中止，也在插件 fiber dispose 时中止（`ctx.effect`）。成功启动后，`run.result` 的结算会释放该父级的进行中条目（仅当该条目仍属于本次回顾的控制器时），dispose 子会话，并在子会话失败时记录警告。
 
 ### 源码地图
 
@@ -86,11 +86,11 @@ base 组合包在 `tool-memory` 之后立即启用它，配置为 `reviewEveryUs
 
 ### 导出列表
 
-本插件是函数/命名空间插件：它导出 `name` / `inject` / `Config` / `apply`，没有默认导出，因此 Loader 会保留其注入元数据（[事故复盘（postmortem） 0001](../../../docs/postmortem/0001-acp-default-export-drops-inject.zh.md)）。具名导出 `REVIEW_PROMPT`、`REVIEW_LABEL`、`REVIEW_DENY_OTHER_TOOL`、`REVIEW_DENY_OVERWRITE`、`dueForReview` 和 `reviewWriteTarget` 分别是子任务、目录标签、两条拒绝理由、间隔谓词，以及写入目标解析器。
+本插件是函数/命名空间插件：它导出 `name` / `inject` / `Config` / `apply`，没有默认导出，因此 Loader 会保留其注入元数据（[事故复盘（postmortem） 0001](../../../docs/postmortem/0001-acp-default-export-drops-inject.zh.md)）。具名导出 `REVIEW_PROMPT`、`REVIEW_LABEL`、`REVIEW_DENY_OTHER_TOOL`、`REVIEW_DENY_OVERWRITE`、`dueForReview`、`reviewWriteTarget` 和 `releaseInflight` 分别是子任务、目录标签、两条拒绝理由、间隔谓词、写入目标解析器，以及为直接测试导出的、受守卫的进行中条目释放。
 
 ### 触发与限制
 
-回顾到期时，若空闲父级看到的 `ctx.tools.get('memory_write', agent)` 为 undefined，或 `ctx.subagents.list()` 中没有 `'fork'`，`startReview` 会调用 `ctx.logger.error` 记录并跳过本次回顾。无效的 `memory_write` 参数（缺少字符串 `name`，或 `scope` 不是 `global` 或 `project`）会以覆盖理由拒绝。下游 `tools/pre-execute` 的拒绝原样返回。
+回顾到期时，若空闲父级看到的 `ctx.tools.get('memory_write', agent)` 为 undefined，或 `ctx.subagents.list()` 中没有 `'fork'`，`startReview` 会调用 `ctx.logger.error`（每个父级与每个依赖各一次）记录并跳过本次回顾。无效的 `memory_write` 参数（缺少字符串 `name`，或 `scope` 不是 `global` 或 `project`）会以覆盖理由拒绝。下游 `tools/pre-execute` 的拒绝原样返回。
 
 ### 没有不变量配套插件
 

@@ -33,7 +33,7 @@ Choose it when a live interactive process should save durable memories from a co
 
 ### Minimal configuration
 
-Both fields are required with no default; a composition that omits either, sets `reviewEveryUserTurns` below `0`, or sets `maxReviewSteps` below `1` fails at load. A review that becomes due while `memory_write` or the `fork` provider is missing logs an error naming the missing piece and does not start; sibling plugins activate concurrently, so their registrations cannot be checked at load.
+Both fields are required with no default; a composition that omits either, sets `reviewEveryUserTurns` below `0`, or sets `maxReviewSteps` below `1` fails at load. A review that becomes due while `memory_write` or the `fork` provider is missing logs an error naming the missing piece, once per parent and dependency for the plugin's lifetime, and does not start; sibling plugins activate concurrently, so their registrations cannot be checked at load.
 
 ```yaml
 - name: '@deepseek-ai/dsh-memory-review'
@@ -73,7 +73,7 @@ This section explains the design decisions behind the review and points at the c
 - **Count user-kind turns on the parent log.** The `memoryReview` projection is `stateVersion: 1` with `{ turnsSinceReset: number }` and `init: () => ({ turnsSinceReset: 0 })`. It folds `user/message` with `source.kind === 'user'` by adding one, and folds `tool/call` named `memory_write`, `memory_recall`, or `memory_forget`, and `subagent/catalog` with `label === 'memory-review'`, to `{ turnsSinceReset: 0 }`. Messages with `source.kind === 'goal'` do not count. Resume rebuilds the count from the parent log.
 - **Cache-parity fork.** The start is `ctx.agents.withInitiator(parent, () => ctx.subagents.start('fork', { parent, prompt: [{ type: 'text', text: REVIEW_PROMPT }], label: 'memory-review', signal }))` and omits `toolFilter`, `persona`, and `agentOptions`, so the child's first request keeps the parent's route, tools, and persona. The start requires `run.localAgent`; otherwise it logs a warning, disposes the run, and does not keep the parent pending.
 - **Race-free restriction.** A global `agent/created` listener, while that parent is pending review and `created.agent.session.header.parentSession` is that parent, calls `installReviewRestrictions` on `created.agent.ctx` during the serial `agent/created` that `agents.create` awaits before `start()` returns, so the child's first tool call is already guarded. `tools/pre-execute` awaits `next()`, then allows `memory_recall`, allows `memory_write` only when no visible record has that `name` and `scope`, and denies `memory_forget` and every other name with `{ kind: 'deny', reason }`. `agent/pre-step` returns `{ kind: 'reject' }` when `step > maxReviewSteps`.
-- **Disposal.** An in-flight review is aborted on `agent/disposed` for that parent and when the plugin fiber disposes (`ctx.effect`). After a successful start, `void run.result.finally(() => run.dispose())` deletes the pending mark and disposes the child.
+- **Disposal.** An in-flight review is aborted on `agent/disposed` for that parent and when the plugin fiber disposes (`ctx.effect`). After a successful start, `run.result` settlement releases the parent's in-flight entry only when it still belongs to this review's controller, disposes the child, and logs a warning when the child failed.
 
 ### Source map
 
@@ -86,11 +86,11 @@ This section explains the design decisions behind the review and points at the c
 
 ### Export list
 
-The plugin is a function/namespace plugin: it exports `name` / `inject` / `Config` / `apply` and no default export, so the Loader keeps its injection metadata ([postmortem 0001](../../../docs/postmortem/0001-acp-default-export-drops-inject.md)). Named exports `REVIEW_PROMPT`, `REVIEW_LABEL`, `REVIEW_DENY_OTHER_TOOL`, `REVIEW_DENY_OVERWRITE`, `dueForReview`, and `reviewWriteTarget` are the child task, the catalog label, the two deny reasons, the interval predicate, and the write-target parser.
+The plugin is a function/namespace plugin: it exports `name` / `inject` / `Config` / `apply` and no default export, so the Loader keeps its injection metadata ([postmortem 0001](../../../docs/postmortem/0001-acp-default-export-drops-inject.md)). Named exports `REVIEW_PROMPT`, `REVIEW_LABEL`, `REVIEW_DENY_OTHER_TOOL`, `REVIEW_DENY_OVERWRITE`, `dueForReview`, `reviewWriteTarget`, and `releaseInflight` are the child task, the catalog label, the two deny reasons, the interval predicate, the write-target parser, and the guarded in-flight release exported for direct testing.
 
 ### Trigger and restriction
 
-When a review becomes due, `startReview` logs `ctx.logger.error` and skips it if `ctx.tools.get('memory_write', agent)` is undefined for the idle parent or `'fork'` is absent from `ctx.subagents.list()`. Invalid `memory_write` arguments (a missing string `name` or a `scope` other than `global` or `project`) are denied with the overwrite reason. A downstream `tools/pre-execute` deny is returned unchanged.
+When a review becomes due, `startReview` logs `ctx.logger.error` once per parent and dependency and skips it if `ctx.tools.get('memory_write', agent)` is undefined for the idle parent or `'fork'` is absent from `ctx.subagents.list()`. Invalid `memory_write` arguments (a missing string `name` or a `scope` other than `global` or `project`) are denied with the overwrite reason. A downstream `tools/pre-execute` deny is returned unchanged.
 
 ### No invariant companion
 
