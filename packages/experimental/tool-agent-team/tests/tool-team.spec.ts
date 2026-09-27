@@ -1325,6 +1325,12 @@ describe('plain fork parity with Team installation', () => {
       signal: SIGNAL,
     })
     const fork = run.localAgent!
+    // Deterministic under the header-origin classification rule: the one-shot
+    // `subagent/descriptor` is not appended yet at this synchronous point (it
+    // lands lazily in the fork's first `agent/pre-step`), so this assertion is
+    // false under the old descriptor-fold classification, which would read no
+    // descriptor yet and misclassify this fresh fork as an implicit new Lead.
+    expect(ctx.agentTeams.tryMembership(fork)).toBeUndefined()
     const result = await execute(ctx, fork, 'send_message', { target: 'lead', message: 'I am the Lead now' })
     expect(result.isError).toBe(true)
     expect(result.error?.info?.code).toBe('TEAM_NOT_MEMBER')
@@ -1343,6 +1349,8 @@ describe('plain fork parity with Team installation', () => {
       signal: SIGNAL,
     })
     const fork = run.localAgent!
+    // See the equivalent assertion in the send_message rejection test above.
+    expect(ctx.agentTeams.tryMembership(fork)).toBeUndefined()
     const result = await execute(ctx, fork, 'spawn_teammate', {
       name: 'rogue', description: 'unauthorized', prompt: 'act as the lead',
     })
@@ -1350,6 +1358,54 @@ describe('plain fork parity with Team installation', () => {
     expect(result.error?.info?.code).toBe('TEAM_NOT_MEMBER')
     expect(ctx.agentTeams.listMembers(lead)).toEqual(beforeMembers)
     await run.dispose()
+  })
+
+  const FORK_DENIAL_CASES = [
+    ['spawn_teammate', { name: 'rogue', description: 'unauthorized', prompt: 'act as the lead' }],
+    ['send_message', { target: 'lead', message: 'I am the Lead now' }],
+    ['list_agents', {}],
+    ['wait_agent', {}],
+    ['interrupt_agent', { target: 'witness' }],
+    ['team_task_create', { subject: 'rogue task', description: 'unauthorized task' }],
+    ['team_task_list', {}],
+    ['team_task_get', { task_id: 'missing-task' }],
+    ['team_task_update', { task_id: 'missing-task', expected_revision: 1, action: 'claim' }],
+  ] as const
+
+  it('covers every Team tool in the plain-fork denial table', () => {
+    expect(FORK_DENIAL_CASES.map(([toolName]) => toolName).sort()).toEqual(TOOL_NAMES)
+  })
+
+  it.each(FORK_DENIAL_CASES)('rejects %s from a plain fork of the Lead as a non-member, with no side effect', async (toolName, args) => {
+    const { ctx, lead } = await setup([textResponse('lead answer'), 'hang', textResponse('fork answer')])
+    await runTurn(lead, 'Lead task')
+    const witnessSpawn = await execute(ctx, lead, 'spawn_teammate', {
+      name: 'witness', description: 'stay available', prompt: 'wait',
+    })
+    const witnessId = spawnedChildId(ctx, lead, witnessSpawn)
+    await waitRunning(ctx, witnessId)
+    await execute(ctx, lead, 'team_task_create', { subject: 'baseline', description: 'baseline task' })
+
+    const beforeMembers = ctx.agentTeams.listMembers(lead)
+    const beforeTasks = ctx.agentTeams.listTasks(lead)
+    const beforeMessages = structuredClone(lead.session.deriveMessages())
+
+    const run = await ctx.subagents.start('fork', {
+      label: 'fork task', prompt: [{ type: 'text', text: 'independent task' }], parent: lead, signal: SIGNAL,
+    })
+    const fork = run.localAgent!
+    expect(ctx.agentTeams.tryMembership(fork)).toBeUndefined()
+
+    const result = await execute(ctx, fork, toolName, args)
+    expect(result.isError, text(result)).toBe(true)
+    expect(result.error?.info?.code).toBe('TEAM_NOT_MEMBER')
+    expect(ctx.agentTeams.listMembers(lead)).toEqual(beforeMembers)
+    expect(ctx.agentTeams.listTasks(lead)).toEqual(beforeTasks)
+    expect(lead.session.deriveMessages()).toEqual(beforeMessages)
+
+    await run.dispose()
+    await execute(ctx, lead, 'interrupt_agent', { target: 'witness' })
+    await vi.waitFor(() => { expect(ctx.agents.get(witnessId)).toBeUndefined() }, { timeout: 5_000 })
   })
 
   it('does not install Team tools on a persona or toolFilter fork', async () => {
@@ -1398,20 +1454,50 @@ describe('plain fork parity with Team installation', () => {
     await freshRun.dispose()
   })
 
-  it('also installs Team tools on a one-shot outputSchema fork (documented one-shot descriptor limitation)', async () => {
-    // A one-shot `subagent/descriptor` never records outputSchema — see
-    // descriptor.ts and plain-fork.ts's own documented limitation — so this
-    // specific combination is not excluded, unlike the persona and
-    // toolFilter continuable forks above. This pins the current, documented
-    // behavior rather than leaving it untested.
+  it('does not install Team tools on a one-shot outputSchema fork', async () => {
+    // A one-shot `subagent/descriptor` never records outputSchema (see
+    // descriptor.ts), so classification relies on the in-process composition
+    // record `applyChildComposition` sets from the driver's own
+    // `request.outputSchema`, not on anything read back from the log.
     const { ctx, lead } = await setup([textResponse('lead answer'), textResponse('child')])
     await runTurn(lead, 'Lead task')
     const run = await ctx.subagents.start('fork', {
       label: 'x', prompt: [{ type: 'text', text: 'x' }], parent: lead, signal: SIGNAL,
       outputSchema: { type: 'object', properties: { ok: { type: 'boolean' } }, required: ['ok'] },
     })
-    expect(ctx.tools.get('spawn_teammate', run.localAgent)).toBeDefined()
+    expect(ctx.tools.get('spawn_teammate', run.localAgent)).toBeUndefined()
     await run.dispose()
+  })
+
+  it('does not install Team tools on a one-shot persona or toolFilter fork', async () => {
+    // Mirrors the continuable case above through the one-shot driver instead:
+    // a one-shot `subagent/descriptor` never records persona or toolFilter
+    // either (see plain-fork.ts), so this exercises the same in-process
+    // composition record from the other creation path.
+    const { ctx, lead } = await setup([
+      textResponse('lead answer'), textResponse('persona child'), textResponse('toolFilter child'),
+    ])
+    await runTurn(lead, 'Lead task')
+    // A known global tool name for the toolFilter case below: restrict()
+    // validates deny/allow entries against registered global tools, and
+    // every Team tool is scoped rather than global.
+    ctx.tools.register(defineContentToolFixture({
+      name: 'probe', description: 'test-only fixture tool', parameters: {}, async execute() { return [] },
+    }))
+
+    const personaRun = await ctx.subagents.start('fork', {
+      label: 'x', prompt: [{ type: 'text', text: 'x' }], parent: lead, signal: SIGNAL,
+      persona: 'You are a narrow specialist.',
+    })
+    expect(ctx.tools.get('spawn_teammate', personaRun.localAgent)).toBeUndefined()
+    await personaRun.dispose()
+
+    const toolFilterRun = await ctx.subagents.start('fork', {
+      label: 'x', prompt: [{ type: 'text', text: 'x' }], parent: lead, signal: SIGNAL,
+      toolFilter: { allow: ['probe'] },
+    })
+    expect(ctx.tools.get('spawn_teammate', toolFilterRun.localAgent)).toBeUndefined()
+    await toolFilterRun.dispose()
   })
 
   it('does not install Team tools on a plain fork of a non-member parent', async () => {

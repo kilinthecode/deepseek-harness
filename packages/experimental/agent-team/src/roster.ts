@@ -137,17 +137,18 @@ export class TeamRoster {
             }
           }
           // A direct child outside the durable roster is not a teammate. Ordinary
-          // host forks are independent roots; subagent descriptors distinguish
-          // provider-owned workers that must not receive a nested Team identity.
-          if (this.subagentDescriptor(agent)) return undefined
+          // host forks are independent roots; the durable header's subagent
+          // origin distinguishes provider-owned workers that must not receive a
+          // nested Team identity.
+          if (this.hasSubagentOrigin(agent)) return undefined
           return { root: agent, id: TeamId(agent.id), role: 'lead', name: 'lead' }
         }
       }
       // A continuation can briefly outlive its parent during child-first teardown.
       // Do not reinterpret that durable child as a new implicit root Team. A host-
-      // resumed ordinary fork has no descriptor in its own suffix and remains a
-      // valid new root whose inherited Team records stay outside its projected Team state.
-      if (this.subagentDescriptor(agent)) return undefined
+      // resumed ordinary fork has no subagent origin in its own header and remains
+      // a valid new root whose inherited Team records stay outside its projected Team state.
+      if (this.hasSubagentOrigin(agent)) return undefined
       return { root: agent, id: TeamId(agent.id), role: 'lead', name: 'lead' }
     } catch {
       // This method is used by lifecycle observers and teardown discovery. A
@@ -573,7 +574,7 @@ export class TeamRoster {
    * that first step (in particular a scoped installer reacting to
    * `agent/created`, such as `tool-agent-team`'s `maybeInstall`).
    */
-  private subagentDescriptor(agent: Agent): boolean {
+  private hasSubagentOrigin(agent: Agent): boolean {
     return agent.session.header.origin === 'subagent'
   }
 }
