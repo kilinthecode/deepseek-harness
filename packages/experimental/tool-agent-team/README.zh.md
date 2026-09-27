@@ -62,7 +62,7 @@ kind: "package-reference"
 
 在 Lead 会话中运行 `/team <subject>`，或在 Web 启动栏中输入主题（它发送同一条命令）。该命令在 Team 上记录主题，以主题命名会话，并把主题作为用户消息发给 Lead。此后每个成员的 Team 段落都会写明该主题以及先规划后执行的流程：Lead 创建一个 `planner`，由它把计划写成共享任务；计划就绪后，Lead 创建 `executor` teammate，由它们 claim、实现并提交就绪任务，planner 验证每次提交。teammate 会话、空主题、超过 200 个字符的主题，以及缺少 session-title 服务的组合，都会以命令错误拒绝。
 
-在主题前加上 `--members <planner|executor,...>` 可以自行选择 roster：`/team --members planner,executor,executor <subject>` 会像上面一样记录主题，然后按顺序为每个分工生成具名 teammate——名字是确定性的，`planner`、`executor-1`、`executor-2` 等，跳过已被占用的名字——最后把主题连同一句额外说明 steer 给 Lead，说明谁已启动，并提醒 Lead 领导他们。最多允许一个 planner，且请求的 roster 必须容纳在 Team 剩余的成员上限之内；空白或未知的分工、超过一个 planner、超出容量，以及缺少 spec 或主题，都会以命令错误拒绝，且不会启动任何人。若 roster 中途某次 spawn 失败，批次会停止，命令结果中会报告谁已启动、谁未启动，且不会像所有人都已加入那样 steer Lead。
+在主题前加上 `--members <planner|executor,...>` 可以自行选择 roster：`/team --members planner,executor,executor <subject>` 会像上面一样记录主题，然后按顺序为每个分工生成具名 teammate——名字是确定性的，`planner`、`executor-1`、`executor-2` 等，跳过已被占用的名字——最后把主题连同一句额外说明 steer 给 Lead，说明谁已启动，并提醒 Lead 领导他们。最多允许一个 planner，且请求的 roster 必须容纳在 Team 剩余的成员上限之内；空白或未知的分工、超过一个 planner、超出容量，以及缺少 spec 或主题，都会以命令错误拒绝，且不会启动任何人。若 roster 中途某次 spawn 失败，批次会停止，命令结果中会报告谁已启动、谁未启动，且不会像所有人都已加入那样 steer Lead。`--members` 是一个保留的开头 token：普通主题本身不能以 `--members` 开头，因为命令总会把这个 token 解析为 roster 标志。
 
 ### 模型能做什么
 

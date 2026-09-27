@@ -1155,6 +1155,38 @@ describe('teammate duties and the /team command', () => {
     ])
   })
 
+  it('names only the Lead in an executor-only roster\'s initial task, with no unstarted planner', async () => {
+    const { ctx, lead } = await withCommands(['hang'])
+    const execution = await ctx.commands.execute(lead, '/team --members executor Ship the parser', [], SIGNAL)
+    expect(execution?.result).toEqual({ kind: 'success', text: 'Agent Team started.' })
+    const listed = ctx.agentTeams.listMembers(lead)
+    expect(listed.map(member => [member.name, member.duty])).toEqual([
+      ['lead', undefined],
+      ['executor-1', 'executor'],
+    ])
+    const child = await waitRunning(ctx, listed[1]!.id)
+    expect(initialPrompt(child)).toEqual([
+      identity('executor-1', ['Your duty is "executor".', EXECUTOR]),
+      'Coordinate with the Lead through messages and the board, then complete the tasks assigned to you for "Ship the parser".',
+    ])
+  })
+
+  it('omits the executors clause in a planner-only roster\'s initial task, with no unstarted executor', async () => {
+    const { ctx, lead } = await withCommands(['hang'])
+    const execution = await ctx.commands.execute(lead, '/team --members planner Ship the parser', [], SIGNAL)
+    expect(execution?.result).toEqual({ kind: 'success', text: 'Agent Team started.' })
+    const listed = ctx.agentTeams.listMembers(lead)
+    expect(listed.map(member => [member.name, member.duty])).toEqual([
+      ['lead', undefined],
+      ['planner', 'planner'],
+    ])
+    const child = await waitRunning(ctx, listed[1]!.id)
+    expect(initialPrompt(child)).toEqual([
+      identity('planner', ['Your duty is "planner".', PLANNER]),
+      'Break "Ship the parser" into tasks on the Team board. Do not edit files yourself.',
+    ])
+  })
+
   it('skips deterministic names already taken by earlier members, across both duties', async () => {
     const { ctx, lead } = await withCommands(['hang', 'hang', 'hang', 'hang', 'hang'])
     for (const name of ['planner', 'executor-1', 'executor-2']) {

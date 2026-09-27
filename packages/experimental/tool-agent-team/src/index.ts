@@ -632,11 +632,20 @@ function allocateMemberName(existing: ReadonlySet<string>, duty: TeamDuty): stri
   throw new Error(`/team --members: could not allocate a name for duty "${duty}"`)
 }
 
-/** Short duty-specific initial task derived from the Team subject. */
-function dutyKickoff(duty: TeamDuty, subject: string): string {
-  return duty === 'planner'
-    ? `Break "${subject}" into tasks on the Team board for the executors. Do not edit files yourself.`
-    : `Coordinate with the planner and the Lead through messages and the board, then complete the tasks assigned to you for "${subject}".`
+/**
+ * Short duty-specific initial task derived from the Team subject, naming
+ * only the peer duty this roster actually starts; a solo duty gets no
+ * peer-coordination clause for a duty nobody in the batch holds.
+ */
+function dutyKickoff(duty: TeamDuty, subject: string, duties: readonly TeamDuty[]): string {
+  if (duty === 'planner') {
+    return duties.includes('executor')
+      ? `Break "${subject}" into tasks on the Team board for the executors. Do not edit files yourself.`
+      : `Break "${subject}" into tasks on the Team board. Do not edit files yourself.`
+  }
+  return duties.includes('planner')
+    ? `Coordinate with the planner and the Lead through messages and the board, then complete the tasks assigned to you for "${subject}".`
+    : `Coordinate with the Lead through messages and the board, then complete the tasks assigned to you for "${subject}".`
 }
 
 /** Render a caught spawn failure for the command's partial-failure report. */
@@ -729,7 +738,7 @@ async function startTeam(
         description: duty === 'planner' ? 'Team planner for this subject' : 'Team executor for this subject',
         prompt: [
           { type: 'text', text: teammateReminder(memberName, duty, config) },
-          { type: 'text', text: dutyKickoff(duty, subject) },
+          { type: 'text', text: dutyKickoff(duty, subject, duties) },
         ],
         context: 'fresh',
         provider: config.freshProvider,
@@ -769,7 +778,7 @@ export function apply(ctx: Context, config: Config = {}): void {
     commandCtx.commands.register({
       definitionId: CommandDefinitionId('@deepseek-ai/dsh-experimental-tool-agent-team/team'),
       name: 'team',
-      description: 'Start an Agent Team, optionally with a chosen roster, for a subject',
+      description: 'Start an Agent Team, optionally with a chosen roster, for a subject; the subject cannot begin with --members',
       input: { hint: '[--members <planner|executor,...>] <subject>' },
       handler: ({ agent, rawInput, signal }) => startTeam(ctx, agent, rawInput, resolved, signal),
     })
