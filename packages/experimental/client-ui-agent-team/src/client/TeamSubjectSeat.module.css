@@ -1,5 +1,8 @@
 /* Team start strip: shares the composer-stack card treatment and dock column
-   of the Goal bar (ui-goal GoalBar.module.css) so the stack reads as one family. */
+   of the Goal bar (ui-goal GoalBar.module.css) so the stack reads as one family.
+   The card carries the frosted menu material once on `::before` (matching the
+   Team panel's own pseudo-element pattern) so both the roster row and the
+   subject row read as one glass surface without a second nested blur. */
 
 .dock {
   box-sizing: border-box;
@@ -15,25 +18,28 @@
   margin: 0 auto;
 }
 
-.bar {
+.card {
   position: relative;
   isolation: isolate;
   box-sizing: border-box;
   display: flex;
-  align-items: center;
-  gap: 10px;
+  flex-direction: column;
+  gap: 8px;
   width: 100%;
   max-width: calc(var(--dsh-composer-card-max-width) - 4 * var(--dsh-composer-dock-inset));
-  height: 36px;
   margin: 0 auto;
-  padding: 4px 4px 4px 12px;
+  padding: 8px 10px;
   border: 0;
   --dsw-elevation-stroke-color: var(--dsw-alias-border-l1);
   border-radius: var(--dsw-radius-md);
   box-shadow: var(--dsw-elevation-panel);
 }
 
-.bar::before {
+/* The menu skin lives on a pseudo-element: backdrop-filter on the card itself
+   would turn it into the containing block for fixed descendants, so the
+   chip-remove Tooltip bubbles would be re-anchored into the card and clipped
+   by its overflow (the same reasoning as the Team panel's own pseudo). */
+.card::before {
   position: absolute;
   z-index: -1;
   inset: 0;
@@ -42,6 +48,69 @@
   backdrop-filter: var(--dsw-menu-backdrop-filter);
   content: '';
   pointer-events: none;
+}
+
+.roster {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+}
+
+.leadChip {
+  flex: none;
+}
+
+.chip {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  gap: 3px;
+  padding: 1px 3px 1px 8px;
+  border-radius: 999px;
+  corner-shape: round;
+  background: var(--dsw-alias-bg-module-platform);
+  color: var(--dsw-alias-label-secondary);
+  font-size: 11px;
+  line-height: 17px;
+  font-weight: 500;
+  white-space: nowrap;
+}
+
+.chipLabel {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.chipRemove {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  justify-content: center;
+  width: 14px;
+  height: 14px;
+  padding: 0;
+  border: 0;
+  border-radius: 999px;
+  corner-shape: round;
+  background: transparent;
+  color: var(--dsw-alias-label-tertiary);
+  cursor: pointer;
+}
+
+.chipRemove:hover,
+.chipRemove:focus-visible {
+  background: var(--dsw-alias-interactive-bg-hover);
+  color: var(--dsw-alias-label-primary);
+}
+
+.bar {
+  box-sizing: border-box;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  height: 28px;
 }
 
 .glyph {

@@ -56,7 +56,7 @@
   padding: 8px 2px 0;
   overflow: hidden;
   border: 0;
-  border-radius: 12px;
+  border-radius: var(--dsw-radius-md);
   --dsw-elevation-stroke-color: var(--dsw-alias-border-l1);
   box-shadow: var(--dsw-elevation-prominent);
 }
@@ -70,7 +70,7 @@
   position: absolute;
   z-index: -1;
   inset: 0;
-  border-radius: 12px;
+  border-radius: inherit;
   background: var(--dsw-specific-menu);
   backdrop-filter: var(--dsw-menu-backdrop-filter);
 }
@@ -128,6 +128,10 @@
   gap: 8px;
 }
 
+/* Member and task cards share one frosted-glass treatment: a translucent
+   menu fill and its backdrop filter applied directly (neither card holds a
+   fixed-position descendant, so unlike the panel and the start-strip card
+   neither needs the pseudo-element isolation). */
 .member {
   display: flex;
   align-items: flex-start;
@@ -137,8 +141,9 @@
   border: 0;
   --dsw-elevation-stroke-color: var(--dsw-alias-border-l2);
   box-shadow: var(--dsw-elevation-stroke);
-  border-radius: 8px;
-  background: var(--dsw-alias-bg-layer-2);
+  border-radius: var(--dsw-radius-sm);
+  background: var(--dsw-specific-menu);
+  backdrop-filter: var(--dsw-menu-backdrop-filter);
   color: var(--dsw-alias-label-primary);
   text-align: left;
   cursor: pointer;
@@ -235,7 +240,7 @@
 .tasks {
   display: flex;
   flex-direction: column;
-  gap: 7px;
+  gap: 8px;
 }
 
 /* Empty task board: a plain description in place of the section heading,
@@ -247,10 +252,13 @@
 }
 
 .task {
-  padding: 11px 13px;
-  border: 0.5px solid var(--dsw-alias-border-l2);
-  border-radius: 9px;
-  background: var(--dsw-alias-bg-layer-2);
+  padding: 10px 12px;
+  border: 0;
+  --dsw-elevation-stroke-color: var(--dsw-alias-border-l2);
+  box-shadow: var(--dsw-elevation-stroke);
+  border-radius: var(--dsw-radius-sm);
+  background: var(--dsw-specific-menu);
+  backdrop-filter: var(--dsw-menu-backdrop-filter);
 }
 
 .taskState {
