@@ -657,7 +657,7 @@ export type ThemePreference = typeof THEME_PREFERENCES[number]
 ## `@deepseek-ai/dsh-compaction-basic`
 
 - `inject`: `llm` · `tokenMeter` · `sessions`
-- `source`: [`packages/compaction/compaction-basic/src/types.ts:48`](../packages/compaction/compaction-basic/src/types.ts)
+- `source`: [`packages/compaction/compaction-basic/src/types.ts:49`](../packages/compaction/compaction-basic/src/types.ts)
 
 ```ts config-catalog
 /** Basic compaction configuration with an optional exact-target policy table. */
@@ -691,9 +691,10 @@ export interface CompactionPolicyConfig {
   /**
    * Fraction of the pressure threshold that a prune-only pass must leave
    * free below the threshold; otherwise pressure compacts first and prunes
-   * the surviving surface after each compaction. `0` only restores skipping
-   * summarization when the prune alone reaches the threshold — it does not
-   * restore the former prune-before-compaction order. Defaults to `0.2`.
+   * the surviving surface after each compaction. Valid range `[0, 1)`. `0`
+   * only restores skipping summarization when the prune alone reaches the
+   * threshold — it does not restore the former prune-before-compaction
+   * order. Defaults to `0.2`.
    */
   pruneHeadroomRatio?: number
 }

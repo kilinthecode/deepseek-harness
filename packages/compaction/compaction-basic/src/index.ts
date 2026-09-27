@@ -321,24 +321,16 @@ export class BasicCompactionEngine extends CompactionEngine {
     )
     if (measurement.totalTokens < spec.thresholdTokens) return null
 
-    // A mounted pruner can buy enough headroom on its own to skip the second
-    // cache break a summarization call would cost: land it before selecting a
-    // summary range only when its preview clears the threshold with margin
-    // to spare. Otherwise leave the surface untouched here — compacting first
-    // (below) already breaks the cache, so pruning afterward is free, while
-    // pruning now and summarizing anyway would cost a second break for
-    // nothing.
+    // The preview uses the heuristic estimateMessage while measure() is
+    // route-priced, so a landed prune can still leave the surface at or above
+    // threshold; compaction then proceeds on the pruned surface.
     if (prune !== undefined) {
       const preview = prune.previewSession(agent.session)
-      if (measurement.totalTokens - preview.tokensSaved <= spec.thresholdTokens - spec.pruneHeadroomTokens) {
+      const projected = measurement.totalTokens - preview.tokensSaved
+      if (projected <= spec.thresholdTokens - spec.pruneHeadroomTokens
+        && projected < spec.thresholdTokens) {
         prune.pruneSession(agent.session)
         measurement = meter.measure(agent.session)
-        // The route-priced remeasurement can diverge from the heuristic
-        // preview (for example at pruneHeadroomRatio 0, where an exact tie
-        // depends on which estimate is used), so a qualifying preview does
-        // not guarantee landing below the threshold. When it does not,
-        // execution falls through into the compaction loop below, which
-        // summarizes the already-pruned surface.
         if (measurement.totalTokens < spec.thresholdTokens) return null
       }
     }

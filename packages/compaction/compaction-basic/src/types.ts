@@ -29,9 +29,10 @@ export interface CompactionPolicyConfig {
   /**
    * Fraction of the pressure threshold that a prune-only pass must leave
    * free below the threshold; otherwise pressure compacts first and prunes
-   * the surviving surface after each compaction. `0` only restores skipping
-   * summarization when the prune alone reaches the threshold — it does not
-   * restore the former prune-before-compaction order. Defaults to `0.2`.
+   * the surviving surface after each compaction. Valid range `[0, 1)`. `0`
+   * only restores skipping summarization when the prune alone reaches the
+   * threshold — it does not restore the former prune-before-compaction
+   * order. Defaults to `0.2`.
    */
   pruneHeadroomRatio?: number
 }
@@ -86,6 +87,6 @@ export type ResolvedCompactSpec = Omit<ResolvedTargetPolicy, 'retainRatio' | 're
   readonly contextWindow: number
   readonly thresholdTokens: number
   readonly retainTokens: number
-  /** Estimated tokens a prune-only pass must save to land without summarizing: `floor(thresholdTokens * pruneHeadroomRatio)`. */
+  /** Tokens that must remain free below the threshold after a prune-only pass: `floor(thresholdTokens * pruneHeadroomRatio)`. */
   readonly pruneHeadroomTokens: number
 }
