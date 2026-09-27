@@ -9,7 +9,7 @@ English | [中文](README.zh.md)
 
 ## Summary
 
-This package adds an Agent Teams action to the Web conversation header, where a user can inspect the roster and shared task board, follow and steer the Team's room when one is enabled, and open teammate conversations. It reads the Lead Session's `agentTeam` projection from the Session store, which Host projection frames keep current, reads the room through the generated `agentTeams/room*` Remote methods, and keeps child-history navigation on the stable addressed-subagent path. Choose it through an experimental Agent Teams or room bundle. The panel does not extend the stable API Proxy, store Team state, or register model-facing input.
+This package adds an Agent Teams action to the Web conversation header, where a user can inspect the roster and shared task board, follow and steer the Team's room, and open teammate conversations, plus a strip above a new conversation's composer that starts a Team from a subject line. It reads the Lead Session's `agentTeam` projection, which Host projection frames keep current, reads the room through the generated `agentTeams/room*` Remote methods, and keeps child-history navigation on the addressed-subagent path. Choose it through an experimental Agent Teams or room bundle. It stores no Team state and registers no model-facing input.
 
 ## Table of Contents
 
@@ -27,11 +27,15 @@ This package adds an Agent Teams action to the Web conversation header, where a 
 
 Enable this package through [`@deepseek-ai/dsh-experimental-agent-team-profile`](../agent-team-profile/README.md), which supplies the Team service, tools, and Web UI together. The Web Client loader mounts the `/client` export; the root Host export is inert, and the package has no user configuration fields.
 
+### Start a Team from a subject
+
+A new conversation shows an Agent Team strip above its composer, with a subject field and a Start team button. Starting sends `/team <subject>` to the Host: the conversation is named after the subject, the subject becomes its first user message, and the Lead begins the plan-then-execute flow with a planner and executors. The strip appears only in the main view of a blank Lead conversation and disappears once the conversation has begun, including after an ordinary first message. A refusal, such as a subject over 200 characters, appears inside the strip, and the typed subject stays for a retry.
+
 ### Inspect and navigate the roster
 
 The panel shows the Lead Session's roster and task board from the shared Session store. Task and roster updates appear while the panel stays open. Opening the panel performs no projection requests. The panel shows a loading notice while the conversation or Session list is loading, and an unavailable notice when no Team value is present afterward.
 
-Roster rows show durable names and phases. Provisioning and running members use the shared ongoing loader, inactive members use a person icon, and failed members use error. Live Session status supplies running activity; the shared `modelSelection` projection supplies a model when available. The current conversation carries a Current chat tag and cannot be selected. Selecting the Lead from a teammate conversation opens the Lead Session directly. Selecting an active teammate opens its ordinary continuable child address. The Host validates the parent, child, and mode when history opens; later human prompts use the same addressed-subagent conversation.
+When the Team has a subject, the panel shows it above the roster. Roster rows show durable names and phases, and a Planner or Executor tag for a teammate created with a duty. Provisioning and running members use the shared ongoing loader, inactive members use a person icon, and failed members use error. Live Session status supplies running activity; the shared `modelSelection` projection supplies a model when available. The current conversation carries a Current chat tag and cannot be selected. Selecting the Lead from a teammate conversation opens the Lead Session directly. Selecting an active teammate opens its ordinary continuable child address. The Host validates the parent, child, and mode when history opens; later human prompts use the same addressed-subagent conversation.
 
 ### Read the room
 
@@ -51,7 +55,7 @@ The read-only task board shows task identity, owner, blockers, readiness, adviso
 <details>
 <summary>Implementation internals — click to expand</summary>
 
-The Client export mounts the generated `agentTeams` room Remote contribution, then registers its locale dictionaries and one conversation-header slot through Cordis effects. Disposing the plugin fiber removes both registrations and unmounts the Remote namespace; a registration failure unmounts it before the error propagates.
+The Client export mounts the generated `agentTeams` room Remote contribution, then registers its locale dictionaries, one conversation-header slot, and one `conversation.input.dock` entry through Cordis effects. The dock entry sits ahead of the Todo and Goal cards and renders nothing unless its Session is blank, has no subagent address, has not attempted a prompt, and is retained by the main view; it starts the Team through `commands/execute` and reads the handler's error text, which the Session face's `command()` does not return. Disposing the plugin fiber removes both registrations and unmounts the Remote namespace; a registration failure unmounts it before the error propagates.
 
 The panel renders outside the conversation container and stays within the viewport. Member cards use the shared elevation stroke for their outlines in resting, selected, and hover states. Hovering the trigger opens the panel after 150ms; leaving both trigger and panel closes it after a 120ms grace period. Clicking the trigger pins the panel and moves focus into it. Outside clicks and Escape dismiss the panel; Escape returns focus to the trigger only when focus was inside the panel. In a narrow header, the trigger becomes an icon and opens only on click. The component derives every roster and task row from the `useSessions`, `useSessionStatus`, and `useSession` seats: the Lead identity comes from the current Session's subagent address, the Team view from `projectionsBySession[lead].values.agentTeam`, member activity from Session status with the list summary as fallback, and the model from `projectionsBySession[member].values.modelSelection.next`. Each roster row selects its own running state. One injected callback opens a roster Session using the current and target Session ids; the room callbacks resolve the current conversation to its Lead before each `agentTeams/room*` call. The room section follows `agentTeams/roomStream` only while it is mounted and aborts the stream when the panel closes. Switching conversations closes the panel and clears a navigation failure.
 
@@ -59,6 +63,7 @@ The panel renders outside the conversation container and stays within the viewpo
 |---|---|
 | [`src/client/mount.ts`](src/client/mount.ts) | Room Remote mount, locale, navigation, and slot registrations |
 | [`src/client/TeamAction.tsx`](src/client/TeamAction.tsx) | Projection-derived roster and task board, Remote-backed room section, and panel interaction state |
+| [`src/client/TeamSubjectSeat.tsx`](src/client/TeamSubjectSeat.tsx) | Start strip above a blank conversation's composer |
 | [`src/client/locales.ts`](src/client/locales.ts) | English and Chinese panel copy |
 | [`src/index.ts`](src/index.ts) | Inert Host entry |
 
@@ -79,7 +84,7 @@ The panel renders outside the conversation container and stays within the viewpo
 <a id="model-experience"></a>
 ## Model Experience
 
-None, as this browser panel registers no model-facing input. Its room controls call the Host room operations, which own every resulting participant prompt and record it in `room/*` and mailbox events; the panel never records a standing.
+None, as this browser package registers no model-facing input. The start strip sends the Host `/team` command, whose handler records the subject and sends it as the user's message. Its room controls call the Host room operations, which own every resulting participant prompt and record it in `room/*` and mailbox events; the panel never records a standing.
 
 #### KV Cache effect
 

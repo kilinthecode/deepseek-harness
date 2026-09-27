@@ -9,7 +9,7 @@ import type { ContentBlock, MessageId } from '@deepseek-ai/dsh-llm'
 import type {} from '@deepseek-ai/dsh-llm'
 import type { SessionId } from '@deepseek-ai/dsh-session'
 import { foldSubagentDescriptor } from '@deepseek-ai/dsh-subagent'
-import type { ContinuableStart, ContinuableSubagentDescriptorData } from '@deepseek-ai/dsh-subagent'
+import type { ContinuableStart, ContinuableSubagentDescriptorData, SubagentStartRequest } from '@deepseek-ai/dsh-subagent'
 import { errorMessage, TeamError } from './error.ts'
 import type { TeamJournal } from './journal.ts'
 import type { TeamRuntimeLifecycle } from './lifecycle.ts'
@@ -19,6 +19,7 @@ import { messageAccepted } from './session-message.ts'
 import { TeamId } from './types.ts'
 import type {
   SpawnTeammateResult,
+  TeamDuty,
   TeamMemberSnapshot,
   TeamMemberView,
 } from './types.ts'
@@ -32,6 +33,8 @@ export interface TeamMembership {
   readonly id: TeamId
   readonly role: 'lead' | 'teammate'
   readonly name: string
+  /** Duty recorded when this teammate was created; absent for the Lead and undutied teammates. */
+  readonly duty?: TeamDuty
 }
 
 /** Input for creating one durable teammate. */
@@ -49,6 +52,14 @@ export interface SpawnTeammateRequest {
    * resulting route is durable in the child's own Session header.
    */
   readonly agentOptions?: AgentOptions
+  /** Immutable duty recorded on the member; omit for a teammate without one. */
+  readonly duty?: TeamDuty
+  /**
+   * Inherited-tool restriction for the child. The subagent provider records it
+   * in the child's descriptor and reapplies it on every resume; the Team
+   * records only {@link duty}.
+   */
+  readonly toolFilter?: SubagentStartRequest['toolFilter']
   readonly signal: AbortSignal
 }
 
@@ -117,7 +128,13 @@ export class TeamRoster {
         if (root !== undefined) {
           const member = this.journal.state(root).members.find(candidate => candidate.id === agent.id)
           if (member?.phase === 'active' || member?.phase === 'provisioning') {
-            return { root, id: TeamId(root.id), role: 'teammate', name: member.name }
+            return {
+              root,
+              id: TeamId(root.id),
+              role: 'teammate',
+              name: member.name,
+              ...member.duty === undefined ? {} : { duty: member.duty },
+            }
           }
           // A direct child outside the durable roster is not a teammate. Ordinary
           // host forks are independent roots; subagent descriptors distinguish
@@ -171,6 +188,7 @@ export class TeamRoster {
         description: member.description,
         provider: member.provider,
         context: member.context,
+        ...member.duty === undefined ? {} : { duty: member.duty },
         ...model === undefined ? {} : { model },
         diagnostics: member.error === undefined ? [] : [member.error],
       })
@@ -283,6 +301,7 @@ export class TeamRoster {
       description,
       provider: requiredText(request.provider, 'provider', 200),
       context: request.context,
+      ...request.duty === undefined ? {} : { duty: request.duty },
       phase: 'provisioning',
     }
 
@@ -307,6 +326,7 @@ export class TeamRoster {
           prompt: request.prompt,
           parent: root,
           ...request.agentOptions === undefined ? {} : { agentOptions: request.agentOptions },
+          ...request.toolFilter === undefined ? {} : { toolFilter: request.toolFilter },
         },
         signal,
       })
@@ -504,6 +524,7 @@ export class TeamRoster {
       description: member.description,
       provider: member.provider,
       context: member.context,
+      ...member.duty === undefined ? {} : { duty: member.duty },
       ...model === undefined ? {} : { model },
       diagnostics: [],
     }

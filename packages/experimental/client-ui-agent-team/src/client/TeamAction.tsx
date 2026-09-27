@@ -20,6 +20,7 @@ import type { PropsLocale, PropsRuntime } from '@deepseek-ai/dsh-client-ui-slots
 import type { TranslateNS } from '@deepseek-ai/dsh-client-ui-slots'
 import type {} from '@deepseek-ai/dsh-client-ui-conversation/client'
 import { NS, type TeamKey } from './locales.ts'
+import { assertNever } from '@deepseek-ai/dsh-util-values'
 import css from './TeamAction.module.css'
 
 /** Generated room Remote result consumed directly by the panel. */
@@ -131,6 +132,15 @@ function voteLine(t: TranslateNS<typeof NS>, label: string, names: readonly stri
   return `${label}: ${names.length === 0 ? t('none') : names.join(', ')}`
 }
 
+function dutyKey(duty: NonNullable<TeamMemberProjection['duty']>): TeamKey {
+  switch (duty) {
+    case 'planner': return 'duty.planner'
+    case 'executor': return 'duty.executor'
+    /* v8 ignore next -- TeamDuty is closed and every member is handled above. */
+    default: return assertNever(duty)
+  }
+}
+
 function memberStatusKey(status: MemberStatus): TeamKey {
   switch (status) {
     case 'running': return 'memberStatus.running'
@@ -202,7 +212,8 @@ function TeamMemberRow({
         <span className={css.memberText}>
           <span className={css.memberName}>
             <span className={css.memberNameText}>{member.name}</span>
-            {isCurrent && <Tag tone="info" className={css.currentTag}>{t('current')}</Tag>}
+            {member.duty !== undefined && <Tag tone="neutral" className={css.memberTag}>{t(dutyKey(member.duty))}</Tag>}
+            {isCurrent && <Tag tone="info" className={css.memberTag}>{t('current')}</Tag>}
           </span>
           <small>
             {t(memberStatusKey(status))}
@@ -698,6 +709,12 @@ export function TeamAction({
               <>
                 {team.failure !== undefined && (
                   <div className={css.error} role="alert"><StateDot state="error" />{t('failure', { message: team.failure })}</div>
+                )}
+                {team.subject !== undefined && (
+                  <section>
+                    <h3>{t('subject')}</h3>
+                    <p className={css.subject}>{team.subject}</p>
+                  </section>
                 )}
                 <section>
                   <h3>

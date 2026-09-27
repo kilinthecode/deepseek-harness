@@ -184,6 +184,42 @@ describe('TeamAction', () => {
     expect(screen.getByRole('heading', { name: '成员3' })).toBeTruthy()
   })
 
+  it('heads the panel with the Team subject and tags each dutied teammate with its duty', () => {
+    const b = bench({
+      projections: {
+        [SESSION]: {
+          state: 'ready', error: null,
+          values: {
+            agentTeam: {
+              subject: 'Ship the parser',
+              members: [
+                lead,
+                { id: WORKER, name: 'planner', role: 'teammate', phase: 'active', duty: 'planner' },
+                { id: 'executor-id' as SessionId, name: 'builder', role: 'teammate', phase: 'active', duty: 'executor' },
+                { id: 'plain-id' as SessionId, name: 'plain', role: 'teammate', phase: 'active' },
+              ],
+              tasks: [],
+            },
+          },
+        },
+      },
+    })
+    render(<TeamAction {...b.props} />)
+    openPanel()
+    const headings = screen.getAllByRole('heading').map(heading => heading.textContent)
+    expect(headings.slice(0, 2)).toEqual([zh.subject, `${zh.roster}4`])
+    expect(screen.getByText('Ship the parser')).toBeTruthy()
+    expect(screen.getByRole('button', { name: /planner/u }).textContent).toContain(zh['duty.planner'])
+    expect(screen.getByRole('button', { name: /builder/u }).textContent).toContain(zh['duty.executor'])
+    const plain = screen.getByRole('button', { name: /plain/u }).textContent
+    expect(plain).not.toContain(zh['duty.planner'])
+    expect(plain).not.toContain(zh['duty.executor'])
+
+    setProjection(b.sessions, SESSION, { members: [lead, worker], tasks: [] })
+    expect(screen.queryByText('Ship the parser')).toBeNull()
+    expect(screen.queryByRole('heading', { name: zh.subject })).toBeNull()
+  })
+
   it('overlays live Session status and the durable model selection on roster rows', () => {
     const statuses: SessionStatusSnapshot = new Map([[WORKER, { running: true, pendingInteraction: undefined, completionUnread: false }]])
     const b = bench({

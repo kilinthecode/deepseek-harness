@@ -809,7 +809,7 @@ export interface Config {
 ## `@deepseek-ai/dsh-experimental-agent-team`
 
 - `inject`: `agents` · `sessions` · `sessionPersistence` · `sessionProjections` · `subagents` · `llm`
-- `source`: [`packages/experimental/agent-team/src/types.ts:428`](../packages/experimental/agent-team/src/types.ts)
+- `source`: [`packages/experimental/agent-team/src/types.ts:444`](../packages/experimental/agent-team/src/types.ts)
 
 ```ts config-catalog
 /** Team-service deployment limits. */
@@ -1206,16 +1206,54 @@ export interface Config {
 ## `@deepseek-ai/dsh-experimental-tool-agent-team`
 
 - `inject`: `agents` · `agentTeams` · `tools` · `systemPrompt`
-- `source`: [`packages/experimental/tool-agent-team/src/index.ts:18`](../packages/experimental/tool-agent-team/src/index.ts)
+- `refs`: [`AgentOptions`](subsystems/core.zh.md)
+- `source`: [`packages/experimental/tool-agent-team/src/index.ts:45`](../packages/experimental/tool-agent-team/src/index.ts)
 
 ```ts config-catalog
-/** Tool routing configuration. */
+/** Tool routing and duty configuration. */
 export interface Config {
   /** Continuable-subagent provider used for fresh teammates. */
   readonly freshProvider?: string
   /** Continuable-subagent provider used for completed-prefix fork teammates. */
   readonly forkProvider?: string
+  /**
+   * Default child route and limits for every spawned teammate; the model's
+   * explicit `provider`, `model`, and `reasoning_effort` arguments override it.
+   */
+  readonly agentOptions?: AgentOptions
+  /**
+   * Instructions and tool access per duty. The keys are the fixed duty names
+   * `spawn_teammate` accepts and the `/team` kickoff requests; only their values vary.
+   */
+  readonly duties?: DutiesConfig
 }
+
+/** Configuration of each fixed duty. */
+export interface DutiesConfig {
+  /**
+   * Teammates that write and revise the shared task plan and verify submitted
+   * work. Their default tools are the read-only inherited tools.
+   */
+  readonly planner?: DutyConfig
+  /** Teammates that claim, implement, and submit planned tasks. They keep every inherited tool by default. */
+  readonly executor?: DutyConfig
+}
+
+/** Instructions and tool access for teammates created with one duty. */
+export interface DutyConfig {
+  /** Model-facing instructions added to the teammate's first message. */
+  readonly instructions?: string
+  /** Inherited tools the teammate keeps. */
+  readonly tools?: DutyTools
+}
+
+/**
+ * Inherited tools a teammate with one duty keeps: `all`, or only the named
+ * global tools. Named tools the Lead cannot see are dropped at creation, so a
+ * list never widens access, and an empty list keeps no inherited tool. The
+ * teammate's own Team tools are always kept.
+ */
+export type DutyTools = 'all' | string[]
 ```
 <!-- END GENERATED config-catalog:@deepseek-ai/dsh-experimental-tool-agent-team -->
 

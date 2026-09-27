@@ -65,6 +65,13 @@ export const zh = {
   'phase.rejected': '已拒绝',
   'phase.escalated': '已升级',
   'status.completed': '已完成',
+  'subject': '主题',
+  'subject.field': '团队主题',
+  'subject.placeholder': '输入主题，由规划者拆分任务、执行者完成',
+  'subject.start': '启动团队',
+  'subject.unavailable': '当前配置无法启动团队',
+  'duty.planner': '规划者',
+  'duty.executor': '执行者',
 } satisfies Record<string, string>
 
 /** Agent Teams locale key union. */
@@ -132,4 +139,11 @@ export const en = {
   'phase.rejected': 'Rejected',
   'phase.escalated': 'Escalated',
   'status.completed': 'Completed',
+  'subject': 'Subject',
+  'subject.field': 'Team subject',
+  'subject.placeholder': 'Subject for a planner to split into tasks and executors to complete',
+  'subject.start': 'Start team',
+  'subject.unavailable': 'This setup cannot start a team',
+  'duty.planner': 'Planner',
+  'duty.executor': 'Executor',
 } satisfies Record<TeamKey, string>

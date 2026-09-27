@@ -9,6 +9,16 @@ Types shared by the experimental implicit-root Team domain, model tools, and hos
 `TeamId` is the root `SessionId` under a distinct [brand](core.md#branded-ids). `TeamTaskId` is Team-local and monotonically allocated as `task-<n>`; `TeamMessageId` is globally random. A teammate's Session id remains its persistent identity, while `name` is an immutable model/UI label.
 
 ```ts type-equiv
+/**
+ * Work a teammate was created for. A `planner` writes and revises the shared
+ * task plan and verifies submissions; an `executor` claims ready tasks and
+ * submits its work. The Team service refuses task actions outside a dutied
+ * teammate's duty; a teammate without a duty keeps the unrestricted task rules.
+ */
+type TeamDuty = 'planner' | 'executor'
+```
+
+```ts type-equiv
 /** Whole durable value written on every teammate lifecycle change. */
 interface TeamMemberSnapshot {
   readonly id: SessionId
@@ -16,6 +26,8 @@ interface TeamMemberSnapshot {
   readonly description: string
   readonly provider: string
   readonly context: 'fresh' | 'fork'
+  /** Immutable duty chosen at creation; absent for a teammate created without one. */
+  readonly duty?: TeamDuty
   /**
    * Resolved child `agentOptions.provider` for this teammate. A teammate holds
    * no live Agent between turns, so the roster reads its route here instead of
@@ -30,7 +42,7 @@ interface TeamMemberSnapshot {
 }
 ```
 
-Every member starts in `provisioning` and reaches exactly one terminal roster phase, `active` or `failed`. Roster `running`/`inactive` status is derived separately and never rewrites this record. `agentProvider` and `agentModel` record the teammate's resolved route, so a roster row or room participant still reports the model it was seated on while that teammate's Agent is not live.
+Every member starts in `provisioning` and reaches exactly one terminal roster phase, `active` or `failed`. Roster `running`/`inactive` status is derived separately and never rewrites this record. `agentProvider` and `agentModel` record the teammate's resolved route, so a roster row or room participant still reports the model it was seated on while that teammate's Agent is not live. `duty` is recorded on the first provisioning record and the projection refuses any later change to it. A `planner` creates tasks, revises tasks no one has claimed, and verifies submissions but never claims or owns a task; an `executor` claims and submits tasks but neither creates nor verifies them; refused actions report `TEAM_DUTY_UNAUTHORIZED`. The tool restriction a duty implies is not a Team record: the subagent provider keeps it in the teammate's own descriptor.
 
 ## Durable mailbox
 
@@ -88,7 +100,7 @@ interface TeamTaskSnapshot {
 
 ## Web projection
 
-The Lead Session publishes `SessionProjectionMap.agentTeam` with durable roster rows and non-deleted task views. `failure` reports a rejected persisted record beside the last valid state. Member activity comes from Session status; model labels come from each member's `modelSelection` projection. A task view reports `verifying` for a submitted revision that awaits its verdict, and `verification` names the verifier, verdict, and reason once a peer records them.
+The Lead Session publishes `SessionProjectionMap.agentTeam` with the latest subject, durable roster rows, and non-deleted task views. The subject comes from the log-only `team/subject` event, whose latest record wins; `setSubject` writes it for the Lead only, and a subject change republishes the view even though the roster and tasks are unchanged. `failure` reports a rejected persisted record beside the last valid state. Member activity comes from Session status; model labels come from each member's `modelSelection` projection. A task view reports `verifying` for a submitted revision that awaits its verdict, and `verification` names the verifier, verdict, and reason once a peer records them.
 
 ```ts type-equiv
 /** One durable roster row published through the `agentTeam` Session projection. */
@@ -98,6 +110,8 @@ interface TeamMemberProjection {
   readonly role: 'lead' | 'teammate'
   /** Durable lifecycle; the Lead row is always `active`. Turn activity comes from Session status. */
   readonly phase: TeamMemberPhase
+  /** Teammate duty; absent on the Lead row and on teammates created without one. */
+  readonly duty?: TeamDuty
   readonly error?: string
 }
 ```
@@ -127,6 +141,8 @@ interface TeamTaskView {
  * record; members and tasks then stay at the last valid state.
  */
 interface TeamProjection {
+  /** Latest subject the Lead recorded for the Team; absent until one is set. */
+  readonly subject?: string
   readonly members: TeamMemberProjection[]
   readonly tasks: TeamTaskView[]
   readonly failure?: string
@@ -228,6 +244,21 @@ listMembers(agent: Agent): TeamMemberView[]
  * @returns the active roster row.
  */
 async spawnTeammate(caller: Agent, request: SpawnTeammateRequest): Promise<SpawnTeammateResult>
+
+/**
+ * Record the Team subject in the Lead log; the latest record wins.
+ * @param caller - exact live Team Lead.
+ * @param subject - subject text, trimmed and at most 200 characters.
+ */
+async setSubject(caller: Agent, subject: string): Promise<void>
+
+/**
+ * Read the latest Team subject without throwing, for prompt assembly. A Team
+ * whose projection rejected a record keeps its last valid subject.
+ * @param agent - candidate exact live Agent.
+ * @returns the subject, or undefined for a non-member or before the Lead records one.
+ */
+subjectOf(agent: Agent): string | undefined
 
 /**
  * Queue one durable peer message, then attempt immediate delivery.

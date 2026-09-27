@@ -21,6 +21,8 @@ import { resolveAdapterOptions } from '@deepseek-ai/dsh-llm-deepseek'
 import { serialize } from '@deepseek-ai/dsh-llm-deepseek/src/serialize.ts'
 import type { GenerateOptions } from '@deepseek-ai/dsh-llm'
 import { MockAdapter, textResponse, toolCallResponse } from '../../../core/agent-loop/tests/mock-adapter.ts'
+import CommandRuntime from '@deepseek-ai/dsh-commands'
+import SessionTitleService from '@deepseek-ai/dsh-session-title'
 import TeamService from '../../agent-team/src/index.ts'
 import * as toolTeam from '../src/index.ts'
 
@@ -46,6 +48,42 @@ const roots: string[] = []
 const contexts = new Set<Context>()
 let callNumber = 0
 
+const ROUTE_REASONING = {
+  efforts: [
+    { id: ReasoningEffortId('low'), name: 'Low' },
+    { id: ReasoningEffortId('high'), name: 'High' },
+  ],
+  defaultEffort: ReasoningEffortId('high'),
+} as const
+
+function spawnedMember(target: string) {
+  return {
+    id: SessionId(`member-${target}`),
+    name: target,
+    role: 'teammate' as const,
+    status: 'inactive' as const,
+    description: 'member',
+    diagnostics: [] as string[],
+  }
+}
+
+function spawnDescriptions(ctx: Context, agent: Agent) {
+  const scope = scopeOf(agent.ctx)
+  const parameters = ctx.tools.get('spawn_teammate', scope)?.parameters as {
+    properties?: {
+      provider?: { description?: string }
+      model?: { description?: string }
+      reasoning_effort?: { description?: string }
+    }
+  } | undefined
+  const properties = parameters?.properties
+  return {
+    provider: properties?.provider?.description,
+    model: properties?.model?.description,
+    reasoning_effort: properties?.reasoning_effort?.description,
+  }
+}
+
 /** Session query implementation whose search faces are outside these tests. */
 class TestSessionQuery extends SessionQueryEngine {
   override searchSessions(): Promise<never> {
@@ -67,6 +105,7 @@ async function setup(
   script: ConstructorParameters<typeof MockAdapter>[0],
   legacyControl = false,
   reasoning?: ConstructorParameters<typeof MockAdapter>[1],
+  teamConfig?: toolTeam.Config,
 ) {
   const ctx = new Context()
   contexts.add(ctx)
@@ -81,7 +120,9 @@ async function setup(
   await ctx.plugin(SubagentSpawn, { providerName: 'spawn' })
   await ctx.plugin(SubagentFork, { providerName: 'fork' })
   await ctx.plugin(TeamService)
-  const fiber = await ctx.plugin(toolTeam)
+  const fiber = teamConfig === undefined
+    ? await ctx.plugin(toolTeam)
+    : await ctx.plugin(toolTeam, teamConfig)
   const adapter = new MockAdapter(script, reasoning)
   ctx.llm.registerAdapter(['mock'], adapter)
   const lead = await ctx.agentLoop.create(SessionId('tool-team-lead'), { provider: 'mock', model: 'mock' })
@@ -796,7 +837,7 @@ describe('dsh-tool-team', () => {
     // Misconfiguration is named at the spawn rather than surfacing later as a
     // durability failure, and no child is created for it.
     expect(refused.isError).toBe(true)
-    expect(text(refused)).toContain('does not declare reasoning effort "high"')
+    expect(text(refused)).toContain('does not support reasoning effort "high"')
     expect(ctx.agentTeams.listMembers(lead).some(member => member.name === 'effort-worker')).toBe(false)
 
     // The refused name is still free, so a corrected retry seats the teammate.
@@ -821,13 +862,13 @@ describe('dsh-tool-team', () => {
     expect(accepted.isError).toBe(false)
     await execute(ctx, lead, 'interrupt_agent', { target: 'low-worker' })
 
-    // An undeclared one is refused, and the refusal names what the route declares.
+    // An undeclared effort is refused by the live LLM preflight.
     const refused = await execute(ctx, lead, 'spawn_teammate', {
       name: 'high-worker', description: 'high worker', prompt: 'wait',
       provider: 'mock', model: 'mock', reasoning_effort: 'high',
     })
     expect(refused.isError).toBe(true)
-    expect(text(refused)).toContain('it declares "low"')
+    expect(text(refused)).toContain('does not support reasoning effort "high"')
     expect(ctx.agentTeams.listMembers(lead).some(member => member.name === 'high-worker')).toBe(false)
   })
 
@@ -840,8 +881,179 @@ describe('dsh-tool-team', () => {
       reasoning_effort: 'low',
     })
     expect(result.isError).toBe(true)
-    expect(text(result)).toContain('does not declare reasoning effort "low"')
+    expect(text(result)).toContain('does not support reasoning effort "low"')
     expect(ctx.agentTeams.listMembers(lead).some(member => member.name === 'inherit-worker')).toBe(false)
+  })
+
+  it('preserves an omitted agentOptions and accepts partial child defaults', () => {
+    expect(toolTeam.Config({}).agentOptions).toBeUndefined()
+    expect(toolTeam.Config({ agentOptions: { provider: 'mock' } }).agentOptions).toEqual({ provider: 'mock' })
+    expect(toolTeam.Config({ agentOptions: { reasoningEffort: ReasoningEffortId('high') } }).agentOptions)
+      .toEqual({ reasoningEffort: ReasoningEffortId('high') })
+  })
+
+  it('applies a fully configured default route to every spawned teammate', async () => {
+    const { ctx, lead } = await setup([], false, ROUTE_REASONING, {
+      agentOptions: {
+        provider: 'mock',
+        model: 'mock-configured',
+        reasoningEffort: ReasoningEffortId('high'),
+      },
+    })
+    const spawn = vi.spyOn(ctx.agentTeams, 'spawnTeammate')
+      .mockResolvedValue({ member: spawnedMember('configured-worker') })
+    const result = await execute(ctx, lead, 'spawn_teammate', {
+      name: 'configured-worker', description: 'configured worker', prompt: 'wait',
+    })
+    expect(result.isError, text(result)).toBe(false)
+    expect(spawn).toHaveBeenCalledTimes(1)
+    expect(spawn.mock.calls[0]?.[1].agentOptions).toEqual({
+      provider: 'mock',
+      model: 'mock-configured',
+      reasoningEffort: ReasoningEffortId('high'),
+    })
+  })
+
+  it('overrides configured defaults with explicit route arguments and drops the configured effort', async () => {
+    const { ctx, lead } = await setup([], false, ROUTE_REASONING, {
+      agentOptions: {
+        provider: 'mock',
+        model: 'mock-configured',
+        reasoningEffort: ReasoningEffortId('high'),
+      },
+    })
+    const spawn = vi.spyOn(ctx.agentTeams, 'spawnTeammate')
+      .mockResolvedValue({ member: spawnedMember('explicit-worker') })
+
+    const explicit = await execute(ctx, lead, 'spawn_teammate', {
+      name: 'explicit-worker', description: 'explicit worker', prompt: 'wait',
+      provider: 'mock', model: 'mock-explicit',
+    })
+    expect(explicit.isError, text(explicit)).toBe(false)
+    expect(spawn.mock.calls[0]?.[1].agentOptions).toEqual({ provider: 'mock', model: 'mock-explicit' })
+
+    const effortOnly = await execute(ctx, lead, 'spawn_teammate', {
+      name: 'effort-worker', description: 'effort worker', prompt: 'wait',
+      reasoning_effort: 'low',
+    })
+    expect(effortOnly.isError, text(effortOnly)).toBe(false)
+    expect(spawn.mock.calls[1]?.[1].agentOptions).toEqual({
+      provider: 'mock',
+      model: 'mock-configured',
+      reasoningEffort: ReasoningEffortId('low'),
+    })
+  })
+
+  it('refuses an unknown explicit route before spawning or journaling a member', async () => {
+    const { ctx, lead } = await setup([])
+    const spawn = vi.spyOn(ctx.agentTeams, 'spawnTeammate')
+    const result = await execute(ctx, lead, 'spawn_teammate', {
+      name: 'missing-worker', description: 'missing worker', prompt: 'wait',
+      provider: 'missing', model: 'mock-unknown',
+    })
+    expect(result.isError).toBe(true)
+    expect(text(result)).toContain('no adapter registered for provider "missing"')
+    expect(spawn).not.toHaveBeenCalled()
+    expect(ctx.agentTeams.listMembers(lead).some(member => member.name === 'missing-worker')).toBe(false)
+  })
+
+  it('skips route preflight and passes no agentOptions for pure inheritance', async () => {
+    const { ctx, lead } = await setup([])
+    const resolve = vi.spyOn(ctx.llm, 'resolveCallConfig')
+    const spawn = vi.spyOn(ctx.agentTeams, 'spawnTeammate')
+      .mockResolvedValue({ member: spawnedMember('plain-worker') })
+    const result = await execute(ctx, lead, 'spawn_teammate', {
+      name: 'plain-worker', description: 'plain worker', prompt: 'wait',
+    })
+    expect(result.isError, text(result)).toBe(false)
+    expect(resolve).not.toHaveBeenCalled()
+    expect(spawn).toHaveBeenCalledTimes(1)
+    expect(spawn.mock.calls[0]?.[1]).not.toHaveProperty('agentOptions')
+  })
+
+  it('refuses a configured route when the teammate scope has no LLM service', async () => {
+    // `scoped.get('llm')` is strict about the calling scope: an Agent isolated
+    // from the deployment's `llm` provider observes the same missing-service
+    // refusal tool-subagent records for a context that never mounts one.
+    const { ctx, lead, fiber } = await setup([], false, undefined, {
+      agentOptions: { provider: 'mock', model: 'mock-configured' },
+    })
+    await fiber.dispose()
+    Object.assign(lead, { ctx: lead.ctx.isolate('llm') })
+    await ctx.plugin(toolTeam, {
+      agentOptions: { provider: 'mock', model: 'mock-configured' },
+    })
+    const spawn = vi.spyOn(ctx.agentTeams, 'spawnTeammate')
+    const result = await execute(ctx, lead, 'spawn_teammate', {
+      name: 'unroutable-worker', description: 'unroutable worker', prompt: 'wait',
+    })
+    expect(result.isError).toBe(true)
+    expect(text(result)).toContain('`llm` service is unavailable')
+    expect(spawn).not.toHaveBeenCalled()
+  })
+
+  it('preflights an effort-only configured default against the Lead\'s latest logged route', async () => {
+    const { ctx, lead } = await setup([], false, ROUTE_REASONING, {
+      agentOptions: { reasoningEffort: ReasoningEffortId('high') },
+    })
+    lead.session.append('request/header', {
+      header: { config: { provider: 'current-provider', model: 'current-model' } },
+      reason: 'initial',
+    })
+    const resolve = vi.spyOn(ctx.llm, 'resolveCallConfig').mockResolvedValue({
+      provider: 'current-provider',
+      model: 'current-model',
+      reasoningEffort: ReasoningEffortId('high'),
+    })
+    const spawn = vi.spyOn(ctx.agentTeams, 'spawnTeammate')
+      .mockResolvedValue({ member: spawnedMember('latest-worker') })
+    const result = await execute(ctx, lead, 'spawn_teammate', {
+      name: 'latest-worker', description: 'latest worker', prompt: 'wait',
+    })
+    expect(result.isError, text(result)).toBe(false)
+    expect(resolve).toHaveBeenCalledWith({
+      provider: 'current-provider',
+      model: 'current-model',
+      reasoningEffort: ReasoningEffortId('high'),
+    }, expect.anything())
+    expect(spawn.mock.calls[0]?.[1].agentOptions).toEqual({
+      reasoningEffort: ReasoningEffortId('high'),
+    })
+  })
+
+  it('builds default-route descriptions from fully configured agentOptions', async () => {
+    const { ctx, lead } = await setup([], false, undefined, {
+      agentOptions: {
+        provider: 'mock',
+        model: 'mock-flash',
+        reasoningEffort: ReasoningEffortId('high'),
+      },
+    })
+    expect(spawnDescriptions(ctx, lead)).toEqual({
+      provider: 'Model provider route for this teammate, for example deepseek-official. Defaults to mock/mock-flash.',
+      model: 'Model id for this teammate; pick one that fits its responsibility, since teammates on different models disagree more usefully than copies of one model. Defaults to mock-flash.',
+      reasoning_effort: 'Reasoning effort for this teammate, named as the target model declares it. Defaults to high.',
+    })
+  })
+
+  it('changes only the effort default sentence for effort-only agentOptions', async () => {
+    const { ctx, lead } = await setup([], false, undefined, {
+      agentOptions: { reasoningEffort: ReasoningEffortId('high') },
+    })
+    expect(spawnDescriptions(ctx, lead)).toEqual({
+      provider: 'Model provider route for this teammate, for example deepseek-official. Defaults to your own route.',
+      model: 'Model id for this teammate; pick one that fits its responsibility, since teammates on different models disagree more usefully than copies of one model. Defaults to your own model.',
+      reasoning_effort: 'Reasoning effort for this teammate, named as the target model declares it. Defaults to high.',
+    })
+  })
+
+  it('keeps the default route descriptions byte-for-byte without agentOptions', async () => {
+    const { ctx, lead } = await setup([])
+    expect(spawnDescriptions(ctx, lead)).toEqual({
+      provider: 'Model provider route for this teammate, for example deepseek-official. Defaults to your own route.',
+      model: 'Model id for this teammate; pick one that fits its responsibility, since teammates on different models disagree more usefully than copies of one model. Defaults to your own model.',
+      reasoning_effort: 'Reasoning effort for this teammate, named as the target model declares it. Defaults to your own setting.',
+    })
   })
 
   it('uses configured fresh and fork provider names', async () => {
@@ -856,5 +1068,206 @@ describe('dsh-tool-team', () => {
     const childId = spawnedChildId(ctx, lead, result)
     await vi.waitFor(() => { expect(ctx.agents.get(childId)).toBeUndefined() }, { timeout: 5_000 })
     expect(ctx.agentTeams.listMembers(lead)[1]).toMatchObject({ provider: 'team-fresh' })
+  })
+})
+
+describe('teammate duties and the /team command', () => {
+  const IDENTITY = '<system-reminder>\nYou are teammate "{name}".\nYour Team Lead is named "lead".\nUse list_agents({}) to find your teammates and their names.\nTo message your Team Lead, use send_message({ target: "lead", message: "..." }).\nTo message another teammate, use send_message({ target: "<teammate name>", message: "..." }).'
+  const PLANNER = 'You plan and verify; you cannot change files or run commands. Read the workspace, then write the plan with team_task_create: one task per independently verifiable change, with blocked_by for ordering and write_scopes for the files it will touch. Revise unclaimed tasks with team_task_update edit, set_dependencies, or delete. Message the Lead when the plan is ready. When a task awaits your verdict, check the work itself in the workspace, then record approved or rejected with a reason using team_task_update action "verify".'
+  const EXECUTOR = 'You execute planned tasks. Take a ready, unowned task with team_task_update action "claim" at its current revision, implement it within its write_scopes, then hand it over with action "submit". Do not create or verify tasks; message the planner when the plan is missing work. After a rejection, rework the task and submit it again. Take the next ready task until none is left, then report to the Lead.'
+  const SUBJECT_POLICY = 'The user started this Agent Team with the subject "Ship the parser". The Lead runs the plan-then-execute flow: spawn one teammate with duty "planner" to write the plan as shared tasks; when the planner reports the plan, spawn teammates with duty "executor" to claim ready tasks, implement them, and submit them; the planner verifies each submission. The Lead waits for the required teammates, then answers the user when every task is completed.'
+  const GLOBAL_TOOLS = ['read', 'grep', 'glob', 'write', 'edit', 'bash', 'workflow']
+
+  function identity(name: string, extra: readonly string[] = []): string {
+    return `${[IDENTITY.replace('{name}', name), ...extra].join('\n')}\n</system-reminder>\n\n`
+  }
+
+  function registerGlobalTools(ctx: Context): void {
+    for (const name of GLOBAL_TOOLS) {
+      ctx.tools.register(defineContentToolFixture({
+        name,
+        description: `${name} fixture`,
+        parameters: {},
+        execute: () => Promise.resolve([{ type: 'text', text: name }]),
+      }))
+    }
+  }
+
+  /** Initial user text blocks recorded in one teammate Session. */
+  function initialPrompt(child: Agent): string[] {
+    const initial = child.session.snapshotEvents().find(event => event.type === 'user/message'
+      && event.data.source.kind === 'user')
+    return initial?.type === 'user/message'
+      ? initial.data.content.flatMap(block => block.type === 'text' ? [block.text] : [])
+      : []
+  }
+
+  async function inheritedTools(ctx: Context, agent: Agent): Promise<string[]> {
+    return (await assembly(ctx, agent)).tools.map(schema => schema.name)
+      .filter(name => GLOBAL_TOOLS.includes(name)).sort()
+  }
+
+  it('gives each dutied teammate its duty instructions and leaves plain teammates plain', async () => {
+    const { ctx, lead } = await setup(['hang', 'hang', 'hang'])
+    const plain = await execute(ctx, lead, 'spawn_teammate', { name: 'plain', description: 'plain', prompt: 'help' })
+    await ctx.agentTeams.setSubject(lead, 'Ship the parser')
+    const planner = await execute(ctx, lead, 'spawn_teammate', {
+      name: 'planner', description: 'plan', prompt: 'plan it', duty: 'planner',
+    })
+    const executor = await execute(ctx, lead, 'spawn_teammate', {
+      name: 'builder', description: 'build', prompt: 'build it', duty: 'executor',
+    })
+    expect(JSON.parse(text(planner))).toMatchObject({ member: { target: 'planner', role: 'teammate', duty: 'planner' } })
+    expect((JSON.parse(text(plain)) as { member: object }).member).not.toHaveProperty('duty')
+
+    const plainChild = await waitRunning(ctx, spawnedChildId(ctx, lead, plain))
+    const plannerChild = await waitRunning(ctx, spawnedChildId(ctx, lead, planner))
+    const executorChild = await waitRunning(ctx, spawnedChildId(ctx, lead, executor))
+    // A teammate without a duty keeps the exact pre-duty reminder.
+    expect(initialPrompt(plainChild)).toEqual([identity('plain'), 'help'])
+    expect(initialPrompt(plannerChild)).toEqual([identity('planner', ['Your duty is "planner".', PLANNER]), 'plan it'])
+    expect(initialPrompt(executorChild)).toEqual([identity('builder', ['Your duty is "executor".', EXECUTOR]), 'build it'])
+    const listed = JSON.parse(text(await execute(ctx, lead, 'list_agents', {}))) as { target: string; duty?: string }[]
+    expect(listed.map(row => [row.target, row.duty])).toEqual([
+      ['lead', undefined], ['plain', undefined], ['planner', 'planner'], ['builder', 'executor'],
+    ])
+  })
+
+  it('keeps a planner to the read tools the Lead can see and refuses its writes at execution', async () => {
+    const { ctx, lead } = await setup(['hang', 'hang'])
+    registerGlobalTools(ctx)
+    const planner = await execute(ctx, lead, 'spawn_teammate', {
+      name: 'planner', description: 'plan', prompt: 'plan it', duty: 'planner',
+    })
+    const executor = await execute(ctx, lead, 'spawn_teammate', {
+      name: 'builder', description: 'build', prompt: 'build it', duty: 'executor',
+    })
+    const plannerChild = await waitRunning(ctx, spawnedChildId(ctx, lead, planner))
+    const executorChild = await waitRunning(ctx, spawnedChildId(ctx, lead, executor))
+
+    // read_image, skill, and the web tools are absent from this composition,
+    // so the default list narrows to what the Lead can see.
+    expect(await inheritedTools(ctx, plannerChild)).toEqual(['glob', 'grep', 'read'])
+    expect(await inheritedTools(ctx, executorChild)).toEqual([...GLOBAL_TOOLS].sort())
+    expect((await assembly(ctx, plannerChild)).tools.map(schema => schema.name).filter(name => TOOL_NAMES.includes(name)).sort())
+      .toEqual(TOOL_NAMES)
+    const write = await execute(ctx, plannerChild, 'write', {})
+    expect(write.isError).toBe(true)
+    expect((await execute(ctx, executorChild, 'write', {})).isError).toBe(false)
+    const descriptor = plannerChild.session.snapshotEvents().find(event => event.type === 'subagent/descriptor')
+    expect(descriptor?.data).toMatchObject({ toolFilter: { allow: ['read', 'grep', 'glob'] } })
+  })
+
+  it('applies configured duty instructions and tool lists, including an empty list', async () => {
+    const { ctx, lead, fiber } = await setup(['hang', 'hang'])
+    registerGlobalTools(ctx)
+    await fiber.dispose()
+    await ctx.plugin(toolTeam, {
+      duties: { planner: { tools: [] }, executor: { instructions: 'Build only.', tools: ['bash', 'missing'] } },
+    })
+    const planner = await execute(ctx, lead, 'spawn_teammate', {
+      name: 'planner', description: 'plan', prompt: 'plan it', duty: 'planner',
+    })
+    const executor = await execute(ctx, lead, 'spawn_teammate', {
+      name: 'builder', description: 'build', prompt: 'build it', duty: 'executor',
+    })
+    const plannerChild = await waitRunning(ctx, spawnedChildId(ctx, lead, planner))
+    const executorChild = await waitRunning(ctx, spawnedChildId(ctx, lead, executor))
+    expect(await inheritedTools(ctx, plannerChild)).toEqual([])
+    expect(await inheritedTools(ctx, executorChild)).toEqual(['bash'])
+    expect(initialPrompt(plannerChild)[0]).toContain(PLANNER)
+    expect(initialPrompt(executorChild)[0]).toBe(identity('builder', ['Your duty is "executor".', 'Build only.']))
+  })
+
+  it('adds the subject policy to every member\'s Team section once the Lead records a subject', async () => {
+    const { ctx, lead } = await setup(['hang'])
+    const plain = await execute(ctx, lead, 'spawn_teammate', { name: 'plain', description: 'plain', prompt: 'help' })
+    const child = await waitRunning(ctx, spawnedChildId(ctx, lead, plain))
+    const before = renderPrompt(await assembly(ctx, lead))
+    expect(before).not.toContain('plan-then-execute')
+
+    await ctx.agentTeams.setSubject(lead, 'Ship the parser')
+    const leadPrompt = renderPrompt(await assembly(ctx, lead))
+    expect(leadPrompt).toContain(SUBJECT_POLICY)
+    expect(leadPrompt.startsWith(before.slice(0, before.indexOf('Agent Teams is available')))).toBe(true)
+    // The section is uniform, so a teammate renders the Lead's prompt byte for byte.
+    expect(renderPrompt(await assembly(ctx, child))).toBe(leadPrompt)
+  })
+
+  it('refuses blank duty instructions at load, including a direct apply', async () => {
+    const { ctx, fiber } = await setup([])
+    await fiber.dispose()
+    expect(() => { toolTeam.apply(ctx, { duties: { executor: { instructions: '  ' } } }) })
+      .toThrow('tool-agent-team: duties.executor.instructions must be non-empty')
+    await expect(ctx.plugin(toolTeam, { duties: { planner: { instructions: '' } } })).rejects
+      .toThrow('tool-agent-team: duties.planner.instructions must be non-empty')
+  })
+
+  async function withCommands(script: ConstructorParameters<typeof MockAdapter>[0], title = true) {
+    const context = await setup(script)
+    await context.ctx.plugin(CommandRuntime)
+    if (title) await context.ctx.plugin(SessionTitleService, { fallbackMaxWords: 6, fallbackMaxBytes: 80, maxTitleBytes: 80 })
+    return context
+  }
+
+  it('starts a Team from /team: subject, pinned title, then the subject alone as the user turn', async () => {
+    const { ctx, lead, adapter } = await withCommands([textResponse('planning now')])
+    const execution = await ctx.commands.execute(lead, '/team   Ship the parser  ', [], SIGNAL)
+    expect(execution?.result).toEqual({ kind: 'success', text: 'Agent Team started.' })
+    await lead.whenIdle()
+
+    expect(ctx.agentTeams.subjectOf(lead)).toBe('Ship the parser')
+    const events = lead.session.snapshotEvents()
+    const subjectSeq = events.findIndex(event => event.type === 'team/subject')
+    const titleSeq = events.findIndex(event => event.type === 'session/title')
+    const turnSeq = events.findIndex(event => event.type === 'turn/start')
+    expect(subjectSeq).toBeGreaterThanOrEqual(0)
+    expect(subjectSeq).toBeLessThan(titleSeq)
+    expect(titleSeq).toBeLessThan(turnSeq)
+    expect(events[titleSeq]?.data).toMatchObject({ title: 'Ship the parser', source: { kind: 'user' } })
+
+    const request = adapter.requests[0]!
+    const userTexts = request.messages.filter(message => message.role === 'user')
+      .map(message => ({ kind: message.source?.kind, text: message.content.flatMap(block => block.type === 'text' ? [block.text] : []).join('') }))
+    expect(userTexts).toEqual([{ kind: 'user', text: 'Ship the parser' }])
+    // The flow reaches the Lead through its Team section, recorded with the request.
+    const system = request.messages.filter(message => message.role === 'system')
+      .flatMap(message => message.content.flatMap(block => block.type === 'text' ? [block.text] : [])).join('')
+    expect(system).toContain(SUBJECT_POLICY)
+  })
+
+  it('refuses /team without a subject, from a teammate, beyond the subject bound, or without the title service', async () => {
+    const { ctx, lead } = await withCommands(['hang'])
+    const helper = await execute(ctx, lead, 'spawn_teammate', { name: 'helper', description: 'help', prompt: 'help' })
+    const teammate = await waitRunning(ctx, spawnedChildId(ctx, lead, helper))
+    expect((await ctx.commands.execute(lead, '/team   ', [], SIGNAL))?.result)
+      .toEqual({ kind: 'error', text: 'Usage: /team <subject>' })
+    expect((await ctx.commands.execute(teammate, '/team mine', [], SIGNAL))?.result)
+      .toEqual({ kind: 'error', text: 'Only the Team Lead conversation can start an Agent Team.' })
+    expect((await ctx.commands.execute(lead, `/team ${'x'.repeat(201)}`, [], SIGNAL))?.result)
+      .toEqual({ kind: 'error', text: 'subject exceeds 200 characters' })
+    expect(ctx.agentTeams.subjectOf(lead)).toBeUndefined()
+
+    const untitled = await withCommands([], false)
+    expect((await untitled.ctx.commands.execute(untitled.lead, '/team Ship', [], SIGNAL))?.result)
+      .toEqual({ kind: 'error', text: '/team needs the session-title service to name the conversation.' })
+    expect(untitled.ctx.agentTeams.subjectOf(untitled.lead)).toBeUndefined()
+    expect(untitled.lead.session.snapshotEvents().some(event => event.type === 'turn/start')).toBe(false)
+  })
+
+  it('fails /team loudly when recording the subject fails for a reason other than a Team refusal', async () => {
+    const { ctx, lead } = await withCommands([])
+    vi.spyOn(ctx.agentTeams, 'setSubject').mockRejectedValue(new Error('flush failed'))
+    await expect(ctx.commands.execute(lead, '/team Ship', [], SIGNAL)).rejects.toThrow('flush failed')
+    expect(lead.session.snapshotEvents().some(event => event.type === 'session/title')).toBe(false)
+    expect(lead.session.snapshotEvents().some(event => event.type === 'turn/start')).toBe(false)
+  })
+
+  it('withdraws /team with the plugin', async () => {
+    const { ctx, lead, fiber } = await withCommands([])
+    expect(ctx.commands.list(lead).map(command => command.name)).toContain('team')
+    await fiber.dispose()
+    expect(ctx.commands.list(lead).map(command => command.name)).not.toContain('team')
+    expect(await ctx.commands.execute(lead, '/team Ship', [], SIGNAL)).toBeUndefined()
   })
 })

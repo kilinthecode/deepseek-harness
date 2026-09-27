@@ -675,3 +675,93 @@ describe('Agent Teams projection events', () => {
     })
   })
 })
+
+describe('teammate duty and Team subject in the durable stream', () => {
+  const subjectEvent = (subject: string, seq: number) =>
+    event('team/subject', { version: 1, teamId: TEAM, subject }, SessionSeq(seq))
+  const memberEvent = (snapshot: TeamMemberSnapshot, seq: number) =>
+    event('team/member', { version: 2, teamId: TEAM, member: snapshot }, SessionSeq(seq))
+
+  it('keeps a duty recorded at provisioning through settlement and refuses any change to it', () => {
+    const planner = member({ duty: 'planner' })
+    const settled = projectTeam(ROOT, [memberEvent(planner, 1), memberEvent({ ...planner, phase: 'active' }, 2)])
+    expect(settled.members).toEqual([{ ...planner, phase: 'active' }])
+    expect(teamProjectionView(settled).members[1]).toEqual({
+      id: CHILD, name: 'worker-a', role: 'teammate', phase: 'active', duty: 'planner',
+    })
+
+    const changes: readonly [TeamMemberSnapshot, TeamMemberSnapshot][] = [
+      [planner, { ...planner, phase: 'active', duty: 'executor' }],
+      [planner, { ...member(), phase: 'active' }],
+      [member(), { ...member(), phase: 'active', duty: 'planner' }],
+    ]
+    for (const [first, second] of changes) {
+      expect(project(ROOT, [memberEvent(first, 1), memberEvent(second, 2)]).failure)
+        .toBe(`teammate "${CHILD}" changed immutable identity fields`)
+    }
+  })
+
+  it('rejects a duty outside the closed set', () => {
+    // Persisted JSON is untyped, so an out-of-set duty arrives as parsed data.
+    const invalid = JSON.parse(JSON.stringify({
+      ...memberEvent(member(), 1),
+      data: { version: 2, teamId: TEAM, member: { ...member(), duty: 'reviewer' } },
+    })) as SessionEvent
+    expect(project(ROOT, [invalid]).failure)
+      .toBe('persisted Agent Teams team/member payload is invalid')
+  })
+
+  it('projects the latest Team subject and refuses an empty or malformed one', () => {
+    const state = projectTeam(ROOT, [subjectEvent('Ship the parser', 1), subjectEvent('Ship the lexer', 2)])
+    expect(state.subject).toBe('Ship the lexer')
+    expect(teamProjectionView(state).subject).toBe('Ship the lexer')
+
+    expect(project(ROOT, [subjectEvent('Ship', 1), subjectEvent('  ', 2)])).toMatchObject({
+      subject: 'Ship',
+      failure: 'team subject is empty',
+    })
+    const malformed = JSON.parse(JSON.stringify({
+      ...subjectEvent('x', 1),
+      data: { version: 1, teamId: TEAM, subject: 7 },
+    })) as SessionEvent
+    expect(project(ROOT, [malformed]).failure).toBe('persisted Agent Teams team/subject payload is invalid')
+    const future = event('team/subject', { version: 2 as 1, teamId: TEAM, subject: 'x' }, SessionSeq(1))
+    expect(project(ROOT, [future]).failure).toBe('unsupported Agent Teams team/subject event version 2')
+    const foreign = event('team/subject', { version: 1, teamId: TeamId('other'), subject: 'x' }, SessionSeq(1))
+    expect(project(ROOT, [foreign]).subject).toBeUndefined()
+  })
+
+  it('republishes the client view for a subject-only change and reuses it for mailbox-only changes', () => {
+    const first = projectTeam(ROOT, [subjectEvent('Ship the parser', 1)])
+    const view = teamProjectionView(first)
+    const renamed = teamState(teamProjectionDefinition.apply(first, subjectEvent('Ship the lexer', 2)))
+    // Only the subject changed, so both collection references are shared.
+    expect(renamed.members).toBe(first.members)
+    expect(renamed.tasks).toBe(first.tasks)
+    const renamedView = teamProjectionView(renamed)
+    expect(renamedView).not.toBe(view)
+    expect(renamedView.subject).toBe('Ship the lexer')
+
+    const mailed = teamState(teamProjectionDefinition.apply(renamed, event('team/message/queued', {
+      version: 2,
+      teamId: TEAM,
+      message: {
+        id: TeamMessageId('m-1'),
+        senderId: ROOT,
+        senderName: 'lead',
+        targetId: CHILD,
+        content: [{ type: 'text', text: 'hello' }] as ContentBlock[],
+      },
+    }, SessionSeq(3))))
+    expect(teamProjectionView(mailed)).toBe(renamedView)
+  })
+
+  it('round-trips duty and subject through the strict checkpoint schema', () => {
+    const state = projectTeam(ROOT, [
+      subjectEvent('Ship the parser', 1),
+      memberEvent(member({ duty: 'executor' }), 2),
+    ])
+    expect(teamProjectionDefinition.stateSchema.parse(JSON.parse(JSON.stringify(state)))).toEqual(state)
+    expect(teamProjectionDefinition.stateVersion).toBe(6)
+  })
+})

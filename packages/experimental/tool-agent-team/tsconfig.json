@@ -15,6 +15,10 @@
     { "path": "../../core/session" },
     { "path": "../../core/system-prompt" },
     { "path": "../../core/tools" },
+    { "path": "../../interaction/commands" },
+    { "path": "../../session/session-title" },
+    { "path": "../../subagent/subagent" },
+    { "path": "../../subagent/tool-subagent" },
     { "path": "../agent-team" }
   ]
 }

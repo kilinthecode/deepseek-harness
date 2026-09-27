@@ -16620,7 +16620,7 @@
       "kind": "event",
       "event": "team/member",
       "surface": false,
-      "digest": "49c67f40c45f8e1c1bc65851eaefbe41d5ed354544fa90bbd264aa2ce14321ba",
+      "digest": "602df874ec87ea193096763329faf87e74fd7005eea3bcfefad3f177f4fd1588",
       "schema": {
         "root": 0,
         "nodes": [
@@ -16634,22 +16634,22 @@
               },
               {
                 "name": "ignorable",
-                "type": 12,
+                "type": 15,
                 "optional": true
               },
               {
                 "name": "seq",
-                "type": 13,
+                "type": 16,
                 "optional": false
               },
               {
                 "name": "time",
-                "type": 13,
+                "type": 16,
                 "optional": false
               },
               {
                 "name": "type",
-                "type": 14,
+                "type": 17,
                 "optional": false
               }
             ],
@@ -16670,7 +16670,7 @@
               },
               {
                 "name": "version",
-                "type": 11,
+                "type": 14,
                 "optional": false
               }
             ],
@@ -16700,6 +16700,11 @@
                 "optional": false
               },
               {
+                "name": "duty",
+                "type": 7,
+                "optional": true
+              },
+              {
                 "name": "error",
                 "type": 3,
                 "optional": true
@@ -16716,7 +16721,7 @@
               },
               {
                 "name": "phase",
-                "type": 7,
+                "type": 10,
                 "optional": false
               },
               {
@@ -16750,8 +16755,23 @@
             "kind": "union",
             "types": [
               8,
-              9,
-              10
+              9
+            ]
+          },
+          {
+            "kind": "literal",
+            "value": "executor"
+          },
+          {
+            "kind": "literal",
+            "value": "planner"
+          },
+          {
+            "kind": "union",
+            "types": [
+              11,
+              12,
+              13
             ]
           },
           {
@@ -17268,6 +17288,90 @@
           {
             "kind": "literal",
             "value": "team/message/queued"
+          }
+        ]
+      }
+    },
+    {
+      "key": "event:team/subject",
+      "kind": "event",
+      "event": "team/subject",
+      "surface": false,
+      "digest": "e632de6c2a434c169a380dfe895fcc8261cb8504a8b374980fd30581290f87e8",
+      "schema": {
+        "root": 0,
+        "nodes": [
+          {
+            "kind": "object",
+            "properties": [
+              {
+                "name": "data",
+                "type": 1,
+                "optional": false
+              },
+              {
+                "name": "ignorable",
+                "type": 4,
+                "optional": true
+              },
+              {
+                "name": "seq",
+                "type": 5,
+                "optional": false
+              },
+              {
+                "name": "time",
+                "type": 5,
+                "optional": false
+              },
+              {
+                "name": "type",
+                "type": 6,
+                "optional": false
+              }
+            ],
+            "indices": []
+          },
+          {
+            "kind": "object",
+            "properties": [
+              {
+                "name": "subject",
+                "type": 2,
+                "optional": false
+              },
+              {
+                "name": "teamId",
+                "type": 2,
+                "optional": false
+              },
+              {
+                "name": "version",
+                "type": 3,
+                "optional": false
+              }
+            ],
+            "indices": []
+          },
+          {
+            "kind": "primitive",
+            "type": "string"
+          },
+          {
+            "kind": "literal",
+            "value": 1
+          },
+          {
+            "kind": "literal",
+            "value": true
+          },
+          {
+            "kind": "primitive",
+            "type": "number"
+          },
+          {
+            "kind": "literal",
+            "value": "team/subject"
           }
         ]
       }
@@ -23438,7 +23542,7 @@
       },
       "names": [],
       "sources": [
-        "packages/experimental/agent-team/src/types.ts:536"
+        "packages/experimental/agent-team/src/types.ts:552"
       ]
     },
     {
@@ -30217,110 +30321,6 @@
       "sources": []
     },
     {
-      "digest": "16c425e4303cc199fa78843fcc793ac544311d1947f670fe1b15c4d9ed545b67",
-      "schema": {
-        "root": 0,
-        "nodes": [
-          {
-            "kind": "object",
-            "properties": [
-              {
-                "name": "agentModel",
-                "type": 1,
-                "optional": true
-              },
-              {
-                "name": "agentProvider",
-                "type": 1,
-                "optional": true
-              },
-              {
-                "name": "context",
-                "type": 2,
-                "optional": false
-              },
-              {
-                "name": "description",
-                "type": 1,
-                "optional": false
-              },
-              {
-                "name": "error",
-                "type": 1,
-                "optional": true
-              },
-              {
-                "name": "id",
-                "type": 1,
-                "optional": false
-              },
-              {
-                "name": "name",
-                "type": 1,
-                "optional": false
-              },
-              {
-                "name": "phase",
-                "type": 5,
-                "optional": false
-              },
-              {
-                "name": "provider",
-                "type": 1,
-                "optional": false
-              }
-            ],
-            "indices": []
-          },
-          {
-            "kind": "primitive",
-            "type": "string"
-          },
-          {
-            "kind": "union",
-            "types": [
-              3,
-              4
-            ]
-          },
-          {
-            "kind": "literal",
-            "value": "fork"
-          },
-          {
-            "kind": "literal",
-            "value": "fresh"
-          },
-          {
-            "kind": "union",
-            "types": [
-              6,
-              7,
-              8
-            ]
-          },
-          {
-            "kind": "literal",
-            "value": "active"
-          },
-          {
-            "kind": "literal",
-            "value": "failed"
-          },
-          {
-            "kind": "literal",
-            "value": "provisioning"
-          }
-        ]
-      },
-      "names": [
-        "packages/experimental/agent-team/src/types.ts#TeamMemberSnapshot"
-      ],
-      "sources": [
-        "packages/experimental/agent-team/src/types.ts:47"
-      ]
-    },
-    {
       "digest": "16d0507cb94b4cfc84a87446b1ba7652d6ec1d65ee1684789e747e30d542800e",
       "schema": {
         "root": 0,
@@ -32303,7 +32303,7 @@
       },
       "names": [],
       "sources": [
-        "packages/experimental/agent-team/src/types.ts:543"
+        "packages/experimental/agent-team/src/types.ts:559"
       ]
     },
     {
@@ -33118,7 +33118,7 @@
         "packages/experimental/agent-team/src/types.ts#TeamMessageSource"
       ],
       "sources": [
-        "packages/experimental/agent-team/src/types.ts:177"
+        "packages/experimental/agent-team/src/types.ts:193"
       ]
     },
     {
@@ -33653,7 +33653,7 @@
         "packages/experimental/agent-team/src/types.ts#TeamTaskVerification"
       ],
       "sources": [
-        "packages/experimental/agent-team/src/types.ts:90"
+        "packages/experimental/agent-team/src/types.ts:102"
       ]
     },
     {
@@ -34035,6 +34035,31 @@
           {
             "kind": "literal",
             "value": "file"
+          }
+        ]
+      },
+      "names": [],
+      "sources": []
+    },
+    {
+      "digest": "27fe11b5414079a9e14aaa8dc1bda0f5aa33a009fdcc551d5a8692365b2a7e7e",
+      "schema": {
+        "root": 0,
+        "nodes": [
+          {
+            "kind": "union",
+            "types": [
+              1,
+              2
+            ]
+          },
+          {
+            "kind": "literal",
+            "value": "executor"
+          },
+          {
+            "kind": "literal",
+            "value": "planner"
           }
         ]
       },
@@ -35073,7 +35098,7 @@
         "packages/experimental/agent-team/src/types.ts#TeamMessageSnapshot"
       ],
       "sources": [
-        "packages/experimental/agent-team/src/types.ts:168"
+        "packages/experimental/agent-team/src/types.ts:184"
       ]
     },
     {
@@ -35594,7 +35619,7 @@
         "packages/experimental/agent-team/src/types.ts#RoomReviewTimeoutKind"
       ],
       "sources": [
-        "packages/experimental/agent-team/src/types.ts:359"
+        "packages/experimental/agent-team/src/types.ts:375"
       ]
     },
     {
@@ -36768,7 +36793,7 @@
         "packages/experimental/agent-team/src/types.ts#RoomReviewSnapshot"
       ],
       "sources": [
-        "packages/experimental/agent-team/src/types.ts:246"
+        "packages/experimental/agent-team/src/types.ts:262"
       ]
     },
     {
@@ -37616,7 +37641,7 @@
       },
       "names": [],
       "sources": [
-        "packages/experimental/agent-team/src/types.ts:532"
+        "packages/experimental/agent-team/src/types.ts:548"
       ]
     },
     {
@@ -45854,174 +45879,6 @@
       "sources": []
     },
     {
-      "digest": "49c67f40c45f8e1c1bc65851eaefbe41d5ed354544fa90bbd264aa2ce14321ba",
-      "schema": {
-        "root": 0,
-        "nodes": [
-          {
-            "kind": "object",
-            "properties": [
-              {
-                "name": "data",
-                "type": 1,
-                "optional": false
-              },
-              {
-                "name": "ignorable",
-                "type": 12,
-                "optional": true
-              },
-              {
-                "name": "seq",
-                "type": 13,
-                "optional": false
-              },
-              {
-                "name": "time",
-                "type": 13,
-                "optional": false
-              },
-              {
-                "name": "type",
-                "type": 14,
-                "optional": false
-              }
-            ],
-            "indices": []
-          },
-          {
-            "kind": "object",
-            "properties": [
-              {
-                "name": "member",
-                "type": 2,
-                "optional": false
-              },
-              {
-                "name": "teamId",
-                "type": 3,
-                "optional": false
-              },
-              {
-                "name": "version",
-                "type": 11,
-                "optional": false
-              }
-            ],
-            "indices": []
-          },
-          {
-            "kind": "object",
-            "properties": [
-              {
-                "name": "agentModel",
-                "type": 3,
-                "optional": true
-              },
-              {
-                "name": "agentProvider",
-                "type": 3,
-                "optional": true
-              },
-              {
-                "name": "context",
-                "type": 4,
-                "optional": false
-              },
-              {
-                "name": "description",
-                "type": 3,
-                "optional": false
-              },
-              {
-                "name": "error",
-                "type": 3,
-                "optional": true
-              },
-              {
-                "name": "id",
-                "type": 3,
-                "optional": false
-              },
-              {
-                "name": "name",
-                "type": 3,
-                "optional": false
-              },
-              {
-                "name": "phase",
-                "type": 7,
-                "optional": false
-              },
-              {
-                "name": "provider",
-                "type": 3,
-                "optional": false
-              }
-            ],
-            "indices": []
-          },
-          {
-            "kind": "primitive",
-            "type": "string"
-          },
-          {
-            "kind": "union",
-            "types": [
-              5,
-              6
-            ]
-          },
-          {
-            "kind": "literal",
-            "value": "fork"
-          },
-          {
-            "kind": "literal",
-            "value": "fresh"
-          },
-          {
-            "kind": "union",
-            "types": [
-              8,
-              9,
-              10
-            ]
-          },
-          {
-            "kind": "literal",
-            "value": "active"
-          },
-          {
-            "kind": "literal",
-            "value": "failed"
-          },
-          {
-            "kind": "literal",
-            "value": "provisioning"
-          },
-          {
-            "kind": "literal",
-            "value": 2
-          },
-          {
-            "kind": "literal",
-            "value": true
-          },
-          {
-            "kind": "primitive",
-            "type": "number"
-          },
-          {
-            "kind": "literal",
-            "value": "team/member"
-          }
-        ]
-      },
-      "names": [],
-      "sources": []
-    },
-    {
       "digest": "49dab019d00e8c26f27ad2ccff7b604d69e323ae4d17e0d2a7b6b8a830b1ade2",
       "schema": {
         "root": 0,
@@ -46836,9 +46693,9 @@
         "packages/attachment/attachment/src/brand.ts:6",
         "packages/compaction/compaction/src/brand.ts:4",
         "packages/core/session/src/types.ts:20",
-        "packages/experimental/agent-team/src/types.ts:192",
         "packages/experimental/agent-team/src/types.ts:20",
-        "packages/experimental/agent-team/src/types.ts:204",
+        "packages/experimental/agent-team/src/types.ts:208",
+        "packages/experimental/agent-team/src/types.ts:220",
         "packages/experimental/agent-team/src/types.ts:32",
         "packages/experimental/agent-team/src/types.ts:8",
         "packages/feedback/message-feedback/src/types.ts:14",
@@ -46857,6 +46714,153 @@
         "packages/webhook/webhook/src/brand.ts:6",
         "packages/webhook/webhook/src/brand.ts:9",
         "packages/workflow/workflow/src/types.ts:13"
+      ]
+    },
+    {
+      "digest": "4d5318ae1b5ec090cfd96facab49ab48cc7b7575dbac0ddee56a9150f4f16afc",
+      "schema": {
+        "root": 0,
+        "nodes": [
+          {
+            "kind": "object",
+            "properties": [
+              {
+                "name": "member",
+                "type": 1,
+                "optional": false
+              },
+              {
+                "name": "teamId",
+                "type": 2,
+                "optional": false
+              },
+              {
+                "name": "version",
+                "type": 13,
+                "optional": false
+              }
+            ],
+            "indices": []
+          },
+          {
+            "kind": "object",
+            "properties": [
+              {
+                "name": "agentModel",
+                "type": 2,
+                "optional": true
+              },
+              {
+                "name": "agentProvider",
+                "type": 2,
+                "optional": true
+              },
+              {
+                "name": "context",
+                "type": 3,
+                "optional": false
+              },
+              {
+                "name": "description",
+                "type": 2,
+                "optional": false
+              },
+              {
+                "name": "duty",
+                "type": 6,
+                "optional": true
+              },
+              {
+                "name": "error",
+                "type": 2,
+                "optional": true
+              },
+              {
+                "name": "id",
+                "type": 2,
+                "optional": false
+              },
+              {
+                "name": "name",
+                "type": 2,
+                "optional": false
+              },
+              {
+                "name": "phase",
+                "type": 9,
+                "optional": false
+              },
+              {
+                "name": "provider",
+                "type": 2,
+                "optional": false
+              }
+            ],
+            "indices": []
+          },
+          {
+            "kind": "primitive",
+            "type": "string"
+          },
+          {
+            "kind": "union",
+            "types": [
+              4,
+              5
+            ]
+          },
+          {
+            "kind": "literal",
+            "value": "fork"
+          },
+          {
+            "kind": "literal",
+            "value": "fresh"
+          },
+          {
+            "kind": "union",
+            "types": [
+              7,
+              8
+            ]
+          },
+          {
+            "kind": "literal",
+            "value": "executor"
+          },
+          {
+            "kind": "literal",
+            "value": "planner"
+          },
+          {
+            "kind": "union",
+            "types": [
+              10,
+              11,
+              12
+            ]
+          },
+          {
+            "kind": "literal",
+            "value": "active"
+          },
+          {
+            "kind": "literal",
+            "value": "provisioning"
+          },
+          {
+            "kind": "literal",
+            "value": "failed"
+          },
+          {
+            "kind": "literal",
+            "value": 2
+          }
+        ]
+      },
+      "names": [],
+      "sources": [
+        "packages/experimental/agent-team/src/types.ts:546"
       ]
     },
     {
@@ -53381,6 +53385,194 @@
       "sources": [
         "packages/subagent/subagent/src/descriptor.ts:61"
       ]
+    },
+    {
+      "digest": "602df874ec87ea193096763329faf87e74fd7005eea3bcfefad3f177f4fd1588",
+      "schema": {
+        "root": 0,
+        "nodes": [
+          {
+            "kind": "object",
+            "properties": [
+              {
+                "name": "data",
+                "type": 1,
+                "optional": false
+              },
+              {
+                "name": "ignorable",
+                "type": 15,
+                "optional": true
+              },
+              {
+                "name": "seq",
+                "type": 16,
+                "optional": false
+              },
+              {
+                "name": "time",
+                "type": 16,
+                "optional": false
+              },
+              {
+                "name": "type",
+                "type": 17,
+                "optional": false
+              }
+            ],
+            "indices": []
+          },
+          {
+            "kind": "object",
+            "properties": [
+              {
+                "name": "member",
+                "type": 2,
+                "optional": false
+              },
+              {
+                "name": "teamId",
+                "type": 3,
+                "optional": false
+              },
+              {
+                "name": "version",
+                "type": 14,
+                "optional": false
+              }
+            ],
+            "indices": []
+          },
+          {
+            "kind": "object",
+            "properties": [
+              {
+                "name": "agentModel",
+                "type": 3,
+                "optional": true
+              },
+              {
+                "name": "agentProvider",
+                "type": 3,
+                "optional": true
+              },
+              {
+                "name": "context",
+                "type": 4,
+                "optional": false
+              },
+              {
+                "name": "description",
+                "type": 3,
+                "optional": false
+              },
+              {
+                "name": "duty",
+                "type": 7,
+                "optional": true
+              },
+              {
+                "name": "error",
+                "type": 3,
+                "optional": true
+              },
+              {
+                "name": "id",
+                "type": 3,
+                "optional": false
+              },
+              {
+                "name": "name",
+                "type": 3,
+                "optional": false
+              },
+              {
+                "name": "phase",
+                "type": 10,
+                "optional": false
+              },
+              {
+                "name": "provider",
+                "type": 3,
+                "optional": false
+              }
+            ],
+            "indices": []
+          },
+          {
+            "kind": "primitive",
+            "type": "string"
+          },
+          {
+            "kind": "union",
+            "types": [
+              5,
+              6
+            ]
+          },
+          {
+            "kind": "literal",
+            "value": "fork"
+          },
+          {
+            "kind": "literal",
+            "value": "fresh"
+          },
+          {
+            "kind": "union",
+            "types": [
+              8,
+              9
+            ]
+          },
+          {
+            "kind": "literal",
+            "value": "executor"
+          },
+          {
+            "kind": "literal",
+            "value": "planner"
+          },
+          {
+            "kind": "union",
+            "types": [
+              11,
+              12,
+              13
+            ]
+          },
+          {
+            "kind": "literal",
+            "value": "active"
+          },
+          {
+            "kind": "literal",
+            "value": "failed"
+          },
+          {
+            "kind": "literal",
+            "value": "provisioning"
+          },
+          {
+            "kind": "literal",
+            "value": 2
+          },
+          {
+            "kind": "literal",
+            "value": true
+          },
+          {
+            "kind": "primitive",
+            "type": "number"
+          },
+          {
+            "kind": "literal",
+            "value": "team/member"
+          }
+        ]
+      },
+      "names": [],
+      "sources": []
     },
     {
       "digest": "6085488d223aeffdef51d7ae17655fc26ab22ee13cbed82a50e62e2b6fb5b918",
@@ -61068,6 +61260,20 @@
       ]
     },
     {
+      "digest": "72b39fd276635f5a5d4bf8d2a10c4df50f630c3903ce5cad0b09d7bfc47ec5e6",
+      "schema": {
+        "root": 0,
+        "nodes": [
+          {
+            "kind": "literal",
+            "value": "executor"
+          }
+        ]
+      },
+      "names": [],
+      "sources": []
+    },
+    {
       "digest": "72ec79127a9c0d0241b1106a74cc2b24c81ce467170f1c3c93f7b71a9496d227",
       "schema": {
         "root": 0,
@@ -61272,7 +61478,7 @@
         "packages/experimental/agent-team/src/types.ts#TeamTaskSnapshot"
       ],
       "sources": [
-        "packages/experimental/agent-team/src/types.ts:110"
+        "packages/experimental/agent-team/src/types.ts:122"
       ]
     },
     {
@@ -61638,6 +61844,47 @@
       },
       "names": [],
       "sources": []
+    },
+    {
+      "digest": "771e6fd978bc0ef09e53a13dbb5aa4942dae7884cb9bfaf630595d89e96013ac",
+      "schema": {
+        "root": 0,
+        "nodes": [
+          {
+            "kind": "object",
+            "properties": [
+              {
+                "name": "subject",
+                "type": 1,
+                "optional": false
+              },
+              {
+                "name": "teamId",
+                "type": 1,
+                "optional": false
+              },
+              {
+                "name": "version",
+                "type": 2,
+                "optional": false
+              }
+            ],
+            "indices": []
+          },
+          {
+            "kind": "primitive",
+            "type": "string"
+          },
+          {
+            "kind": "literal",
+            "value": 1
+          }
+        ]
+      },
+      "names": [],
+      "sources": [
+        "packages/experimental/agent-team/src/types.ts:567"
+      ]
     },
     {
       "digest": "78a9be340090b735a39980e7222ce730c972fbcf1de7c9e0aef2125884b7caee",
@@ -64671,6 +64918,20 @@
       "sources": []
     },
     {
+      "digest": "854ba24512034996d5bbcf8f7ec4f3caf04c6fdbb06d0389d5bca86194c0747b",
+      "schema": {
+        "root": 0,
+        "nodes": [
+          {
+            "kind": "literal",
+            "value": "team/subject"
+          }
+        ]
+      },
+      "names": [],
+      "sources": []
+    },
+    {
       "digest": "854db3efdfb0cd39d30953b28703e519c121f1115cebfffc40369fe86c406dd1",
       "schema": {
         "root": 0,
@@ -64870,7 +65131,7 @@
         "packages/experimental/agent-team/src/types.ts#RoomProposalSnapshot"
       ],
       "sources": [
-        "packages/experimental/agent-team/src/types.ts:232"
+        "packages/experimental/agent-team/src/types.ts:248"
       ]
     },
     {
@@ -65054,133 +65315,6 @@
       },
       "names": [],
       "sources": []
-    },
-    {
-      "digest": "87a592afe5d1a645f513caf83d175b7961bb3ac0732f96a49aa0b7bd7b702d88",
-      "schema": {
-        "root": 0,
-        "nodes": [
-          {
-            "kind": "object",
-            "properties": [
-              {
-                "name": "member",
-                "type": 1,
-                "optional": false
-              },
-              {
-                "name": "teamId",
-                "type": 2,
-                "optional": false
-              },
-              {
-                "name": "version",
-                "type": 10,
-                "optional": false
-              }
-            ],
-            "indices": []
-          },
-          {
-            "kind": "object",
-            "properties": [
-              {
-                "name": "agentModel",
-                "type": 2,
-                "optional": true
-              },
-              {
-                "name": "agentProvider",
-                "type": 2,
-                "optional": true
-              },
-              {
-                "name": "context",
-                "type": 3,
-                "optional": false
-              },
-              {
-                "name": "description",
-                "type": 2,
-                "optional": false
-              },
-              {
-                "name": "error",
-                "type": 2,
-                "optional": true
-              },
-              {
-                "name": "id",
-                "type": 2,
-                "optional": false
-              },
-              {
-                "name": "name",
-                "type": 2,
-                "optional": false
-              },
-              {
-                "name": "phase",
-                "type": 6,
-                "optional": false
-              },
-              {
-                "name": "provider",
-                "type": 2,
-                "optional": false
-              }
-            ],
-            "indices": []
-          },
-          {
-            "kind": "primitive",
-            "type": "string"
-          },
-          {
-            "kind": "union",
-            "types": [
-              4,
-              5
-            ]
-          },
-          {
-            "kind": "literal",
-            "value": "fork"
-          },
-          {
-            "kind": "literal",
-            "value": "fresh"
-          },
-          {
-            "kind": "union",
-            "types": [
-              7,
-              8,
-              9
-            ]
-          },
-          {
-            "kind": "literal",
-            "value": "active"
-          },
-          {
-            "kind": "literal",
-            "value": "failed"
-          },
-          {
-            "kind": "literal",
-            "value": "provisioning"
-          },
-          {
-            "kind": "literal",
-            "value": 2
-          }
-        ]
-      },
-      "names": [],
-      "sources": [
-        "packages/experimental/agent-team/src/types.ts:530"
-      ]
     },
     {
       "digest": "87b1a33564b9a4d63b00988a524c12259243953aebb9c9a05127d87b27464df9",
@@ -65686,7 +65820,7 @@
         "packages/experimental/agent-team/src/types.ts#RoomMessageSnapshot"
       ],
       "sources": [
-        "packages/experimental/agent-team/src/types.ts:222"
+        "packages/experimental/agent-team/src/types.ts:238"
       ]
     },
     {
@@ -65786,6 +65920,20 @@
           {
             "kind": "literal",
             "value": "hook/invoked"
+          }
+        ]
+      },
+      "names": [],
+      "sources": []
+    },
+    {
+      "digest": "8a885773d2d5e4db2d85dd9fd948b1565722ecb46b65254c23aa1ec37b9152b1",
+      "schema": {
+        "root": 0,
+        "nodes": [
+          {
+            "kind": "literal",
+            "value": "planner"
           }
         ]
       },
@@ -66356,6 +66504,130 @@
       "names": [],
       "sources": [
         "packages/core/tools/src/index.ts:34"
+      ]
+    },
+    {
+      "digest": "90356c753d33f49c423a9b228c2d12c4177bcc0940a77b4f116a995b38c1c3f8",
+      "schema": {
+        "root": 0,
+        "nodes": [
+          {
+            "kind": "object",
+            "properties": [
+              {
+                "name": "agentModel",
+                "type": 1,
+                "optional": true
+              },
+              {
+                "name": "agentProvider",
+                "type": 1,
+                "optional": true
+              },
+              {
+                "name": "context",
+                "type": 2,
+                "optional": false
+              },
+              {
+                "name": "description",
+                "type": 1,
+                "optional": false
+              },
+              {
+                "name": "duty",
+                "type": 5,
+                "optional": true
+              },
+              {
+                "name": "error",
+                "type": 1,
+                "optional": true
+              },
+              {
+                "name": "id",
+                "type": 1,
+                "optional": false
+              },
+              {
+                "name": "name",
+                "type": 1,
+                "optional": false
+              },
+              {
+                "name": "phase",
+                "type": 8,
+                "optional": false
+              },
+              {
+                "name": "provider",
+                "type": 1,
+                "optional": false
+              }
+            ],
+            "indices": []
+          },
+          {
+            "kind": "primitive",
+            "type": "string"
+          },
+          {
+            "kind": "union",
+            "types": [
+              3,
+              4
+            ]
+          },
+          {
+            "kind": "literal",
+            "value": "fork"
+          },
+          {
+            "kind": "literal",
+            "value": "fresh"
+          },
+          {
+            "kind": "union",
+            "types": [
+              6,
+              7
+            ]
+          },
+          {
+            "kind": "literal",
+            "value": "executor"
+          },
+          {
+            "kind": "literal",
+            "value": "planner"
+          },
+          {
+            "kind": "union",
+            "types": [
+              9,
+              10,
+              11
+            ]
+          },
+          {
+            "kind": "literal",
+            "value": "active"
+          },
+          {
+            "kind": "literal",
+            "value": "failed"
+          },
+          {
+            "kind": "literal",
+            "value": "provisioning"
+          }
+        ]
+      },
+      "names": [
+        "packages/experimental/agent-team/src/types.ts#TeamMemberSnapshot"
+      ],
+      "sources": [
+        "packages/experimental/agent-team/src/types.ts:55"
       ]
     },
     {
@@ -72426,7 +72698,7 @@
       },
       "names": [],
       "sources": [
-        "packages/experimental/agent-team/src/types.ts:549"
+        "packages/experimental/agent-team/src/types.ts:565"
       ]
     },
     {
@@ -73783,7 +74055,7 @@
         "packages/experimental/agent-team/src/types.ts#RoomProposalPhase"
       ],
       "sources": [
-        "packages/experimental/agent-team/src/types.ts:216"
+        "packages/experimental/agent-team/src/types.ts:232"
       ]
     },
     {
@@ -74416,7 +74688,7 @@
         "packages/experimental/agent-team/src/types.ts#TeamTaskStatus"
       ],
       "sources": [
-        "packages/experimental/agent-team/src/types.ts:80"
+        "packages/experimental/agent-team/src/types.ts:92"
       ]
     },
     {
@@ -76429,7 +76701,7 @@
       },
       "names": [],
       "sources": [
-        "packages/experimental/agent-team/src/types.ts:545"
+        "packages/experimental/agent-team/src/types.ts:561"
       ]
     },
     {
@@ -77375,7 +77647,7 @@
       },
       "names": [],
       "sources": [
-        "packages/experimental/agent-team/src/types.ts:547"
+        "packages/experimental/agent-team/src/types.ts:563"
       ]
     },
     {
@@ -85765,7 +86037,7 @@
         "packages/experimental/agent-team/src/types.ts#RoomReviewTimeoutSnapshot"
       ],
       "sources": [
-        "packages/experimental/agent-team/src/types.ts:367"
+        "packages/experimental/agent-team/src/types.ts:383"
       ]
     },
     {
@@ -85819,6 +86091,88 @@
       "sources": [
         "packages/schedule/schedule/src/types.ts:244"
       ]
+    },
+    {
+      "digest": "e632de6c2a434c169a380dfe895fcc8261cb8504a8b374980fd30581290f87e8",
+      "schema": {
+        "root": 0,
+        "nodes": [
+          {
+            "kind": "object",
+            "properties": [
+              {
+                "name": "data",
+                "type": 1,
+                "optional": false
+              },
+              {
+                "name": "ignorable",
+                "type": 4,
+                "optional": true
+              },
+              {
+                "name": "seq",
+                "type": 5,
+                "optional": false
+              },
+              {
+                "name": "time",
+                "type": 5,
+                "optional": false
+              },
+              {
+                "name": "type",
+                "type": 6,
+                "optional": false
+              }
+            ],
+            "indices": []
+          },
+          {
+            "kind": "object",
+            "properties": [
+              {
+                "name": "subject",
+                "type": 2,
+                "optional": false
+              },
+              {
+                "name": "teamId",
+                "type": 2,
+                "optional": false
+              },
+              {
+                "name": "version",
+                "type": 3,
+                "optional": false
+              }
+            ],
+            "indices": []
+          },
+          {
+            "kind": "primitive",
+            "type": "string"
+          },
+          {
+            "kind": "literal",
+            "value": 1
+          },
+          {
+            "kind": "literal",
+            "value": true
+          },
+          {
+            "kind": "primitive",
+            "type": "number"
+          },
+          {
+            "kind": "literal",
+            "value": "team/subject"
+          }
+        ]
+      },
+      "names": [],
+      "sources": []
     },
     {
       "digest": "e6411b09c1d982f789bf741ca74e2bea69df56029847f86a6148e722039ee732",
@@ -86425,7 +86779,7 @@
       },
       "names": [],
       "sources": [
-        "packages/experimental/agent-team/src/types.ts:534"
+        "packages/experimental/agent-team/src/types.ts:550"
       ]
     },
     {
@@ -86500,7 +86854,7 @@
         "packages/experimental/agent-team/src/types.ts#RoomReviewVerdict"
       ],
       "sources": [
-        "packages/experimental/agent-team/src/types.ts:219"
+        "packages/experimental/agent-team/src/types.ts:235"
       ]
     },
     {

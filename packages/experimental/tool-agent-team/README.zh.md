@@ -25,7 +25,7 @@ kind: "package-reference"
 <a id="use-this-package"></a>
 ## 使用本包
 
-当模型应该通过工具运行一支团队时，在 `@deepseek-ai/dsh-experimental-agent-team` 之上挂载本包。挂载后，每个团队成员——Lead 与每个 teammate——都会获得相同的九个工具，以及相同的协作策略。`spawn_teammate` 在初始任务前加上 teammate 的角色和名字。
+当模型应该通过工具运行一支团队时，在 `@deepseek-ai/dsh-experimental-agent-team` 之上挂载本包。挂载后，每个团队成员——Lead 与每个 teammate——都会获得相同的九个工具，以及相同的协作策略。`spawn_teammate` 在初始任务前加上 teammate 的角色和名字；Lead 为其指定 `planner` 或 `executor` 分工时，还会加上该分工的指示。`/team <subject>` 命令以一个主题启动 Team。
 
 ### 何时选择
 
@@ -33,7 +33,7 @@ kind: "package-reference"
 
 ### 最小工作示例
 
-对现有组合的最小增量是 [agent-team README](../agent-team/README.zh.md#smallest-working-setup) 中的两包片段：持久会话存储、团队领域包与本包。插件本身只有两个可选设置：
+对现有组合的最小增量是 [agent-team README](../agent-team/README.zh.md#smallest-working-setup) 中的两包片段：持久会话存储、团队领域包与本包。插件本身只有可选设置：
 
 ```yaml
 - id: tool-agent-team
@@ -41,22 +41,39 @@ kind: "package-reference"
   config:
     freshProvider: spawn
     forkProvider: fork
+    agentOptions:
+      provider: openai-codex
+      model: gpt-6-luna
+      reasoningEffort: xhigh
 ```
 
 | 字段 | 默认值 | 含义 |
 |---|---|---|
 | `freshProvider` | `spawn` | 启动 fresh teammate 的提供方 |
 | `forkProvider` | `fork` | 启动 fork teammate 的提供方 |
+| `agentOptions` | — | 每个生成 teammate 的默认子级路由与限制；模型的显式参数会覆盖它 |
+| `duties.planner.instructions` | 只读规划与验证文本 | 加到 planner 第一条消息中的指示 |
+| `duties.planner.tools` | `read`、`read_image`、`grep`、`glob`、`skill`、`web_search`、`web_fetch` | planner 保留的继承工具 |
+| `duties.executor.instructions` | claim、实现与提交文本 | 加到 executor 第一条消息中的指示 |
+| `duties.executor.tools` | `all` | executor 保留的继承工具 |
+
+路由优先级依次是显式的 `provider`、`model` 与 `reasoning_effort` 参数，然后是配置的 `agentOptions`，最后是 Lead 自身的 route。工具会在创建 teammate 前通过实时 LLM 解析生效路由，因此未知路由或不支持的 effort 会使工具调用失败，且不会记录成员。
 
 生成的[配置目录](../../../docs/config-catalog.zh.md#deepseek-aidsh-experimental-tool-agent-team)是每个受支持字段及其 JSDoc 的穷尽式真源。
 
 试试这样要求 Lead 模型：「创建一个名为 reviewer 的 teammate 检查 diff，再把变更摘要发给 reviewer」。模型会调用创建工具，然后调用消息工具。
 
+分工的 `tools` 取值为 `all` 或继承工具名列表。列表只保留其中 Lead 可见的工具，因此组合中不存在的名字会被忽略，绝不会扩大访问范围；空列表不保留任何继承工具。teammate 自己的 Team 工具始终保留。分工的键是 `spawn_teammate` 与 `/team` 流程使用的固定名字；只有它们的取值属于部署设置，空白指示会在加载时失败。
+
+### 以主题启动 Team
+
+在 Lead 会话中运行 `/team <subject>`，或在 Web 启动栏中输入主题（它发送同一条命令）。该命令在 Team 上记录主题，以主题命名会话，并把主题作为用户消息发给 Lead。此后每个成员的 Team 段落都会写明该主题以及先规划后执行的流程：Lead 创建一个 `planner`，由它把计划写成共享任务；计划就绪后，Lead 创建 `executor` teammate，由它们 claim、实现并提交就绪任务，planner 验证每次提交。teammate 会话、空主题、超过 200 个字符的主题，以及缺少 session-title 服务的组合，都会以命令错误拒绝。
+
 ### 模型能做什么
 
 九个工具分为四类能力：
 
-- **创建 teammate**——`spawn_teammate` 接收名字、描述与初始任务；只有 Lead 可以调用它。
+- **创建 teammate**——`spawn_teammate` 接收名字、描述、初始任务，以及可选的 `planner` 或 `executor` 分工；只有 Lead 可以调用它。
 - **发送消息**——`send_message` 在最近的步骤边界对运行中的成员进行 steering（中途引导）、启动或恢复非活动成员。
 - **查看与等待**——`list_agents` 返回各成员的 `target` 与可用状态；`wait_agent` 等待下一次团队变化；`interrupt_agent` 停止 teammate 的当前轮次（仅限 Lead）。
 - **管理任务板**——`team_task_create`、`team_task_list`、`team_task_get` 与 `team_task_update` 添加、浏览、读取与更新共享任务。生命周期由 `team_task_update` 承载：claim、edit、set_dependencies、用 `submit` 把自己的完成成果提交同行验证、用 `verify` 连同裁决与理由验证同行的提交，以及 reopen、reassign、release 与 delete。
@@ -96,7 +113,7 @@ kind: "package-reference"
 
 ### 策略与工具
 
-member scope 上的一个 `team:policy` 段落说明共享的协作规则；固定文本与九个工具注册都声明在 [`src/index.ts`](src/index.ts)。九个工具 schema 注册在发布时被识别为 Team member 的 scope 中。与旧全局 continuable-subagent 控件同名的 scoped 注册只会为团队成员覆盖这些全局控件。
+member scope 上的一个 `team:policy` 段落说明共享的协作规则，并在 Team 有主题后附上主题段落；固定文本、九个工具注册与 `/team` 命令都声明在 [`src/index.ts`](src/index.ts)。有分工的 spawn 会把分工，以及由该分工 `tools` 构建的工具限制交给 Team 服务；服务记录分工，并把限制转交给 subagent provider。`/team` 通过 `ctx.inject(['commands'])` 注册，因此只存在于带命令注册表的组合中。九个工具 schema 注册在发布时被识别为 Team member 的 scope 中。与旧全局 continuable-subagent 控件同名的 scoped 注册只会为团队成员覆盖这些全局控件。
 
 ### 按作用域注册与拆除
 
@@ -125,15 +142,15 @@ member scope 上的一个 `team:policy` 段落说明共享的协作规则；固�
 
 #### 模型看到什么
 
-一段共享 system 策略会说明显式 delegation 要求、共享 cwd 行为、文件陈旧版本恢复、Bash／formatter／codegen 风险、task／write-scope 协调、已提交任务的同行验证、Steer 投递、mailbox 不重试规则，以及 Lead 必须在回答前等待。`spawn_teammate` 接受 `provider`、`model` 与 `reasoning_effort`，且 `model` 的说明要求选择适合该 teammate 职责的模型，因此调用方可以把每个 teammate 安排在该职责所需的 route 上；省略它们则继承调用方自身的 route。若某条 route 未声明所请求的 reasoning effort，spawn 会在任何 child 存在之前就被拒绝，并列出该 route 确实声明的 effort；被拒绝的名字仍然可用，因此修正后重试即可安置该 teammate。该检查解析的是 teammate 的生效 route，即调用方覆盖项合并到自身 route 之上的结果。Lead 与 teammate 的全部九个 Team schema 相同；执行时检查仅限 Lead 的操作权限。`spawn_teammate` 在初始 user 消息前加上 `<system-reminder>\nYou are teammate "<name>".\nYour Team Lead is named "lead".\nUse list_agents({}) to find your teammates and their names.\nTo message your Team Lead, use send_message({ target: "lead", message: "..." }).\nTo message another teammate, use send_message({ target: "<teammate name>", message: "..." }).\n</system-reminder>`，接着是一个空行和任务。该前缀不含 Team id，禁用运行时上下文时也能生效。fork 继承历史，不额外添加 Lead 身份消息。
+一段共享 system 策略会说明显式 delegation 要求、共享 cwd 行为、文件陈旧版本恢复、Bash／formatter／codegen 风险、task／write-scope 协调、已提交任务的同行验证、Steer 投递、mailbox 不重试规则，以及 Lead 必须在回答前等待。`spawn_teammate` 接受 `provider`、`model` 与 `reasoning_effort`，且 `model` 的说明要求选择适合该 teammate 职责的模型，因此调用方可以把每个 teammate 安排在该职责所需的 route 上。该检查会在任何 child 存在之前，通过实时 LLM 解析 teammate 的生效 route——调用方的显式取值合并到配置的 `agentOptions` 之上，后者再合并到调用方自身的 route 之上——因此未注册的 route，或模型不支持所请求的 reasoning effort，都会以 LLM 自身的错误让调用失败，例如 `provider "<provider>" model "<model>" does not support reasoning effort "<effort>"`，且不列出任何已声明的 effort。被拒绝的名字仍然可用，因此修正后重试即可安置该 teammate。Lead 与 teammate 的全部九个 Team schema 相同；执行时检查仅限 Lead 的操作权限与分工规则。Lead 记录主题后，每个成员的 Team 段落末尾都会加上 `The user started this Agent Team with the subject "<subject>".`，随后是 Lead 执行的先规划后执行流程。`spawn_teammate` 在初始 user 消息前加上 `<system-reminder>\nYou are teammate "<name>".\nYour Team Lead is named "lead".\nUse list_agents({}) to find your teammates and their names.\nTo message your Team Lead, use send_message({ target: "lead", message: "..." }).\nTo message another teammate, use send_message({ target: "<teammate name>", message: "..." }).\n</system-reminder>`，接着是一个空行和任务。对有分工的 teammate，`Your duty is "<duty>".` 与该分工配置的指示位于 `</system-reminder>` 之前。该前缀不含 Team id，禁用运行时上下文时也能生效。fork 继承历史，不额外添加 Lead 身份消息。
 
 #### Token 影响
 
-每次 Team member 请求都有固定策略与 schema 成本。初始身份文本随普通历史经历后续步骤、冷恢复和压缩；插件不扫描或重新插入它。工具调用会增加紧凑 JSON roster、task、wait 或 receipt 结果。Peer 内容由 Team 领域保留在 target 历史中。
+每次 Team member 请求都有固定策略与 schema 成本；有主题的 Team 另有约 90 个 token 的主题段落。分工指示只在 teammate 的第一条消息中花费约 100 个 token。初始身份文本随普通历史经历后续步骤、冷恢复和压缩；插件不扫描或重新插入它。工具调用会增加紧凑 JSON roster、task、wait 或 receipt 结果。Peer 内容由 Team 领域保留在 target 历史中。
 
 #### KV Cache 影响
 
-provider／model、共享 system 策略和工具 schema 相同时，fork 保留父请求前缀并追加带身份前缀的初始任务。工具结果与 peer 消息追加在可复用请求前缀之后。原先在 system prompt 中记录身份的 Session，首次使用此布局请求时可能改变该前缀；提供方实际缓存命中仍为尽力而为。
+provider／model、共享 system 策略和工具 schema 相同时，fork 保留父请求前缀并追加带身份前缀的初始任务。工具结果与 peer 消息追加在可复用请求前缀之后。原先在 system prompt 中记录身份的 Session，首次使用此布局请求时可能改变该前缀；提供方实际缓存命中仍为尽力而为。主题段落对每个成员都相同，因此 fork 前缀保持一致；`/team` 在 Lead 第一次请求之前记录主题，而之后才记录的主题会使每个成员的 Team 段落改变一次。`tools` 为列表的分工会改变该 teammate 的工具 schema，因此它的请求前缀从一开始就与 Lead 不同。
 
 ## 已知限制与延期工作
 
@@ -144,6 +161,8 @@ provider／model、共享 system 策略和工具 schema 相同时，fork 保留�
 这些限制说明策略与工具无法为一支团队保证什么。它们是当前包约束，不是与其他协作方式的对比。
 
 - **提示词策略只负责协调，不负责 confinement**——它无法阻止 Bash 或外部进程写入重叠文件。
+- **planner 只凭工具列表保持只读**——默认列表不保留任何写入、shell 或 workflow 工具；部署若把 planner 的 `tools` 设为 `all`，或列出这类工具，planner 就能修改文件。
+- **一次性 headless 运行中没有 `/team`**——headless runner 把任务作为用户消息而非命令发送，因此不会以主题启动 Team。
 - **不会自主创建 Team**——除非用户明确要求，普通任务不会触发 delegation。
 - **没有 Web 控制功能**——浏览器 roster 与任务板呈现不属于该运行时包。
 - **实验原型，无稳定性承诺**——本包公开发布，但孵化期间 schema 仍可自由变更。
