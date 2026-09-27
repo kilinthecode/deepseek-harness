@@ -32,7 +32,7 @@ import {
   preflightChildLlmRoute,
   requestedAgentOptions,
 } from './model-selection.ts'
-import type { DelegationModelRequest, ModelSelectionPolicy } from './model-selection.ts'
+import type { DefaultChildRoute, DelegationModelRequest, ModelSelectionPolicy } from './model-selection.ts'
 import { registerListSubagentModels } from './list-models.ts'
 import type {} from './model-selection-settings.ts'
 import {
@@ -275,6 +275,23 @@ function providerWording(inheritsConversation: boolean): { description: string; 
   }
 }
 
+/**
+ * Model-facing statement of the recorded default child route's effect,
+ * replacing the generic "use configured child defaults" clause of the
+ * selection sentence when a Session policy default exists.
+ * @param defaultRoute - the policy's recorded default child route.
+ * @returns the selection sentence naming the default route and, when set, its effort.
+ */
+function defaultRouteSelectionSentence(defaultRoute: DefaultChildRoute): string {
+  const effortClause = defaultRoute.reasoningEffort === undefined
+    ? ''
+    : ` at reasoning effort \`${defaultRoute.reasoningEffort}\``
+  return ' Child LLM selection is optional. Omit `provider` and `model` to run the child on '
+    + `\`${defaultRoute.provider}/${defaultRoute.model}\`${effortClause}. `
+    + 'Supply `provider` and `model` together after using `list_subagent_models` to inspect advertised routes and efforts. '
+    + 'Changing the effective route without naming an effort uses the selected model\'s default effort.'
+}
+
 interface DelegationRunRequest {
   readonly run_in_background?: boolean
 }
@@ -367,9 +384,12 @@ export function apply(ctx: Context, config: Config, session?: Session): void {
       assertSubagentProviderConfiguration(subagentProvider)
       const wording = providerWording(subagentProvider.inheritsParentContext)
       const providerRouteDefaults = subagentProvider.agentRouteDefaults
-      const selectionDescription = providerRouteDefaults !== undefined
-        ? ' Child LLM selection is optional. Omit `provider`, `model`, and `reasoning_effort` to use configured child defaults and this provider\'s route defaults. Supply `provider` and `model` together after using `list_subagent_models` to inspect advertised routes and efforts. Changing the effective route without naming an effort uses the selected model\'s default effort.'
-        : ' Child LLM selection is optional. Omit `provider`, `model`, and `reasoning_effort` to use configured child defaults and inherit compatible missing values from the parent Agent. Supply `provider` and `model` together after using `list_subagent_models` to inspect advertised routes and efforts. Changing the effective route without naming an effort uses the selected model\'s default effort.'
+      const defaultRoute = modelSelectionPolicy?.defaultRoute
+      const selectionDescription = defaultRoute !== undefined
+        ? defaultRouteSelectionSentence(defaultRoute)
+        : providerRouteDefaults !== undefined
+          ? ' Child LLM selection is optional. Omit `provider`, `model`, and `reasoning_effort` to use configured child defaults and this provider\'s route defaults. Supply `provider` and `model` together after using `list_subagent_models` to inspect advertised routes and efforts. Changing the effective route without naming an effort uses the selected model\'s default effort.'
+          : ' Child LLM selection is optional. Omit `provider`, `model`, and `reasoning_effort` to use configured child defaults and inherit compatible missing values from the parent Agent. Supply `provider` and `model` together after using `list_subagent_models` to inspect advertised routes and efforts. Changing the effective route without naming an effort uses the selected model\'s default effort.'
       const choiceDescription = !modelSelectionEnabled
         ? ''
         : selectionDescription
@@ -400,21 +420,29 @@ export function apply(ctx: Context, config: Config, session?: Session): void {
           ...modelSelectionEnabled ? {
             provider: {
               type: 'string' as const,
-              description: providerRouteDefaults !== undefined
-                ? 'LLM provider route for the child. Supply together with model; omit both to use configured child defaults or this provider\'s route defaults.'
-                : 'LLM provider route for the child. Supply together with model; omit both to use configured child defaults or inherit the parent route.',
+              description: defaultRoute !== undefined
+                ? `LLM provider route for the child. Supply together with model; omit both to run the child on \`${defaultRoute.provider}/${defaultRoute.model}\`.`
+                : providerRouteDefaults !== undefined
+                  ? 'LLM provider route for the child. Supply together with model; omit both to use configured child defaults or this provider\'s route defaults.'
+                  : 'LLM provider route for the child. Supply together with model; omit both to use configured child defaults or inherit the parent route.',
             },
             model: {
               type: 'string' as const,
-              description: providerRouteDefaults !== undefined
-                ? 'Model id interpreted by provider. Supply together with provider; omit both to use configured child defaults or this provider\'s route defaults.'
-                : 'Model id interpreted by provider. Supply together with provider; omit both to use configured child defaults or inherit the parent route.',
+              description: defaultRoute !== undefined
+                ? `Model id interpreted by provider. Supply together with provider; omit both to run the child on \`${defaultRoute.provider}/${defaultRoute.model}\`.`
+                : providerRouteDefaults !== undefined
+                  ? 'Model id interpreted by provider. Supply together with provider; omit both to use configured child defaults or this provider\'s route defaults.'
+                  : 'Model id interpreted by provider. Supply together with provider; omit both to use configured child defaults or inherit the parent route.',
             },
             reasoning_effort: {
               type: 'string' as const,
-              description: providerRouteDefaults !== undefined
-                ? 'Adapter-owned reasoning effort for the effective child route. Omit to use a compatible configured effort or the selected model\'s default.'
-                : 'Adapter-owned reasoning effort for the effective child route. Omit to inherit a compatible configured/parent effort or use a newly selected model\'s default.',
+              description: defaultRoute !== undefined
+                ? defaultRoute.reasoningEffort !== undefined
+                  ? `Adapter-owned reasoning effort for the effective child route. Omit to use \`${defaultRoute.reasoningEffort}\` on the default route, or a newly selected model's default on another route.`
+                  : 'Adapter-owned reasoning effort for the effective child route. Omit to inherit a compatible effort from the default route or use a newly selected model\'s default.'
+                : providerRouteDefaults !== undefined
+                  ? 'Adapter-owned reasoning effort for the effective child route. Omit to use a compatible configured effort or the selected model\'s default.'
+                  : 'Adapter-owned reasoning effort for the effective child route. Omit to inherit a compatible configured/parent effort or use a newly selected model\'s default.',
             },
           } : {},
           ...backgroundEnabled ? {
@@ -479,6 +507,7 @@ export function apply(ctx: Context, config: Config, session?: Session): void {
           const parentOptions = parentAgentOptionsForDelegation(parent)
           const requiresRoutePreflight = hasDelegationModelRequest(modelRequest)
             || hasConfiguredLlmSelection(config.agentOptions)
+            || defaultRoute !== undefined
           const configuredChildAgentOptions = requiresRoutePreflight && providerRouteDefaults !== undefined
             ? { ...providerRouteDefaults, ...config.agentOptions }
             : config.agentOptions
@@ -487,6 +516,7 @@ export function apply(ctx: Context, config: Config, session?: Session): void {
             configuredChildAgentOptions,
             modelRequest,
             modelSelectionEnabled,
+            defaultRoute,
           )
           assertAllowedModelSelection(
             modelSelectionPolicy,
@@ -621,8 +651,8 @@ export function apply(ctx: Context, config: Config, session?: Session): void {
     const freshSession = target.firstLiveSeq === 0
       // oxlint-disable-next-line typescript/no-deprecated -- Existing Session history read; migration deferred.
       && target.eventAt(SessionSeq(0))?.type !== 'session/end-seed'
-    let allowedModels = subagentModelSelectionPolicy(ctx.sessionProjections, target)
-    if (allowedModels === undefined) {
+    let decision = subagentModelSelectionPolicy(ctx.sessionProjections, target)
+    if (decision === undefined) {
       const parentId = target.header.origin === 'subagent'
         ? target.header.parentSession
         : undefined
@@ -632,18 +662,22 @@ export function apply(ctx: Context, config: Config, session?: Session): void {
           throw new Error('tool-subagent: child model-selection inheritance requires the Session registry')
         }
         const parent = sessions.get(parentId)
-        allowedModels = parent === undefined
+        decision = parent === undefined
           ? undefined
           : subagentModelSelectionPolicy(ctx.sessionProjections, parent)
       } else if (freshSession) {
         const current = settings.current()
-        allowedModels = current.enabled ? current.allowedModels : undefined
+        decision = current.enabled
+          ? { allowedModels: current.allowedModels, ...current.defaultModel === undefined ? {} : { defaultModel: current.defaultModel } }
+          : undefined
       }
     }
-    if (allowedModels !== undefined) {
-      recordSubagentModelSelection(ctx.sessionProjections, target, allowedModels)
+    if (decision !== undefined) {
+      recordSubagentModelSelection(ctx.sessionProjections, target, decision)
     }
-    return allowedModels === undefined ? undefined : { routes: allowedModels }
+    return decision === undefined
+      ? undefined
+      : { routes: decision.allowedModels, ...decision.defaultModel === undefined ? {} : { defaultRoute: decision.defaultModel } }
   }
 
   if (session !== undefined) {
