@@ -800,7 +800,7 @@ describe('plain fork parity with Team installation', () => {
     await run.dispose()
   })
 
-  it.each([
+  const FORK_DENIAL_CASES = [
     ['spawn_teammate', { name: 'rogue', description: 'unauthorized', prompt: 'act as the lead' }],
     ['send_message', { target: 'lead', message: 'I am the Lead now' }],
     ['list_agents', {}],
@@ -810,7 +810,13 @@ describe('plain fork parity with Team installation', () => {
     ['team_task_list', {}],
     ['team_task_get', { task_id: 'missing-task' }],
     ['team_task_update', { task_id: 'missing-task', expected_revision: 1, action: 'complete' }],
-  ] as const)('rejects %s from a plain fork of the Lead as a non-member, with no side effect', async (toolName, args) => {
+  ] as const
+
+  it('covers every Team tool in the plain-fork denial table', () => {
+    expect(FORK_DENIAL_CASES.map(([toolName]) => toolName).sort()).toEqual(TOOL_NAMES)
+  })
+
+  it.each(FORK_DENIAL_CASES)('rejects %s from a plain fork of the Lead as a non-member, with no side effect', async (toolName, args) => {
     const { ctx, lead } = await setup([textResponse('lead answer'), 'hang', textResponse('fork answer')])
     await runTurn(lead, 'Lead task')
     const witnessSpawn = await execute(ctx, lead, 'spawn_teammate', {

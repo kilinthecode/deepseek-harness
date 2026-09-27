@@ -48,17 +48,14 @@ import { foldSubagentDescriptor } from './descriptor.ts'
 export function plainForkParentOf(agent: Agent): Agent | undefined {
   const header = agent.session.header
   if (!header.isSeeded || header.origin !== 'subagent' || header.parentSession === undefined) return undefined
+  const ownEvents = agent.session.snapshotEvents(agent.session.inheritedEventCount)
   let descriptor: ReturnType<typeof foldSubagentDescriptor>
   try {
-    // oxlint-disable-next-line typescript/no-deprecated -- Existing Session history read; migration deferred.
-    descriptor = foldSubagentDescriptor(agent.session.snapshotEvents(agent.session.inheritedEventCount))
+    descriptor = foldSubagentDescriptor(ownEvents)
   } catch (_error: unknown) {
-    // A structurally invalid current-version descriptor (for example a damaged
-    // cold-resumed continuable fork payload, see archive-admission.spec.ts's
-    // fixture) throws here. This runs from the `agent/created` listener inside
-    // AgentRegistry#announce()'s serial dispatch, so propagating would reject
-    // the whole chain and veto the agent's creation or resume; treat an
-    // unclassifiable descriptor as not a plain fork instead.
+    // An invalid logged descriptor makes the child unclassifiable. Callers run
+    // from `agent/created`, where a throw rejects the serial listener chain and
+    // vetoes the agent's creation or resume.
     return undefined
   }
   if (descriptor?.mode === 'continuable' && (descriptor.persona !== undefined || descriptor.toolFilter !== undefined)) {
