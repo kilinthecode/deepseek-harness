@@ -1,0 +1,10 @@
+version: 1
+scenario: subagent-dsh-sdk-default-route
+profile: sdk
+composition: sdk-dsh-sdk-default-route
+recording: authored
+header:
+  class: sdk-dsh-sdk-default-route
+  pin: true
+  childSystemPrompts: [1]
+  childToolSchemas: [1]
