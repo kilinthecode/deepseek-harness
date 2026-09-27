@@ -1679,6 +1679,18 @@ describe('default one-shot summarizer', () => {
     expect(adapter.lastOptions).toMatchObject({ provider: MODEL, model: MODEL })
   })
 
+  it('omits reasoning effort for the AgentOptions fallback target even when agent.options sets one', async () => {
+    const { adapter, compact } = await summarizerHarness([{ type: 'text', text: 'summary' }])
+    const owner = {
+      session: Session.create(SessionId('agent-options-effort-fallback')),
+      options: { provider: MODEL, model: MODEL, reasoningEffort: ReasoningEffortId('low') },
+    } as Agent
+
+    await compact.runSummarize(promptInput('history'), owner)
+
+    expect(adapter.lastOptions).not.toHaveProperty('reasoningEffort')
+  })
+
   it.each([
     { provider: '', model: MODEL },
     { provider: MODEL },

@@ -231,7 +231,7 @@ This is a separate model call: the replayed conversation prefix plus the fixed i
 
 #### KV Cache effect
 
-The replayed system prompt, tools, and shadowed-region messages match the conversation's last routed request byte-for-byte, so the provider's warm prefix cache is reused up to the trailing instruction; only that instruction, and the summary output, is uncached. When the resolved summarization provider and model equal that last routed request, the call also carries its logged reasoning effort, since some providers partition prefix caching by effort. A different configured summarization route, or the `AgentOptions` fallback used before any request is routed, carries no effort and starts an independent, uncached request. Compacting a non-head range likewise forgoes this reuse.
+The replayed system prompt, tools, and shadowed-region messages match the conversation's last routed request byte-for-byte, so the provider's warm prefix cache is reused up to the trailing instruction; only that instruction, and the summary output, is uncached. When the resolved summarization provider and model equal that last routed request, the call also carries its logged reasoning effort, since some providers partition prefix caching by effort. A different configured summarization route, or the `AgentOptions` fallback used before any request is routed, carries no effort and starts an independent, uncached request. Compacting a non-head range still carries the matched route's effort; only the prefix reuse is forgone, since the replayed messages no longer start at the original request's byte prefix.
 
 ## Known Limitations and Deferred Work
 
@@ -245,6 +245,7 @@ These limits define when automatic condensation is a poor fit or needs special c
 - **Some indivisible-unit and envelope-only overflow remains outside surface compaction** — recovery cannot shrink system/tools/prefix, split an indivisible non-tool node, or repair a tool unit whose non-prunable remainder still exceeds the window. The optional pruner can shrink text-bearing tool-result bulk inside an otherwise indivisible pair.
 - **`compactRegion` requires an open turn** — a manual call on a fully-closed session throws ("no open turn") rather than compacting.
 - **Summarization failure preserves the latest durable surface** — before any replacement, the auto path logs a warning and proceeds with full over-budget history. If pruning already landed, a later summarization failure proceeds from that durable pruned surface. Summarization truncation at `maxTokens`, which hidden reasoning tokens can consume, follows the same rule.
+- **The summarizer's hidden reasoning follows the conversation's routed effort** — a high-effort conversation spends more of the summarization call's `maxTokens` (default `headroomTokens`) on hidden reasoning than an adapter-default call would before writing the checkpoint. Raise `maxTokens`, or add a per-model `modelPolicies` entry, for a route whose summaries truncate.
 
 <a id="dev-note"></a>
 ### Dev Note
