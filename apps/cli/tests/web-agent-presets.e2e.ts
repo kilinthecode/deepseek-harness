@@ -308,6 +308,36 @@ describe('the shipped Web composition', () => {
     }
   })
 
+  it('reaches a settings-recorded default child route through the real preset composition', async () => {
+    await ctx.settings.update(SUBAGENT_MODEL_SELECTION_SETTINGS_NAMESPACE, {
+      enabled: true,
+      allowedModels: [{ provider: 'deepseek-official', model: 'deepseek-v4-flash' }],
+      defaultModel: { provider: 'deepseek-official', model: 'deepseek-v4-flash', reasoningEffort: 'max' },
+    })
+    const defaulted = await ctx.agents.create({
+      sessionId: SessionId('preset-model-selection-default'),
+      setup: agentCtx => ctx.agentPresets.mount(agentCtx, 'standard').then(() => undefined),
+    })
+    try {
+      // The tool's own description states the effect of omitting provider/model.
+      const schema = ctx.tools.schemas(defaulted.agent).find(entry => entry.name === 'subagent')!
+      expect(schema.description).toContain(
+        'Omit `provider` and `model` to run the child on `deepseek-official/deepseek-v4-flash` at reasoning effort `max`.',
+      )
+      // The durable Session policy — what a real delegation call would resolve
+      // its child route from — carries the same recorded default.
+      const projections = ctx.get('sessionProjections')
+      if (projections === undefined) throw new Error('the Web composition must compose a projection registry')
+      expect(projections.stateOf(defaulted.agent.session, 'subagentModelSelectionPolicy')).toEqual({
+        allowedModels: [{ provider: 'deepseek-official', model: 'deepseek-v4-flash' }],
+        defaultModel: { provider: 'deepseek-official', model: 'deepseek-v4-flash', reasoningEffort: 'max' },
+      })
+    } finally {
+      await ctx.settings.update(SUBAGENT_MODEL_SELECTION_SETTINGS_NAMESPACE, { enabled: false, defaultModel: null })
+      await defaulted.dispose()
+    }
+  })
+
   it('composes the exact RL prompt and persistent shell from `minimal`', async () => {
     const handle = await ctx.agents.create({
       sessionId: SessionId('preset-minimal'),

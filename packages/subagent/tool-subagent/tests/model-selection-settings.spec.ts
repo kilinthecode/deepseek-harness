@@ -2,7 +2,7 @@
 
 import { describe, expect, it, vi } from 'vitest'
 import { Context } from '@deepseek-ai/cordis'
-import { ToolCallId } from '@deepseek-ai/dsh-llm'
+import { ReasoningEffortId, ToolCallId } from '@deepseek-ai/dsh-llm'
 import { Session, SESSION_FORMAT_VERSION, SessionId } from '@deepseek-ai/dsh-session'
 import type { SessionEvent } from '@deepseek-ai/dsh-session'
 import { bindScopeParent, createScope, scopeOf, scopeTarget } from '@deepseek-ai/dsh-scope'
@@ -173,7 +173,7 @@ describe('SubagentModelSelectionConfig', () => {
     const v2 = Session.create(SessionId('v2-event'))
     v2.append('subagent/model-selection-policy', {
       allowedModels: ALLOWED_MODELS,
-      defaultModel: { provider: 'alpha', model: 'fast-model', reasoningEffort: 'max' },
+      defaultModel: { provider: 'alpha', model: 'fast-model', reasoningEffort: ReasoningEffortId('max') },
     })
     expect(subagentModelSelectionPolicy(ctx.sessionProjections, v2)).toEqual({
       allowedModels: ALLOWED_MODELS,
