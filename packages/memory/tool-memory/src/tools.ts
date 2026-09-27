@@ -8,10 +8,10 @@
 import type { Context } from '@deepseek-ai/cordis'
 import type { Agent } from '@deepseek-ai/dsh-agent'
 import { MEMORY_SCOPES, MEMORY_TYPES } from '@deepseek-ai/dsh-memory'
-import type { MemoryRecord, MemoryScanFinding, MemoryScope, MemoryType } from '@deepseek-ai/dsh-memory'
+import type { MemoryRecord, MemoryScanFinding, MemoryScope, MemoryStore, MemoryType } from '@deepseek-ai/dsh-memory'
 
 import { defineTool } from '@deepseek-ai/dsh-tools'
-import type { GenericCallView, ToolExecution } from '@deepseek-ai/dsh-tools'
+import type { GenericCallView, ToolDefinition, ToolExecution } from '@deepseek-ai/dsh-tools'
 
 const WRITE_DESCRIPTION = 'Save one durable memory for future sessions.'
 
@@ -81,13 +81,37 @@ function present(title: string, kind: NonNullable<GenericCallView['kind']>, rawI
   return { card: 'generic', title, kind, rawInput }
 }
 
+/** Options for {@link createMemoryWriteTool}. */
+export interface MemoryWriteToolOptions {
+  /**
+   * When true, the built definition only creates: writing a name that
+   * already exists in the given scope is rejected (the store's
+   * `already-exists` `MemoryError`) instead of replacing it.
+   */
+  readonly ifAbsent?: boolean
+}
+
 /**
- * Register `memory_write`, `memory_recall`, and `memory_forget` on `ctx.tools`.
- * @param ctx - registrant context carrying `tools` and `memory`; registrations dispose with it.
- * @param maxRecallResults - most records one `memory_recall` call returns.
+ * Build the `memory_write` tool definition. The create-only variant
+ * (`options.ifAbsent: true`) has the identical `name`, `description`, and
+ * `parameters` as the default (replacing) variant — only `execute` differs —
+ * so a caller may register it in a narrower scope to shadow the default tool
+ * for one agent without changing what the model sees there.
+ *
+ * Takes the store instance directly, not a `Context`, because a caller that
+ * registers the built definition into a narrower scope (e.g. one agent's own
+ * `ctx.tools`) need not also have `memory` declared in that scope's own
+ * `inject` — the topology-sensitive `ctx.<service>` property proxy throws
+ * `cannot get property "memory" without inject` for a scope that never
+ * declared it, even when an ancestor's `apply()` already holds a live
+ * instance to pass in.
+ * @param memory - the store `execute` writes to.
+ * @param options - create-only behavior.
+ * @returns the tool definition, unregistered.
  */
-export function registerMemoryTools(ctx: Context, maxRecallResults: number): void {
-  ctx.tools.register(defineTool({
+export function createMemoryWriteTool(memory: MemoryStore, options: MemoryWriteToolOptions = {}): ToolDefinition {
+  const ifAbsent = options.ifAbsent === true
+  return defineTool({
     name: 'memory_write',
     description: WRITE_DESCRIPTION,
     parameters: {
@@ -136,18 +160,28 @@ export function registerMemoryTools(ctx: Context, maxRecallResults: number): voi
     },
     async execute(args, exec) {
       const agent = requireAgent(exec, 'memory_write')
-      const result = await ctx.memory.write({
+      const result = await memory.write({
         name: args.name,
         type: args.type,
         scope: args.scope,
         description: args.description,
         content: args.content,
         cwd: agent.session.header.cwd,
+        ...ifAbsent ? { ifAbsent: true } : {},
       })
       return { name: result.record.name, scope: result.record.scope, outcome: result.outcome }
     },
     presentCall: args => present('Save memory', 'other', args),
-  }))
+  })
+}
+
+/**
+ * Register `memory_write`, `memory_recall`, and `memory_forget` on `ctx.tools`.
+ * @param ctx - registrant context carrying `tools` and `memory`; registrations dispose with it.
+ * @param maxRecallResults - most records one `memory_recall` call returns.
+ */
+export function registerMemoryTools(ctx: Context, maxRecallResults: number): void {
+  ctx.tools.register(createMemoryWriteTool(ctx.memory))
 
   ctx.tools.register(defineTool({
     name: 'memory_recall',

@@ -73,6 +73,7 @@ This section explains the design decisions behind the review and points at the c
 - **Count user-kind turns on the parent log.** The `memoryReview` projection is `stateVersion: 1` with `{ turnsSinceReset: number }` and `init: () => ({ turnsSinceReset: 0 })`. It folds `user/message` with `source.kind === 'user'` by adding one, and folds `tool/call` named `memory_write`, `memory_recall`, or `memory_forget`, and `subagent/catalog` with `label === 'memory-review'`, to `{ turnsSinceReset: 0 }`. Messages with `source.kind === 'goal'` do not count. Resume rebuilds the count from the parent log.
 - **Cache-parity fork.** The start is `ctx.agents.withInitiator(parent, () => ctx.subagents.start('fork', { parent, prompt: [{ type: 'text', text: REVIEW_PROMPT }], label: 'memory-review', signal }))` and omits `toolFilter`, `persona`, and `agentOptions`, so the child's first request keeps the parent's route, tools, and persona. The start requires `run.localAgent`; otherwise it logs a warning, disposes the run, and does not keep the parent pending.
 - **Race-free restriction.** A global `agent/created` listener, while that parent is pending review and `created.agent.session.header.parentSession` is that parent, calls `installReviewRestrictions` on `created.agent.ctx` during the serial `agent/created` that `agents.create` awaits before `start()` returns, so the child's first tool call is already guarded. `tools/pre-execute` awaits `next()`, then allows `memory_recall`, allows `memory_write` only when no visible record has that `name` and `scope`, and denies `memory_forget` and every other name with `{ kind: 'deny', reason }`. `agent/pre-step` returns `{ kind: 'reject' }` when `step > maxReviewSteps`.
+- **Add-only is enforced twice.** `installReviewRestrictions` also registers `createMemoryWriteTool(memory, { ifAbsent: true })` (from [`dsh-tool-memory`](../tool-memory/README.md)) on the child's own `ctx.tools`, shadowing the global (replacing) `memory_write` for that agent alone. The `tools/pre-execute` check above still runs first and denies with the clear `REVIEW_DENY_OVERWRITE` reason; the scoped definition's `execute` passes `ifAbsent: true`, so `MemoryStore.write` itself rejects with `already-exists` a name that another call already created between this call's `tools/pre-execute` check and its own turn in the store's serialized write section — the operation that owns the decision enforces it, not only the heuristic that produces the friendlier reason.
 - **Disposal.** An in-flight review is aborted on `agent/disposed` for that parent and when the plugin fiber disposes (`ctx.effect`). After a successful start, `run.result` settlement releases the parent's in-flight entry only when it still belongs to this review's controller, disposes the child, and logs a warning when the child failed.
 
 ### Source map
@@ -81,7 +82,7 @@ This section explains the design decisions behind the review and points at the c
 |---|---|
 | [`src/index.ts`](src/index.ts) | Plugin entry: `Config`, idle trigger, fork start, `agent/created` restriction install |
 | [`src/projection.ts`](src/projection.ts) | `memoryReview` projection unit and `dueForReview` |
-| [`src/restrict.ts`](src/restrict.ts) | Add-only `tools/pre-execute` policy and the child step cap |
+| [`src/restrict.ts`](src/restrict.ts) | Add-only `tools/pre-execute` policy, the scoped create-only `memory_write` registration, and the child step cap |
 | [`src/prompt.ts`](src/prompt.ts) | Review task, catalog label, and deny reasons |
 
 ### Export list
@@ -168,8 +169,7 @@ These limits define when unattended review is a poor fit. They are current packa
 - **First-step compaction** — the child's first step may compact when the parent is near its compaction threshold, so the inherited prefix is summarized and the warm cache read is lost.
 - **Process-lifetime only** — reviews run only while the process lives, so the headless, ACP, and SDK bundles disable the plugin.
 - **Ordinary Web row** — Web shows an ordinary subagent row labelled `memory-review`.
-- **Parallel new-name writes** — two parallel `memory_write` calls with the same new name in one step can both pass the add-only check.
-- **Parent-write race** — a parent `memory_write` that lands between the child's add-only check and the child's own `memory_write` of the same name can be overwritten by the child.
+- **Parallel new-name writes race the check, not the write** — two parallel `memory_write` calls with the same new name can both pass the `tools/pre-execute` add-only check; the store's create-only write still arbitrates the tie, so only the call whose turn in the serialized write section comes first commits, and the other fails loud with `already-exists` instead of silently overwriting.
 - **`memory_recall` and failed calls also reset the interval** — every parent `tool/call` named `memory_write`, `memory_recall`, or `memory_forget` resets `turnsSinceReset` to `0`, whether or not the call succeeds, so a parent that calls a memory tool every turn defers reviews indefinitely.
 - **Routed digest reviews** — review on a cheaper routed model is deferred.
 

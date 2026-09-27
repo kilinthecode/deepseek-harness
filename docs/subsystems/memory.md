@@ -23,6 +23,15 @@ interface MemoryWriteRequest {
   readonly content: string
   /** Session working directory, when the session has one. */
   readonly cwd?: string | undefined
+  /**
+   * When true, create only: an existing record with this name and scope is
+   * rejected with `already-exists` instead of replaced. Checked inside the
+   * store's serialized write section, immediately after the existence
+   * lookup, so a same-name write that commits between this call's argument
+   * validation and its turn in that section still loses to whichever write
+   * reaches the section first.
+   */
+  readonly ifAbsent?: boolean
 }
 ```
 
@@ -77,7 +86,8 @@ Every rejection is a `MemoryError` whose `code` names the reason and whose messa
 /**
  * Why a store operation was rejected.
  * `blocked-content` is a write-time scan finding; `project-key-collision`
- * means this project's key already holds another project's record.
+ * means this project's key already holds another project's record;
+ * `already-exists` is an `ifAbsent` write naming a record already in that scope.
  */
 type MemoryErrorCode =
   | 'invalid-name'
@@ -88,6 +98,7 @@ type MemoryErrorCode =
   | 'project-key-collision'
   | 'project-root-unavailable'
   | 'not-found'
+  | 'already-exists'
 ```
 
 ## Catalog projection
@@ -141,8 +152,9 @@ scan(text: string): MemoryScanFinding | undefined
  * @returns whether the record was created or updated, and the stored record.
  * @throws {@link MemoryError} for an invalid name, description, or content,
  * blocked description or content, a project scope without a project root, a
- * project key occupied by another project's record, or a cap reached in the
- * target scope.
+ * project key occupied by another project's record, a cap reached in the
+ * target scope, or (`request.ifAbsent`) an existing record with that name
+ * and scope.
  */
 async write(request: MemoryWriteRequest): Promise<MemoryWriteResult>
 

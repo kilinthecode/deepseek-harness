@@ -9,6 +9,7 @@ import SystemPrompt from '@deepseek-ai/dsh-system-prompt'
 import ToolRuntime from '@deepseek-ai/dsh-tools'
 import * as tool from '@deepseek-ai/dsh-tool-memory'
 import type { Config } from '@deepseek-ai/dsh-tool-memory'
+import { createMemoryWriteTool } from '@deepseek-ai/dsh-tool-memory'
 import { cleanupRoots, freshRoot, mountStore, project, sessionAgent, sessionAt } from './helpers.ts'
 
 const signal = new AbortController().signal
@@ -195,6 +196,38 @@ describe('memory tools', () => {
       .toEqual({ card: 'generic', title: 'Recall memories', kind: 'search', rawInput: { query: 'pnpm' } })
     expect(ctx.tools.get('memory_forget')?.presentCall?.({ name: 'x', scope: 'global' }))
       .toEqual({ card: 'generic', title: 'Forget memory', kind: 'other', rawInput: { name: 'x', scope: 'global' } })
+  })
+
+  it('builds a create-only memory_write definition byte-identical to the default one', async () => {
+    const { ctx } = await setup()
+    const replacing = createMemoryWriteTool(ctx.memory)
+    const createOnly = createMemoryWriteTool(ctx.memory, { ifAbsent: true })
+    expect(createOnly.name).toBe(replacing.name)
+    expect(createOnly.description).toBe(replacing.description)
+    expect(createOnly.parameters).toEqual(replacing.parameters)
+    expect(createOnly.output.schema).toEqual(replacing.output.schema)
+  })
+
+  it('rejects a create-only memory_write of an existing name and scope, leaving the record unchanged', async () => {
+    // A fresh mount registers only the create-only definition (no plugin
+    // apply(), so the default replacing one is never registered alongside
+    // it) and drives it through the real tool pipeline, the same way the
+    // scoped registration `installReviewRestrictions` installs is dispatched.
+    const root = await freshRoot()
+    const ctx = new Context()
+    contexts.push(ctx)
+    await ctx.plugin(SystemPrompt)
+    await ctx.plugin(ToolRuntime)
+    await ctx.plugin(SessionProjectionRegistry)
+    await mountStore(ctx, root)
+    ctx.tools.register(createMemoryWriteTool(ctx.memory, { ifAbsent: true }))
+    const created = await call(ctx, 'memory_write', WRITE)
+    expect(created.isError).toBe(false)
+    const conflict = await call(ctx, 'memory_write', { ...WRITE, description: 'clobber attempt', content: 'clobber' })
+    expect(conflict.isError).toBe(true)
+    expect(text(conflict)).toContain('already exists')
+    const stored = await ctx.memory.recall({ limit: 1 })
+    expect(stored[0]?.content).toBe(WRITE.content)
   })
 
   it('contributes the memory prompt section and unregisters everything with its fiber', async () => {

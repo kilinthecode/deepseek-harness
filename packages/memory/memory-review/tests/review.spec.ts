@@ -434,6 +434,52 @@ describe('dsh-memory-review through the agent loop', () => {
     expect(visible.global.some(record => record.name === 'likes-terse' && record.content.includes('terse'))).toBe(true)
   })
 
+  it('rejects the review child\'s own write when another write of the same new name lands between the add-only check and the store\'s serialized section, leaving that other record intact', async () => {
+    // A deterministic race, not a timing gamble: an outer PREPENDED
+    // `tools/pre-execute` listener on the child's own ctx awaits `next()`
+    // first — letting restrict.ts's own add-only check run and pass, since
+    // the name is not yet visible — then writes the same new name directly
+    // through `ctx.memory.write` (simulating a concurrent session), and only
+    // then returns the unchanged 'allow' decision. The direct write fully
+    // settles (awaited) before the child's own `memory_write` execute() ever
+    // runs, so the store's `ifAbsent` check inside its serialized section is
+    // guaranteed to see the racing record already there.
+    const root = await freshRoot()
+    const adapter = reviewAdapter([
+      toolCallResponse('n1', 'memory_write', {
+        name: 'new-fact', type: 'user', scope: 'global', description: 'A new fact', content: 'The review wrote this.',
+      }),
+      textResponse('Nothing else to save.'),
+    ])
+    const { ctx } = await harness(adapter, { reviewEveryUserTurns: 1, maxReviewSteps: 8 }, root)
+    ctx.on('agent/created', ({ agent }) => {
+      if (agent.session.header.parentSession === undefined) return
+      agent.ctx.on('tools/pre-execute', async (exec, next) => {
+        const decision = await next()
+        if (exec.name === 'memory_write' && decision.kind === 'allow') {
+          await ctx.memory.write({
+            name: 'new-fact', type: 'reference', scope: 'global', description: 'Raced in first', content: 'The race winner.',
+          })
+        }
+        return decision
+      }, { prepend: true })
+    })
+    const parent = await createParent(ctx, 'create-only-race')
+    const childP = waitForReviewChild(ctx, parent)
+    ask(parent, 'go')
+    await waitForIdle(ctx, parent)
+    const child = await childP
+    const live = child.session.snapshotEvents().filter(event => event.seq >= child.session.inheritedEventCount)
+    const result = live.find(event => event.type === 'tool/result')
+    expect(result?.type === 'tool/result' && result.data.message.isError).toBe(true)
+    expect(result?.type === 'tool/result'
+      && result.data.message.content.some(block => block.type === 'text' && block.text.includes('already exists'))).toBe(true)
+    const visible = await ctx.memory.visible(undefined)
+    const record = visible.global.find(candidate => candidate.name === 'new-fact')
+    expect(record?.description).toBe('Raced in first')
+    expect(record?.content).toBe('The race winner.')
+  })
+
   it('keeps the child first request tools byte-identical to the parent and prefixes the parent messages', async () => {
     const root = await freshRoot()
     const adapter = reviewAdapter([textResponse('Nothing to save.')])

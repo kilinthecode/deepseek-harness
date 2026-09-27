@@ -3676,7 +3676,7 @@ export interface Config {
 ## `@deepseek-ai/dsh-tool-memory`
 
 - `inject`: `memory` · `tools` · `sessionProjections` · `systemPrompt`
-- `source`: [`packages/memory/tool-memory/src/index.ts:31`](../packages/memory/tool-memory/src/index.ts)
+- `source`: [`packages/memory/tool-memory/src/index.ts:33`](../packages/memory/tool-memory/src/index.ts)
 
 ```ts config-catalog
 /** Model-facing memory configuration. Invalid values fail plugin load. */

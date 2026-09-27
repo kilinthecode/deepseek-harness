@@ -557,6 +557,45 @@ describe('MemoryStore over the json backend', () => {
     expect(await store.resolveProjectRoot(repo.cwd)).toBeUndefined()
   })
 
+  it('rejects an ifAbsent write of an existing global or project record and leaves it unchanged', async () => {
+    const root = await freshRoot()
+    const ctx = await open(root)
+    const created = await ctx.memory.write(write())
+    await expect(ctx.memory.write(write({ ifAbsent: true, content: 'clobber attempt' }))).rejects.toMatchObject({
+      code: 'already-exists',
+      message: 'global memory "prefers-pnpm" already exists; write without ifAbsent to replace it',
+    })
+    expect((await ctx.memory.visible(undefined)).global).toEqual([created.record])
+
+    const alpha = await project(root, 'alpha')
+    const createdProject = await ctx.memory.write(write({ scope: 'project', cwd: alpha.cwd }))
+    await expect(ctx.memory.write(write({ scope: 'project', cwd: alpha.cwd, ifAbsent: true, content: 'clobber' }))).rejects.toMatchObject({
+      code: 'already-exists',
+      message: 'project memory "prefers-pnpm" already exists; write without ifAbsent to replace it',
+    })
+    expect((await ctx.memory.visible(alpha.cwd)).project?.records).toEqual([createdProject.record])
+  })
+
+  it('allows an ifAbsent write of a name not yet in that scope and reports created', async () => {
+    const root = await freshRoot()
+    const ctx = await open(root)
+    const result = await ctx.memory.write(write({ ifAbsent: true }))
+    expect(result.outcome).toBe('created')
+    expect((await ctx.memory.visible(undefined)).global.map(record => record.name)).toEqual(['prefers-pnpm'])
+  })
+
+  it('rejects the second of two overlapping ifAbsent writes of one new name, keeping the first record intact', async () => {
+    const root = await freshRoot()
+    const ctx = await open(root)
+    const results = await Promise.allSettled([
+      ctx.memory.write(write({ ifAbsent: true, content: 'first writer' })),
+      ctx.memory.write(write({ ifAbsent: true, content: 'second writer' })),
+    ])
+    expect(results.map(result => result.status)).toEqual(['fulfilled', 'rejected'])
+    expect(rejectedCode(results[1])).toBe('already-exists')
+    expect((await ctx.memory.visible(undefined)).global.map(record => record.content)).toEqual(['first writer'])
+  })
+
   it('walks up with the configured markers', async () => {
     const root = await freshRoot()
     const ctx = await open(root, { projectRootMarkers: ['.dsh-project'] })

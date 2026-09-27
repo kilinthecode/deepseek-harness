@@ -20,6 +20,8 @@ import { SNAPSHOT_MIN_BYTES } from './catalog.ts'
 export { SNAPSHOT_HEADER, SNAPSHOT_MIN_BYTES, renderSnapshot } from './catalog.ts'
 export type { MemoryCatalogState } from './catalog.ts'
 export { MEMORY_SECTION_TEXT } from './prompt.ts'
+export { createMemoryWriteTool } from './tools.ts'
+export type { MemoryWriteToolOptions } from './tools.ts'
 
 /** Cordis plugin name; also the `source.kind` of every injected snapshot. */
 export const name = 'tool-memory'

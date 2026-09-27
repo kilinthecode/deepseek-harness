@@ -85,7 +85,7 @@ kind: "package-reference"
 
 ### 导出列表
 
-本插件是函数/命名空间插件：它导出 `name` / `inject` / `Config` / `apply`，没有默认导出，因此 Loader 会保留其注入元数据（[事故复盘（postmortem） 0001](../../../docs/postmortem/0001-acp-default-export-drops-inject.zh.md)）。具名导出 `SNAPSHOT_HEADER`、`SNAPSHOT_MIN_BYTES`、`renderSnapshot` 和 `MEMORY_SECTION_TEXT` 分别是快照首行、最小的正 `injectMaxBytes`（该标题加上带七位计数的省略行的 UTF-8 字节数）、带预算的渲染函数，以及静态提示词段落文本。
+本插件是函数/命名空间插件：它导出 `name` / `inject` / `Config` / `apply`，没有默认导出，因此 Loader 会保留其注入元数据（[事故复盘（postmortem） 0001](../../../docs/postmortem/0001-acp-default-export-drops-inject.zh.md)）。具名导出 `SNAPSHOT_HEADER`、`SNAPSHOT_MIN_BYTES`、`renderSnapshot` 和 `MEMORY_SECTION_TEXT` 分别是快照首行、最小的正 `injectMaxBytes`（该标题加上带七位计数的省略行的 UTF-8 字节数）、带预算的渲染函数，以及静态提示词段落文本。`createMemoryWriteTool(memory, options?)` 构建本插件注册的 `memory_write` 定义；`options.ifAbsent: true` 构建仅创建变体，其 `name`、`description` 与 `parameters` 与默认变体完全相同（只有 `execute` 不同：对已存在的名称与作用域，以存储的 `already-exists` `MemoryError` 拒绝而不是替换），因此像 [`dsh-memory-review`](../memory-review/README.zh.md) 这样的消费者可以把它注册到更窄的作用域，为某个 agent 遮蔽本插件自身的（替换型）工具。
 
 ### 注入机制
 

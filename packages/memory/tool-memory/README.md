@@ -85,7 +85,7 @@ This section explains the design decisions behind the tools and points at the co
 
 ### Export list
 
-The plugin is a function/namespace plugin: it exports `name` / `inject` / `Config` / `apply` and no default export, so the Loader keeps its injection metadata ([postmortem 0001](../../../docs/postmortem/0001-acp-default-export-drops-inject.md)). Named exports `SNAPSHOT_HEADER`, `SNAPSHOT_MIN_BYTES`, `renderSnapshot`, and `MEMORY_SECTION_TEXT` are the snapshot first line, the smallest positive `injectMaxBytes` (UTF-8 bytes of that header plus the omission line with a seven-digit count), the budgeted renderer, and the static prompt section text.
+The plugin is a function/namespace plugin: it exports `name` / `inject` / `Config` / `apply` and no default export, so the Loader keeps its injection metadata ([postmortem 0001](../../../docs/postmortem/0001-acp-default-export-drops-inject.md)). Named exports `SNAPSHOT_HEADER`, `SNAPSHOT_MIN_BYTES`, `renderSnapshot`, and `MEMORY_SECTION_TEXT` are the snapshot first line, the smallest positive `injectMaxBytes` (UTF-8 bytes of that header plus the omission line with a seven-digit count), the budgeted renderer, and the static prompt section text. `createMemoryWriteTool(memory, options?)` builds the `memory_write` definition this plugin registers; `options.ifAbsent: true` builds a create-only variant with the identical `name`, `description`, and `parameters` (only `execute` differs, rejecting an existing name and scope with the store's `already-exists` `MemoryError` instead of replacing it), so a consumer such as [`dsh-memory-review`](../memory-review/README.md) can register it into a narrower scope to shadow this plugin's own (replacing) tool for one agent.
 
 ### Injection mechanics
 

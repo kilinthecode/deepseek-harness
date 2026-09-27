@@ -73,6 +73,7 @@ base 组合包在 `tool-memory` 之后立即启用它，配置为 `reviewEveryUs
 - **在父日志上统计用户类轮次。** `memoryReview` 投影为 `stateVersion: 1`，状态为 `{ turnsSinceReset: number }`，`init: () => ({ turnsSinceReset: 0 })`。它将 `source.kind === 'user'` 的 `user/message` 折叠为加一，并将名为 `memory_write`、`memory_recall` 或 `memory_forget` 的 `tool/call`，以及 `label === 'memory-review'` 的 `subagent/catalog`，折叠为 `{ turnsSinceReset: 0 }`。`source.kind === 'goal'` 的消息不计入。恢复会从父日志重建计数。
 - **Cache-parity fork。** 启动方式为 `ctx.agents.withInitiator(parent, () => ctx.subagents.start('fork', { parent, prompt: [{ type: 'text', text: REVIEW_PROMPT }], label: 'memory-review', signal }))`，并省略 `toolFilter`、`persona` 和 `agentOptions`，因此子会话的首次请求保持父级的路由、工具和 persona。启动要求 `run.localAgent`；否则记录警告、dispose（资源释放）该 run，并且不将父级保持为待处理。
 - **无竞态限制。** 全局 `agent/created` 监听器在该父级处于待回顾且 `created.agent.session.header.parentSession` 为该父级时，在 `agents.create` 于 `start()` 返回之前等待的串行 `agent/created` 期间，在 `created.agent.ctx` 上调用 `installReviewRestrictions`，因此子会话的第一次工具调用已被守卫。`tools/pre-execute` 先 `await next()`，然后允许 `memory_recall`，仅当可见记录中没有该 `name` 与 `scope` 时允许 `memory_write`，并以 `{ kind: 'deny', reason }` 拒绝 `memory_forget` 和所有其他名称。当 `step > maxReviewSteps` 时，`agent/pre-step` 返回 `{ kind: 'reject' }`。
+- **仅添加被执行两次。** `installReviewRestrictions` 还会在子会话自己的 `ctx.tools` 上注册 `createMemoryWriteTool(memory, { ifAbsent: true })`（来自 [`dsh-tool-memory`](../tool-memory/README.zh.md)），只为该 agent 遮蔽全局的（替换型）`memory_write`。上面的 `tools/pre-execute` 检查仍然先运行，并以清晰的 `REVIEW_DENY_OVERWRITE` 理由拒绝；作用域内定义的 `execute` 会传入 `ifAbsent: true`，因此若另一次调用在本次调用的 `tools/pre-execute` 检查与其自身在存储串行写入区段中的轮次之间已经创建了同名记录，`MemoryStore.write` 自身会以 `already-exists` 拒绝——由拥有该决定的操作本身执行，而不仅由产生更友好理由的启发式检查执行。
 - **释放。** 进行中的回顾在该父级的 `agent/disposed` 时中止，也在插件 fiber dispose 时中止（`ctx.effect`）。成功启动后，`run.result` 的结算会释放该父级的进行中条目（仅当该条目仍属于本次回顾的控制器时），dispose 子会话，并在子会话失败时记录警告。
 
 ### 源码地图
@@ -81,7 +82,7 @@ base 组合包在 `tool-memory` 之后立即启用它，配置为 `reviewEveryUs
 |---|---|
 | [`src/index.ts`](src/index.ts) | 插件入口：`Config`、idle 触发、fork 启动、`agent/created` 限制安装 |
 | [`src/projection.ts`](src/projection.ts) | `memoryReview` 投影单元与 `dueForReview` |
-| [`src/restrict.ts`](src/restrict.ts) | 仅添加的 `tools/pre-execute` 策略与子会话步骤上限 |
+| [`src/restrict.ts`](src/restrict.ts) | 仅添加的 `tools/pre-execute` 策略、作用域内仅创建的 `memory_write` 注册，以及子会话步骤上限 |
 | [`src/prompt.ts`](src/prompt.ts) | 回顾任务、目录标签与拒绝理由 |
 
 ### 导出列表
@@ -168,8 +169,7 @@ Unattended memory review may only add a new name.
 - **第一步压缩**——当父级接近压缩阈值时，子会话的第一步可能会压缩，因此继承前缀被摘要，热缓存读取丢失。
 - **仅限进程存活期间**——回顾只在进程存活时运行，因此 headless、ACP 和 SDK 组合包禁用该插件。
 - **普通 Web 行**——Web 显示带 `memory-review` 标签的普通 subagent 行。
-- **并行的新名称写入**——同一步骤中两次并行的、使用同一新名称的 `memory_write` 调用都可以通过仅添加检查。
-- **父级写入竞态**——若父级的 `memory_write` 落在子会话的仅添加检查与子会话对同一名称的 `memory_write` 之间，会被子会话覆盖。
+- **并行的新名称写入只是检查存在竞态，写入本身不会**——两次并行的、使用同一新名称的 `memory_write` 调用都可以通过 `tools/pre-execute` 的仅添加检查；存储的仅创建写入仍会裁定这个平局：只有在存储串行写入区段中先轮到的那次调用才会提交，另一次会以 `already-exists` 明确失败，而不是悄悄覆盖。
 - **`memory_recall` 与失败调用同样会重置间隔**——每次名为 `memory_write`、`memory_recall` 或 `memory_forget` 的父级 `tool/call` 都会将 `turnsSinceReset` 重置为 `0`，无论调用是否成功，因此每轮都调用记忆工具的父级会无限期推迟回顾。
 - **路由到更便宜模型的摘要回顾**——使用更便宜路由模型的回顾被延期。
 

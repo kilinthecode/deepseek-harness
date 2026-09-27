@@ -79,7 +79,8 @@ export const Config: z<Config> = z.object({
 /**
  * Why a store operation was rejected.
  * `blocked-content` is a write-time scan finding; `project-key-collision`
- * means this project's key already holds another project's record.
+ * means this project's key already holds another project's record;
+ * `already-exists` is an `ifAbsent` write naming a record already in that scope.
  */
 export type MemoryErrorCode =
   | 'invalid-name'
@@ -90,6 +91,7 @@ export type MemoryErrorCode =
   | 'project-key-collision'
   | 'project-root-unavailable'
   | 'not-found'
+  | 'already-exists'
 
 /** A rejected store operation; `message` is stable, model-readable text. */
 export class MemoryError extends Error {
@@ -115,6 +117,15 @@ export interface MemoryWriteRequest {
   readonly content: string
   /** Session working directory, when the session has one. */
   readonly cwd?: string | undefined
+  /**
+   * When true, create only: an existing record with this name and scope is
+   * rejected with `already-exists` instead of replaced. Checked inside the
+   * store's serialized write section, immediately after the existence
+   * lookup, so a same-name write that commits between this call's argument
+   * validation and its turn in that section still loses to whichever write
+   * reaches the section first.
+   */
+  readonly ifAbsent?: boolean
 }
 
 /** Outcome of one write. */
@@ -287,8 +298,9 @@ export class MemoryStore extends Service {
    * @returns whether the record was created or updated, and the stored record.
    * @throws {@link MemoryError} for an invalid name, description, or content,
    * blocked description or content, a project scope without a project root, a
-   * project key occupied by another project's record, or a cap reached in the
-   * target scope.
+   * project key occupied by another project's record, a cap reached in the
+   * target scope, or (`request.ifAbsent`) an existing record with that name
+   * and scope.
    */
   async write(request: MemoryWriteRequest): Promise<MemoryWriteResult> {
     const name = validateName(request.name)
@@ -316,6 +328,7 @@ export class MemoryStore extends Service {
         const table = this.globalTable()
         return this.serialized(async () => {
           const existing = table.get(name)
+          if (request.ifAbsent === true && existing !== undefined) throw alreadyExists(name, 'global')
           this.assertCapacity(existing, table.size, 'global')
           const now = new Date().toISOString()
           const record: MemoryRecord = {
@@ -333,6 +346,7 @@ export class MemoryStore extends Service {
           const key = projectMemoryKey(root, name)
           const existing = table.get(key)
           this.assertProjectKeyOwner(existing, root, name, 'write')
+          if (request.ifAbsent === true && existing !== undefined) throw alreadyExists(name, 'project')
           this.assertCapacity(existing, this.projectRecords(root).length, 'project')
           const now = new Date().toISOString()
           const record: MemoryRecord = {
@@ -435,6 +449,10 @@ function validateName(name: string): MemoryName {
 
 function notFound(name: MemoryName, scope: MemoryScope): MemoryError {
   return new MemoryError('not-found', `no ${scope} memory named "${name}"`)
+}
+
+function alreadyExists(name: MemoryName, scope: MemoryScope): MemoryError {
+  return new MemoryError('already-exists', `${scope} memory "${name}" already exists; write without ifAbsent to replace it`)
 }
 
 /* v8 ignore next 3 -- closed-union backstop; unreachable without violating the TypeScript contract */
