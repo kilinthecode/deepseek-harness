@@ -191,6 +191,66 @@ describe('adapter wiring: the shared cache key reaches the wire through the real
     const body = server.requests[0] as { prompt_cache_key?: string }
     expect(body.prompt_cache_key).toBe('root-session')
   })
+
+  it('overrides prompt_cache_key end-to-end on the openai-codex route while its session-id header stays put', async () => {
+    const server = await mockServer([{ events: [
+      '{"type":"response.created","response":{"id":"resp_1"}}',
+      JSON.stringify({ type: 'response.completed', response: {
+        id: 'resp_1', status: 'completed', output: [], usage: { input_tokens: 3, output_tokens: 1, total_tokens: 4 },
+      } }),
+    ] }])
+    const redirectFetch: typeof fetch = (input, init) => {
+      const target = input instanceof URL ? input : new URL(typeof input === 'string' ? input : input.url)
+      return fetch(`${server.url}${target.pathname}${target.search}`, init)
+    }
+    // pi-ai's real openai-codex provider baseUrl is chatgpt.com/backend-api,
+    // not api.openai.com — the exact route this whole fix is about.
+    const codexModel = model('openai-codex-responses', 'openai-codex', 'https://chatgpt.com/backend-api')
+    const profile: ResolvedPiAiProviderProfile = {
+      provider: 'openai-codex',
+      displayName: 'Cache Test Codex',
+      streamIdleTimeoutMs: 30_000,
+      maxRequestImageBytes: 1,
+      requestImagePixelBudget: 1,
+      requestImageMaxBytes: 1,
+      // Forces the SSE branch of openai-codex-responses.stream(); the
+      // WebSocket branch shares the same onPayload-modified `body` before
+      // its own JSON.stringify (see the Agent Note), so this is the simpler
+      // of the two transports to drive through a redirected fetch.
+      transport: 'sse',
+      retryPolicy: NO_RETRY,
+      modelErrors: new Map(),
+      configuredMaxTokens: new Map(),
+      piProvider: createProvider({
+        id: 'openai-codex',
+        name: 'Cache Test Codex',
+        auth: { apiKey: { name: 'test', resolve: () => Promise.resolve({ auth: { apiKey: fakeCodexApiKey('acct_test') } }) } },
+        models: [codexModel],
+        api: {
+          stream: () => { throw new Error('unused in this test') },
+          streamSimple: (m, context, options) =>
+            streamCodex(m as Model<'openai-codex-responses'>, context, { ...options, fetch: redirectFetch }),
+        },
+      }),
+    }
+    const adapter = new PiAiAdapter({
+      profiles: () => new Map([['openai-codex', profile]]),
+      resolveApiKey: () => Promise.resolve(fakeCodexApiKey('acct_test')),
+      auth: memoryAuth(),
+    })
+    const events = adapter.stream({
+      provider: 'openai-codex',
+      model: codexModel.id,
+      messages: [{ role: 'user', content: [{ type: 'text', text: 'hi' }] }],
+      sessionId: fakeSessionId('child-session'),
+      cacheKey: 'root-session',
+    })
+    for await (const _chunk of events) { /* drain to completion; the mock server's captured request is the assertion. */ }
+    expect(server.requests).toHaveLength(1)
+    const body = server.requests[0] as { prompt_cache_key?: string }
+    expect(body.prompt_cache_key).toBe('root-session')
+    expect(server.headers[0]?.['session-id']).toBe('child-session')
+  })
 })
 
 describe('real pi-ai openai-completions module: wire-level prompt_cache_key override', () => {

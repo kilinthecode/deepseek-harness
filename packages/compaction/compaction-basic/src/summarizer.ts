@@ -110,7 +110,11 @@ export type SummaryResult = {
 /**
  * Run the default cache-reusing `ctx.llm.stream()` summarization call: replay
  * the conversation prefix, then append the compaction instruction as the final
- * user message so the provider's warm prefix cache is reused.
+ * user message so the provider's warm prefix cache is reused. Because this
+ * request replays `agent.session`'s own prefix, it carries that session's own
+ * delegation-tree `cacheKey` (not a fixed or session-title-style value), so a
+ * provider that routes on it lands this call on the same cached prefix as the
+ * session's ordinary requests.
  * @param ctx - context providing the LLM service.
  * @param config - resolved backend configuration.
  * @param input - replayed conversation prefix (system, tools, and leading messages) to condense.
