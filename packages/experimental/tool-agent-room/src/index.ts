@@ -5,6 +5,7 @@ import z from '@deepseek-ai/schemastery'
 import type { Agent } from '@deepseek-ai/dsh-agent'
 import { RoomProposalId } from '@deepseek-ai/dsh-experimental-agent-team'
 import type { RoomProposalView, RoomView } from '@deepseek-ai/dsh-experimental-agent-team'
+import { plainForkParentOf } from '@deepseek-ai/dsh-subagent'
 import { defineTool } from '@deepseek-ai/dsh-tools'
 import type { InferValue, ValueSchemaSpec } from '@deepseek-ai/dsh-tools'
 
@@ -280,6 +281,26 @@ function install(agent: Agent, ctx: Context, config: Required<Config>): () => vo
   }
 }
 
+/**
+ * Whether `agent` qualifies for the room section and tool set: either it
+ * currently has Team membership itself, or it is a plain fork
+ * ({@link plainForkParentOf}) of a parent that currently does. A plain fork
+ * of a participant is not itself a member — every room tool resolves and
+ * authorizes the calling agent through `ctx.agentTeams` at execution time
+ * and rejects a non-member with `TEAM_NOT_MEMBER`, so a fork can never act
+ * as its parent — but its assembled prompt must match the parent's declared
+ * section and tools so a provider prompt cache keyed on the exact prefix
+ * covers the inherited history instead of missing on a dropped section.
+ * @param agent - the exact live candidate agent.
+ * @param ctx - the context whose `agentTeams` resolves membership.
+ * @returns whether `agent` qualifies for the room installation.
+ */
+function qualifiesForRoomInstall(agent: Agent, ctx: Context): boolean {
+  if (ctx.agentTeams.tryMembership(agent) !== undefined) return true
+  const forkParent = plainForkParentOf(agent)
+  return forkParent !== undefined && ctx.agentTeams.tryMembership(forkParent) !== undefined
+}
+
 /** Install room tools in every live or subsequently published room participant scope. */
 export function apply(ctx: Context, config: Config = {}): void {
   const resolved: Required<Config> = {
@@ -287,7 +308,7 @@ export function apply(ctx: Context, config: Config = {}): void {
   }
   const installed = new Map<Agent, () => void>()
   const maybeInstall = (agent: Agent): void => {
-    if (installed.has(agent) || ctx.agentTeams.tryMembership(agent) === undefined) return
+    if (installed.has(agent) || !qualifiesForRoomInstall(agent, ctx)) return
     installed.set(agent, install(agent, ctx, resolved))
   }
   for (const agent of ctx.agents.list()) maybeInstall(agent)

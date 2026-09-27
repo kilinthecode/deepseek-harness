@@ -8,6 +8,9 @@ import type { Agent } from '@deepseek-ai/dsh-agent'
 import AgentLoop from '@deepseek-ai/dsh-agent-loop'
 import { mountAgentLoopTestDependencies } from '@deepseek-ai/dsh-agent-loop-testkit'
 import { ToolCallId, createUserMessage } from '@deepseek-ai/dsh-llm'
+import type { GenerateOptions } from '@deepseek-ai/dsh-llm'
+import { resolveAdapterOptions } from '@deepseek-ai/dsh-llm-deepseek'
+import { serialize } from '@deepseek-ai/dsh-llm-deepseek/src/serialize.ts'
 import { scopeOf } from '@deepseek-ai/dsh-scope'
 import { SESSION_FORMAT_VERSION, SessionId, type SessionEvent } from '@deepseek-ai/dsh-session'
 import JsonlSessionPersistence from '@deepseek-ai/dsh-session-persistence-jsonl'
@@ -22,6 +25,12 @@ import TeamService from '../../agent-team/src/index.ts'
 import { teamProjectionDefinition } from '../../agent-team/src/projection.ts'
 import type { RoomStreamFrame } from '../../agent-team/src/index.ts'
 import * as toolRoom from '../src/index.ts'
+
+/** Render one captured request the way the wire protocol would, for prompt-cache-prefix comparison. */
+function serializeRequest(request: GenerateOptions) {
+  const connection = resolveAdapterOptions({ models: [{ id: request.model, systemPromptUpdate: 'in-history' }] })
+  return serialize(request, connection, request.messages, new Map(), () => undefined)
+}
 
 const SIGNAL = new AbortController().signal
 /** An opening turn that never settles, so a participant stays live as an authority credential. */
@@ -402,11 +411,13 @@ describe('dsh-tool-room', () => {
     await run.result
     const child = run.localAgent!
     expect(ctx.agentTeams.tryMembership(child)).toBeUndefined()
-    // Scoped installation reaches the child before its descriptor is recorded,
-    // so the authority check inside the operation is what refuses it.
+    // The durable header marks a subagent child synchronously, before its
+    // first step, so scoped installation excludes it from the start and no
+    // room tool ever reaches its scope.
+    expect(ctx.tools.get('room_view', child)).toBeUndefined()
     const refused = await execute(ctx, child, 'room_view', {})
     expect(refused.isError).toBe(true)
-    expect(text(refused)).toContain('is not a member of an active Agent Team')
+    expect(text(refused)).toContain('unknown tool "room_view"')
   })
 
 
@@ -482,5 +493,109 @@ describe('dsh-tool-room', () => {
     expect(replayed.roomReviews).toHaveLength(2)
     expect(replayed.roomReviews.every(review => review.reason.length > 0)).toBe(true)
     expect(replayed.members.map(member => member.name)).toEqual(['alice', 'bob'])
+  })
+})
+
+describe('plain fork parity with room installation', () => {
+  it('mirrors the participant\'s room policy and tools onto a plain subagent_fork, with the participant\'s prefix', async () => {
+    const { ctx, lead, adapter } = await setup([textResponse('lead answer'), textResponse('fork answer')])
+    await runTurn(lead, 'Lead task')
+    const leadRequest = serializeRequest(adapter.requests[0]!)
+    const run = await ctx.subagents.start('fork', {
+      label: 'fork task',
+      prompt: [{ type: 'text', text: 'Continue independently' }],
+      parent: lead,
+      signal: SIGNAL,
+    })
+    await run.result
+    const forkRequest = serializeRequest(adapter.requests[1]!)
+    expect(forkRequest.tools).toEqual(leadRequest.tools)
+    expect(forkRequest.system).toEqual(leadRequest.system)
+    expect(forkRequest.messages.slice(0, leadRequest.messages.length)).toEqual(leadRequest.messages)
+    await run.dispose()
+  })
+
+  it('rejects room_propose from a plain fork as a non-member, creating no decision', async () => {
+    const { ctx, lead } = await setup([textResponse('lead answer'), textResponse('fork answer')])
+    await runTurn(lead, 'Lead task')
+    const run = await ctx.subagents.start('fork', {
+      label: 'fork task',
+      prompt: [{ type: 'text', text: 'independent task' }],
+      parent: lead,
+      signal: SIGNAL,
+    })
+    const fork = run.localAgent!
+    const result = await execute(ctx, fork, 'room_propose', { statement: 'a rogue decision' })
+    expect(result.isError).toBe(true)
+    expect(text(result)).toContain('is not a member of an active Agent Team')
+    expect(ctx.agentTeams.roomView(lead).proposals).toEqual([])
+    await run.dispose()
+  })
+
+  it('does not install room tools on a fresh subagent child of a participant', async () => {
+    const { ctx, lead } = await setup([textResponse('lead answer'), textResponse('fresh')])
+    const freshRun = await ctx.subagents.start('spawn', {
+      label: 'x', prompt: [{ type: 'text', text: 'x' }], parent: lead, signal: SIGNAL,
+    })
+    expect(ctx.tools.get('room_view', freshRun.localAgent)).toBeUndefined()
+    await freshRun.dispose()
+  })
+
+  it('does not install room tools on a persona or toolFilter fork', async () => {
+    const { ctx, lead } = await setup([textResponse('lead answer')])
+    await runTurn(lead, 'Lead task')
+    // A known global tool name for the toolFilter case below: restrict()
+    // validates deny/allow entries against registered global tools, and
+    // every room tool is scoped rather than global.
+    ctx.tools.register(defineContentToolFixture({
+      name: 'probe', description: 'test-only fixture tool', parameters: {}, async execute() { return [] },
+    }))
+
+    const personaId = SessionId('room-gate-persona-fork')
+    await ctx.subagents.startContinuable({
+      childId: personaId,
+      provider: 'fork',
+      label: 'x',
+      request: { prompt: [{ type: 'text', text: 'x' }], parent: lead, persona: 'You are a narrow specialist.' },
+      signal: SIGNAL,
+    })
+    expect(ctx.tools.get('room_view', ctx.agents.get(personaId))).toBeUndefined()
+    await ctx.subagents.drainContinuableChildren(lead, [personaId])
+
+    const toolFilterId = SessionId('room-gate-toolfilter-fork')
+    await ctx.subagents.startContinuable({
+      childId: toolFilterId,
+      provider: 'fork',
+      label: 'x',
+      request: { prompt: [{ type: 'text', text: 'x' }], parent: lead, toolFilter: { allow: ['probe'] } },
+      signal: SIGNAL,
+    })
+    expect(ctx.tools.get('room_view', ctx.agents.get(toolFilterId))).toBeUndefined()
+    await ctx.subagents.drainContinuableChildren(lead, [toolFilterId])
+  })
+
+  it('does not install room tools on a plain fork of a non-participant parent', async () => {
+    const { ctx, lead } = await setup([
+      textResponse('lead answer'), textResponse('fork1 answer'), textResponse('fork2 answer'),
+    ])
+    await runTurn(lead, 'Lead task')
+    const fork1Run = await ctx.subagents.start('fork', {
+      label: 'fork1', prompt: [{ type: 'text', text: 'fork1 task' }], parent: lead, signal: SIGNAL,
+    })
+    const fork1 = fork1Run.localAgent!
+    await fork1Run.result
+    // fork1 is a plain fork of the participant Lead, so it gets room tools, but
+    // it is not itself a member — the roster still rejects it as a caller.
+    expect(ctx.tools.get('room_view', fork1)).toBeDefined()
+    expect(() => ctx.agentTeams.membership(fork1)).toThrow(expect.objectContaining({ code: 'TEAM_NOT_MEMBER' }))
+
+    const fork2Run = await ctx.subagents.start('fork', {
+      label: 'fork2', prompt: [{ type: 'text', text: 'fork2 task' }], parent: fork1, signal: SIGNAL,
+    })
+    const fork2 = fork2Run.localAgent!
+    expect(ctx.tools.get('room_view', fork2)).toBeUndefined()
+
+    await fork2Run.dispose()
+    await fork1Run.dispose()
   })
 })

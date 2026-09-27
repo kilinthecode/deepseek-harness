@@ -44,7 +44,7 @@ kind: "package-reference"
 <a id="understand-the-implementation"></a>
 ## 理解实现
 
-`apply` 会安装到每个已存在或随后发布的 room 参与者的 Agent scope 中：一个承载共同问责策略的 system-prompt section，以及五个工具。安装依据 `ctx.agentTeams.tryMembership`，也就是 room 使用的同一条 roster 规则，因此成员从 provisioning 记录它的那一刻起就会收到这些工具。
+`apply` 会安装到每个已存在或随后发布的 room 参与者的 Agent scope 中：一个承载共同问责策略的 system-prompt section，以及五个工具。安装依据 `ctx.agentTeams.tryMembership`（也就是 room 使用的同一条 roster 规则），或依据当前具备成员身份的 parent 的纯 fork（来自 `@deepseek-ai/dsh-subagent` 的 `plainForkParentOf()`），因此成员从 provisioning 记录它的那一刻起就会收到这些工具，纯 `subagent_fork` child 也会继承相同的 scope。
 
 每个工具包装一个 `ctx.agentTeams` 操作，并按其声明的 schema 把结果渲染为紧凑 JSON。每个结果都由服务而非工具决定：`room_review` 记录一个立场并返回 quorum 算术当时给出的结果，`room_propose` 无法接受任何东西，也没有任何工具可以强行给出结论。拒绝会以说明原因的 tool error result 抵达模型，因此参与者可以纠正过期 revision 或未知的决策 id 并重试。
 
@@ -63,7 +63,7 @@ kind: "package-reference"
 
 #### 模型看到什么
 
-每位参与者的 schema 中都会出现五个工具：`room_view`、`room_prompt`、`room_propose`、`room_review` 与 `room_escalate`。每个工具都按其声明的 schema 返回紧凑 JSON：一个 decision view 携带其 id、revision、proposer、statement、phase、所需批准数、三个投票列表、每条已记录立场及其理由，以及在决策仍未结清时立场缺失的参与者名单。一个 system-prompt section 陈述参与者何时可以发言以及 quorum 规则；每个工具的说明与参数承载各自的使用规则，而自我评审、已结清的决策或 revision 上限等拒绝会在调用结果中返回。
+每位参与者的 schema 中都会出现五个工具：`room_view`、`room_prompt`、`room_propose`、`room_review` 与 `room_escalate`。每个工具都按其声明的 schema 返回紧凑 JSON：一个 decision view 携带其 id、revision、proposer、statement、phase、所需批准数、三个投票列表、每条已记录立场及其理由，以及在决策仍未结清时立场缺失的参与者名单。一个 system-prompt section 陈述参与者何时可以发言以及 quorum 规则；每个工具的说明与参数承载各自的使用规则，而自我评审、已结清的决策或 revision 上限等拒绝会在调用结果中返回。在 room 参与者之外、经其自身工具调用之外途径创建的纯 fork（例如通用的 `subagent_fork` 工具），在其 parent 当前具备成员关系时，也会拿到相同的策略 section 与工具 schema；执行时仍会把它当作非成员拒绝，因此它无法冒充其 parent 行事。
 
 #### Token 影响
 
@@ -82,7 +82,6 @@ kind: "package-reference"
 - **实验原型，无稳定性承诺**——本包公开发布，但孵化期间约定仍可自由变更。
 - **room 必须由组合启用**——若 `@deepseek-ai/dsh-experimental-agent-team` 未开启 `roomEnabled`，所有工具都会以 `TEAM_ROOM_DISABLED` 失败，而不是降级运行。
 - **参与者只在获得发言权时发言**——没有任何工具让参与者自行取得 turn 或主动回应同伴，因此当参与者不再交出发言权时，room 会停滞。
-- **scoped 安装可能触及 provider-owned subagent**——安装依据创建时的成员身份，早于 provider-owned child 的 descriptor 被记录；真正拒绝它的是每个操作内部的授权检查。
 - **沉默的 reviewer 只会推迟决策**——每个有资格的 reviewer 都必须投票后决策才会结清；room 会先提醒停止工作的 reviewer，之后才把决策连同沉默者名单升级给人类。
 - **room 面板从不记录立场**——当组合挂载 `@deepseek-ai/dsh-experimental-client-ui-agent-team` 时，它会渲染 transcript 与决策，并能交出发言权、开启决策和升级决策，但 review 只来自参与者通过 `room_review` 提交的立场。
 

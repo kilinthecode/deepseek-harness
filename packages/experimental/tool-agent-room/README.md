@@ -44,7 +44,7 @@ Choose it when one question should be reasoned about by several models that must
 <a id="understand-the-implementation"></a>
 ## Understand the implementation
 
-`apply` installs into every live or subsequently published room participant's Agent scope: one system-prompt section carrying the co-accountability policy, and five tools. Installation follows `ctx.agentTeams.tryMembership`, the same roster rule the room uses, so a member receives the tools from the moment provisioning records it.
+`apply` installs into every live or subsequently published room participant's Agent scope: one system-prompt section carrying the co-accountability policy, and five tools. Installation follows `ctx.agentTeams.tryMembership`, the same roster rule the room uses, or a plain fork (`plainForkParentOf()` from `@deepseek-ai/dsh-subagent`) of a currently-member parent, so a member receives the tools from the moment provisioning records it and a plain `subagent_fork` child inherits the identical scope.
 
 Each tool wraps one `ctx.agentTeams` operation and renders its result as compact JSON against a declared schema. The service, not the tool, decides every outcome: `room_review` records a standing and returns whatever the quorum arithmetic then produces, `room_propose` cannot accept anything, and no tool can force a verdict. A refusal reaches the model as a tool error result naming the reason, so a participant can correct a stale revision or an unknown decision id and retry.
 
@@ -63,7 +63,7 @@ Each tool wraps one `ctx.agentTeams` operation and renders its result as compact
 
 #### What the model sees
 
-Five tools appear in every participant's schema: `room_view`, `room_prompt`, `room_propose`, `room_review`, and `room_escalate`. Each returns compact JSON against a declared schema: a decision view carries its id, revision, proposer, statement, phase, required approvals, the three vote lists, every recorded standing with its reason, and, while the decision is still open, the names whose standing is missing. One system-prompt section states when a participant may speak and the quorum rule; each tool's description and parameters carry its own usage rules, and refusals such as self-review, a settled decision, or the revision limit arrive in the call result.
+Five tools appear in every participant's schema: `room_view`, `room_prompt`, `room_propose`, `room_review`, and `room_escalate`. Each returns compact JSON against a declared schema: a decision view carries its id, revision, proposer, statement, phase, required approvals, the three vote lists, every recorded standing with its reason, and, while the decision is still open, the names whose standing is missing. One system-prompt section states when a participant may speak and the quorum rule; each tool's description and parameters carry its own usage rules, and refusals such as self-review, a settled decision, or the revision limit arrive in the call result. A plain fork created outside a participant's own tool calls (for example through a generic `subagent_fork` tool) on a room participant also receives the identical policy section and tool schemas when its parent currently has membership; execution still rejects it as a non-member, so it cannot act as its parent.
 
 #### Token effect
 
@@ -82,7 +82,6 @@ These limits describe what a room participant cannot do yet or what needs specia
 - **Experimental prototype with no stability promise** — the package is public, but its contracts can change freely while it incubates.
 - **The room must be enabled by the composition** — without `roomEnabled` on `@deepseek-ai/dsh-experimental-agent-team`, every tool fails with `TEAM_ROOM_DISABLED` rather than degrading.
 - **A participant speaks only when given the floor** — no tool lets a participant claim a turn or answer a peer unprompted, so a room whose participants stop granting the floor stalls.
-- **Scoped installation can reach a provider-owned subagent** — installation follows membership at creation time, before a provider-owned child's descriptor is recorded; the authority check inside each operation is what refuses it.
 - **A silent reviewer only delays a decision** — every eligible reviewer must vote before a decision settles, and the room reminds a reviewer that stops working before it escalates the decision to the human with the silent reviewers named.
 - **The room panel never records a standing** — `@deepseek-ai/dsh-experimental-client-ui-agent-team` renders the transcript and decisions when the composition mounts it, and it can give the floor, open a decision, and escalate one, but reviews come only from participants through `room_review`.
 
