@@ -603,6 +603,13 @@ const SERVICE_ROLES: ServiceRole[] = [
     note: 'Folds revisioned objective state from the session log and keeps live continuation activation process-local.',
   },
   {
+    key: 'memory',
+    pkg: 'memory',
+    title: 'Durable agent memory store',
+    mode: 'core',
+    note: 'Keeps cross-session memory records as one JSON document each under the storage domain form; dsh-tool-memory exposes them to the model.',
+  },
+  {
     key: 'ssh',
     pkg: 'ssh',
     title: 'POSIX SSH connection owner',
