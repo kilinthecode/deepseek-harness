@@ -2,9 +2,9 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { Context } from '@deepseek-ai/cordis'
 import AuthorizationService, { AuthorizationDeclinedError } from '@deepseek-ai/dsh-authorization'
-import type { AuthorizationFlow } from '@deepseek-ai/dsh-authorization'
+import type { AuthorizationFlow, AuthorizationMethod } from '@deepseek-ai/dsh-authorization'
 import { credentialKey } from '@deepseek-ai/dsh-credentials'
-import type { CredentialKey, CredentialRecordInfo } from '@deepseek-ai/dsh-credentials'
+import type { CredentialKey, CredentialRecordInfo, GrantRecord } from '@deepseek-ai/dsh-credentials'
 import { remoteErrorOf } from '@deepseek-ai/dsh-typert-protocol'
 import type { AuthorizationPromptId, AuthorizationPromptView, AuthorizationView } from '../src/types.ts'
 import AuthorizationController from '../src/index.ts'
@@ -12,10 +12,17 @@ import { MemoryCredentials } from '../../../credentials/authorization/tests/memo
 
 const KEY = credentialKey('llm-pi-ai', 'openai-codex')
 const OTHER = credentialKey('llm-pi-ai', 'anthropic')
-const STORED = { kind: 'grant', payload: { token: 'stored' } }
-const COMMITTED = { kind: 'grant', payload: { token: 'granted' } }
+// The seam's write half takes a record, so the fixtures carry the grant tag
+// that discriminates them from an api key.
+const STORED: GrantRecord = { kind: 'grant', payload: { token: 'stored' } }
+const COMMITTED: GrantRecord = { kind: 'grant', payload: { token: 'granted' } }
 const NOTICE = { message: 'Continue in your browser', url: 'https://auth.example/start' }
-const METHODS = [{ id: 'oauth', label: 'Sign in with ChatGPT' }, { id: 'device', label: 'Use a device code' }]
+// The seam types a flow's method list non-empty (a flow with nothing to run
+// cannot be begun), so the shared fixture carries that shape.
+const METHODS: readonly [AuthorizationMethod, ...AuthorizationMethod[]] = [
+  { id: 'oauth', label: 'Sign in with ChatGPT' },
+  { id: 'device', label: 'Use a device code' },
+]
 
 const contexts: Context[] = []
 afterEach(async () => { await Promise.all(contexts.splice(0).map(ctx => ctx.fiber.dispose())) })

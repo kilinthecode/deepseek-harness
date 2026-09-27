@@ -6,6 +6,7 @@ import type {
   AuthorizationAttemptView,
   AuthorizationFlowView,
   AuthorizationPromptId,
+  AuthorizationPromptView,
   AuthorizationView,
 } from '@deepseek-ai/dsh-api-authorization-controller/types'
 import { RemoteError } from '@deepseek-ai/dsh-client-test-runtime'
@@ -96,7 +97,7 @@ function noticeView(notice: { message: string; url?: string; code?: string }): A
 }
 
 /** A view whose attempt is waiting on one prompt. */
-function promptView(prompt: AuthorizationAttemptView['prompt']): AuthorizationView {
+function promptView(prompt: AuthorizationPromptView): AuthorizationView {
   return viewOf(attemptOf({ phase: 'prompting', prompt }))
 }
 
