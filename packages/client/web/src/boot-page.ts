@@ -83,8 +83,31 @@ const PLATE_DELAY_MS = 2420
 const PLATE_MS = 560
 /** Rest between the settled brand and the leave fade. */
 const SETTLE_REST_MS = 360
+/**
+ * Time from the first animation frame at which the mark's last stage — the
+ * outer cell settling onto the spoke tips — has finished its reveal. The
+ * hold-and-fade handoff in {@link BootPage.settled} never starts before this
+ * point, however early it is requested or however soon a host's reported
+ * animations settle, so the tesseract always finishes drawing before the
+ * fade begins. {@link MAX_SETTLE_MS} already exceeds it, so a throttled
+ * background document's worst-case hand-off time is unchanged.
+ */
+const MARK_DRAWN_MS = STAGE_DELAY_MS[2] + STAGE_MS
+/**
+ * Extra hold after the brand settles and before the fade begins, so the
+ * reader is held on the completed brand a little longer while the rest of
+ * the application finishes loading behind it. Applies after the animations-
+ * or-max-settle race in {@link BootPage.settled}: a throttled background
+ * document that only settles by hitting {@link MAX_SETTLE_MS} still holds
+ * this long afterward before handing off, so that bound still caps the
+ * wait, just with this fixed amount added on top. Reduced motion does not
+ * gain this hold — {@link BootPage.leave} detaches at once there, since the
+ * brand is already complete from mount and no animation is left to justify
+ * holding the reader on the boot page any longer.
+ */
+const LOAD_MARGIN_MS = 500
 /** Hold from mount used where the host cannot report animation progress. */
-const FALLBACK_HOLD_MS = PLATE_DELAY_MS + PLATE_MS + SETTLE_REST_MS
+const FALLBACK_HOLD_MS = PLATE_DELAY_MS + PLATE_MS + SETTLE_REST_MS + LOAD_MARGIN_MS
 /** Longest wait for the brand animations to finish once the application is ready. */
 const MAX_SETTLE_MS = 4800
 /** Leave fade, matching the `.leaving` transitions in the stylesheet. */
@@ -236,9 +259,11 @@ export class BootPage {
   }
 
   /**
-   * Hand the mount point to the UI renderer. The page stays on top until every
-   * brand animation has finished, rests briefly, then dissolves to reveal the
-   * ready application. Reduced motion detaches at once.
+   * Hand the mount point to the UI renderer. The page stays on top until the
+   * mark has fully drawn and every brand animation has finished, rests
+   * briefly, holds a fixed load margin ({@link LOAD_MARGIN_MS}), then
+   * dissolves to reveal the ready application. Reduced motion detaches at
+   * once instead, gaining neither hold — see {@link LOAD_MARGIN_MS} for why.
    */
   leave(): void {
     if (this.leaving) return
@@ -260,21 +285,30 @@ export class BootPage {
 
   /**
    * Resolve once the brand sequence has played out. Hosts that report
-   * animations wait for the finite brand animations to finish, bounded by
-   * {@link MAX_SETTLE_MS} for throttled background documents; others hold
-   * until {@link FALLBACK_HOLD_MS} after mount.
+   * animations wait for the finite brand animations to finish, bounded below
+   * by {@link MARK_DRAWN_MS} and above by {@link MAX_SETTLE_MS} for
+   * throttled background documents; hosts that cannot report animations
+   * hold until {@link FALLBACK_HOLD_MS} after mount instead. Either way,
+   * {@link SETTLE_REST_MS} then {@link LOAD_MARGIN_MS} still follow before
+   * the fade begins.
    */
   private async settled(): Promise<void> {
     if (typeof this.brand.getAnimations !== 'function') {
       await this.wait(Math.max(0, this.mountedAt + FALLBACK_HOLD_MS - Date.now()))
       return
     }
+    // Read before the animations race so a handoff requested before the host
+    // has created (or reported) the mark's animations still holds until the
+    // mark has actually finished drawing, rather than resolving on whatever
+    // partial or empty list getAnimations happens to return this early.
+    const markDrawn = this.wait(Math.max(0, this.mountedAt + MARK_DRAWN_MS - Date.now()))
     const finishing = this.brand.getAnimations({ subtree: true })
       .map(animation => animation.finished.then(() => undefined, (_cancelled: unknown) => {
         // A cancelled animation has stopped moving, which is all the hold waits for.
       }))
-    await Promise.race([Promise.all(finishing), this.wait(MAX_SETTLE_MS)])
+    await Promise.all([markDrawn, Promise.race([Promise.all(finishing), this.wait(MAX_SETTLE_MS)])])
     await this.wait(SETTLE_REST_MS)
+    await this.wait(LOAD_MARGIN_MS)
   }
 
   /**

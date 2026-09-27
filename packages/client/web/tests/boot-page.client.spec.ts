@@ -24,10 +24,14 @@ const STATUS_MS = 3400
 /** Reduced motion shows the brand complete from mount, so the status follows sooner. */
 const REDUCED_STATUS_MS = 500
 /** Hold used where the host reports no animations (jsdom), then the leave fade. */
-const FALLBACK_HOLD_MS = 3340
+const FALLBACK_HOLD_MS = 3840
 const LEAVE_MS = 560
 const SETTLE_REST_MS = 360
 const MAX_SETTLE_MS = 4800
+/** Time from mount by which the mark's last stage has finished its reveal. */
+const MARK_DRAWN_MS = 1320
+/** Extra hold after the brand settles, before the leave fade begins. */
+const LOAD_MARGIN_MS = 500
 
 /** Read an element's inline animation window, in ms from the first animation frame. */
 function scheduled(el: HTMLElement | SVGElement): { start: number; end: number } {
@@ -171,9 +175,10 @@ describe('BootPage', () => {
     // The progress status never interrupts the sequence.
     await vi.advanceTimersByTimeAsync(lockup)
     expect(el.querySelector('[data-dsh-boot-spinner]')).toBeNull()
-    // The complete lockup holds for the rest before the page starts to leave.
+    // The complete lockup holds for the rest, then the load margin, before
+    // the page starts to leave.
     page.leave()
-    await vi.advanceTimersByTimeAsync(SETTLE_REST_MS - 1)
+    await vi.advanceTimersByTimeAsync(SETTLE_REST_MS + LOAD_MARGIN_MS - 1)
     expect(el.firstElementChild?.classList.contains(css.leaving!)).toBe(false)
     await vi.advanceTimersByTimeAsync(1)
     expect(el.firstElementChild?.classList.contains(css.leaving!)).toBe(true)
@@ -328,7 +333,7 @@ describe('BootPage', () => {
     await vi.advanceTimersByTimeAsync(FALLBACK_HOLD_MS + LEAVE_MS)
     expect(el.firstElementChild?.classList.contains(css.leaving!)).toBe(false)
     brand.finish()
-    await vi.advanceTimersByTimeAsync(SETTLE_REST_MS - 1)
+    await vi.advanceTimersByTimeAsync(SETTLE_REST_MS + LOAD_MARGIN_MS - 1)
     expect(el.firstElementChild?.classList.contains(css.leaving!)).toBe(false)
     await vi.advanceTimersByTimeAsync(1)
     expect(el.firstElementChild?.classList.contains(css.leaving!)).toBe(true)
@@ -336,11 +341,29 @@ describe('BootPage', () => {
     expect(el.childNodes).toHaveLength(0)
   })
 
-  it('treats a cancelled brand animation as settled', async () => {
+  it('treats a cancelled brand animation as settled, but still waits for the mark to finish drawing', async () => {
     const { el, page } = mount()
     stubBrandAnimation(el).cancel()
     page.leave()
-    await vi.advanceTimersByTimeAsync(SETTLE_REST_MS)
+    // The tracked animation is already settled, but the handoff still holds
+    // for the mark's own schedule, plus the rest and load margin.
+    await vi.advanceTimersByTimeAsync(MARK_DRAWN_MS + SETTLE_REST_MS + LOAD_MARGIN_MS - 1)
+    expect(el.firstElementChild?.classList.contains(css.leaving!)).toBe(false)
+    await vi.advanceTimersByTimeAsync(1)
+    expect(el.firstElementChild?.classList.contains(css.leaving!)).toBe(true)
+  })
+
+  it('does not start the handoff before the mark has drawn, even if the host reports no animations yet', async () => {
+    const { el, page } = mount()
+    const brand = el.querySelector<HTMLElement>('[role="img"]')!
+    // A host that has not yet created (or cannot yet report) the mark's CSS
+    // animations returns an empty list; the floor must not read that as
+    // "already settled".
+    brand.getAnimations = () => []
+    page.leave()
+    await vi.advanceTimersByTimeAsync(MARK_DRAWN_MS + SETTLE_REST_MS + LOAD_MARGIN_MS - 1)
+    expect(el.firstElementChild?.classList.contains(css.leaving!)).toBe(false)
+    await vi.advanceTimersByTimeAsync(1)
     expect(el.firstElementChild?.classList.contains(css.leaving!)).toBe(true)
   })
 
@@ -348,7 +371,7 @@ describe('BootPage', () => {
     const { el, page } = mount()
     stubBrandAnimation(el)
     page.leave()
-    await vi.advanceTimersByTimeAsync(MAX_SETTLE_MS + SETTLE_REST_MS - 1)
+    await vi.advanceTimersByTimeAsync(MAX_SETTLE_MS + SETTLE_REST_MS + LOAD_MARGIN_MS - 1)
     expect(el.firstElementChild?.classList.contains(css.leaving!)).toBe(false)
     await vi.advanceTimersByTimeAsync(1)
     expect(el.firstElementChild?.classList.contains(css.leaving!)).toBe(true)
@@ -379,7 +402,7 @@ describe('BootPage', () => {
     const { el, page } = mount()
     stubBrandAnimation(el).finish()
     page.leave()
-    await vi.advanceTimersByTimeAsync(SETTLE_REST_MS + LEAVE_MS)
+    await vi.advanceTimersByTimeAsync(MARK_DRAWN_MS + SETTLE_REST_MS + LOAD_MARGIN_MS + LEAVE_MS)
     expect(el.childNodes).toHaveLength(0)
     // The unused settle-limit and status timers go with the page.
     expect(vi.getTimerCount()).toBe(0)
