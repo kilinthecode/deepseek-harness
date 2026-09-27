@@ -57,7 +57,7 @@ export interface AuthorizationAttemptView {
   readonly notice?: AuthorizationNotice
   /** The question currently blocking the attempt, present only during `prompting`. */
   readonly prompt?: AuthorizationPromptView
-  /** User-safe failure message, present only when `phase` is `failed`. */
+  /** Short code naming the failure, present only when `phase` is `failed`; never provider text or secrets. */
   readonly failure?: string
 }
 
