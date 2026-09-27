@@ -228,7 +228,7 @@ const SERVICE_ROLES: ServiceRole[] = [
     title: 'Model-free tool-result pruning',
     mode: 'core',
     consumers: ['compaction-basic'],
-    note: 'Rewrites oversized current tool results through replayable single-node surface replacements before summary compaction.',
+    note: 'Rewrites oversized current tool results through replayable single-node surface replacements; a decisive preview lands the rewrite before summary compaction, otherwise it follows each compaction instead.',
   },
   {
     key: 'sessions',

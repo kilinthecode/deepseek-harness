@@ -27,8 +27,8 @@
   en: 9a357040ff261f6e
   zh: 7434bb64ca9bd094
 /deepseek-ai-dsh-compaction-tool-result-pruner/use-this-package/when-trimming-runs:
-  en: d72e0074faebe148
-  zh: dfb484a385a7ebbf
+  en: ac5e23c9f17f49e1
+  zh: 8627651b012684e5
 /deepseek-ai-dsh-compaction-tool-result-pruner/understand-the-implementation:
   en: 57aaa53880042873
   zh: 667f54624411c37d
@@ -36,11 +36,11 @@
   en: 5adff8207c6294e0
   zh: ccba42d804989abb
 /deepseek-ai-dsh-compaction-tool-result-pruner/understand-the-implementation/pruning-mechanics:
-  en: 9813749e4f016897
-  zh: f2b2b5d6e5e8977a
+  en: 4c5a209a5be9dcde
+  zh: 48376490e4402372
 /deepseek-ai-dsh-compaction-tool-result-pruner/understand-the-implementation/source-map:
-  en: 9c10b4382c2347b5
-  zh: b713a6dcf7589aee
+  en: 563e10aeda68a2ee
+  zh: 6802f731c5ab4ecd
 /deepseek-ai-dsh-compaction-tool-result-pruner/further-exploration:
   en: 3253e154e7610bbd
   zh: ba28c7411fd5c8bb
@@ -51,11 +51,11 @@
   en: 0b0dfb7ec1bf906f
   zh: 68f70bde796751cd
 /deepseek-ai-dsh-compaction-tool-result-pruner/model-experience/pruned-tool-result/what-the-model-sees:
-  en: 8514b5a6586bd65d
-  zh: 2a0648bea6cb81b6
+  en: 09c9e2d97dc2ced4
+  zh: 971d9cc87485f602
 /deepseek-ai-dsh-compaction-tool-result-pruner/model-experience/pruned-tool-result/token-effect:
-  en: 1b11d405468e8d5d
-  zh: 06dc9aef281c776d
+  en: 3ca8d38942ff788f
+  zh: 07fcec4bca5196f8
 /deepseek-ai-dsh-compaction-tool-result-pruner/model-experience/pruned-tool-result/kv-cache-effect:
   en: aac7de507412ba39
   zh: bdd8f391ad9c9a81

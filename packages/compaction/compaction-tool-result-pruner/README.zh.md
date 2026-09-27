@@ -57,7 +57,7 @@ kind: "package-reference"
 
 ### 修剪何时运行
 
-修剪只在压缩触发条件满足后运行：`dsh-compaction-basic` 在压力或溢出确认后、选择要压缩的内容之前调用它。低于压力时不会修剪任何内容，修剪本身也不发起模型调用。
+修剪只在压缩触发条件满足后运行：`dsh-compaction-basic` 会在压力或溢出确认后先预览它。溢出恢复总是先修剪、再选择要压缩的内容，因为重试请求本身必须能放入窗口。主动压力触发时，只有当预览显示单靠修剪就能把压力清到阈值以下的配置余量，才会先修剪；否则会先压缩最旧的平衡范围，再对剩余表层修剪，因为该请求已经承担了修剪本会带来的缓存失效代价。低于压力时不会修剪或预览任何内容，修剪本身也不发起模型调用。
 
 -----
 
@@ -79,13 +79,13 @@ kind: "package-reference"
 
 ### 剪枝机制
 
-剪枝按 Unicode 码点测量 `text` 块（非文本块计为零），生成长度受限的替换——内容已在预算内时则不替换——并把每个超出预算的工具结果换为一条新追加的 `tool/result`，该事件替换原始事件并通过 `sourceEventSeqs` 引用它，前面紧跟一条 `compaction/prune` 影子价格事件。会话拒绝替换时，运行会同步失败；本次扫描中先前已提交的替换仍会保留。非文本块保持原始相对位置，切片绝不会拆分 UTF-16 代理项对。精确签名见 [`src/index.ts`](src/index.ts)。
+剪枝按 Unicode 码点测量 `text` 块（非文本块计为零），生成长度受限的替换——内容已在预算内时则不替换——并把每个超出预算的工具结果换为一条新追加的 `tool/result`，该事件替换原始事件并通过 `sourceEventSeqs` 引用它，前面紧跟一条 `compaction/prune` 影子价格事件。会话拒绝替换时，运行会同步失败；本次扫描中先前已提交的替换仍会保留。非文本块保持原始相对位置，切片绝不会拆分 UTF-16 代理项对。`previewSession` 以只读方式运行相同的候选规划，返回当前一次 `pruneSession` 调用会产生的节点数与估算 token 节省量，使调用方能在真正落地之前为一次仅剪枝的缩减定价。精确签名见 [`src/index.ts`](src/index.ts)。
 
 ### 源码地图
 
 | 文件 | 职责 |
 |---|---|
-| [`src/index.ts`](src/index.ts) | 插件入口：`ToolResultPruner` 服务、`pruneSession` / `pruneContent` / `measureContent` |
+| [`src/index.ts`](src/index.ts) | 插件入口：`ToolResultPruner` 服务、`pruneSession` / `previewSession` / `pruneContent` / `measureContent` |
 | [`src/config.ts`](src/config.ts) | `PRUNE_MARKER`、默认值、码点计数、预算验证 |
 | [`src/types.ts`](src/types.ts) | `ToolResultPruneConfig`、`ResolvedConfig`、`PrunedEntry`、`PruneResult` |
 | — | 不发布运行时不变式伴生入口；Session 会验证每次仅改写内容的操作，其伴生条目负责维护跨事件包围关系。 |
@@ -114,11 +114,11 @@ kind: "package-reference"
 
 #### 模型看到的内容
 
-一旦满足压缩触发条件，后续请求看到的将是保留的头部、`\n\n[... tool result middle pruned ...]\n\n` 和保留的尾部，而非被移除的文本。富内容块保持原有顺序。模型不会看到原文的第二份副本。
+一旦满足压缩触发条件并落地，后续请求看到的将是保留的头部、`\n\n[... tool result middle pruned ...]\n\n` 和保留的尾部，而非被移除的文本。富内容块保持原有顺序。模型不会看到原文的第二份副本。
 
 #### Token 影响
 
-每个已改写工具结果最多包含 `thresholdChars` 个文本码点。剪枝本身不会发起模型调用；重新测量的请求低于压力阈值时，compaction-basic 会跳过摘要，否则摘要器会读取已剪枝的表层。
+每个已改写工具结果最多包含 `thresholdChars` 个文本码点。剪枝本身不会发起模型调用。在 `dsh-compaction-basic` 的主动压力触发下，只有当单靠剪枝就已清出足够余量、从而完全跳过摘要时，摘要器才会读取已剪枝的文本；否则摘要器会读取原始的超大文本，剪枝随后再修剪剩余部分。
 
 #### KV Cache 影响
 
