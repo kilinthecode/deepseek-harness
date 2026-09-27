@@ -10,11 +10,11 @@ Web `subagent` 工具的模型选择设置([用户授权的 subagent 模型路�
 
 ## Decision
 
-`SubagentModelSelectionConfig` 新增可选的 `defaultModel: { provider, model, reasoningEffort? }`，在每个持久边界都会校验：折叠逻辑总是校验其形状，并且只在设置层的 `enabled` 开关打开时才校验其列表归属；`current()` 同样只在启用时执行这项列表校验，禁用时则完全省略该字段，因此关闭功能后遗留的、已过期或不在列表中的默认值绝不会让 Session 组合失败。持久的 `subagent/model-selection-policy` 事件及其 stateVersion 2 投影会把默认值和路由列表一起携带，因此全新顶层 Session 只采样一次，之后每个子级都继承这份已记录的确切决定，绝不重新采样设置。
+`SubagentModelSelectionConfig` 新增可选的 `defaultModel: { provider, model, reasoningEffort? }`，在每个持久边界都会校验：折叠逻辑总是校验其形状与列表归属；`current()` 同样只在启用时执行这项列表校验，禁用时则完全省略该字段，因此关闭功能后遗留的、已过期或不在列表中的默认值绝不会让 Session 组合失败。持久的 `subagent/model-selection-policy` 事件及其 stateVersion 2 投影会把默认值和路由列表一起携带，因此全新顶层 Session 只采样一次，之后每个子级都继承这份已记录的确切决定，绝不重新采样设置。
 
 路由优先级，从高到低依次为：显式的模型请求；工具自身已配置的 `agentOptions` 路由；已记录的默认值；提供方自有的 `agentRouteDefaults`；父 Agent 的路由。`index.ts` 为每个工具实例计算一次这份"有效默认值"——只有当工具已配置的 `agentOptions` 没有指定路由时，已记录的默认值才会生效——并在模型可见文本、`list_subagent_models` 的标记、`requiresRoutePreflight` 以及传给 `requestedAgentOptions` 的合并逻辑中统一复用这同一个值，使措辞与行为不会出现分歧。提供方自有的 `agentRouteDefaults` 保持其原本独立运作的行为完全不变，仍在 `index.ts` 中合并进工具已配置的选项，但仅在不存在有效默认值时才这样做；`requestedAgentOptions`(`model-selection.ts`)随后只在工具已配置的选项没有指定路由时应用有效默认值，提供 provider/model，并且只要默认值本身命名了推理强度，就无条件使用该强度。只有默认值没有强度时，与路由无关的已配置强度才会保留，而且仅限默认值相对父级没有改变路由的情形——这与显式模型请求那一层早已遵循的"路由改变但未指定强度就清除它"规则相同。仅凭有效默认值本身就会触发 `requiresRoutePreflight`，因此一次既没有请求字段、也没有已配置路由的调用，仍会在子级启动前经由实时 LLM 适配器解析并校验生效路由。
 
-工具描述里的选择语句，以及 `provider`、`model`、`reasoning_effort` 参数描述，会把有效默认值表述为具体效果("Omit `provider` and `model` to run the child on `<provider>/<model>`[ at reasoning effort `<effort>`]"),取代泛泛的"使用已配置的子级默认值"措辞；`list_subagent_models` 也会用 `(default)` 标记默认路由。没有有效默认值时，上述每一段文本都与没有记录默认值的组合逐字节保持一致。对于没有强度的默认值，`reasoning_effort` 的描述会直接陈述两种可能的结果(默认路由与父级相同时继承兼容的父级强度，否则使用所选模型自身的默认值),而不是一个在路由改变时会失真的单一断言。
+工具描述里的选择语句，以及 `provider`、`model`、`reasoning_effort` 参数描述，会把有效默认值表述为具体效果("Omit `provider` and `model` to run the child on `<provider>/<model>`[ at reasoning effort `<effort>`]"),取代泛泛的"使用已配置的子级默认值"措辞；`list_subagent_models` 也会用 `(default)` 标记默认路由。没有有效默认值时，上述每一段文本都与没有记录默认值的组合逐字节保持一致。对于带有自身强度的默认值，`reasoning_effort` 的描述会为默认路由命名该强度，并陈述其他路由下两种可达的结果(兼容的已配置/父级强度，或所选模型自身的默认值)。没有强度的默认值则逐字复用无默认值时的父级继承语句：`resolveChildAgentOptions` 的父级强度继承、预检对提供方 `agentRouteDefaults` 的处理，以及与路由无关的已配置强度在路由未变时得以保留，这些规则对两种情形完全相同，因此文本不做区分。
 
 Plugins 设置卡新增一个默认路由选择项，从当前已勾选的允许路由中挑选，或选择"与调用方 Agent 相同"表示不设默认；还新增一个强度选择项，其来源与路由勾选框已经在读取的实时模型目录相同；取消勾选正是默认值的那条路由会清除该默认值。三个字段作为一次带 revision 栅栏的 mutation 一起保存。
 

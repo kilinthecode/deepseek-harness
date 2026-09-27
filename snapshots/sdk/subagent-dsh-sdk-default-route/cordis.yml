@@ -42,10 +42,10 @@
         enabled: true
         allowedModels:
           - provider: mock
-            model: mock-routed
+            model: mock-default
         defaultModel:
           provider: mock
-          model: mock-routed
+          model: mock-default
           reasoningEffort: max
 
     - id: tool-subagent-dsh-sdk

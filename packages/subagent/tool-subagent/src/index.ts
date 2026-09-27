@@ -445,8 +445,8 @@ export function apply(ctx: Context, config: Config, session?: Session): void {
               type: 'string' as const,
               description: effectiveDefaultRoute !== undefined
                 ? effectiveDefaultRoute.reasoningEffort !== undefined
-                  ? `Adapter-owned reasoning effort for the effective child route. Omit to use \`${effectiveDefaultRoute.reasoningEffort}\` on the default route, or a newly selected model's default on another route.`
-                  : 'Adapter-owned reasoning effort for the effective child route. Omit to inherit a compatible parent effort when the default route matches the parent\'s, or use the selected model\'s default otherwise.'
+                  ? `Adapter-owned reasoning effort for the effective child route. Omit to use \`${effectiveDefaultRoute.reasoningEffort}\` on the default route; on another route, omitting it inherits a compatible configured/parent effort or uses that model's default.`
+                  : 'Adapter-owned reasoning effort for the effective child route. Omit to inherit a compatible configured/parent effort or use a newly selected model\'s default.'
                 : providerRouteDefaults !== undefined
                   ? 'Adapter-owned reasoning effort for the effective child route. Omit to use a compatible configured effort or the selected model\'s default.'
                   : 'Adapter-owned reasoning effort for the effective child route. Omit to inherit a compatible configured/parent effort or use a newly selected model\'s default.',

@@ -1,4 +1,4 @@
-# Keyless replay layer for the DSH SDK dynamic-route snapshot.
+# Keyless replay layer for the DSH SDK default-route snapshot.
 
 - insert:
     - id: llm-replay
@@ -13,6 +13,8 @@
             name: Mock
             models:
               - id: mock-routed
+                reasoningEfforts: [max]
+              - id: mock-default
                 reasoningEfforts: [max]
 
     - id: sdk-jsonrpc-server-dynamic-replay

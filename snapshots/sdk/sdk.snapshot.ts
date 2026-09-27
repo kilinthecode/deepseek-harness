@@ -171,7 +171,7 @@ const SDK_ASSERTIONS: Readonly<Record<string, SdkAssertions>> = {
       config: dshSdkChildConfig,
       agentConfig: {
         provider: 'mock',
-        model: 'mock-routed',
+        model: 'mock-default',
         reasoningEffort: 'max',
         maxTokens: 777,
       },
