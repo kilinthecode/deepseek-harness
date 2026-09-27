@@ -148,7 +148,7 @@ You are an AI agent powered by DeepSeek Harness.
 
 #### KV Cache 影响
 
-只要身份、persona、变量、段文本与顺序的渲染完全相同，前缀就保持稳定：渲染未变时系统节点保持不动，除非不支持该能力的路由或新请求序列必须归并保留的历史内提示词。没有 `systemPromptUpdate` 时，非空提示词文本通过有日志记录的逐节点替换归并到首个系统节点，因此头节点重写会从首个变化的 token 起失去前缀复用；当已准备调用声明 `systemPromptUpdate: 'in-history'` 时，agent loop（智能体循环）会在同一请求序列延续期间把变化后的非空提示词追加到已缓存历史之后，因此直到该历史末尾的前缀仍可复用（[决策规则](../agent-loop/README.zh.md#understand-the-implementation)）。模型、persona 前缀、工具与前置指令一致时，不同源码路径、本地 Web URL 或 persona 后缀值不会改变可复用的第一方前缀。persona 前缀变化可能改变靠前的前缀。任何变更都可能从第一个变化的 token 起使复用失效；不保证提供方共享缓存或实际命中率。插值路由变量（如 `{{model}}`、`{{provider}}`）的 persona 或段落会在每次模型切换时渲染出不同文本，因此即使其他输入都未变化，每次切换都会触发上文的头节点重写或历史内追加；不指定路由的 persona 让该渲染结果——以及可复用前缀——在切换后保持不变。
+只要身份、persona、变量、段文本与顺序的渲染完全相同，前缀就保持稳定：渲染未变时系统节点保持不动，除非不支持该能力的路由或新请求序列必须归并保留的历史内提示词。没有 `systemPromptUpdate` 时，非空提示词文本通过有日志记录的逐节点替换归并到首个系统节点，因此头节点重写会从首个变化的 token 起失去前缀复用；当已准备调用声明 `systemPromptUpdate: 'in-history'` 时，agent loop（智能体循环）会在同一请求序列延续期间把变化后的非空提示词追加到已缓存历史之后，因此直到该历史末尾的前缀仍可复用（[决策规则](../agent-loop/README.zh.md#understand-the-implementation)）。模型、persona 前缀、工具与前置指令一致时，不同源码路径、本地 Web URL 或 persona 后缀值不会改变可复用的第一方前缀。persona 前缀变化可能改变靠前的前缀。任何变更都可能从第一个变化的 token 起使复用失效；不保证提供方共享缓存或实际命中率。插值路由变量 `{{model}}` 的 persona 或段落会在每次模型切换时渲染出不同文本，因此即使其他输入都未变化，每次切换都会触发上文的头节点重写或历史内追加；不指定路由的 persona 让该渲染结果——以及可复用前缀——在切换后保持不变。
 
 ### 工具 schema
 
