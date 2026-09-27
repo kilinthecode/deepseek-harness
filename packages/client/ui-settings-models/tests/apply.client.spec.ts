@@ -4,6 +4,7 @@ import Schema from '@deepseek-ai/schemastery'
 import { Context } from '@deepseek-ai/cordis'
 import { afterEach, describe, expect, it, onTestFinished, vi } from 'vitest'
 import { resolveSlotLabel } from '@deepseek-ai/dsh-client-ui-slots'
+import type { StoredEntry } from '@deepseek-ai/dsh-client-ui-slots'
 import { SlotRegistry } from '@deepseek-ai/dsh-client-ui-renderer/client'
 import { LocaleRuntime } from '@deepseek-ai/dsh-client-locale/client'
 import { TestRemote } from '@deepseek-ai/dsh-client-test-runtime'
@@ -16,9 +17,9 @@ import { apply, inject, refreshIfLoaded } from '@deepseek-ai/dsh-client-ui-setti
 import {
   WELCOME_NOTICE_ACK_FIELD, WELCOME_NOTICE_SETTINGS_NAMESPACE, WELCOME_NOTICE_VERSION,
 } from '../src/onboarding-copy.ts'
-import { ModelsSection } from '../src/client/ModelsSection.tsx'
-import { DeepSeekOnboardingDialog } from '../src/client/DeepSeekOnboardingDialog.tsx'
-import { WelcomeNotice } from '../src/client/WelcomeNotice.tsx'
+import { ModelsSection, type ModelsSectionInjected } from '../src/client/ModelsSection.tsx'
+import { DeepSeekOnboardingDialog, type DeepSeekOnboardingInjected } from '../src/client/DeepSeekOnboardingDialog.tsx'
+import { WelcomeNotice, type WelcomeNoticeInjected } from '../src/client/WelcomeNotice.tsx'
 import { providerUsable } from '../src/client/store.ts'
 import { en, zh, type ModelsKey } from '../src/client/locales.ts'
 import type { IndexInjection } from '@deepseek-ai/dsh-host-webserver'
@@ -155,6 +156,37 @@ function declare(slots: SlotRegistry): () => void {
   )
 }
 
+// The ledger stores each registration's `inject` factory type-erased, so these
+// three readers are where a case recovers the face it knows the registrant
+// built; every other line here works with the typed result.
+
+/**
+ * Read the registered Models section's injected face.
+ * @param entry - the section's ledger entry.
+ * @returns the face its `inject` factory produced.
+ */
+function sectionFace(entry: StoredEntry): ModelsSectionInjected {
+  return (entry.inject as unknown as () => ModelsSectionInjected)()
+}
+
+/**
+ * Read the registered DeepSeek onboarding dialog's injected face.
+ * @param entry - the dialog's ledger entry.
+ * @returns the face its `inject` factory produced.
+ */
+function onboardingFace(entry: StoredEntry): DeepSeekOnboardingInjected {
+  return (entry.inject as unknown as () => DeepSeekOnboardingInjected)()
+}
+
+/**
+ * Read the registered welcome notice's injected face.
+ * @param entry - the notice's ledger entry.
+ * @returns the face its `inject` factory produced.
+ */
+function noticeFace(entry: StoredEntry): WelcomeNoticeInjected {
+  return (entry.inject as unknown as () => WelcomeNoticeInjected)()
+}
+
 describe('ui-settings-models apply', () => {
   it('keeps manual credential onboarding available when the native shell owns automatic onboarding', async () => {
     const { ctx, slots } = await bench()
@@ -214,7 +246,7 @@ describe('ui-settings-models apply', () => {
     expect(before.slots.spec('settings.models.footer')).toMatchObject({ kind: 'list', scope: 'root' })
     // The nav label is a locale-following thunk; owners resolve at read time.
     expect(resolveSlotLabel(entry.options.label)).toBe('模型')
-    const injected = (entry.inject as unknown as () => import('../src/client/ModelsSection.tsx').ModelsSectionInjected)()
+    const injected = sectionFace(entry)
     expect(injected.t('nav')).toBe('模型')
     expect(injected.t('deleteTitle')).toBe('删除 {provider}？')
     expect(typeof injected.controller.load).toBe('function')
@@ -229,9 +261,7 @@ describe('ui-settings-models apply', () => {
     const deepSeek = onboarding.find(entry => entry.options.id === 'deepseek-official')!
     expect(deepSeek.component).toBe(DeepSeekOnboardingDialog)
     expect(deepSeek.options).toMatchObject({ id: 'deepseek-official', order: 0 })
-    const deepSeekInjected = (
-      deepSeek.inject as unknown as () => import('../src/client/DeepSeekOnboardingDialog.tsx').DeepSeekOnboardingInjected
-    )()
+    const deepSeekInjected = onboardingFace(deepSeek)
     expect(deepSeekInjected.hooks.models).toBe(injected.controller.store)
     expect(typeof deepSeekInjected.operations.storeCredential).toBe('function')
 
@@ -253,11 +283,11 @@ describe('ui-settings-models apply', () => {
     await b.ctx.plugin({ inject: [...inject], apply }).await()
     b.locale.setLocale('en')
     expect(resolveSlotLabel(b.slots.entries('settings.section')[0]!.options.label)).toBe('Models')
-    const injected = b.slots.entries('settings.section')[0]!.inject as unknown as () => import('../src/client/ModelsSection.tsx').ModelsSectionInjected
-    expect(injected().t('deleteTitle')).toBe('Delete {provider}?')
+    const entry = b.slots.entries('settings.section')[0]!
+    expect(sectionFace(entry).t('deleteTitle')).toBe('Delete {provider}?')
     b.locale.setLocale('zh')
     expect(resolveSlotLabel(b.slots.entries('settings.section')[0]!.options.label)).toBe('模型')
-    expect(injected().t('deleteTitle')).toBe('删除 {provider}？')
+    expect(sectionFace(entry).t('deleteTitle')).toBe('删除 {provider}？')
   })
 
   it('locale change while the slot is undeclared stays a no-op', async () => {
@@ -344,9 +374,7 @@ describe('ui-settings-models apply', () => {
     await b.ctx.plugin({ inject: [...inject], apply }).await()
     const entry = b.slots.entries('settings.onboarding')
       .find(candidate => candidate.options.id === 'welcome-notice')!
-    const injected = (
-      entry.inject as unknown as () => import('../src/client/WelcomeNotice.tsx').WelcomeNoticeInjected
-    )()
+    const injected = noticeFace(entry)
 
     await injected.controller.load()
     expect(injected.controller.store.getSnapshot()).toEqual({
@@ -389,10 +417,7 @@ describe('pushed invalidations', () => {
     await b.ctx.plugin({ inject: [...inject], apply }).await()
     const entry = b.slots.entries('settings.onboarding')
       .find(candidate => candidate.options.id === 'deepseek-official')!
-    const injected = (
-      entry.inject as unknown as
-      () => import('../src/client/DeepSeekOnboardingDialog.tsx').DeepSeekOnboardingInjected
-    )()
+    const injected = onboardingFace(entry)
     injected.controller.store.update((state) => { state.status = 'ready' })
     const load = vi.spyOn(injected.controller, 'load').mockResolvedValue()
     b.remote.emit('credentials/reference-updated', ['DEEPSEEK_API_KEY'])
@@ -418,10 +443,7 @@ describe('pushed invalidations', () => {
     await b.ctx.plugin({ inject: [...inject], apply }).await()
     const entry = b.slots.entries('settings.onboarding')
       .find(candidate => candidate.options.id === 'welcome-notice')!
-    const injected = (
-      entry.inject as unknown as
-      () => import('../src/client/WelcomeNotice.tsx').WelcomeNoticeInjected
-    )()
+    const injected = noticeFace(entry)
     await injected.controller.load()
     await vi.waitFor(() => {
       expect(injected.hooks.welcome.getSnapshot()).toMatchObject({ status: 'ready', acknowledged: false })
@@ -448,10 +470,7 @@ describe('pushed invalidations', () => {
     await b.ctx.plugin({ inject: [...inject], apply }).await()
     const entry = b.slots.entries('settings.section')
       .find(candidate => candidate.options.id === 'models')!
-    const injected = (
-      entry.inject as unknown as
-      () => import('../src/client/ModelsSection.tsx').ModelsSectionInjected
-    )()
+    const injected = sectionFace(entry)
     await injected.controller.load()
     expect(injected.hooks.snapshot.getSnapshot().namespaces.get('llm-test')?.revision).toBe(1)
 
@@ -508,10 +527,7 @@ describe('live authorization stream', () => {
     declare(b.slots)
     await b.ctx.plugin({ inject: [...inject], apply }).await()
     const entry = b.slots.entries('settings.section').find(candidate => candidate.options.id === 'models')!
-    const injected = (
-      entry.inject as unknown as
-      () => import('../src/client/ModelsSection.tsx').ModelsSectionInjected
-    )()
+    const injected = sectionFace(entry)
     await injected.controller.load()
     return { ...b, injected }
   }

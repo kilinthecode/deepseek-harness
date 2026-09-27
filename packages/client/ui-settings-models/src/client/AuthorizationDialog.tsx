@@ -102,7 +102,8 @@ export function AuthorizationDialog(props: AuthorizationDialogProps): ReactNode 
   /** The one line this dialog adds over the attempt's own phase. */
   const [refusal, setRefusal] = useState<'signInRunning' | 'signInFailed' | undefined>(undefined)
   const [answer, setAnswer] = useState('')
-  const [copyResult, setCopyResult] = useState<{ target: CopyTarget; label: 'copied' | 'copyFailed' } | undefined>(undefined)
+  /** Copy feedback one button holds: the target it reports for, and the dictionary key it renders. */
+  const [copyResult, setCopyResult] = useState<{ target: CopyTarget; messageKey: 'copied' | 'copyFailed' } | undefined>(undefined)
   const started = useRef(false)
 
   /**
@@ -167,15 +168,15 @@ export function AuthorizationDialog(props: AuthorizationDialogProps): ReactNode 
   const copy = async (text: string, target: CopyTarget): Promise<void> => {
     try {
       await navigator.clipboard.writeText(text)
-      setCopyResult({ target, label: 'copied' })
+      setCopyResult({ target, messageKey: 'copied' })
     } catch {
-      setCopyResult({ target, label: 'copyFailed' })
+      setCopyResult({ target, messageKey: 'copyFailed' })
     }
   }
 
   /** The label one copy button shows: its own feedback while it holds it, else its action. */
   const copyLabel = (target: CopyTarget, action: keyof typeof en): string =>
-    copyResult?.target === target ? t(copyResult.label) : t(action)
+    copyResult?.target === target ? t(copyResult.messageKey) : t(action)
 
   /** Answer the prompt blocking the attempt, clearing the field for the next one. */
   const submit = (promptId: AuthorizationPromptId, value: string): void => {
