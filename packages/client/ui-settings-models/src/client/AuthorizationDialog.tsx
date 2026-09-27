@@ -105,25 +105,23 @@ export function AuthorizationDialog(props: AuthorizationDialogProps): ReactNode 
   const rawAttempt = attemptOf(view, authorizationKey)
   /**
    * Whether this dialog instance has ever seen this key's attempt in an
-   * active phase (see {@link ACTIVE_PHASES}). Latched during render, not in an
-   * effect: a command this dialog issues does not itself change `view` — the
-   * Host's leftover terminal attempt stays in it until a fresh view arrives —
-   * so latching on "issued a command" instead would adopt that leftover as
-   * this dialog's own on any incidental re-render before the fresh view
-   * lands. Once latched, every later phase of the same attempt (including its
-   * terminal outcome) keeps rendering, whether this dialog issued the
-   * command that started it or only observed it while active. `settle` also
-   * latches it on an accepted answer to one of this dialog's own commands, so
-   * an attempt that reaches a terminal phase in a single answer (no separate
-   * active-phase view ever arrives) is still this dialog's own.
+   * active phase (see {@link ACTIVE_PHASES}), latched as committed state, not
+   * during render. `settle` also latches it on an accepted answer to one of
+   * this dialog's own commands, so an attempt that reaches a terminal phase in
+   * a single answer (no separate active-phase view ever arrives) is still
+   * this dialog's own. Once latched, every later phase of the same attempt
+   * (including its terminal outcome) keeps rendering, whether this dialog
+   * issued the command that started it or only observed it while active.
    */
-  const sawActive = useRef(false)
-  if (rawAttempt !== undefined && ACTIVE_PHASES.includes(rawAttempt.phase)) sawActive.current = true
+  const [sawActive, setSawActive] = useState(false)
+  useEffect(() => {
+    if (rawAttempt !== undefined && ACTIVE_PHASES.includes(rawAttempt.phase)) setSawActive(true)
+  }, [rawAttempt])
   /**
    * An attempt neither active nor ever seen active by this dialog is stale:
    * a previous dialog instance's leftover outcome, not this one's business.
    */
-  const stale = rawAttempt !== undefined && !sawActive.current && !ACTIVE_PHASES.includes(rawAttempt.phase)
+  const stale = rawAttempt !== undefined && !sawActive && !ACTIVE_PHASES.includes(rawAttempt.phase)
   const attempt = stale ? undefined : rawAttempt
   const phase = attempt?.phase
   /** The method the user picked, or undefined for the flow's own default. */
@@ -154,7 +152,7 @@ export function AuthorizationDialog(props: AuthorizationDialogProps): ReactNode 
           return
         }
         setRefusal(undefined)
-        sawActive.current = true
+        setSawActive(true)
         onView(outcome.view, issuedAt)
       },
       () => { setRefusal('signInFailed') },
@@ -193,10 +191,14 @@ export function AuthorizationDialog(props: AuthorizationDialogProps): ReactNode 
 
   /**
    * Leave the dialog, withdrawing the attempt it started: nothing may keep
-   * running behind a closed dialog, and the row follows whatever answer lands.
+   * running behind a closed dialog, and the row follows whatever answer
+   * lands. This dialog's own start can still be in flight with the view not
+   * yet showing it active (a fresh instance restarting over a stale attempt,
+   * for instance) — cancelling on `started` as well as `active` reaches that
+   * window too; a cancel with nothing running is a Host no-op.
    */
   const dismiss = (): void => {
-    if (active) settle(() => operations.cancelAuthorization())
+    if (active || started.current) settle(() => operations.cancelAuthorization())
     onClose()
   }
 

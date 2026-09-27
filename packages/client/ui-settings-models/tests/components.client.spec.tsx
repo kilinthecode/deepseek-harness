@@ -2187,9 +2187,11 @@ describe('authorization rows', () => {
     required?: boolean
     apiKeyEnv?: string
     answer?: Answer
+    /** The attempt the initial read reports, e.g. a previous sign-in's stale terminal outcome. */
+    attempt?: AuthorizationView['attempt']
   } = {}) {
     const flow = options.flow === null ? undefined : { ...FLOW, ...options.flow }
-    const remoteView: AuthorizationView = { flows: flow === undefined ? [] : [flow], attempt: null }
+    const remoteView: AuthorizationView = { flows: flow === undefined ? [] : [flow], attempt: options.attempt ?? null }
     const answer = options.answer ?? remoteOk(remoteView)
     const authorization = {
       getState: vi.fn(() => Promise.resolve(remoteOk(remoteView))),
@@ -2307,6 +2309,35 @@ describe('authorization rows', () => {
 
     expect(screen.getByText('Browser login or device code?')).toBeTruthy()
     expect(screen.queryByText(en.signInWaiting)).toBeNull()
+  })
+
+  it('retries when a fresh dialog opens onto a previously cancelled attempt', async () => {
+    // The stored view still names the prior sign-in's cancelled outcome — the
+    // Host keeps it until a new start — so opening the row's dialog again
+    // must restart rather than getting stuck showing that stale line.
+    const { authorization, controller } = await mountAuthorizationRow({
+      attempt: { key: CODEX_KEY, method: 'oauth', phase: 'cancelled' },
+    })
+    const pending = Promise.withResolvers<Answer>()
+    authorization.start.mockImplementation(() => pending.promise)
+
+    await act(async () => { fireEvent.click(screen.getByRole('button', { name: en.signIn })) })
+
+    expect(authorization.start).toHaveBeenCalledExactlyOnceWith(CODEX_KEY, undefined)
+    expect(screen.queryByText(en.signInCancelled)).toBeNull()
+
+    const promptingView: AuthorizationView = {
+      flows: [FLOW],
+      attempt: {
+        key: CODEX_KEY,
+        method: 'oauth',
+        phase: 'prompting',
+        prompt: { id: 'p1' as AuthorizationPromptId, kind: 'select', message: 'Which login?', options: [{ id: 'browser', label: 'Browser login' }] },
+      },
+    }
+    await act(async () => { controller.mergeAuthorization(promptingView) })
+
+    expect(screen.getByText('Which login?')).toBeTruthy()
   })
 
   it('waits for the flow instead of starting a key the view lists none for', async () => {
