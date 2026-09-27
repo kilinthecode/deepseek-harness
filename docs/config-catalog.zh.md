@@ -1207,7 +1207,7 @@ export interface Config {
 
 - `inject`: `agents` · `agentTeams` · `tools` · `systemPrompt`
 - `refs`: [`AgentOptions`](subsystems/core.zh.md)
-- `source`: [`packages/experimental/tool-agent-team/src/index.ts:45`](../packages/experimental/tool-agent-team/src/index.ts)
+- `source`: [`packages/experimental/tool-agent-team/src/index.ts:47`](../packages/experimental/tool-agent-team/src/index.ts)
 
 ```ts config-catalog
 /** Tool routing and duty configuration. */

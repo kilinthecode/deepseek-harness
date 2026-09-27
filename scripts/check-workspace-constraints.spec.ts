@@ -341,6 +341,17 @@ describe('package payload constraints', () => {
     const manifest = JSON.parse(readFileSync(new URL(`../${dir}/package.json`, import.meta.url), 'utf8')) as WorkspaceManifest['manifest']
     expect(checkWorkspaceManifest({ dir, manifest })).toEqual([])
   })
+
+  it('requires both standalone delegation bundles in the published payload', () => {
+    const dir = 'packages/subagent/tool-subagent'
+    const manifest = JSON.parse(readFileSync(new URL(`../${dir}/package.json`, import.meta.url), 'utf8')) as WorkspaceManifest['manifest']
+    expect(checkWorkspaceManifest({ dir, manifest })).toEqual([])
+    for (const omitted of ['lib/model-selection-settings.js', 'lib/model-selection.js']) {
+      expect(checkWorkspaceManifest({ dir, manifest: {
+        ...manifest, files: manifest.files!.filter(file => file !== omitted),
+      } })).toEqual([expect.stringContaining('package.json files must be')])
+    }
+  })
 })
 
 it('publishes CLI runtime declarations and rejects a payload that omits them', () => {
