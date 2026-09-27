@@ -22492,7 +22492,7 @@
         "packages/llm/llm/src/types.ts#ReplayEnvelope"
       ],
       "sources": [
-        "packages/llm/llm/src/types.ts:430"
+        "packages/llm/llm/src/types.ts:439"
       ]
     },
     {
@@ -25336,7 +25336,7 @@
         "packages/llm/llm/src/types.ts#ImageBlock"
       ],
       "sources": [
-        "packages/llm/llm/src/types.ts:79"
+        "packages/llm/llm/src/types.ts:80"
       ]
     },
     {
@@ -31011,7 +31011,7 @@
       },
       "names": [],
       "sources": [
-        "packages/llm/llm/src/types.ts:157"
+        "packages/llm/llm/src/types.ts:158"
       ]
     },
     {
@@ -32669,7 +32669,7 @@
       },
       "names": [],
       "sources": [
-        "packages/llm/llm/src/types.ts:158"
+        "packages/llm/llm/src/types.ts:159"
       ]
     },
     {
@@ -32963,7 +32963,7 @@
       },
       "names": [],
       "sources": [
-        "packages/llm/llm/src/types.ts:455"
+        "packages/llm/llm/src/types.ts:464"
       ]
     },
     {
@@ -36078,7 +36078,7 @@
       },
       "names": [],
       "sources": [
-        "packages/llm/llm/src/types.ts:453"
+        "packages/llm/llm/src/types.ts:462"
       ]
     },
     {
@@ -42110,7 +42110,7 @@
         "packages/llm/llm/src/types.ts#ToolRemovalBlock"
       ],
       "sources": [
-        "packages/llm/llm/src/types.ts:127"
+        "packages/llm/llm/src/types.ts:128"
       ]
     },
     {
@@ -43014,7 +43014,7 @@
         "packages/llm/llm/src/types.ts#StreamChunk"
       ],
       "sources": [
-        "packages/llm/llm/src/types.ts:452"
+        "packages/llm/llm/src/types.ts:461"
       ]
     },
     {
@@ -44841,7 +44841,7 @@
         "packages/llm/llm/src/types.ts#TextBlock"
       ],
       "sources": [
-        "packages/llm/llm/src/types.ts:62",
+        "packages/llm/llm/src/types.ts:63",
         "packages/web/web-search-deepseek/src/provider.ts:66"
       ]
     },
@@ -50759,7 +50759,7 @@
         "packages/llm/llm/src/types.ts#FinishReason"
       ],
       "sources": [
-        "packages/llm/llm/src/types.ts:165"
+        "packages/llm/llm/src/types.ts:166"
       ]
     },
     {
@@ -51399,7 +51399,7 @@
         "packages/llm/llm/src/types.ts#LlmFailure"
       ],
       "sources": [
-        "packages/llm/llm/src/types.ts:41"
+        "packages/llm/llm/src/types.ts:42"
       ]
     },
     {
@@ -54657,7 +54657,7 @@
         "packages/llm/llm/src/types.ts#ToolSchema"
       ],
       "sources": [
-        "packages/llm/llm/src/types.ts:473"
+        "packages/llm/llm/src/types.ts:482"
       ]
     },
     {
@@ -58176,7 +58176,7 @@
       },
       "names": [],
       "sources": [
-        "packages/llm/llm/src/types.ts:161"
+        "packages/llm/llm/src/types.ts:162"
       ]
     },
     {
@@ -60937,7 +60937,7 @@
         "packages/llm/llm/src/types.ts#ContentBlockType"
       ],
       "sources": [
-        "packages/llm/llm/src/types.ts:148"
+        "packages/llm/llm/src/types.ts:149"
       ]
     },
     {
@@ -61524,7 +61524,7 @@
         "packages/llm/llm/src/types.ts#ContentBlock"
       ],
       "sources": [
-        "packages/llm/llm/src/types.ts:150"
+        "packages/llm/llm/src/types.ts:151"
       ]
     },
     {
@@ -61624,7 +61624,7 @@
         "packages/llm/llm/src/types.ts#ReasoningBlock"
       ],
       "sources": [
-        "packages/llm/llm/src/types.ts:68"
+        "packages/llm/llm/src/types.ts:69"
       ]
     },
     {
@@ -63223,7 +63223,7 @@
       },
       "names": [],
       "sources": [
-        "packages/llm/llm/src/types.ts:456"
+        "packages/llm/llm/src/types.ts:465"
       ]
     },
     {
@@ -63690,7 +63690,7 @@
       },
       "names": [],
       "sources": [
-        "packages/llm/llm/src/types.ts:160"
+        "packages/llm/llm/src/types.ts:161"
       ]
     },
     {
@@ -63737,7 +63737,7 @@
         "packages/llm/llm/src/types.ts#ToolAdditionBlock"
       ],
       "sources": [
-        "packages/llm/llm/src/types.ts:115"
+        "packages/llm/llm/src/types.ts:116"
       ]
     },
     {
@@ -64293,7 +64293,7 @@
       },
       "names": [],
       "sources": [
-        "packages/llm/llm/src/types.ts:454"
+        "packages/llm/llm/src/types.ts:463"
       ]
     },
     {
@@ -69310,7 +69310,7 @@
       },
       "names": [],
       "sources": [
-        "packages/llm/llm/src/types.ts:459"
+        "packages/llm/llm/src/types.ts:468"
       ]
     },
     {
@@ -70736,7 +70736,7 @@
       "names": [],
       "sources": [
         "packages/core/session/src/types.ts:214",
-        "packages/llm/llm/src/types.ts:159"
+        "packages/llm/llm/src/types.ts:160"
       ]
     },
     {
@@ -74048,7 +74048,7 @@
         "packages/llm/llm/src/types.ts#ToolCallBlock"
       ],
       "sources": [
-        "packages/llm/llm/src/types.ts:105"
+        "packages/llm/llm/src/types.ts:106"
       ]
     },
     {
@@ -78027,7 +78027,7 @@
       },
       "names": [],
       "sources": [
-        "packages/llm/llm/src/types.ts:457"
+        "packages/llm/llm/src/types.ts:466"
       ]
     },
     {
@@ -87244,7 +87244,7 @@
       },
       "names": [],
       "sources": [
-        "packages/llm/llm/src/types.ts:458"
+        "packages/llm/llm/src/types.ts:467"
       ]
     },
     {
@@ -87395,7 +87395,7 @@
         "packages/llm/llm/src/types.ts#FileBlock"
       ],
       "sources": [
-        "packages/llm/llm/src/types.ts:98"
+        "packages/llm/llm/src/types.ts:99"
       ]
     },
     {
@@ -87413,7 +87413,7 @@
         "packages/llm/llm/src/types.ts#SystemPromptUpdate"
       ],
       "sources": [
-        "packages/llm/llm/src/types.ts:396"
+        "packages/llm/llm/src/types.ts:405"
       ]
     },
     {
@@ -97036,7 +97036,7 @@
         "packages/llm/llm/src/types.ts#TokenUsage"
       ],
       "sources": [
-        "packages/llm/llm/src/types.ts:175"
+        "packages/llm/llm/src/types.ts:176"
       ]
     },
     {
