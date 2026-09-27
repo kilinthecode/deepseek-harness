@@ -231,7 +231,7 @@ This is a separate model call: the replayed conversation prefix plus the fixed i
 
 #### KV Cache effect
 
-The replayed system prompt, tools, and shadowed-region messages match the conversation's last routed request byte-for-byte, so the provider's warm prefix cache is reused up to the trailing instruction; only that instruction, and the summary output, is uncached. Routing the summarizer to a different provider/model, or compacting a non-head range, forgoes this reuse.
+The replayed system prompt, tools, and shadowed-region messages match the conversation's last routed request byte-for-byte, so the provider's warm prefix cache is reused up to the trailing instruction; only that instruction, and the summary output, is uncached. When the resolved summarization provider and model equal that last routed request, the call also carries its logged reasoning effort, since some providers partition prefix caching by effort. A different configured summarization route, or the `AgentOptions` fallback used before any request is routed, carries no effort and starts an independent, uncached request. Compacting a non-head range likewise forgoes this reuse.
 
 ## Known Limitations and Deferred Work
 
