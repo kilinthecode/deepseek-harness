@@ -57,7 +57,7 @@ Character counts are Unicode code points, so slicing never splits an emoji pair,
 
 ### When trimming runs
 
-Trimming only runs when a compaction trigger qualifies: `dsh-compaction-basic` previews it once pressure or overflow is confirmed. Overflow recovery always trims before it selects what to condense, since the retried request itself must fit. Proactive pressure trims first only when the preview would clear a configured headroom below the threshold on its own; otherwise it condenses the oldest balanced span first and trims what remains afterward, since that request already pays the cache-invalidation cost trimming would add. Below pressure nothing is trimmed or previewed, and trimming itself makes no model call.
+Trimming only runs once a compaction trigger qualifies; a below-pressure conversation is never touched or previewed, and trimming itself makes no model call. Overflow recovery prunes unconditionally before it selects what to condense, since the retried request itself must fit. Proactive pressure previews the prune first: it lands alone only when the preview would clear a configured headroom below the threshold on its own; otherwise the oldest balanced span condenses first and trimming runs afterward over what remains, since that request already pays the cache-invalidation cost trimming would add.
 
 -----
 
@@ -118,7 +118,7 @@ Once a compaction trigger qualifies and lands, future requests see the retained 
 
 #### Token effect
 
-Each rewritten tool result has at most `thresholdChars` text code points. Pruning itself makes no model call. Under `dsh-compaction-basic`'s proactive pressure trigger, the summarizer reads pruned text only when pruning alone already cleared enough headroom to skip summarization entirely; otherwise the summarizer reads the original oversized text and pruning trims what remains afterward.
+Each rewritten tool result has at most `thresholdChars` text code points. Pruning itself makes no model call. Under `dsh-compaction-basic`'s proactive pressure trigger, the summarizer reads the original oversized text on the ordinary path, where a non-qualifying preview leaves compaction to run on the unpruned surface; it reads pruned text only in the rare fall-through where a qualifying preview's landed prune still leaves the surface at or above the threshold, so compaction proceeds on the already-pruned surface.
 
 #### KV Cache effect
 
