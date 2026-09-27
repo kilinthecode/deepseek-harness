@@ -194,6 +194,8 @@ export class MemoryStore extends Service {
   private readonly markers: readonly string[]
   /** Tail of the store's single writer section; every link settles, so one rejected write never blocks the next. */
   private writes: Promise<void> = Promise.resolve()
+  /** Set at the start of disposal; `serialized()` rejects any write or forget queued from this point on. */
+  private disposing = false
 
   /**
    * @param ctx - owning context; the domain handle closes with it.
@@ -208,17 +210,34 @@ export class MemoryStore extends Service {
 
   protected async [Service.init](): Promise<void> {
     const domain = await this.ctx.storageDomain.open(memoryDomainSpec(this.maxRecordBytes))
-    this.ctx.effect(() => () => domain.close(), 'memory.domainClose')
+    this.ctx.effect(() => () => this.closeDomain(domain), 'memory.domainClose')
     this.domain = domain
+  }
+
+  /**
+   * Stop accepting new writes and forgets, let every write and forget already
+   * queued in call order settle, then release the domain. Draining first
+   * means a write queued behind another is never rejected by a closed-domain
+   * error instead of its own outcome.
+   * @param domain - the open domain handle to release once the queue drains.
+   */
+  private async closeDomain(domain: Domain<MemoryDomainSpec>): Promise<void> {
+    this.disposing = true
+    await this.writes
+    await domain.close()
   }
 
   /**
    * Run one mutation after every earlier write and forget of this store has
    * settled, so mutations run in call order and each one's project-root
    * lookup, existence check, and capacity check see the committed results of
-   * the earlier calls.
+   * the earlier calls. Rejects immediately, without queuing, once disposal
+   * has begun.
    */
   private serialized<T>(mutation: () => Promise<T>): Promise<T> {
+    if (this.disposing) {
+      return Promise.reject(new Error('memory store is disposing: no new writes or forgets are accepted'))
+    }
     const result = this.writes.then(mutation)
     this.writes = result.then(noop, noop)
     return result

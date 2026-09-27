@@ -596,6 +596,33 @@ describe('MemoryStore over the json backend', () => {
     expect((await ctx.memory.visible(undefined)).global.map(record => record.content)).toEqual(['first writer'])
   })
 
+  it('drains writes queued before dispose, then closes the domain, and rejects a write begun after dispose starts', async () => {
+    const root = await freshRoot()
+    const ctx = new Context()
+    contexts.push(ctx)
+    await ctx.plugin(Storage)
+    await ctx.plugin(StorageJson, { root })
+    await ctx.plugin(StorageDomain, { backend: 'json' })
+    const fiber = await ctx.plugin(MemoryStore, { maxRecords: 3, maxRecordBytes: 64 })
+    // Captured before dispose: calling through this direct instance reference
+    // (not `ctx.memory`) isolates the store's own disposing guard from
+    // whatever the registry does to the `memory` service binding on unload.
+    const store = ctx.memory
+    const first = store.write(write({ name: 'first' }))
+    const second = store.write(write({ name: 'second' }))
+    await fiber.dispose()
+    const [firstResult, secondResult] = await Promise.all([first, second])
+    expect(firstResult.outcome).toBe('created')
+    expect(secondResult.outcome).toBe('created')
+    await expect(store.write(write({ name: 'after-dispose' }))).rejects.toThrow(
+      'memory store is disposing: no new writes or forgets are accepted',
+    )
+
+    const reopened = await open(root)
+    expect((await reopened.memory.visible(undefined)).global.map(record => record.name).sort())
+      .toEqual(['first', 'second'])
+  })
+
   it('walks up with the configured markers', async () => {
     const root = await freshRoot()
     const ctx = await open(root, { projectRootMarkers: ['.dsh-project'] })

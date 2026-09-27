@@ -102,7 +102,7 @@ This section explains the design decisions behind the store and points at the co
 
 ### Lifecycle
 
-The service opens the `memory` domain during its init, so a consumer that injects `memory` always sees an open store, and closes the domain with its own fiber. A domain opens once per process; on the Web profile that is why the store sits on the host plane while the tools compose per agent preset.
+The service opens the `memory` domain during its init, so a consumer that injects `memory` always sees an open store, and closes the domain with its own fiber. Disposal stops accepting new writes and forgets first (a write or forget started after disposal begins fails loud with `memory store is disposing: no new writes or forgets are accepted`), then awaits every write and forget already queued in call order, then closes the domain, so a write queued behind another is never rejected by a closed-domain error instead of its own outcome. A domain opens once per process; on the Web profile that is why the store sits on the host plane while the tools compose per agent preset.
 
 ### Concurrency
 

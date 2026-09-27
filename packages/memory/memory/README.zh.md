@@ -102,7 +102,7 @@ kind: "package-reference"
 
 ### 生命周期
 
-服务在其初始化期间打开 `memory` domain，因此注入 `memory` 的消费者总能看到已打开的存储，并随自身 fiber 关闭该 domain。一个 domain 在每个进程中只打开一次；这正是 Web profile 中存储位于宿主平面、而工具按 agent 预设组合的原因。
+服务在其初始化期间打开 `memory` domain，因此注入 `memory` 的消费者总能看到已打开的存储，并随自身 fiber 关闭该 domain。释放（disposal）先停止接受新的写入与遗忘（在释放开始之后才启动的写入或遗忘会以明确的错误 `memory store is disposing: no new writes or forgets are accepted` 失败），再等待所有已按调用顺序排队的写入与遗忘完成，然后才关闭 domain，因此排在另一次写入之后的写入绝不会被 domain 已关闭的错误拒绝，而是得到它自己的结果。一个 domain 在每个进程中只打开一次；这正是 Web profile 中存储位于宿主平面、而工具按 agent 预设组合的原因。
 
 ### 并发
 
