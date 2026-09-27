@@ -20,6 +20,8 @@ planner 的只读性来自它保留的继承工具，而不是提示词文本。
 
 Lead 通过 `setSubject` 记录主题，它会追加一条仅日志的 `team/subject` 事件；以最新记录为准，主题最多 200 个字符，与任务标题相同。工具包中的 `/team <subject>` 命令记录主题，通过 `sessionTitle.rename` 固定 Session 标题，并把主题作为用户消息 steer 给 Lead。Team 有主题期间，每个成员共享的 `team:policy` 段落末尾都会附上一段说明，写明该主题以及 Lead 执行的先规划后执行流程。`@deepseek-ai/dsh-experimental-client-ui-agent-team` 中的 Web 启动栏从空白 Lead 会话发送同一条命令，Team 面板则在 roster 上方显示该主题。
 
+`/team` 还接受可选的 `--members <planner|executor,...> <subject>` roster。Host 命令会先校验 spec——每个 token 必须是 `planner` 或 `executor`，最多一个 planner——以及请求数量是否符合 `TeamService.remainingCapacity()`，全部通过后才会有任何改动；然后像普通形式一样记录主题；接着按顺序为每个请求的分工调用与 `spawn_teammate` 相同的、经 Lead 授权的 `spawnTeammate` 事务，使用确定性的名字（`planner`，随后是 `executor-1`、`executor-2`……，跳过已被占用的名字）与简短的分工专属启动任务；最后把主题连同一句额外说明 steer 给 Lead，说明谁已启动，以及 Lead 领导他们。若批次中途某次 spawn 失败，批次会停止，并在命令结果中报告部分 roster，而不会像所有人都已加入那样 steer Lead。启动任务与额外的 steer 说明都不携带新的 event 类型：两者都搭载普通主题已经使用的持久 `team/member` 记录与 `user/message` event，因此 Session 格式 4 保持不变。
+
 ## 考虑过的替代方案
 
 **用单独的消息承载启动指示。** 已拒绝，因为消息需要 source kind，而在持久消息 source 联合类型中新增变体会改变已定稿的 Session 格式 4，仅为一条命令就得升级格式。若用一条用户消息同时承载主题与指示，指示就会出现在用户自己的气泡中。策略段落让第一条用户消息恰好等于主题，记录在每次请求的 system 消息中，并且对每个成员渲染相同，因此 fork teammate 保留 Lead 的前缀。
@@ -33,6 +35,8 @@ Lead 通过 `setSubject` 记录主题，它会追加一条仅日志的 `team/sub
 **由部署定义分工名称。** 已拒绝，因为没有使用方需要第三种分工，而封闭联合类型让服务、投影与面板可以对其做穷尽式判断；部署只配置两种固定分工的指示与工具。
 
 **为启动表单新增 `agentTeams` Remote 方法。** 已拒绝，因为 Host 命令已经能为空白 Session 解析 Lead Agent、记录自身生命周期、通过 `commands/execute` 把处理器错误返回给客户端，并为支持命令的客户端提供同一个入口。
+
+**让 Lead 模型自己 spawn 所请求的 roster。** 已拒绝，因为这会让 Lead 必须在自己的一次或多次 turn 中正确解析 `--members` 得到的 spawn 数量，把 token 和一次模型调用花在一个机械的批处理上，且无法保证顺序、名字，也无法保证 all-or-nothing 的失败报告。命令本身已经能解析 Lead Agent、校验容量，并可以调用与工具相同的 `spawnTeammate`；把批处理留在命令里能让 roster 创建保持确定性且可测试，而不必在小巧的 `remainingCapacity` 查询之外再增加服务方法。
 
 ## 测试
 

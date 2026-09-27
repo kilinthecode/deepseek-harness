@@ -335,6 +335,12 @@ export const SERVICE_API: readonly ServiceApiEntry[] = [
         returns: 'the active roster row.',
       },
       {
+        signature: 'remainingCapacity(agent: Agent): number',
+        description: 'Count of additional teammates the Team\'s durable roster can still accept before its configured member limit, without creating any of them.',
+        parameters: [{ name: 'agent', description: 'exact live Team member used as the authority credential.' }],
+        returns: 'the configured member limit minus the Team\'s current durable member count.',
+      },
+      {
         signature: 'async setSubject(caller: Agent, subject: string): Promise<void>',
         description: 'Record the Team subject in the Lead log; the latest record wins.',
         parameters: [{ name: 'caller', description: 'exact live Team Lead.' }, { name: 'subject', description: 'subject text, trimmed and at most 200 characters.' }],
