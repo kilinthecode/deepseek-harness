@@ -80,7 +80,9 @@ export const Config: z<Config> = z.object({
  * Why a store operation was rejected.
  * `blocked-content` is a write-time scan finding; `project-key-collision`
  * means this project's key already holds another project's record;
- * `already-exists` is an `ifAbsent` write naming a record already in that scope.
+ * `already-exists` is an `ifAbsent` write naming a record already in that
+ * scope; `disposing` is a write or forget begun after the store's domain
+ * started closing.
  */
 export type MemoryErrorCode =
   | 'invalid-name'
@@ -92,6 +94,7 @@ export type MemoryErrorCode =
   | 'project-root-unavailable'
   | 'not-found'
   | 'already-exists'
+  | 'disposing'
 
 /** A rejected store operation; `message` is stable, model-readable text. */
 export class MemoryError extends Error {
@@ -236,7 +239,7 @@ export class MemoryStore extends Service {
    */
   private serialized<T>(mutation: () => Promise<T>): Promise<T> {
     if (this.disposing) {
-      return Promise.reject(new Error('memory store is disposing: no new writes or forgets are accepted'))
+      return Promise.reject(new MemoryError('disposing', 'memory store is disposing: no new writes or forgets are accepted'))
     }
     const result = this.writes.then(mutation)
     this.writes = result.then(noop, noop)
@@ -471,7 +474,7 @@ function notFound(name: MemoryName, scope: MemoryScope): MemoryError {
 }
 
 function alreadyExists(name: MemoryName, scope: MemoryScope): MemoryError {
-  return new MemoryError('already-exists', `${scope} memory "${name}" already exists; write without ifAbsent to replace it`)
+  return new MemoryError('already-exists', `a ${scope} memory named "${name}" already exists; choose a different name`)
 }
 
 /* v8 ignore next 3 -- closed-union backstop; unreachable without violating the TypeScript contract */

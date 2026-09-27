@@ -67,7 +67,7 @@ kind: "package-reference"
 
 ### 每个操作做什么
 
-`write` 校验名称（小写 kebab-case，1 到 64 个字符），将描述修剪为 1 到 256 个字符的单行（U+000A、U+000D、U+2028 和 U+2029 以 `invalid-description` 失败，消息为 `description must be a single line of 1 to 256 characters after trimming`），修剪内容（最多 `maxRecordBytes`），先扫描描述再扫描内容并将发现拒绝为 `blocked-content`，按本进程已加载或写入的记录执行作用域上限（`over-cap` 只把作用域称为 `global` 或 `project`：`the project scope already holds <count> memories (cap <max>); forget one before writing`），并在返回 `created` 或 `updated` 之前持久地插入或替换记录。若项目写入的键已被另一项目的记录占用，则以 `project-key-collision` 失败，消息为 `cannot write project memory "<name>": another project's record already occupies this key`，并保持该记录不变。`recall` 在可见记录的名称、描述和内容上做不区分大小写的子串匹配，按最新优先、再按名称、再以全局先于项目的顺序返回，并受调用方的数量限制。`forget` 删除一条记录，不存在时以 `not-found` 失败；若项目遗忘的键被另一项目的记录占用，则以 `project-key-collision` 失败，消息为 `cannot forget project memory "<name>": another project's record occupies this key`，并保持该记录不变。写入请求可将 `ifAbsent` 设为仅创建：该检查在与存在性查找相同的串行区段内进行，若该名称与作用域已有记录，则以 `already-exists` 失败，消息为 `<scope> memory "<name>" already exists; write without ifAbsent to replace it`，并保持该记录不变。`visible` 返回所有全局记录加上当前项目的记录。`scan` 返回与 `scanMemoryText` 相同的发现。每次拒绝都是带有稳定 `code` 和面向模型的消息的 `MemoryError`。
+`write` 校验名称（小写 kebab-case，1 到 64 个字符），将描述修剪为 1 到 256 个字符的单行（U+000A、U+000D、U+2028 和 U+2029 以 `invalid-description` 失败，消息为 `description must be a single line of 1 to 256 characters after trimming`），修剪内容（最多 `maxRecordBytes`），先扫描描述再扫描内容并将发现拒绝为 `blocked-content`，按本进程已加载或写入的记录执行作用域上限（`over-cap` 只把作用域称为 `global` 或 `project`：`the project scope already holds <count> memories (cap <max>); forget one before writing`），并在返回 `created` 或 `updated` 之前持久地插入或替换记录。若项目写入的键已被另一项目的记录占用，则以 `project-key-collision` 失败，消息为 `cannot write project memory "<name>": another project's record already occupies this key`，并保持该记录不变。`recall` 在可见记录的名称、描述和内容上做不区分大小写的子串匹配，按最新优先、再按名称、再以全局先于项目的顺序返回，并受调用方的数量限制。`forget` 删除一条记录，不存在时以 `not-found` 失败；若项目遗忘的键被另一项目的记录占用，则以 `project-key-collision` 失败，消息为 `cannot forget project memory "<name>": another project's record occupies this key`，并保持该记录不变。写入请求可将 `ifAbsent` 设为仅创建：该检查在与存在性查找相同的串行区段内进行，若该名称与作用域已有记录，则以 `already-exists` 失败，消息为 `a <scope> memory named "<name>" already exists; choose a different name`，并保持该记录不变。`visible` 返回所有全局记录加上当前项目的记录。`scan` 返回与 `scanMemoryText` 相同的发现。每次拒绝都是带有稳定 `code` 和面向模型的消息的 `MemoryError`。
 
 ### 写入时扫描
 
@@ -102,7 +102,7 @@ kind: "package-reference"
 
 ### 生命周期
 
-服务在其初始化期间打开 `memory` domain，因此注入 `memory` 的消费者总能看到已打开的存储，并随自身 fiber 关闭该 domain。释放（disposal）先停止接受新的写入与遗忘（在释放开始之后才启动的写入或遗忘会以明确的错误 `memory store is disposing: no new writes or forgets are accepted` 失败），再等待所有已按调用顺序排队的写入与遗忘完成，然后才关闭 domain，因此排在另一次写入之后的写入绝不会被 domain 已关闭的错误拒绝，而是得到它自己的结果。一个 domain 在每个进程中只打开一次；这正是 Web profile 中存储位于宿主平面、而工具按 agent 预设组合的原因。
+服务在其初始化期间打开 `memory` domain，因此注入 `memory` 的消费者总能看到已打开的存储，并随自身 fiber 关闭该 domain。释放（disposal）先停止接受新的写入与遗忘（在释放开始之后才启动的写入或遗忘会以一个 `code` 为 `disposing`、消息为 `memory store is disposing: no new writes or forgets are accepted` 的 `MemoryError` 失败），再等待所有已按调用顺序排队的写入与遗忘完成，然后才关闭 domain，因此排在另一次写入之后的写入绝不会被 domain 已关闭的错误拒绝，而是得到它自己的结果。一个 domain 在每个进程中只打开一次；这正是 Web profile 中存储位于宿主平面、而工具按 agent 预设组合的原因。
 
 ### 并发
 

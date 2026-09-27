@@ -198,14 +198,52 @@ describe('memory tools', () => {
       .toEqual({ card: 'generic', title: 'Forget memory', kind: 'other', rawInput: { name: 'x', scope: 'global' } })
   })
 
-  it('builds a create-only memory_write definition byte-identical to the default one', async () => {
+  it('matches the default memory_write definition in every field but execute, invoking wrapped callbacks with sample input since defineTool wraps them in fresh closures', async () => {
     const { ctx } = await setup()
     const replacing = createMemoryWriteTool(ctx.memory)
     const createOnly = createMemoryWriteTool(ctx.memory, { ifAbsent: true })
+
+    // `defineTool` (packages/core/tools/src/schema.ts) wraps every user
+    // callback — `presentCall`, `output.render`, and any `timeoutMs` /
+    // `isConcurrencySafe` a future edit might add — in a fresh closure on
+    // each call. That wrapper's own reference and source text are identical
+    // across any two built definitions no matter what they close over, so
+    // comparing them by reference or by `.toString()` would pass even if the
+    // underlying behavior diverged. Comparing the own-key sets catches a
+    // field only one variant declares; invoking the shared keys with the
+    // same sample input and comparing the result catches a real behavioral
+    // divergence between the two variants.
+    expect(Object.keys(replacing).sort()).toEqual(Object.keys(createOnly).sort())
+    expect(Object.keys(replacing.output).sort()).toEqual(Object.keys(createOnly.output).sort())
     expect(createOnly.name).toBe(replacing.name)
     expect(createOnly.description).toBe(replacing.description)
     expect(createOnly.parameters).toEqual(replacing.parameters)
     expect(createOnly.output.schema).toEqual(replacing.output.schema)
+    const sampleValue = { name: 'prefers-pnpm', scope: 'global', outcome: 'created' }
+    expect(createOnly.output.render(WRITE, sampleValue)).toEqual(replacing.output.render(WRITE, sampleValue))
+    expect(createOnly.presentCall?.(WRITE)).toEqual(replacing.presentCall?.(WRITE))
+  })
+
+  it('keeps the default memory_write variant replacing an existing name and scope, not create-only', async () => {
+    // Symmetric with the create-only rejection test below: a fresh mount
+    // registers only the default (replacing) definition through the real
+    // tool pipeline and drives two calls of the same name.
+    const root = await freshRoot()
+    const ctx = new Context()
+    contexts.push(ctx)
+    await ctx.plugin(SystemPrompt)
+    await ctx.plugin(ToolRuntime)
+    await ctx.plugin(SessionProjectionRegistry)
+    await mountStore(ctx, root)
+    ctx.tools.register(createMemoryWriteTool(ctx.memory))
+    const created = await call(ctx, 'memory_write', WRITE)
+    expect(created.isError).toBe(false)
+    expect(created.value).toMatchObject({ outcome: 'created' })
+    const updated = await call(ctx, 'memory_write', { ...WRITE, description: 'still uses pnpm', content: 'updated content' })
+    expect(updated.isError).toBe(false)
+    expect(updated.value).toMatchObject({ outcome: 'updated' })
+    const stored = await ctx.memory.recall({ limit: 1 })
+    expect(stored[0]?.content).toBe('updated content')
   })
 
   it('rejects a create-only memory_write of an existing name and scope, leaving the record unchanged', async () => {

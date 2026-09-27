@@ -87,7 +87,9 @@ Every rejection is a `MemoryError` whose `code` names the reason and whose messa
  * Why a store operation was rejected.
  * `blocked-content` is a write-time scan finding; `project-key-collision`
  * means this project's key already holds another project's record;
- * `already-exists` is an `ifAbsent` write naming a record already in that scope.
+ * `already-exists` is an `ifAbsent` write naming a record already in that
+ * scope; `disposing` is a write or forget begun after the store's domain
+ * started closing.
  */
 type MemoryErrorCode =
   | 'invalid-name'
@@ -99,6 +101,7 @@ type MemoryErrorCode =
   | 'project-root-unavailable'
   | 'not-found'
   | 'already-exists'
+  | 'disposing'
 ```
 
 ## Catalog projection

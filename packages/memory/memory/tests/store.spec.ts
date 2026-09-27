@@ -563,7 +563,7 @@ describe('MemoryStore over the json backend', () => {
     const created = await ctx.memory.write(write())
     await expect(ctx.memory.write(write({ ifAbsent: true, content: 'clobber attempt' }))).rejects.toMatchObject({
       code: 'already-exists',
-      message: 'global memory "prefers-pnpm" already exists; write without ifAbsent to replace it',
+      message: 'a global memory named "prefers-pnpm" already exists; choose a different name',
     })
     expect((await ctx.memory.visible(undefined)).global).toEqual([created.record])
 
@@ -571,7 +571,7 @@ describe('MemoryStore over the json backend', () => {
     const createdProject = await ctx.memory.write(write({ scope: 'project', cwd: alpha.cwd }))
     await expect(ctx.memory.write(write({ scope: 'project', cwd: alpha.cwd, ifAbsent: true, content: 'clobber' }))).rejects.toMatchObject({
       code: 'already-exists',
-      message: 'project memory "prefers-pnpm" already exists; write without ifAbsent to replace it',
+      message: 'a project memory named "prefers-pnpm" already exists; choose a different name',
     })
     expect((await ctx.memory.visible(alpha.cwd)).project?.records).toEqual([createdProject.record])
   })
@@ -614,9 +614,7 @@ describe('MemoryStore over the json backend', () => {
     const [firstResult, secondResult] = await Promise.all([first, second])
     expect(firstResult.outcome).toBe('created')
     expect(secondResult.outcome).toBe('created')
-    await expect(store.write(write({ name: 'after-dispose' }))).rejects.toThrow(
-      'memory store is disposing: no new writes or forgets are accepted',
-    )
+    expect(await code(store.write(write({ name: 'after-dispose' })))).toBe('disposing')
 
     const reopened = await open(root)
     expect((await reopened.memory.visible(undefined)).global.map(record => record.name).sort())
