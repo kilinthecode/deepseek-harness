@@ -4,7 +4,7 @@
  * conversation's warm prefix when its call carries the same routed effort.
  */
 import { randomUUID } from 'node:crypto'
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, onTestFinished } from 'vitest'
 import { Context } from '@deepseek-ai/cordis'
 import LlmRuntime, { BlockAssembler, ReasoningEffortId, createAssistantMessage, createUserMessage } from '@deepseek-ai/dsh-llm'
 import * as Messages from '@deepseek-ai/dsh-llm-deepseek-api-key'
@@ -29,6 +29,7 @@ const filler = (sentinel: string): string =>
 describe.skipIf(!process.env.DEEPSEEK_API_KEY)('compaction-basic summarizer cache reuse (real DeepSeek)', () => {
   it('reuses the routed conversation effort so the compaction summarizer hits the warm prefix cache', async () => {
     const ctx = new Context()
+    onTestFinished(async () => { await ctx.fiber.dispose() })
     await ctx.plugin(LlmRuntime)
     // maxRetries: 0 keeps a transient failure from doubling real spend; the
     // suite's other real-API tests disable retries the same way.
