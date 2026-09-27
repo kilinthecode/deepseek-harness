@@ -556,6 +556,12 @@
 - id: tool-todo
   disabled: true
 
+- id: tool-memory
+  disabled: true
+
+- id: memory-review
+  disabled: true
+
 - id: tool-web
   disabled: true
 
