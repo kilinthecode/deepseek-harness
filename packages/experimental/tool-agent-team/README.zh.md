@@ -41,16 +41,23 @@ kind: "package-reference"
   config:
     freshProvider: spawn
     forkProvider: fork
+    agentOptions:
+      provider: openai-codex
+      model: gpt-6-luna
+      reasoningEffort: xhigh
 ```
 
 | 字段 | 默认值 | 含义 |
 |---|---|---|
 | `freshProvider` | `spawn` | 启动 fresh teammate 的提供方 |
 | `forkProvider` | `fork` | 启动 fork teammate 的提供方 |
+| `agentOptions` | — | 每个生成 teammate 的默认子级路由与限制；模型的显式参数会覆盖它 |
 | `duties.planner.instructions` | 只读规划与验证文本 | 加到 planner 第一条消息中的指示 |
 | `duties.planner.tools` | `read`、`read_image`、`grep`、`glob`、`skill`、`web_search`、`web_fetch` | planner 保留的继承工具 |
 | `duties.executor.instructions` | claim、实现与提交文本 | 加到 executor 第一条消息中的指示 |
 | `duties.executor.tools` | `all` | executor 保留的继承工具 |
+
+路由优先级依次是显式的 `provider`、`model` 与 `reasoning_effort` 参数，然后是配置的 `agentOptions`，最后是 Lead 自身的 route。工具会在创建 teammate 前通过实时 LLM 解析生效路由，因此未知路由或不支持的 effort 会使工具调用失败，且不会记录成员。
 
 生成的[配置目录](../../../docs/config-catalog.zh.md#deepseek-aidsh-experimental-tool-agent-team)是每个受支持字段及其 JSDoc 的穷尽式真源。
 
@@ -135,7 +142,7 @@ member scope 上的一个 `team:policy` 段落说明共享的协作规则，并�
 
 #### 模型看到什么
 
-一段共享 system 策略会说明显式 delegation 要求、共享 cwd 行为、文件陈旧版本恢复、Bash／formatter／codegen 风险、task／write-scope 协调、已提交任务的同行验证、Steer 投递、mailbox 不重试规则，以及 Lead 必须在回答前等待。`spawn_teammate` 接受 `provider`、`model` 与 `reasoning_effort`，且 `model` 的说明要求选择适合该 teammate 职责的模型，因此调用方可以把每个 teammate 安排在该职责所需的 route 上；省略它们则继承调用方自身的 route。若某条 route 未声明所请求的 reasoning effort，spawn 会在任何 child 存在之前就被拒绝，并列出该 route 确实声明的 effort；被拒绝的名字仍然可用，因此修正后重试即可安置该 teammate。该检查解析的是 teammate 的生效 route，即调用方覆盖项合并到自身 route 之上的结果。Lead 与 teammate 的全部九个 Team schema 相同；执行时检查仅限 Lead 的操作权限与分工规则。Lead 记录主题后，每个成员的 Team 段落末尾都会加上 `The user started this Agent Team with the subject "<subject>".`，随后是 Lead 执行的先规划后执行流程。`spawn_teammate` 在初始 user 消息前加上 `<system-reminder>\nYou are teammate "<name>".\nYour Team Lead is named "lead".\nUse list_agents({}) to find your teammates and their names.\nTo message your Team Lead, use send_message({ target: "lead", message: "..." }).\nTo message another teammate, use send_message({ target: "<teammate name>", message: "..." }).\n</system-reminder>`，接着是一个空行和任务。对有分工的 teammate，`Your duty is "<duty>".` 与该分工配置的指示位于 `</system-reminder>` 之前。该前缀不含 Team id，禁用运行时上下文时也能生效。fork 继承历史，不额外添加 Lead 身份消息。
+一段共享 system 策略会说明显式 delegation 要求、共享 cwd 行为、文件陈旧版本恢复、Bash／formatter／codegen 风险、task／write-scope 协调、已提交任务的同行验证、Steer 投递、mailbox 不重试规则，以及 Lead 必须在回答前等待。`spawn_teammate` 接受 `provider`、`model` 与 `reasoning_effort`，且 `model` 的说明要求选择适合该 teammate 职责的模型，因此调用方可以把每个 teammate 安排在该职责所需的 route 上。该检查会在任何 child 存在之前，通过实时 LLM 解析 teammate 的生效 route——调用方的显式取值合并到配置的 `agentOptions` 之上，后者再合并到调用方自身的 route 之上——因此未注册的 route，或模型不支持所请求的 reasoning effort，都会以 LLM 自身的错误让调用失败，例如 `provider "<provider>" model "<model>" does not support reasoning effort "<effort>"`，且不列出任何已声明的 effort。被拒绝的名字仍然可用，因此修正后重试即可安置该 teammate。Lead 与 teammate 的全部九个 Team schema 相同；执行时检查仅限 Lead 的操作权限与分工规则。Lead 记录主题后，每个成员的 Team 段落末尾都会加上 `The user started this Agent Team with the subject "<subject>".`，随后是 Lead 执行的先规划后执行流程。`spawn_teammate` 在初始 user 消息前加上 `<system-reminder>\nYou are teammate "<name>".\nYour Team Lead is named "lead".\nUse list_agents({}) to find your teammates and their names.\nTo message your Team Lead, use send_message({ target: "lead", message: "..." }).\nTo message another teammate, use send_message({ target: "<teammate name>", message: "..." }).\n</system-reminder>`，接着是一个空行和任务。对有分工的 teammate，`Your duty is "<duty>".` 与该分工配置的指示位于 `</system-reminder>` 之前。该前缀不含 Team id，禁用运行时上下文时也能生效。fork 继承历史，不额外添加 Lead 身份消息。
 
 #### Token 影响
 

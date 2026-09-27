@@ -48,6 +48,42 @@ const roots: string[] = []
 const contexts = new Set<Context>()
 let callNumber = 0
 
+const ROUTE_REASONING = {
+  efforts: [
+    { id: ReasoningEffortId('low'), name: 'Low' },
+    { id: ReasoningEffortId('high'), name: 'High' },
+  ],
+  defaultEffort: ReasoningEffortId('high'),
+} as const
+
+function spawnedMember(target: string) {
+  return {
+    id: SessionId(`member-${target}`),
+    name: target,
+    role: 'teammate' as const,
+    status: 'inactive' as const,
+    description: 'member',
+    diagnostics: [] as string[],
+  }
+}
+
+function spawnDescriptions(ctx: Context, agent: Agent) {
+  const scope = scopeOf(agent.ctx)
+  const parameters = ctx.tools.get('spawn_teammate', scope)?.parameters as {
+    properties?: {
+      provider?: { description?: string }
+      model?: { description?: string }
+      reasoning_effort?: { description?: string }
+    }
+  } | undefined
+  const properties = parameters?.properties
+  return {
+    provider: properties?.provider?.description,
+    model: properties?.model?.description,
+    reasoning_effort: properties?.reasoning_effort?.description,
+  }
+}
+
 /** Session query implementation whose search faces are outside these tests. */
 class TestSessionQuery extends SessionQueryEngine {
   override searchSessions(): Promise<never> {
@@ -69,6 +105,7 @@ async function setup(
   script: ConstructorParameters<typeof MockAdapter>[0],
   legacyControl = false,
   reasoning?: ConstructorParameters<typeof MockAdapter>[1],
+  teamConfig?: toolTeam.Config,
 ) {
   const ctx = new Context()
   contexts.add(ctx)
@@ -83,7 +120,9 @@ async function setup(
   await ctx.plugin(SubagentSpawn, { providerName: 'spawn' })
   await ctx.plugin(SubagentFork, { providerName: 'fork' })
   await ctx.plugin(TeamService)
-  const fiber = await ctx.plugin(toolTeam)
+  const fiber = teamConfig === undefined
+    ? await ctx.plugin(toolTeam)
+    : await ctx.plugin(toolTeam, teamConfig)
   const adapter = new MockAdapter(script, reasoning)
   ctx.llm.registerAdapter(['mock'], adapter)
   const lead = await ctx.agentLoop.create(SessionId('tool-team-lead'), { provider: 'mock', model: 'mock' })
@@ -798,7 +837,7 @@ describe('dsh-tool-team', () => {
     // Misconfiguration is named at the spawn rather than surfacing later as a
     // durability failure, and no child is created for it.
     expect(refused.isError).toBe(true)
-    expect(text(refused)).toContain('does not declare reasoning effort "high"')
+    expect(text(refused)).toContain('does not support reasoning effort "high"')
     expect(ctx.agentTeams.listMembers(lead).some(member => member.name === 'effort-worker')).toBe(false)
 
     // The refused name is still free, so a corrected retry seats the teammate.
@@ -823,13 +862,13 @@ describe('dsh-tool-team', () => {
     expect(accepted.isError).toBe(false)
     await execute(ctx, lead, 'interrupt_agent', { target: 'low-worker' })
 
-    // An undeclared one is refused, and the refusal names what the route declares.
+    // An undeclared effort is refused by the live LLM preflight.
     const refused = await execute(ctx, lead, 'spawn_teammate', {
       name: 'high-worker', description: 'high worker', prompt: 'wait',
       provider: 'mock', model: 'mock', reasoning_effort: 'high',
     })
     expect(refused.isError).toBe(true)
-    expect(text(refused)).toContain('it declares "low"')
+    expect(text(refused)).toContain('does not support reasoning effort "high"')
     expect(ctx.agentTeams.listMembers(lead).some(member => member.name === 'high-worker')).toBe(false)
   })
 
@@ -842,8 +881,179 @@ describe('dsh-tool-team', () => {
       reasoning_effort: 'low',
     })
     expect(result.isError).toBe(true)
-    expect(text(result)).toContain('does not declare reasoning effort "low"')
+    expect(text(result)).toContain('does not support reasoning effort "low"')
     expect(ctx.agentTeams.listMembers(lead).some(member => member.name === 'inherit-worker')).toBe(false)
+  })
+
+  it('preserves an omitted agentOptions and accepts partial child defaults', () => {
+    expect(toolTeam.Config({}).agentOptions).toBeUndefined()
+    expect(toolTeam.Config({ agentOptions: { provider: 'mock' } }).agentOptions).toEqual({ provider: 'mock' })
+    expect(toolTeam.Config({ agentOptions: { reasoningEffort: ReasoningEffortId('high') } }).agentOptions)
+      .toEqual({ reasoningEffort: ReasoningEffortId('high') })
+  })
+
+  it('applies a fully configured default route to every spawned teammate', async () => {
+    const { ctx, lead } = await setup([], false, ROUTE_REASONING, {
+      agentOptions: {
+        provider: 'mock',
+        model: 'mock-configured',
+        reasoningEffort: ReasoningEffortId('high'),
+      },
+    })
+    const spawn = vi.spyOn(ctx.agentTeams, 'spawnTeammate')
+      .mockResolvedValue({ member: spawnedMember('configured-worker') })
+    const result = await execute(ctx, lead, 'spawn_teammate', {
+      name: 'configured-worker', description: 'configured worker', prompt: 'wait',
+    })
+    expect(result.isError, text(result)).toBe(false)
+    expect(spawn).toHaveBeenCalledTimes(1)
+    expect(spawn.mock.calls[0]?.[1].agentOptions).toEqual({
+      provider: 'mock',
+      model: 'mock-configured',
+      reasoningEffort: ReasoningEffortId('high'),
+    })
+  })
+
+  it('overrides configured defaults with explicit route arguments and drops the configured effort', async () => {
+    const { ctx, lead } = await setup([], false, ROUTE_REASONING, {
+      agentOptions: {
+        provider: 'mock',
+        model: 'mock-configured',
+        reasoningEffort: ReasoningEffortId('high'),
+      },
+    })
+    const spawn = vi.spyOn(ctx.agentTeams, 'spawnTeammate')
+      .mockResolvedValue({ member: spawnedMember('explicit-worker') })
+
+    const explicit = await execute(ctx, lead, 'spawn_teammate', {
+      name: 'explicit-worker', description: 'explicit worker', prompt: 'wait',
+      provider: 'mock', model: 'mock-explicit',
+    })
+    expect(explicit.isError, text(explicit)).toBe(false)
+    expect(spawn.mock.calls[0]?.[1].agentOptions).toEqual({ provider: 'mock', model: 'mock-explicit' })
+
+    const effortOnly = await execute(ctx, lead, 'spawn_teammate', {
+      name: 'effort-worker', description: 'effort worker', prompt: 'wait',
+      reasoning_effort: 'low',
+    })
+    expect(effortOnly.isError, text(effortOnly)).toBe(false)
+    expect(spawn.mock.calls[1]?.[1].agentOptions).toEqual({
+      provider: 'mock',
+      model: 'mock-configured',
+      reasoningEffort: ReasoningEffortId('low'),
+    })
+  })
+
+  it('refuses an unknown explicit route before spawning or journaling a member', async () => {
+    const { ctx, lead } = await setup([])
+    const spawn = vi.spyOn(ctx.agentTeams, 'spawnTeammate')
+    const result = await execute(ctx, lead, 'spawn_teammate', {
+      name: 'missing-worker', description: 'missing worker', prompt: 'wait',
+      provider: 'missing', model: 'mock-unknown',
+    })
+    expect(result.isError).toBe(true)
+    expect(text(result)).toContain('no adapter registered for provider "missing"')
+    expect(spawn).not.toHaveBeenCalled()
+    expect(ctx.agentTeams.listMembers(lead).some(member => member.name === 'missing-worker')).toBe(false)
+  })
+
+  it('skips route preflight and passes no agentOptions for pure inheritance', async () => {
+    const { ctx, lead } = await setup([])
+    const resolve = vi.spyOn(ctx.llm, 'resolveCallConfig')
+    const spawn = vi.spyOn(ctx.agentTeams, 'spawnTeammate')
+      .mockResolvedValue({ member: spawnedMember('plain-worker') })
+    const result = await execute(ctx, lead, 'spawn_teammate', {
+      name: 'plain-worker', description: 'plain worker', prompt: 'wait',
+    })
+    expect(result.isError, text(result)).toBe(false)
+    expect(resolve).not.toHaveBeenCalled()
+    expect(spawn).toHaveBeenCalledTimes(1)
+    expect(spawn.mock.calls[0]?.[1]).not.toHaveProperty('agentOptions')
+  })
+
+  it('refuses a configured route when the teammate scope has no LLM service', async () => {
+    // `scoped.get('llm')` is strict about the calling scope: an Agent isolated
+    // from the deployment's `llm` provider observes the same missing-service
+    // refusal tool-subagent records for a context that never mounts one.
+    const { ctx, lead, fiber } = await setup([], false, undefined, {
+      agentOptions: { provider: 'mock', model: 'mock-configured' },
+    })
+    await fiber.dispose()
+    Object.assign(lead, { ctx: lead.ctx.isolate('llm') })
+    await ctx.plugin(toolTeam, {
+      agentOptions: { provider: 'mock', model: 'mock-configured' },
+    })
+    const spawn = vi.spyOn(ctx.agentTeams, 'spawnTeammate')
+    const result = await execute(ctx, lead, 'spawn_teammate', {
+      name: 'unroutable-worker', description: 'unroutable worker', prompt: 'wait',
+    })
+    expect(result.isError).toBe(true)
+    expect(text(result)).toContain('`llm` service is unavailable')
+    expect(spawn).not.toHaveBeenCalled()
+  })
+
+  it('preflights an effort-only configured default against the Lead\'s latest logged route', async () => {
+    const { ctx, lead } = await setup([], false, ROUTE_REASONING, {
+      agentOptions: { reasoningEffort: ReasoningEffortId('high') },
+    })
+    lead.session.append('request/header', {
+      header: { config: { provider: 'current-provider', model: 'current-model' } },
+      reason: 'initial',
+    })
+    const resolve = vi.spyOn(ctx.llm, 'resolveCallConfig').mockResolvedValue({
+      provider: 'current-provider',
+      model: 'current-model',
+      reasoningEffort: ReasoningEffortId('high'),
+    })
+    const spawn = vi.spyOn(ctx.agentTeams, 'spawnTeammate')
+      .mockResolvedValue({ member: spawnedMember('latest-worker') })
+    const result = await execute(ctx, lead, 'spawn_teammate', {
+      name: 'latest-worker', description: 'latest worker', prompt: 'wait',
+    })
+    expect(result.isError, text(result)).toBe(false)
+    expect(resolve).toHaveBeenCalledWith({
+      provider: 'current-provider',
+      model: 'current-model',
+      reasoningEffort: ReasoningEffortId('high'),
+    }, expect.anything())
+    expect(spawn.mock.calls[0]?.[1].agentOptions).toEqual({
+      reasoningEffort: ReasoningEffortId('high'),
+    })
+  })
+
+  it('builds default-route descriptions from fully configured agentOptions', async () => {
+    const { ctx, lead } = await setup([], false, undefined, {
+      agentOptions: {
+        provider: 'mock',
+        model: 'mock-flash',
+        reasoningEffort: ReasoningEffortId('high'),
+      },
+    })
+    expect(spawnDescriptions(ctx, lead)).toEqual({
+      provider: 'Model provider route for this teammate, for example deepseek-official. Defaults to mock/mock-flash.',
+      model: 'Model id for this teammate; pick one that fits its responsibility, since teammates on different models disagree more usefully than copies of one model. Defaults to mock-flash.',
+      reasoning_effort: 'Reasoning effort for this teammate, named as the target model declares it. Defaults to high.',
+    })
+  })
+
+  it('changes only the effort default sentence for effort-only agentOptions', async () => {
+    const { ctx, lead } = await setup([], false, undefined, {
+      agentOptions: { reasoningEffort: ReasoningEffortId('high') },
+    })
+    expect(spawnDescriptions(ctx, lead)).toEqual({
+      provider: 'Model provider route for this teammate, for example deepseek-official. Defaults to your own route.',
+      model: 'Model id for this teammate; pick one that fits its responsibility, since teammates on different models disagree more usefully than copies of one model. Defaults to your own model.',
+      reasoning_effort: 'Reasoning effort for this teammate, named as the target model declares it. Defaults to high.',
+    })
+  })
+
+  it('keeps the default route descriptions byte-for-byte without agentOptions', async () => {
+    const { ctx, lead } = await setup([])
+    expect(spawnDescriptions(ctx, lead)).toEqual({
+      provider: 'Model provider route for this teammate, for example deepseek-official. Defaults to your own route.',
+      model: 'Model id for this teammate; pick one that fits its responsibility, since teammates on different models disagree more usefully than copies of one model. Defaults to your own model.',
+      reasoning_effort: 'Reasoning effort for this teammate, named as the target model declares it. Defaults to your own setting.',
+    })
   })
 
   it('uses configured fresh and fork provider names', async () => {

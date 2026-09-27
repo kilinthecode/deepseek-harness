@@ -1206,7 +1206,8 @@ export interface Config {
 ## `@deepseek-ai/dsh-experimental-tool-agent-team`
 
 - `inject`: `agents` · `agentTeams` · `tools` · `systemPrompt`
-- `source`: [`packages/experimental/tool-agent-team/src/index.ts:37`](../packages/experimental/tool-agent-team/src/index.ts)
+- `refs`: [`AgentOptions`](subsystems/core.zh.md)
+- `source`: [`packages/experimental/tool-agent-team/src/index.ts:45`](../packages/experimental/tool-agent-team/src/index.ts)
 
 ```ts config-catalog
 /** Tool routing and duty configuration. */
@@ -1215,6 +1216,11 @@ export interface Config {
   readonly freshProvider?: string
   /** Continuable-subagent provider used for completed-prefix fork teammates. */
   readonly forkProvider?: string
+  /**
+   * Default child route and limits for every spawned teammate; the model's
+   * explicit `provider`, `model`, and `reasoning_effort` arguments override it.
+   */
+  readonly agentOptions?: AgentOptions
   /**
    * Instructions and tool access per duty. The keys are the fixed duty names
    * `spawn_teammate` accepts and the `/team` kickoff requests; only their values vary.

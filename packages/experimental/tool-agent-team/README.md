@@ -41,16 +41,23 @@ The smallest addition to an existing composition is the two-package fragment fro
   config:
     freshProvider: spawn
     forkProvider: fork
+    agentOptions:
+      provider: openai-codex
+      model: gpt-6-luna
+      reasoningEffort: xhigh
 ```
 
 | Field | Default | Meaning |
 |---|---|---|
 | `freshProvider` | `spawn` | Provider that starts fresh teammates |
 | `forkProvider` | `fork` | Provider that starts fork teammates |
+| `agentOptions` | — | Default child route and limits for every spawned teammate; the model's explicit arguments override it |
 | `duties.planner.instructions` | read-only planning and verification text | Instructions added to a planner's first message |
 | `duties.planner.tools` | `read`, `read_image`, `grep`, `glob`, `skill`, `web_search`, `web_fetch` | Inherited tools a planner keeps |
 | `duties.executor.instructions` | claim, implement, and submit text | Instructions added to an executor's first message |
 | `duties.executor.tools` | `all` | Inherited tools an executor keeps |
+
+Route precedence is explicit `provider`, `model`, and `reasoning_effort` arguments, then configured `agentOptions`, then the Lead's own route. The effective route is resolved through the live LLM before the teammate is created, so an unknown route or unsupported effort fails the tool call without recording a member.
 
 The generated [configuration catalog](../../../docs/config-catalog.md#deepseek-aidsh-experimental-tool-agent-team) is the exhaustive source for every accepted field and its JSDoc.
 
@@ -135,7 +142,7 @@ Read these pages when the package-level contract is not enough. They move from t
 
 #### What the model sees
 
-One shared system policy states the explicit-delegation requirement, shared-cwd behavior, filesystem stale-version recovery, Bash/formatter/codegen risk, task and write-scope coordination, peer verification of submitted tasks, Steer delivery, the no-retry mailbox rule, and the Lead's duty to wait before answering. `spawn_teammate` accepts `provider`, `model`, and `reasoning_effort`, and the `model` description asks for a model that fits the teammate's responsibility, so a caller seats each teammate on the route that responsibility needs; omitting them inherits the caller's own route. A route that does not declare the requested reasoning effort is refused before any child exists, naming the efforts the route does declare; the refused name stays free, so a corrected retry seats the teammate. The check resolves the teammate's effective route, which is the caller's overrides merged over its own. All nine Team schemas are identical for Leads and teammates; execution enforces Lead-only operations and duty rules. Once the Lead records a subject, every member's Team section ends with `The user started this Agent Team with the subject "<subject>".` followed by the plan-then-execute flow the Lead runs. `spawn_teammate` prefixes its initial user message with `<system-reminder>\nYou are teammate "<name>".\nYour Team Lead is named "lead".\nUse list_agents({}) to find your teammates and their names.\nTo message your Team Lead, use send_message({ target: "lead", message: "..." }).\nTo message another teammate, use send_message({ target: "<teammate name>", message: "..." }).\n</system-reminder>`, followed by a blank line and the task. For a dutied teammate, `Your duty is "<duty>".` and the duty's configured instructions come before `</system-reminder>`. The prefix contains no Team id and works when runtime context is disabled. Forks inherit history without an additional Lead identity message.
+One shared system policy states the explicit-delegation requirement, shared-cwd behavior, filesystem stale-version recovery, Bash/formatter/codegen risk, task and write-scope coordination, peer verification of submitted tasks, Steer delivery, the no-retry mailbox rule, and the Lead's duty to wait before answering. `spawn_teammate` accepts `provider`, `model`, and `reasoning_effort`, and the `model` description asks for a model that fits the teammate's responsibility, so a caller seats each teammate on the route that responsibility needs. The check resolves the teammate's effective route — the call's explicit values merged over the configured `agentOptions`, which are merged over the caller's own route — through the live LLM before any child exists, so an unregistered route, or a model that does not support the requested reasoning effort, fails the call with the LLM's own error, such as `provider "<provider>" model "<model>" does not support reasoning effort "<effort>"`, which names no declared efforts. The refused name stays free, so a corrected retry seats the teammate. All nine Team schemas are identical for Leads and teammates; execution enforces Lead-only operations and duty rules. Once the Lead records a subject, every member's Team section ends with `The user started this Agent Team with the subject "<subject>".` followed by the plan-then-execute flow the Lead runs. `spawn_teammate` prefixes its initial user message with `<system-reminder>\nYou are teammate "<name>".\nYour Team Lead is named "lead".\nUse list_agents({}) to find your teammates and their names.\nTo message your Team Lead, use send_message({ target: "lead", message: "..." }).\nTo message another teammate, use send_message({ target: "<teammate name>", message: "..." }).\n</system-reminder>`, followed by a blank line and the task. For a dutied teammate, `Your duty is "<duty>".` and the duty's configured instructions come before `</system-reminder>`. The prefix contains no Team id and works when runtime context is disabled. Forks inherit history without an additional Lead identity message.
 
 #### Token effect
 

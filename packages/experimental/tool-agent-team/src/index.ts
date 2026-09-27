@@ -6,6 +6,14 @@ import type { Agent, AgentOptions } from '@deepseek-ai/dsh-agent'
 import { CommandDefinitionId } from '@deepseek-ai/dsh-commands'
 import type { CommandResult } from '@deepseek-ai/dsh-commands'
 import { createUserMessage, ReasoningEffortId } from '@deepseek-ai/dsh-llm'
+import { parentAgentOptionsForDelegation } from '@deepseek-ai/dsh-subagent'
+import {
+  hasConfiguredLlmSelection,
+  hasDelegationModelRequest,
+  preflightChildLlmRoute,
+  requestedAgentOptions,
+} from '@deepseek-ai/dsh-tool-subagent/model-selection'
+import type { DelegationModelRequest } from '@deepseek-ai/dsh-tool-subagent/model-selection'
 import type {} from '@deepseek-ai/dsh-session-title'
 import { TeamError, TeamTaskId } from '@deepseek-ai/dsh-experimental-agent-team'
 import type { TeamDuty, TeamMemberView } from '@deepseek-ai/dsh-experimental-agent-team'
@@ -39,6 +47,11 @@ export interface Config {
   readonly freshProvider?: string
   /** Continuable-subagent provider used for completed-prefix fork teammates. */
   readonly forkProvider?: string
+  /**
+   * Default child route and limits for every spawned teammate; the model's
+   * explicit `provider`, `model`, and `reasoning_effort` arguments override it.
+   */
+  readonly agentOptions?: AgentOptions
   /**
    * Instructions and tool access per duty. The keys are the fixed duty names
    * `spawn_teammate` accepts and the `/team` kickoff requests; only their values vary.
@@ -75,6 +88,18 @@ function dutySchema(instructions: string, tools: DutyTools): z<DutyConfig> {
 export const Config: z<Config> = z.object({
   freshProvider: z.string().default('spawn'),
   forkProvider: z.string().default('fork'),
+  // Prevent Schemastery from materializing omitted agentOptions as `{}`.
+  agentOptions: z.object({
+    provider: z.string(),
+    model: z.string(),
+    reasoningEffort: z.string().min(1) as z<ReturnType<typeof ReasoningEffortId>>,
+    maxTokens: z.number().step(1).min(1).max(Number.MAX_SAFE_INTEGER),
+  }).default(undefined as unknown as {
+    provider: string
+    model: string
+    reasoningEffort: ReturnType<typeof ReasoningEffortId>
+    maxTokens: number
+  }),
   duties: z.object({
     planner: dutySchema(PLANNER_INSTRUCTIONS, PLANNER_TOOLS),
     executor: dutySchema(EXECUTOR_INSTRUCTIONS, 'all'),
@@ -91,6 +116,7 @@ interface ResolvedDuty {
 interface ResolvedConfig {
   readonly freshProvider: string
   readonly forkProvider: string
+  readonly agentOptions?: AgentOptions
   readonly duties: Readonly<Record<TeamDuty, ResolvedDuty>>
 }
 
@@ -113,6 +139,7 @@ function resolveConfig(config: Config): ResolvedConfig {
       planner: duty('planner', config.duties?.planner, PLANNER_INSTRUCTIONS, PLANNER_TOOLS),
       executor: duty('executor', config.duties?.executor, EXECUTOR_INSTRUCTIONS, 'all'),
     },
+    ...config.agentOptions === undefined ? {} : { agentOptions: config.agentOptions },
   }
 }
 
@@ -295,6 +322,9 @@ function install(agent: Agent, ctx: Context, config: ResolvedConfig): () => void
   const scoped = agent.ctx
   const disposers: Array<() => unknown> = []
   const register = (disposer: () => unknown): void => { disposers.push(disposer) }
+  const configuredRoute = config.agentOptions?.provider !== undefined && config.agentOptions.model !== undefined
+    ? { route: `${config.agentOptions.provider}/${config.agentOptions.model}`, model: config.agentOptions.model }
+    : undefined
   try {
     register(scoped.systemPrompt.section({
       name: 'team:policy',
@@ -321,15 +351,21 @@ function install(agent: Agent, ctx: Context, config: ResolvedConfig): () => void
         },
         provider: {
           type: 'string',
-          description: 'Model provider route for this teammate, for example deepseek-official. Defaults to your own route.',
+          description: configuredRoute === undefined
+            ? 'Model provider route for this teammate, for example deepseek-official. Defaults to your own route.'
+            : `Model provider route for this teammate, for example deepseek-official. Defaults to ${configuredRoute.route}.`,
         },
         model: {
           type: 'string',
-          description: 'Model id for this teammate; pick one that fits its responsibility, since teammates on different models disagree more usefully than copies of one model. Defaults to your own model.',
+          description: configuredRoute === undefined
+            ? 'Model id for this teammate; pick one that fits its responsibility, since teammates on different models disagree more usefully than copies of one model. Defaults to your own model.'
+            : `Model id for this teammate; pick one that fits its responsibility, since teammates on different models disagree more usefully than copies of one model. Defaults to ${configuredRoute.model}.`,
         },
         reasoning_effort: {
           type: 'string',
-          description: 'Reasoning effort for this teammate, named as the target model declares it. Defaults to your own setting.',
+          description: config.agentOptions?.reasoningEffort === undefined
+            ? 'Reasoning effort for this teammate, named as the target model declares it. Defaults to your own setting.'
+            : `Reasoning effort for this teammate, named as the target model declares it. Defaults to ${config.agentOptions.reasoningEffort}.`,
         },
         duty: {
           type: 'string',
@@ -340,14 +376,28 @@ function install(agent: Agent, ctx: Context, config: ResolvedConfig): () => void
       output: jsonOutput(SPAWN_VALUE_SCHEMA),
       async execute(args, exec) {
         const agent = callingAgent(exec.agent, 'spawn_teammate')
+        const modelRequest = args as DelegationModelRequest
+        const parentOptions = parentAgentOptionsForDelegation(agent)
+        const requiresRoutePreflight = hasDelegationModelRequest(modelRequest)
+          || hasConfiguredLlmSelection(config.agentOptions)
+        // Agent Teams has no settings-owned route allowlist, so model-facing
+        // selection is always enabled; no assertAllowedModelSelection here.
+        const requestedChildAgentOptions = requestedAgentOptions(
+          parentOptions,
+          config.agentOptions,
+          modelRequest,
+          true,
+        )
+        if (requiresRoutePreflight) {
+          const llm = scoped.get('llm')
+          if (llm === undefined) {
+            throw new Error('cannot resolve the selected child LLM route because the `llm` service is unavailable')
+          }
+          await preflightChildLlmRoute(llm, parentOptions, requestedChildAgentOptions, exec.signal)
+        }
         const context = args.context ?? 'fresh'
         const duty = args.duty
         const toolFilter = duty === undefined ? undefined : dutyToolFilter(ctx, agent, config.duties[duty].tools)
-        const agentOptions: AgentOptions = {
-          ...args.provider === undefined ? {} : { provider: args.provider },
-          ...args.model === undefined ? {} : { model: args.model },
-          ...args.reasoning_effort === undefined ? {} : { reasoningEffort: ReasoningEffortId(args.reasoning_effort) },
-        }
         const result = await ctx.agentTeams.spawnTeammate(agent, {
           name: args.name,
           description: args.description,
@@ -357,7 +407,7 @@ function install(agent: Agent, ctx: Context, config: ResolvedConfig): () => void
           ],
           context,
           provider: context === 'fork' ? config.forkProvider : config.freshProvider,
-          ...Object.keys(agentOptions).length === 0 ? {} : { agentOptions },
+          ...requestedChildAgentOptions === undefined ? {} : { agentOptions: requestedChildAgentOptions },
           ...duty === undefined ? {} : { duty },
           ...toolFilter === undefined ? {} : { toolFilter },
           signal: exec.signal,

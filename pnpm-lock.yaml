@@ -7973,6 +7973,9 @@ importers:
 
   packages/experimental/tool-agent-team:
     dependencies:
+      '@deepseek-ai/dsh-tool-subagent':
+        specifier: workspace:*
+        version: link:../../subagent/tool-subagent
       '@deepseek-ai/schemastery':
         specifier: link:../../../vendor/schemastery
         version: link:../../../vendor/schemastery
