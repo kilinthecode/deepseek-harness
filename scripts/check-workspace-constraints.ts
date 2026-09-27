@@ -199,8 +199,10 @@ const packageFileExtras: Readonly<Record<string, readonly string[]>> = {
   // Creator's composition guidance travels with the declaration package.
   '@deepseek-ai/dsh-agent-preset': ['skills'],
   // The Web Host mounts the default-off settings owner independently of each
-  // Agent-scoped delegation-tool instance.
-  '@deepseek-ai/dsh-tool-subagent': ['lib/model-selection-settings.js'],
+  // Agent-scoped delegation-tool instance, and the shared route helpers ship as
+  // their own bundle so a consumer that only resolves a child route never loads
+  // the delegation tool itself.
+  '@deepseek-ai/dsh-tool-subagent': ['lib/model-selection-settings.js', 'lib/model-selection.js'],
   // The JSONL backend resolves its private verification Worker relative to
   // import.meta.url; it is shipped without a public package subpath.
   '@deepseek-ai/dsh-session-persistence-jsonl': ['lib/worker.cjs'],

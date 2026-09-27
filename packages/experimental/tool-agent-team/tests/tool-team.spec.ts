@@ -1270,4 +1270,26 @@ describe('teammate duties and the /team command', () => {
     expect(ctx.commands.list(lead).map(command => command.name)).not.toContain('team')
     expect(await ctx.commands.execute(lead, '/team Ship', [], SIGNAL)).toBeUndefined()
   })
+
+  it('loads and applies without the optional commands peer installed', async () => {
+    // `@deepseek-ai/dsh-commands` is an optional peer: a module-scope value
+    // import would reject here and take down every consumer of the plugin, even
+    // one that composes no command registry.
+    vi.doMock('@deepseek-ai/dsh-commands', () => {
+      throw new Error('@deepseek-ai/dsh-commands is not installed')
+    })
+    try {
+      vi.resetModules()
+      const isolated = await import('../src/index.ts')
+      const ctx = new Context()
+      contexts.add(ctx)
+      await mountAgentLoopTestDependencies(ctx)
+      await ctx.plugin(isolated)
+      expect(ctx.get('commands')).toBeUndefined()
+      expect(isolated.Config({}).agentOptions).toBeUndefined()
+    } finally {
+      vi.doUnmock('@deepseek-ai/dsh-commands')
+      vi.resetModules()
+    }
+  })
 })

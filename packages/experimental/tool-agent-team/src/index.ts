@@ -3,8 +3,10 @@
 import type { Context } from '@deepseek-ai/cordis'
 import z from '@deepseek-ai/schemastery'
 import type { Agent, AgentOptions } from '@deepseek-ai/dsh-agent'
-import { CommandDefinitionId } from '@deepseek-ai/dsh-commands'
-import type { CommandResult } from '@deepseek-ai/dsh-commands'
+// `@deepseek-ai/dsh-commands` is an optional peer: name its brand in type
+// position so module scope loads nothing, and brand the id with the shared helper.
+import { brandString } from '@deepseek-ai/dsh-brand'
+import type { CommandDefinitionId, CommandResult } from '@deepseek-ai/dsh-commands'
 import { createUserMessage, ReasoningEffortId } from '@deepseek-ai/dsh-llm'
 import { parentAgentOptionsForDelegation } from '@deepseek-ai/dsh-subagent'
 import {
@@ -88,18 +90,15 @@ function dutySchema(instructions: string, tools: DutyTools): z<DutyConfig> {
 export const Config: z<Config> = z.object({
   freshProvider: z.string().default('spawn'),
   forkProvider: z.string().default('fork'),
-  // Prevent Schemastery from materializing omitted agentOptions as `{}`.
+  // Schemastery materializes an omitted object as `{}`, which would read as a
+  // configured route; the explicit `undefined` default keeps omission absent.
+  // `.default()` accepts only a resolved value, so `extra` writes it instead.
   agentOptions: z.object({
     provider: z.string(),
     model: z.string(),
     reasoningEffort: z.string().min(1) as z<ReturnType<typeof ReasoningEffortId>>,
     maxTokens: z.number().step(1).min(1).max(Number.MAX_SAFE_INTEGER),
-  }).default(undefined as unknown as {
-    provider: string
-    model: string
-    reasoningEffort: ReturnType<typeof ReasoningEffortId>
-    maxTokens: number
-  }),
+  }).extra('default', undefined),
   duties: z.object({
     planner: dutySchema(PLANNER_INSTRUCTIONS, PLANNER_TOOLS),
     executor: dutySchema(EXECUTOR_INSTRUCTIONS, 'all'),
@@ -638,7 +637,7 @@ export function apply(ctx: Context, config: Config = {}): void {
   // The command activates only when a command registry is composed.
   ctx.inject(['commands'], (commandCtx) => {
     commandCtx.commands.register({
-      definitionId: CommandDefinitionId('@deepseek-ai/dsh-experimental-tool-agent-team/team'),
+      definitionId: brandString<CommandDefinitionId>('@deepseek-ai/dsh-experimental-tool-agent-team/team'),
       name: 'team',
       description: 'Start an Agent Team with a planner and executors for a subject',
       input: { hint: 'subject' },
