@@ -123,7 +123,7 @@ describe('shipped persona text names no route', () => {
     // just leaving it quieter.
     const webApp = shippedBundles.find(entry => entry.manifest.name === '@deepseek-ai/dsh-web-app')
     if (webApp === undefined) throw new Error('the @deepseek-ai/dsh-web-app bundle was not discovered')
-    const editedPresets = ['standard', 'ptc', 'cordis'].map(name => join(webApp.dir, 'presets', `${name}.patch.yml`))
+    const editedPresets = ['standard.patch.yml', 'ptc.patch.yml', 'cordis.patch.yml'].map(file => join(webApp.dir, 'presets', file))
     for (const file of editedPresets) {
       expect(scannedFiles, `${file} must be a scanned file`).toContain(file)
       expect(personaTexts(file).length, `${file} must contribute at least one checked persona string`).toBeGreaterThan(0)
