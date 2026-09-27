@@ -9,6 +9,8 @@ import { LocaleRuntime } from '@deepseek-ai/dsh-client-locale/client'
 import { TestRemote } from '@deepseek-ai/dsh-client-test-runtime'
 import { remoteDefaultResponses } from '@deepseek-ai/dsh-client-test-runtime/src/assembly/remote-default-responses.ts'
 import { ok, RemoteMock } from '@deepseek-ai/dsh-remote-mock'
+import type { AuthorizationView } from '@deepseek-ai/dsh-api-authorization-controller/types'
+import type { CredentialKey } from '@deepseek-ai/dsh-credentials/types'
 import { apply as settingsApply, inject as settingsInject } from '@deepseek-ai/dsh-client-ui-settings/client'
 import { apply, inject, refreshIfLoaded } from '@deepseek-ai/dsh-client-ui-settings-models/client'
 import {
@@ -17,11 +19,84 @@ import {
 import { ModelsSection } from '../src/client/ModelsSection.tsx'
 import { DeepSeekOnboardingDialog } from '../src/client/DeepSeekOnboardingDialog.tsx'
 import { WelcomeNotice } from '../src/client/WelcomeNotice.tsx'
+import { providerUsable } from '../src/client/store.ts'
+import { en, zh, type ModelsKey } from '../src/client/locales.ts'
 import type { IndexInjection } from '@deepseek-ai/dsh-host-webserver'
 import * as hostPlugin from '../src/index.ts'
 import { ONBOARDING_CONFIG_GLOBAL } from '../src/onboarding-config.ts'
 
 afterEach(() => { vi.unstubAllGlobals() })
+
+/** A view listing no sign-in flow, as the page holds it before the first frame. */
+const NO_FLOWS: AuthorizationView = { flows: [], attempt: null }
+
+/**
+ * The `remote.authorization` namespace and the Gateway stream supervisor that
+ * carries it, scripted together: the plugin's own opener subscribes to `watch`,
+ * `push` delivers one Host view the way a frame arrives, and `end` closes the
+ * generation the way a terminal carrier end does.
+ * @returns the scripted namespace, the supervisor, and the frame driver.
+ */
+function authorizationWire() {
+  const queued: AuthorizationView[] = []
+  /** Every option set the plugin subscribed with. */
+  const opened: Array<{
+    name: string
+    open: (signal: AbortSignal) => AsyncIterable<AuthorizationView>
+    ended: (accepted: boolean) => Error
+  }> = []
+  const accepted = vi.fn()
+  let deliver: (() => void) | undefined
+  let ended = false
+  const wake = (): void => { deliver?.(); deliver = undefined }
+
+  /** The Host's watch generation: one queued view per push, until the spec ends it. */
+  async function* watch(signal: AbortSignal): AsyncGenerator<AuthorizationView> {
+    while (!ended && !signal.aborted) {
+      const view = queued.shift()
+      if (view !== undefined) {
+        yield view
+        continue
+      }
+      await new Promise<void>((resolve) => { deliver = resolve })
+    }
+  }
+
+  const authorization = {
+    getState: vi.fn(() => Promise.resolve({ ok: true as const, value: NO_FLOWS })),
+    watch: vi.fn((signal: AbortSignal) => watch(signal)),
+  }
+
+  const supervise = (options: (typeof opened)[number]) => {
+    opened.push(options)
+    const lifetime = new AbortController()
+    return {
+      signal: lifetime.signal,
+      async *[Symbol.asyncIterator]() {
+        for await (const value of options.open(lifetime.signal)) {
+          yield { generation: 1, value, signal: lifetime.signal, accept: accepted }
+        }
+        // The supervisor returns quietly when its own lifetime aborts; any other
+        // generation end is the plugin's `ended` to classify, and throwing it is
+        // how its consumer sees that.
+        if (lifetime.signal.aborted) return
+        throw options.ended(true)
+      },
+      dispose: async () => { lifetime.abort(); wake() },
+    }
+  }
+
+  return {
+    authorization,
+    supervise,
+    /** Deliver one Host view to the subscribed consumer. */
+    push(view: AuthorizationView): void { queued.push(view); wake() },
+    /** End the Host generation as a terminal carrier end does. */
+    end(): void { ended = true; wake() },
+    opened,
+    accepted,
+  }
+}
 
 // These specs assert the shipped Chinese copy. The lane has no jsdom `window`,
 // so browser-language detection never runs and a fresh LocaleRuntime opens on
@@ -34,6 +109,7 @@ async function bench(isLoopback = true, mock = RemoteMock.create().load(remoteDe
   const locale = new LocaleRuntime(ctx)
   locale.setLocale('zh')
   ctx.provide('locale', locale)
+  const wire = authorizationWire()
   const remote = new TestRemote(ctx, {
     credentials: {
       describe: vi.fn(() => Promise.resolve({ ok: true, value: {} })),
@@ -46,14 +122,25 @@ async function bench(isLoopback = true, mock = RemoteMock.create().load(remoteDe
       discoverModels: vi.fn(() => Promise.resolve({ ok: true, value: [] })),
       ...services,
     },
+    authorization: wire.authorization,
     settings: mock.remote.settings,
     session: { initializeDefaultModel: vi.fn(async () => ({ ok: true, value: undefined })) },
   })
+  // The Gateway's stream supervisor, which this double does not carry: the
+  // plugin subscribes through it and the script above stands in for the wire.
+  Object.assign(remote, { $stream: wire.supervise })
   // The fixed Host facts the settings provider reads its persistence from.
   remote.$host = { home: undefined, isLoopback }
   await ctx.plugin({ inject: [...settingsInject], apply: settingsApply }).await()
-  return { ctx, slots: ctx.get('slots') as SlotRegistry, locale, remote }
+  return { ctx, slots: ctx.get('slots') as SlotRegistry, locale, remote, wire }
 }
+
+/** The sign-in copy the Models rows and the authorization dialog render. */
+const SIGN_IN_KEYS = [
+  'signIn', 'signOut', 'signedIn', 'notSignedIn', 'signInTitle', 'signInMethod', 'signInWaiting',
+  'openPage', 'copyLink', 'copied', 'copyFailed', 'copyCode', 'submit', 'decline',
+  'signInRunning', 'signInFailed', 'signInCancelled', 'signOutFailed',
+] as const satisfies readonly ModelsKey[]
 
 function declare(slots: SlotRegistry): () => void {
   return slots.register(
@@ -110,8 +197,8 @@ describe('ui-settings-models apply', () => {
 
   it('declares the services it uses', () => {
     expect(inject).toEqual([
-      'slots', 'locale', 'remote', 'remote.credentials', 'remote.llm', 'remote.settings', 'remote.session',
-      'configForms', 'settingsSchema',
+      'slots', 'locale', 'remote', 'remote.authorization', 'remote.credentials', 'remote.llm', 'remote.settings',
+      'remote.session', 'configForms', 'settingsSchema',
     ])
   })
 
@@ -235,6 +322,20 @@ describe('ui-settings-models apply', () => {
     // The (ns, locale) seats are free again — the dictionary disposers ran.
     expect(() => b.locale.register('settings.models', 'zh', {})).not.toThrow()
     expect(() => b.locale.register('settings.models', 'en', {})).not.toThrow()
+  })
+
+  it('declares the Models sign-in copy in both dictionaries', async () => {
+    const b = await bench()
+    declare(b.slots)
+    await b.ctx.plugin({ inject: [...inject], apply }).await()
+    const translate = b.locale.bind('settings.models')
+    // The sign-in surface's lines live in both dictionaries, and each one
+    // resolves through the Models dictionary the plugin registered.
+    for (const key of SIGN_IN_KEYS) {
+      expect(zh[key]).toBeTruthy()
+      expect(en[key]).toBeTruthy()
+      expect(translate(key)).toBe(zh[key])
+    }
   })
 
   it('keeps remote-browser acknowledgement in process memory', async () => {
@@ -361,5 +462,93 @@ describe('pushed invalidations', () => {
       expect(injected.hooks.snapshot.getSnapshot().namespaces.get('llm-test')?.revision).toBe(2)
     })
     expect(describe).toHaveBeenCalledTimes(2)
+  })
+})
+
+describe('live authorization stream', () => {
+  /** The record the subscription's flow writes: pi-ai scopes it by route id. */
+  const CODEX_KEY = 'llm-pi-ai/openai-codex' as CredentialKey
+
+  /** The Host view a frame carries: the subscription's one flow, signed in or not. */
+  function codexView(configured: boolean): AuthorizationView {
+    return {
+      flows: [{
+        key: CODEX_KEY,
+        label: 'ChatGPT',
+        methods: [{ id: 'oauth', label: 'ChatGPT' }],
+        inFlight: false,
+        configured,
+        writable: true,
+      }],
+      attempt: null,
+    }
+  }
+
+  /** The page directory: one keyless route whose only way in is the stored sign-in. */
+  const directory = {
+    listProviders: vi.fn(() => Promise.resolve({
+      ok: true as const,
+      value: [{ id: 'openai-codex', name: 'ChatGPT' }],
+    })),
+    listConfigurableProviders: vi.fn(() => Promise.resolve({
+      ok: true as const,
+      value: [{
+        provider: 'openai-codex',
+        displayName: 'ChatGPT',
+        settingsNs: 'llm-pi-ai',
+        settingsPath: ['providers', 'openai-codex'],
+        authorization: { key: CODEX_KEY, required: true },
+      }],
+    })),
+  }
+
+  /** Apply the plugin over that directory and load the section's own store. */
+  async function mountStream() {
+    const b = await bench(true, RemoteMock.create().load(remoteDefaultResponses), directory)
+    declare(b.slots)
+    await b.ctx.plugin({ inject: [...inject], apply }).await()
+    const entry = b.slots.entries('settings.section').find(candidate => candidate.options.id === 'models')!
+    const injected = (
+      entry.inject as unknown as
+      () => import('../src/client/ModelsSection.tsx').ModelsSectionInjected
+    )()
+    await injected.controller.load()
+    return { ...b, injected }
+  }
+
+  it('subscribes once and merges a pushed frame into the row the page renders', async () => {
+    const b = await mountStream()
+    // One subscription for the page, opened through the Gateway supervisor.
+    expect(b.wire.authorization.watch).toHaveBeenCalledTimes(1)
+    expect(b.wire.opened).toHaveLength(1)
+    expect(b.wire.opened[0]?.name).toBe('authorization')
+
+    b.wire.push(codexView(true))
+
+    // A frame the page never had a command for: the row's sign-in state and its
+    // whole usability come from the pushed view alone.
+    await vi.waitFor(() => {
+      expect(providerUsable(b.injected.hooks.snapshot.getSnapshot().rows[0]!)).toBe(true)
+    })
+    const state = b.injected.hooks.snapshot.getSnapshot()
+    expect(state.authorization).toEqual(codexView(true))
+    expect(state.rows[0]?.flow).toMatchObject({ key: CODEX_KEY, configured: true })
+    expect(b.wire.accepted).toHaveBeenCalledTimes(1)
+  })
+
+  it('keeps the row state and reports a terminal stream end', async () => {
+    const b = await mountStream()
+    b.wire.push(codexView(true))
+    await vi.waitFor(() => {
+      expect(providerUsable(b.injected.hooks.snapshot.getSnapshot().rows[0]!)).toBe(true)
+    })
+
+    b.wire.end()
+
+    await vi.waitFor(() => {
+      expect(b.injected.hooks.snapshot.getSnapshot().authorizationError).toBe('authorization stream ended')
+    })
+    // The row is not dropped with the stream: it keeps the last known sign-in.
+    expect(providerUsable(b.injected.hooks.snapshot.getSnapshot().rows[0]!)).toBe(true)
   })
 })
