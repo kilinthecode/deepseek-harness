@@ -220,6 +220,36 @@ describe('TeamAction', () => {
     expect(screen.queryByRole('heading', { name: zh.subject })).toBeNull()
   })
 
+  it('tags only the Lead row, even when a teammate carries a duty of its own', () => {
+    const b = bench({
+      projections: {
+        [SESSION]: {
+          state: 'ready', error: null,
+          values: { agentTeam: { members: [lead, { ...worker, duty: 'executor' }], tasks: [] } },
+        },
+      },
+    })
+    render(<TeamAction {...b.props} />)
+    openPanel()
+    expect(screen.getByRole('button', { name: /^lead/u }).textContent).toContain(zh['roster.lead'])
+    const workerRow = screen.getByRole('button', { name: /^worker/u })
+    expect(workerRow.textContent).not.toContain(zh['roster.lead'])
+    expect(workerRow.textContent).toContain(zh['duty.executor'])
+  })
+
+  it('keeps the multi-column roster grid for 2+ members and compacts only a lone member with no tasks', () => {
+    const b = bench()
+    render(<TeamAction {...b.props} />)
+    openPanel()
+    expect(screen.getByRole('dialog').className).not.toContain('panelCompact')
+
+    setProjection(b.sessions, SESSION, { members: [lead], tasks: [] })
+    expect(screen.getByRole('dialog').className).toContain('panelCompact')
+
+    setProjection(b.sessions, SESSION, { members: [lead, worker], tasks: [] })
+    expect(screen.getByRole('dialog').className).not.toContain('panelCompact')
+  })
+
   it('overlays live Session status and the durable model selection on roster rows', () => {
     const statuses: SessionStatusSnapshot = new Map([[WORKER, { running: true, pendingInteraction: undefined, completionUnread: false }]])
     const b = bench({
