@@ -29,13 +29,13 @@ kind: "package-reference"
 
 ### 以主题启动 Team
 
-新会话在输入框上方显示 Agent Team 启动栏，包含主题输入框与“启动团队”按钮。启动时会向 Host 发送 `/team <subject>`：会话以主题命名，主题成为第一条用户消息，Lead 开始由 planner 与 executor 执行的先规划后执行流程。启动栏只出现在空白 Lead 会话的主视图中，会话一旦开始就会消失，包括发送了一条普通首条消息之后。拒绝结果（例如主题超过 200 个字符）会显示在启动栏内，已输入的主题保留以便重试。
+新会话在输入框上方显示 Agent Team 启动栏：一行可编辑的参与者 roster，之上是主题输入框与“启动团队”按钮。roster 始终展示一个固定的 Lead 标签，代表当前会话自身的 agent，再加上默认的一个规划者与两个执行者标签；每个参与者标签都带有移除控件，"添加规划者"控件在已有规划者后自行禁用，"添加执行者"控件没有上限。启动时：若参与者全部被移除，则向 Host 发送 `/team <subject>`；否则发送 `/team --members <duties> <subject>`，`<duties>` 按标签顺序列出 roster 的分工。会话以主题命名，主题成为第一条用户消息，Lead 按选定的参与者开始先规划后执行的流程。启动栏只出现在空白 Lead 会话的主视图中，会话一旦开始就会消失，包括发送了一条普通首条消息之后。拒绝结果（例如主题超过 200 个字符）会显示在启动栏内，已输入的主题与 roster 保留以便重试。
 
 ### 检查并导航 roster
 
 面板从共享 Session store 展示 Lead Session 的 roster 与任务板。面板保持打开时，任务和成员更新会直接出现。打开面板不发起投影请求。会话或 Session 列表正在加载时，面板显示加载提示；加载结束后仍无 Team 值时，显示不可用提示。
 
-Team 有主题时，面板在 roster 上方显示该主题。Roster 行展示持久名称与阶段；以分工创建的 teammate 还会带有“规划者”或“执行者”标签。provisioning 和 running 成员使用共享 ongoing loading，inactive 成员使用人物图标，failed 成员使用 error 红点。实时 Session 状态提供运行活动；共享 `modelSelection` 投影在可用时提供模型。当前会话带有“当前会话”标签且不可选择。在 teammate 会话中选择 Lead 会直接打开 Lead Session。选择 active teammate 会打开其普通 continuable 子会话地址。Host 在打开历史时校验 parent、child 与 mode；后续人类提示词使用同一 addressed-subagent 会话。
+Team 有主题时，面板在 roster 上方显示该主题。Roster 行展示持久名称与阶段，Team 自身的 Lead 行带有“Lead”标签；以分工创建的 teammate 还会带有“规划者”或“执行者”标签。provisioning 和 running 成员使用共享 ongoing loading，inactive 成员使用人物图标，failed 成员使用 error 红点。实时 Session 状态提供运行活动；共享 `modelSelection` 投影在可用时提供模型。当前会话带有“当前会话”标签且不可选择。在 teammate 会话中选择 Lead 会直接打开 Lead Session。选择 active teammate 会打开其普通 continuable 子会话地址。Host 在打开历史时校验 parent、child 与 mode；后续人类提示词使用同一 addressed-subagent 会话。
 
 ### 读取 room
 
@@ -57,7 +57,7 @@ Team 有主题时，面板在 roster 上方显示该主题。Roster 行展示持
 
 Client export 先挂载生成式 `agentTeams` room Remote contribution，再通过 Cordis effect 注册 locale dictionary、一个 conversation-header slot 与一个 `conversation.input.dock` 条目。该 dock 条目排在 Todo 与 Goal 卡片之前；只有当其 Session 为空白、没有 subagent address、尚未尝试发送提示词且被主视图保留时才会渲染；它通过 `commands/execute` 启动 Team，并读取处理器的错误文本，Session face 的 `command()` 不会返回该文本。Dispose plugin fiber 会移除这两项 registration 并卸载该 Remote namespace；registration 失败时，会先卸载该 namespace，再传播错误。
 
-面板渲染在会话容器外，并保持在视口范围内。成员卡片在静止、选中和悬停状态下均使用共享 elevation 描边绘制轮廓。悬停触发按钮 150ms 后打开面板；指针离开触发按钮和面板后，经过 120ms 宽限关闭。点击触发按钮会固定面板并将焦点移入其中。点击外部或按 Escape 可关闭面板；仅当焦点原本位于面板内时，Escape 才将焦点返回触发按钮。页头较窄时触发按钮折叠为图标，只响应点击打开。组件从 `useSessions`、`useSessionStatus` 与 `useSession` 座位派生每一个 roster 行与任务行：Lead 身份来自当前 Session 的 subagent address，Team 视图来自 `projectionsBySession[lead].values.agentTeam`，成员活动来自 Session 状态并以列表摘要为后备，model 来自 `projectionsBySession[member].values.modelSelection.next`。每个 roster 行只选择自己的运行状态。一个注入回调通过当前与目标 Session 的 id 打开 roster Session；room 回调在每次调用 `agentTeams/room*` 之前把当前会话解析为其 Lead。room 区块只在挂载期间跟随 `agentTeams/roomStream`，并在面板关闭时中止该 stream。切换会话会关闭面板并清除导航失败。
+面板渲染在会话容器外，并保持在视口范围内。成员卡片与任务卡片渲染为半透明表面，与主题的菜单背景滤镜共享同一处理，并在静止、选中和悬停状态下均使用共享 elevation 描边绘制轮廓；roster 网格在 Team 拥有多个成员时保持两列，只有当只剩一名成员且没有共享任务时才收缩为一列。启动栏的 roster 行与主题行共享同一张半透明卡片。悬停触发按钮 150ms 后打开面板；指针离开触发按钮和面板后，经过 120ms 宽限关闭。点击触发按钮会固定面板并将焦点移入其中。点击外部或按 Escape 可关闭面板；仅当焦点原本位于面板内时，Escape 才将焦点返回触发按钮。页头较窄时触发按钮折叠为图标，只响应点击打开。组件从 `useSessions`、`useSessionStatus` 与 `useSession` 座位派生每一个 roster 行与任务行：Lead 身份来自当前 Session 的 subagent address，Team 视图来自 `projectionsBySession[lead].values.agentTeam`，成员活动来自 Session 状态并以列表摘要为后备，model 来自 `projectionsBySession[member].values.modelSelection.next`。每个 roster 行只选择自己的运行状态。一个注入回调通过当前与目标 Session 的 id 打开 roster Session；room 回调在每次调用 `agentTeams/room*` 之前把当前会话解析为其 Lead。room 区块只在挂载期间跟随 `agentTeams/roomStream`，并在面板关闭时中止该 stream。切换会话会关闭面板并清除导航失败。
 
 | 文件 | 职责 |
 |---|---|

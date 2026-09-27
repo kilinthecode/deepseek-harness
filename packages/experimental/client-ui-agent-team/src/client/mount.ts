@@ -12,7 +12,7 @@ import type {} from '@deepseek-ai/dsh-client-ui-renderer/client'
 import type {} from '@deepseek-ai/dsh-client-ui-workspace/client'
 import type { TypertRemoteContribution } from '@deepseek-ai/dsh-typert-protocol'
 import { TeamAction, type TeamActionInjected, type TeamActionResult } from './TeamAction.tsx'
-import { TeamSubjectSeat, type TeamStartResult, type TeamSubjectInjected } from './TeamSubjectSeat.tsx'
+import { TeamSubjectSeat, type RosterDuty, type TeamStartResult, type TeamSubjectInjected } from './TeamSubjectSeat.tsx'
 import { en, NS, zh, type TeamKey } from './locales.ts'
 
 declare module '@deepseek-ai/dsh-client-ui-slots' {
@@ -26,14 +26,21 @@ declare module '@deepseek-ai/dsh-client-ui-slots' {
 export const inject = ['sessions', 'uiWorkspace', 'remote', 'slots', 'locale']
 
 /**
- * Start one conversation's Team through the Host `/team` command.
+ * Start one conversation's Team through the Host `/team` command. A roster
+ * with at least one duty sends `--members <duties>` ahead of the subject, the
+ * duties in chip order; an empty roster sends the plain subject, unchanged
+ * from before the strip could edit participants.
  * @param ctx - Client Context carrying the mounted `commands` Remote namespace.
  * @param sessionId - blank Lead conversation.
  * @param subject - trimmed Team subject.
+ * @param members - roster duties in chip order, excluding the fixed Lead chip.
  * @returns the command outcome in the start strip's terms.
  */
-async function startTeam(ctx: ClientContext, sessionId: SessionId, subject: string): Promise<TeamStartResult> {
-  const result = await ctx.remote.commands.execute(sessionId, `/team ${subject}`, [])
+async function startTeam(
+  ctx: ClientContext, sessionId: SessionId, subject: string, members: readonly RosterDuty[],
+): Promise<TeamStartResult> {
+  const command = members.length === 0 ? `/team ${subject}` : `/team --members ${members.join(',')} ${subject}`
+  const result = await ctx.remote.commands.execute(sessionId, command, [])
   if (!result.ok) return { kind: 'refused', text: result.error.message }
   if (result.value === undefined) return { kind: 'unavailable' }
   const outcome = result.value.result
@@ -107,7 +114,7 @@ export function registerAgentTeamUi(ctx: ClientContext): void {
       order: -10,
       locale: NS,
       inject: (sessionId): TeamSubjectInjected => ({
-        startTeam: subject => startTeam(ctx, sessionId, subject),
+        startTeam: (subject, members) => startTeam(ctx, sessionId, subject, members),
       }),
     }, TeamSubjectSeat),
   )

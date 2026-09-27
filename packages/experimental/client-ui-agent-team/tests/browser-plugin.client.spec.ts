@@ -289,8 +289,18 @@ describe('ui-team browser plugin', () => {
 
   it('starts a Team through the /team command of the conversation it was injected for', async () => {
     const b = await bench()
-    await expect(b.startTeam(SESSION)('Ship the parser')).resolves.toEqual({ kind: 'started' })
+    await expect(b.startTeam(SESSION)('Ship the parser', [])).resolves.toEqual({ kind: 'started' })
     expect(b.calls).toEqual([{ method: 'commands/execute', args: [SESSION, '/team Ship the parser', []] }])
+  })
+
+  it('sends the roster as a --members flag ahead of the subject, in chip order', async () => {
+    const b = await bench()
+    await expect(b.startTeam(SESSION)('Ship the parser', ['planner', 'executor', 'executor']))
+      .resolves.toEqual({ kind: 'started' })
+    expect(b.calls).toEqual([{
+      method: 'commands/execute',
+      args: [SESSION, '/team --members planner,executor,executor Ship the parser', []],
+    }])
   })
 
   it.each([
@@ -299,7 +309,7 @@ describe('ui-team browser plugin', () => {
     ['failure', { kind: 'refused', text: 'offline' }],
   ] as const)('maps the command outcome %j to %j', async (command, expected) => {
     const b = await bench({ command })
-    await expect(b.startTeam(SESSION)('Ship')).resolves.toEqual(expected)
+    await expect(b.startTeam(SESSION)('Ship', [])).resolves.toEqual(expected)
   })
 
   it('keeps the node half inert', () => {

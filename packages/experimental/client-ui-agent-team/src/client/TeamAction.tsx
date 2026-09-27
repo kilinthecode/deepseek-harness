@@ -212,6 +212,7 @@ function TeamMemberRow({
         <span className={css.memberText}>
           <span className={css.memberName}>
             <span className={css.memberNameText}>{member.name}</span>
+            {member.role === 'lead' && <Tag tone="solid" className={css.memberTag}>{t('roster.lead')}</Tag>}
             {member.duty !== undefined && <Tag tone="neutral" className={css.memberTag}>{t(dutyKey(member.duty))}</Tag>}
             {isCurrent && <Tag tone="info" className={css.memberTag}>{t('current')}</Tag>}
           </span>

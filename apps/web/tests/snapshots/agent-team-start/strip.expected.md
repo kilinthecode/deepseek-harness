@@ -1,3 +1,12 @@
+- 'group "Team roster: 4 participants"':
+  - text: Lead Planner
+  - button "Remove Planner"
+  - text: Executor 1
+  - button "Remove Executor 1"
+  - text: Executor 2
+  - button "Remove Executor 2"
+  - button "Add planner" [disabled]
+  - button "Add executor"
 - text: Agent Team
 - textbox "Team subject":
   - /placeholder: Subject for a planner to split into tasks and executors to complete

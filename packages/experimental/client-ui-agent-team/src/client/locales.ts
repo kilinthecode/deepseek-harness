@@ -72,6 +72,11 @@ export const zh = {
   'subject.unavailable': '当前配置无法启动团队',
   'duty.planner': '规划者',
   'duty.executor': '执行者',
+  'roster.lead': 'Lead',
+  'roster.addPlanner': '添加规划者',
+  'roster.addExecutor': '添加执行者',
+  'roster.remove': '移除 {name}',
+  'roster.group': '团队成员：{count} 位参与者',
 } satisfies Record<string, string>
 
 /** Agent Teams locale key union. */
@@ -146,4 +151,9 @@ export const en = {
   'subject.unavailable': 'This setup cannot start a team',
   'duty.planner': 'Planner',
   'duty.executor': 'Executor',
+  'roster.lead': 'Lead',
+  'roster.addPlanner': 'Add planner',
+  'roster.addExecutor': 'Add executor',
+  'roster.remove': 'Remove {name}',
+  'roster.group': 'Team roster: {count} participants',
 } satisfies Record<TeamKey, string>
