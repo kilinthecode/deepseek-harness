@@ -134,28 +134,49 @@ describe('SubagentModelSelectionConfig', () => {
     await ctx.fiber.dispose()
   })
 
-  it('rejects a settings-owned default route outside allowedModels and reports it in current() once valid', async () => {
+  it('rejects an enabled out-of-list default route and reports it in current() once valid', async () => {
     const ctx = new Context()
     selectionConfigs.set(ctx, await liveConfig(ctx, SubagentModelSelectionConfig))
 
-    await selectionConfigs.get(ctx)!.replace({ enabled: false, allowedModels: ALLOWED_MODELS, defaultModel: null })
-    expect(ctx.subagentModelSelection.current()).toEqual({ enabled: false, allowedModels: ALLOWED_MODELS })
+    await selectionConfigs.get(ctx)!.replace({ enabled: true, allowedModels: ALLOWED_MODELS, defaultModel: null })
+    expect(ctx.subagentModelSelection.current()).toEqual({ enabled: true, allowedModels: ALLOWED_MODELS })
 
     await selectionConfigs.get(ctx)!.replace({
-      enabled: false, allowedModels: ALLOWED_MODELS, defaultModel: { provider: 'alpha', model: 'other-model' },
+      enabled: true, allowedModels: ALLOWED_MODELS, defaultModel: { provider: 'alpha', model: 'other-model' },
     })
     expect(() => ctx.subagentModelSelection.current())
       .toThrow('subagent model selection default route "alpha/other-model" is not in allowedModels')
 
     await selectionConfigs.get(ctx)!.replace({
-      enabled: false, allowedModels: ALLOWED_MODELS,
+      enabled: true, allowedModels: ALLOWED_MODELS,
       defaultModel: { provider: 'alpha', model: 'fast-model', reasoningEffort: 'max' },
     })
     expect(ctx.subagentModelSelection.current()).toEqual({
-      enabled: false,
+      enabled: true,
       allowedModels: ALLOWED_MODELS,
       defaultModel: { provider: 'alpha', model: 'fast-model', reasoningEffort: 'max' },
     })
+    await ctx.fiber.dispose()
+  })
+
+  it('ignores a stale or out-of-list default while disabled, so turning the feature off never fails Session composition', async () => {
+    const ctx = new Context()
+    selectionConfigs.set(ctx, await liveConfig(ctx, SubagentModelSelectionConfig))
+
+    // An out-of-list default would throw while enabled (previous test); while
+    // disabled it must not, since selectForSession never reads either field
+    // from a disabled current().
+    await selectionConfigs.get(ctx)!.replace({
+      enabled: false, allowedModels: ALLOWED_MODELS, defaultModel: { provider: 'alpha', model: 'other-model' },
+    })
+    expect(ctx.subagentModelSelection.current()).toEqual({ enabled: false, allowedModels: ALLOWED_MODELS })
+
+    // A valid, in-list default is still omitted while disabled.
+    await selectionConfigs.get(ctx)!.replace({
+      enabled: false, allowedModels: ALLOWED_MODELS,
+      defaultModel: { provider: 'alpha', model: 'fast-model', reasoningEffort: 'max' },
+    })
+    expect(ctx.subagentModelSelection.current()).toEqual({ enabled: false, allowedModels: ALLOWED_MODELS })
     await ctx.fiber.dispose()
   })
 

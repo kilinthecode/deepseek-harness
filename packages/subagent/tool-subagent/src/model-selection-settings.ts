@@ -54,10 +54,11 @@ export class SubagentModelSelectionConfig extends Service {
 
   /**
    * Read a detached selection preference for the next eligible Session composition.
-   * @returns the enabled state, exact allowed routes, and default child route when one is set.
-   * @throws when the allowed routes are malformed or duplicated, the default
-   *   route is malformed, or the default's provider/model pair is not one of
-   *   the allowed routes.
+   * @returns the enabled state, exact allowed routes, and, while enabled, a
+   *   default child route when one is set.
+   * @throws when the allowed routes are malformed or duplicated, or the
+   *   default route is malformed; while enabled, also throws when the
+   *   default's provider/model pair is not one of the allowed routes.
    */
   current(): SubagentModelSelectionSettings {
     const enabled = this.config.enabled.get()
@@ -71,13 +72,18 @@ export class SubagentModelSelectionConfig extends Service {
     // `undefined` rather than the declared `null`; normalize both to `null` here.
     const defaultModel = this.config.defaultModel.get() ?? null
     assertValidDefaultChildRoute(defaultModel)
-    if (defaultModel !== null && !defaultChildRouteAllowed(defaultModel, allowedModels)) {
+    // A stale or now-unlisted default only matters while the feature is
+    // enabled: selectForSession never reads allowedModels or defaultModel
+    // from a disabled current(), so enforcing list membership regardless
+    // of enabled would fail every new Session for a user who turned the
+    // feature off without first clearing an old default.
+    if (enabled && defaultModel !== null && !defaultChildRouteAllowed(defaultModel, allowedModels)) {
       throw new Error(`subagent model selection default route "${defaultModel.provider}/${defaultModel.model}" is not in allowedModels`)
     }
     return {
       enabled,
       allowedModels: allowedModels.map(route => ({ ...route })),
-      ...defaultModel === null ? {} : { defaultModel: { ...defaultModel } },
+      ...enabled && defaultModel !== null ? { defaultModel: { ...defaultModel } } : {},
     }
   }
 

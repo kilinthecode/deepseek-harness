@@ -376,7 +376,20 @@ export function apply(ctx: Context, config: Config, session?: Session): void {
 
   const install = (runtimeCtx: Context, modelSelectionPolicy: ModelSelectionPolicy | undefined): void => {
     const modelSelectionEnabled = modelSelectionPolicy !== undefined
-    if (modelSelectionPolicy !== undefined) registerListSubagentModels(runtimeCtx, modelSelectionPolicy)
+    // A configured route (config.agentOptions naming provider+model) wins
+    // outright, so the default never applies and must not be advertised or
+    // preflighted; this mirrors the precedence requestedAgentOptions enforces
+    // (tool agentOptions route > policy default > provider agentRouteDefaults).
+    // Provider-owned agentRouteDefaults do NOT suppress the policy default:
+    // the policy default outranks them too, decided per delegation call below.
+    const configuredNamesRoute = config.agentOptions?.provider !== undefined
+    const effectiveDefaultRoute = configuredNamesRoute ? undefined : modelSelectionPolicy?.defaultRoute
+    if (modelSelectionPolicy !== undefined) {
+      registerListSubagentModels(runtimeCtx, {
+        routes: modelSelectionPolicy.routes,
+        ...effectiveDefaultRoute === undefined ? {} : { defaultRoute: effectiveDefaultRoute },
+      })
+    }
     // Load order and HMR replacement can change provider availability while
     // this fiber remains active.
     let mounted: { subagentProvider: SubagentProvider; disposeTool: () => void } | undefined
@@ -384,9 +397,8 @@ export function apply(ctx: Context, config: Config, session?: Session): void {
       assertSubagentProviderConfiguration(subagentProvider)
       const wording = providerWording(subagentProvider.inheritsParentContext)
       const providerRouteDefaults = subagentProvider.agentRouteDefaults
-      const defaultRoute = modelSelectionPolicy?.defaultRoute
-      const selectionDescription = defaultRoute !== undefined
-        ? defaultRouteSelectionSentence(defaultRoute)
+      const selectionDescription = effectiveDefaultRoute !== undefined
+        ? defaultRouteSelectionSentence(effectiveDefaultRoute)
         : providerRouteDefaults !== undefined
           ? ' Child LLM selection is optional. Omit `provider`, `model`, and `reasoning_effort` to use configured child defaults and this provider\'s route defaults. Supply `provider` and `model` together after using `list_subagent_models` to inspect advertised routes and efforts. Changing the effective route without naming an effort uses the selected model\'s default effort.'
           : ' Child LLM selection is optional. Omit `provider`, `model`, and `reasoning_effort` to use configured child defaults and inherit compatible missing values from the parent Agent. Supply `provider` and `model` together after using `list_subagent_models` to inspect advertised routes and efforts. Changing the effective route without naming an effort uses the selected model\'s default effort.'
@@ -420,26 +432,26 @@ export function apply(ctx: Context, config: Config, session?: Session): void {
           ...modelSelectionEnabled ? {
             provider: {
               type: 'string' as const,
-              description: defaultRoute !== undefined
-                ? `LLM provider route for the child. Supply together with model; omit both to run the child on \`${defaultRoute.provider}/${defaultRoute.model}\`.`
+              description: effectiveDefaultRoute !== undefined
+                ? `LLM provider route for the child. Supply together with model; omit both to run the child on \`${effectiveDefaultRoute.provider}/${effectiveDefaultRoute.model}\`.`
                 : providerRouteDefaults !== undefined
                   ? 'LLM provider route for the child. Supply together with model; omit both to use configured child defaults or this provider\'s route defaults.'
                   : 'LLM provider route for the child. Supply together with model; omit both to use configured child defaults or inherit the parent route.',
             },
             model: {
               type: 'string' as const,
-              description: defaultRoute !== undefined
-                ? `Model id interpreted by provider. Supply together with provider; omit both to run the child on \`${defaultRoute.provider}/${defaultRoute.model}\`.`
+              description: effectiveDefaultRoute !== undefined
+                ? `Model id interpreted by provider. Supply together with provider; omit both to run the child on \`${effectiveDefaultRoute.provider}/${effectiveDefaultRoute.model}\`.`
                 : providerRouteDefaults !== undefined
                   ? 'Model id interpreted by provider. Supply together with provider; omit both to use configured child defaults or this provider\'s route defaults.'
                   : 'Model id interpreted by provider. Supply together with provider; omit both to use configured child defaults or inherit the parent route.',
             },
             reasoning_effort: {
               type: 'string' as const,
-              description: defaultRoute !== undefined
-                ? defaultRoute.reasoningEffort !== undefined
-                  ? `Adapter-owned reasoning effort for the effective child route. Omit to use \`${defaultRoute.reasoningEffort}\` on the default route, or a newly selected model's default on another route.`
-                  : 'Adapter-owned reasoning effort for the effective child route. Omit to inherit a compatible effort from the default route or use a newly selected model\'s default.'
+              description: effectiveDefaultRoute !== undefined
+                ? effectiveDefaultRoute.reasoningEffort !== undefined
+                  ? `Adapter-owned reasoning effort for the effective child route. Omit to use \`${effectiveDefaultRoute.reasoningEffort}\` on the default route, or a newly selected model's default on another route.`
+                  : 'Adapter-owned reasoning effort for the effective child route. Omit to inherit a compatible parent effort when the default route matches the parent\'s, or use the selected model\'s default otherwise.'
                 : providerRouteDefaults !== undefined
                   ? 'Adapter-owned reasoning effort for the effective child route. Omit to use a compatible configured effort or the selected model\'s default.'
                   : 'Adapter-owned reasoning effort for the effective child route. Omit to inherit a compatible configured/parent effort or use a newly selected model\'s default.',
@@ -507,8 +519,13 @@ export function apply(ctx: Context, config: Config, session?: Session): void {
           const parentOptions = parentAgentOptionsForDelegation(parent)
           const requiresRoutePreflight = hasDelegationModelRequest(modelRequest)
             || hasConfiguredLlmSelection(config.agentOptions)
-            || defaultRoute !== undefined
+            || effectiveDefaultRoute !== undefined
+          // A recorded default outranks a provider's own agentRouteDefaults, so
+          // the provider defaults are merged into "configured" only when no
+          // default applies; requestedAgentOptions treats a configured route
+          // (named directly or, here, by this premerge) as winning outright.
           const configuredChildAgentOptions = requiresRoutePreflight && providerRouteDefaults !== undefined
+            && effectiveDefaultRoute === undefined
             ? { ...providerRouteDefaults, ...config.agentOptions }
             : config.agentOptions
           const requestedChildAgentOptions = requestedAgentOptions(
@@ -516,7 +533,7 @@ export function apply(ctx: Context, config: Config, session?: Session): void {
             configuredChildAgentOptions,
             modelRequest,
             modelSelectionEnabled,
-            defaultRoute,
+            effectiveDefaultRoute,
           )
           assertAllowedModelSelection(
             modelSelectionPolicy,
