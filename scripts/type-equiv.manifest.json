@@ -1502,6 +1502,11 @@
       "source": "packages/compaction/compaction-tool-result-pruner/src/types.ts"
     },
     {
+      "doc": "docs/subsystems/compaction.md",
+      "symbol": "PrunePreview",
+      "source": "packages/compaction/compaction-tool-result-pruner/src/types.ts"
+    },
+    {
       "doc": "docs/subsystems/subagent.md",
       "symbol": "SubagentCapabilities",
       "source": "packages/subagent/subagent/src/types.ts"

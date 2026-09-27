@@ -3209,6 +3209,12 @@ export const SERVICE_API: readonly ServiceApiEntry[] = [
         returns: 'landed replacements and aggregate Unicode-code-point savings.',
         throws: ['when the session rejects a replacement; replacements committed earlier in the pass remain durable.'],
       },
+      {
+        signature: 'previewSession(session: Session): PrunePreview',
+        description: 'Preview the replacements `pruneSession` would land for the current surface, without appending anything. A caller compares `tokensSaved` against a pressure margin to decide whether a prune-only reduction is worth landing on its own, before paying for a second cache break by also summarizing.',
+        parameters: [{ name: 'session', description: 'session whose current surface is inspected.' }],
+        returns: 'the candidate count and aggregate estimated token savings `pruneSession` would currently produce.',
+      },
     ],
   },
   {
@@ -5992,6 +5998,10 @@ export const TYPE_API: readonly TypeApiEntry[] = [
   {
     name: 'PrunedEntry',
     declaration: 'export interface PrunedEntry {\n    readonly originalSeq: SessionSeq;\n    readonly replacementSeq: SessionSeq;\n    readonly callId: ToolCallId;\n    readonly charsBefore: number;\n    readonly charsAfter: number;\n}',
+  },
+  {
+    name: 'PrunePreview',
+    declaration: 'export interface PrunePreview {\n    readonly nodes: number;\n    readonly tokensSaved: number;\n}',
   },
   {
     name: 'PruneResult',

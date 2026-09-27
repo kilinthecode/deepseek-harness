@@ -26,7 +26,13 @@ export interface CompactionPolicyConfig {
   compactionRetries?: number
   /** Maximum retries after canonical context overflow; `0` disables recovery. Defaults to `1`. */
   maxOverflowRetries?: number
-  /** Window fraction a prune-only pass must clear below the threshold; otherwise pressure compacts, then prunes. Defaults to `0.2`. */
+  /**
+   * Fraction of the pressure threshold that a prune-only pass must leave
+   * free below the threshold; otherwise pressure compacts first and prunes
+   * the surviving surface after each compaction. `0` only restores skipping
+   * summarization when the prune alone reaches the threshold — it does not
+   * restore the former prune-before-compaction order. Defaults to `0.2`.
+   */
   pruneHeadroomRatio?: number
 }
 
@@ -80,6 +86,6 @@ export type ResolvedCompactSpec = Omit<ResolvedTargetPolicy, 'retainRatio' | 're
   readonly contextWindow: number
   readonly thresholdTokens: number
   readonly retainTokens: number
-  /** Estimated tokens a prune-only pass must save to land without summarizing: `floor(contextWindow * pruneHeadroomRatio)`. */
+  /** Estimated tokens a prune-only pass must save to land without summarizing: `floor(thresholdTokens * pruneHeadroomRatio)`. */
   readonly pruneHeadroomTokens: number
 }

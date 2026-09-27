@@ -22,7 +22,7 @@ const DEFAULT_THRESHOLD_RATIO = 0.8
 /** Default verbatim-tail fraction for every routed model. */
 const DEFAULT_RETAIN_RATIO = 0.16
 
-/** Default window fraction a prune-only pass must clear below the threshold. */
+/** Default fraction of the pressure threshold a prune-only pass must leave free below it. */
 const DEFAULT_PRUNE_HEADROOM_RATIO = 0.2
 
 /** Fields shared by top-level defaults and exact-target overrides. */
@@ -208,7 +208,7 @@ export function resolveCompactSpec(
       + `(${retainTokens}) must be less than threshold tokens ${thresholdTokens}`,
     )
   }
-  const pruneHeadroomTokens = Math.floor(contextWindow * policy.pruneHeadroomRatio)
+  const pruneHeadroomTokens = Math.floor(thresholdTokens * policy.pruneHeadroomRatio)
   return deepFreeze({
     target: { ...policy.target },
     contextWindow,

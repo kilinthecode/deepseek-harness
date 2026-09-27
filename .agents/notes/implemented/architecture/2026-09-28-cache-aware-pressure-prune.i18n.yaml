@@ -1,0 +1,19 @@
+# Bilingual-pair consistency record for 2026-09-28-cache-aware-pressure-prune.md (docs/i18n/README.md): per heading
+# section, a hash of its English and Chinese blocks outside code blocks and generated regions.
+# After editing either side, bring the other along and re-record with:
+#   pnpm run verify-translation-pairing --write .agents/notes/implemented/architecture/2026-09-28-cache-aware-pressure-prune.md
+/agent-note-threshold-relative-prune-headroom-and-compact-first-pressure-order:
+  en: 4b6d7eea3f19734e
+  zh: 44bc0e35b4f0b94e
+/agent-note-threshold-relative-prune-headroom-and-compact-first-pressure-order/problem:
+  en: 28c34b981adf84eb
+  zh: e3ca5155cc204037
+/agent-note-threshold-relative-prune-headroom-and-compact-first-pressure-order/decision:
+  en: 0872a62040c46c86
+  zh: ceb4c1ab7e59481c
+/agent-note-threshold-relative-prune-headroom-and-compact-first-pressure-order/alternatives-considered:
+  en: d574dd791b0e821c
+  zh: 557287b2b2b7281b
+/agent-note-threshold-relative-prune-headroom-and-compact-first-pressure-order/consequences:
+  en: 4803696ae7f28134
+  zh: fb0b61ed29a568bb

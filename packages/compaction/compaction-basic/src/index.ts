@@ -330,15 +330,15 @@ export class BasicCompactionEngine extends CompactionEngine {
     // nothing.
     if (prune !== undefined) {
       const preview = prune.previewSession(agent.session)
-      if (preview.nodes > 0
-        && measurement.totalTokens - preview.tokensSaved <= spec.thresholdTokens - spec.pruneHeadroomTokens) {
+      if (measurement.totalTokens - preview.tokensSaved <= spec.thresholdTokens - spec.pruneHeadroomTokens) {
         prune.pruneSession(agent.session)
         measurement = meter.measure(agent.session)
-        /* v8 ignore else -- the fixed heuristic prices a pruned node
-         * identically in the preview and the remeasured surface, so a
-         * qualifying preview always clears the threshold once landed; the
-         * recheck stays defensive against a route-priced remeasurement that
-         * could diverge from the heuristic. */
+        // The route-priced remeasurement can diverge from the heuristic
+        // preview (for example at pruneHeadroomRatio 0, where an exact tie
+        // depends on which estimate is used), so a qualifying preview does
+        // not guarantee landing below the threshold. When it does not,
+        // execution falls through into the compaction loop below, which
+        // summarizes the already-pruned surface.
         if (measurement.totalTokens < spec.thresholdTokens) return null
       }
     }

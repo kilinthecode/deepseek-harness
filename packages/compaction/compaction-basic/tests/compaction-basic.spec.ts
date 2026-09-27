@@ -428,10 +428,12 @@ describe('compact configuration and defaults', () => {
     })
   })
 
-  it('floors pruneHeadroomTokens from the window ratio and lets a modelPolicies override win over the top-level value', () => {
-    // Fractional ratios make the raw product a non-integer (123.4, 456.7), so
-    // a dropped Math.floor (rounding instead, or leaving it fractional) would
-    // diverge from the expected floored token counts below.
+  it('floors pruneHeadroomTokens from the threshold ratio and lets a modelPolicies override win over the top-level value', () => {
+    // Both targets resolve the same 800-token threshold (window 1_000 at the
+    // default 0.8 thresholdRatio). Fractional ratios against that threshold
+    // make the raw product a non-integer (98.72, 365.36), so a dropped
+    // Math.floor (rounding instead, or leaving it fractional) would diverge
+    // from the expected floored token counts below.
     const config = resolveConfig({
       headroomTokens: 0,
       maxTokens: 8192,
@@ -448,8 +450,14 @@ describe('compact configuration and defaults', () => {
       model: 'override-model',
     })
 
-    expect(resolveCompactSpec(defaulted, 1_000, 0)).toMatchObject({ pruneHeadroomTokens: 123 })
-    expect(resolveCompactSpec(overridden, 1_000, 0)).toMatchObject({ pruneHeadroomTokens: 456 })
+    expect(resolveCompactSpec(defaulted, 1_000, 0)).toMatchObject({
+      thresholdTokens: 800,
+      pruneHeadroomTokens: 98,
+    })
+    expect(resolveCompactSpec(overridden, 1_000, 0)).toMatchObject({
+      thresholdTokens: 800,
+      pruneHeadroomTokens: 365,
+    })
   })
 
   it.each([
@@ -1009,9 +1017,10 @@ describe('optional model-free tool-result pruning', () => {
     })
     const session = oversizedToolResult()
 
-    // The default pruneHeadroomRatio (0.2, i.e. 200 tokens of this 1,000-token
-    // window) is comfortably cleared: pruning alone drops estimated pressure
-    // from >=500 to under 50, so the preview qualifies for the prune-only path.
+    // The default pruneHeadroomRatio (0.2, i.e. 100 tokens of this session's
+    // 500-token pressure threshold) is comfortably cleared: pruning alone
+    // drops estimated pressure from >=500 to under 50, so the preview
+    // qualifies for the prune-only path.
     expect(ctx.tokenMeter.measure(session).totalTokens).toBeGreaterThanOrEqual(500)
     expect(await compactIfNeeded(compact, session)).toBeNull()
     expect(ctx.tokenMeter.measure(session).totalTokens).toBeLessThan(500)
@@ -1063,6 +1072,53 @@ describe('optional model-free tool-result pruning', () => {
     expect(JSON.stringify(finalToolResult)).not.toContain('result 3 '.repeat(300))
   })
 
+  it('falls through to the compaction loop when a landed prune does not clear the threshold despite a qualifying preview', async () => {
+    const ctx = createContext(2_000)
+    const prune = new ToolResultPruner(ctx, pruneConfig)
+    // Over-report tokensSaved so the qualifying check lands the prune; the
+    // real prune it drives still only saves what the fixture actually
+    // allows, which is not enough to clear the threshold on its own.
+    vi.spyOn(prune, 'previewSession').mockReturnValue({ nodes: 3, tokensSaved: 1_000_000 })
+    const compact = new TestCompactionEngine(ctx, {
+      headroomTokens: 0,
+      maxTokens: 8192,
+      auto: false,
+      thresholdRatio: 0.5,
+      retainTokens: 50,
+    })
+    const session = toolConversation()
+
+    const result = await compactIfNeeded(compact, session)
+    expect(result).not.toBeNull()
+    expect(compact.calls).toHaveLength(1)
+    // The prune landed for real before the recheck found it insufficient, so
+    // compaction reads the already-pruned surface instead of returning null.
+    expect(summarizedText(compact.calls[0]!.input)).toContain('tool result middle pruned')
+  })
+
+  it('does not restore the former prune-before-compaction order at pruneHeadroomRatio 0', async () => {
+    const ctx = createContext(2_000)
+    void new ToolResultPruner(ctx, pruneConfig)
+    const compact = new TestCompactionEngine(ctx, {
+      headroomTokens: 0,
+      maxTokens: 8192,
+      auto: false,
+      thresholdRatio: 0.5,
+      retainTokens: 50,
+      pruneHeadroomRatio: 0,
+    })
+    const session = toolConversation()
+
+    expect(await compactIfNeeded(compact, session)).not.toBeNull()
+    expect(compact.calls).toHaveLength(1)
+    // Ratio 0 only restores skipping summarization when the prune alone
+    // reaches the threshold; it does not restore pruning before compaction
+    // when the prune alone is insufficient, so the summarizer still sees the
+    // original oversized text.
+    expect(summarizedText(compact.calls[0]!.input)).toContain('result 1 '.repeat(300))
+    expect(summarizedText(compact.calls[0]!.input)).not.toContain('tool result middle pruned')
+  })
+
   it('still lands a prune when no compactable range exists, and declines without summarizing', async () => {
     const ctx = createContext(1_000)
     void new ToolResultPruner(ctx, pruneConfig)
@@ -1072,10 +1128,11 @@ describe('optional model-free tool-result pruning', () => {
       auto: false,
       thresholdRatio: 0.5,
       retainTokens: 50,
-      // A large headroom requirement keeps the prune-only path from landing,
-      // so the only range in this indivisible single tool-call/result pair
-      // is never compactable either.
-      pruneHeadroomRatio: 0.9,
+      // A headroom requirement above this fixture's reachable margin keeps
+      // the prune-only path from landing on its own, so the only range in
+      // this indivisible single tool-call/result pair is never compactable
+      // either, and the fallback prune before decline is what lands it.
+      pruneHeadroomRatio: 0.95,
     })
     const session = oversizedToolResult()
 
