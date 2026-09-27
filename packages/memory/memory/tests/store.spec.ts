@@ -614,7 +614,10 @@ describe('MemoryStore over the json backend', () => {
     const [firstResult, secondResult] = await Promise.all([first, second])
     expect(firstResult.outcome).toBe('created')
     expect(secondResult.outcome).toBe('created')
-    expect(await code(store.write(write({ name: 'after-dispose' })))).toBe('disposing')
+    await expect(store.write(write({ name: 'after-dispose' }))).rejects.toMatchObject({
+      code: 'disposing',
+      message: 'memory store is disposing: no new writes or forgets are accepted',
+    })
 
     const reopened = await open(root)
     expect((await reopened.memory.visible(undefined)).global.map(record => record.name).sort())

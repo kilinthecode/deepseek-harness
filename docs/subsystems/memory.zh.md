@@ -156,8 +156,8 @@ scan(text: string): MemoryScanFinding | undefined
  * @throws {@link MemoryError} for an invalid name, description, or content,
  * blocked description or content, a project scope without a project root, a
  * project key occupied by another project's record, a cap reached in the
- * target scope, or (`request.ifAbsent`) an existing record with that name
- * and scope.
+ * target scope, (`request.ifAbsent`) an existing record with that name
+ * and scope, or a write begun after the store's domain started closing.
  */
 async write(request: MemoryWriteRequest): Promise<MemoryWriteResult>
 
@@ -174,8 +174,9 @@ async recall(request: MemoryRecallRequest): Promise<MemoryRecord[]>
  * Delete one record durably, in the same one-at-a-time call order as writes.
  * @param request - name, scope, and working directory.
  * @throws {@link MemoryError} when the name is invalid, the project root is
- * unavailable, no such record exists in the scope, or a project key is
- * occupied by another project's record.
+ * unavailable, no such record exists in the scope, a project key is
+ * occupied by another project's record, or the forget began after the
+ * store's domain started closing.
  */
 async forget(request: MemoryForgetRequest): Promise<void>
 ```

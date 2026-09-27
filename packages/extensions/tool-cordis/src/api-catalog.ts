@@ -1513,7 +1513,7 @@ export const SERVICE_API: readonly ServiceApiEntry[] = [
         description: 'Insert or replace one record durably. Writes and forgets of one store run one at a time in call order, from the project-root lookup to the durable put, so overlapping calls never exceed the cap and a same-name overlap reports `created` for the earlier call and keeps its `createdAt`. The cap counts the records this process has loaded or written.',
         parameters: [{ name: 'request', description: 'the memory to store.' }],
         returns: 'whether the record was created or updated, and the stored record.',
-        throws: ['{@link MemoryError} for an invalid name, description, or content, blocked description or content, a project scope without a project root, a project key occupied by another project\'s record, a cap reached in the target scope, or (`request.ifAbsent`) an existing record with that name and scope.'],
+        throws: ['{@link MemoryError} for an invalid name, description, or content, blocked description or content, a project scope without a project root, a project key occupied by another project\'s record, a cap reached in the target scope, (`request.ifAbsent`) an existing record with that name and scope, or a write begun after the store\'s domain started closing.'],
       },
       {
         signature: 'async recall(request: MemoryRecallRequest): Promise<MemoryRecord[]>',
@@ -1525,7 +1525,7 @@ export const SERVICE_API: readonly ServiceApiEntry[] = [
         signature: 'async forget(request: MemoryForgetRequest): Promise<void>',
         description: 'Delete one record durably, in the same one-at-a-time call order as writes.',
         parameters: [{ name: 'request', description: 'name, scope, and working directory.' }],
-        throws: ['{@link MemoryError} when the name is invalid, the project root is unavailable, no such record exists in the scope, or a project key is occupied by another project\'s record.'],
+        throws: ['{@link MemoryError} when the name is invalid, the project root is unavailable, no such record exists in the scope, a project key is occupied by another project\'s record, or the forget began after the store\'s domain started closing.'],
       },
     ],
   },
