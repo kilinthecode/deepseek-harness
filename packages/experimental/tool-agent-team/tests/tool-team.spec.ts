@@ -894,20 +894,50 @@ describe('plain fork parity with Team installation', () => {
     await freshRun.dispose()
   })
 
-  it('also installs Team tools on a one-shot outputSchema fork (documented one-shot descriptor limitation)', async () => {
-    // A one-shot `subagent/descriptor` never records outputSchema — see
-    // descriptor.ts and plain-fork.ts's own documented limitation — so this
-    // specific combination is not excluded, unlike the persona and
-    // toolFilter continuable forks above. This pins the current, documented
-    // behavior rather than leaving it untested.
+  it('does not install Team tools on a one-shot outputSchema fork', async () => {
+    // A one-shot `subagent/descriptor` never records outputSchema (see
+    // descriptor.ts), so classification relies on the in-process composition
+    // record `applyChildComposition` sets from the driver's own
+    // `request.outputSchema`, not on anything read back from the log.
     const { ctx, lead } = await setup([textResponse('lead answer'), textResponse('child')])
     await runTurn(lead, 'Lead task')
     const run = await ctx.subagents.start('fork', {
       label: 'x', prompt: [{ type: 'text', text: 'x' }], parent: lead, signal: SIGNAL,
       outputSchema: { type: 'object', properties: { ok: { type: 'boolean' } }, required: ['ok'] },
     })
-    expect(ctx.tools.get('spawn_teammate', run.localAgent)).toBeDefined()
+    expect(ctx.tools.get('spawn_teammate', run.localAgent)).toBeUndefined()
     await run.dispose()
+  })
+
+  it('does not install Team tools on a one-shot persona or toolFilter fork', async () => {
+    // Mirrors the continuable case above through the one-shot driver instead:
+    // a one-shot `subagent/descriptor` never records persona or toolFilter
+    // either (see plain-fork.ts), so this exercises the same in-process
+    // composition record from the other creation path.
+    const { ctx, lead } = await setup([
+      textResponse('lead answer'), textResponse('persona child'), textResponse('toolFilter child'),
+    ])
+    await runTurn(lead, 'Lead task')
+    // A known global tool name for the toolFilter case below: restrict()
+    // validates deny/allow entries against registered global tools, and
+    // every Team tool is scoped rather than global.
+    ctx.tools.register(defineContentToolFixture({
+      name: 'probe', description: 'test-only fixture tool', parameters: {}, async execute() { return [] },
+    }))
+
+    const personaRun = await ctx.subagents.start('fork', {
+      label: 'x', prompt: [{ type: 'text', text: 'x' }], parent: lead, signal: SIGNAL,
+      persona: 'You are a narrow specialist.',
+    })
+    expect(ctx.tools.get('spawn_teammate', personaRun.localAgent)).toBeUndefined()
+    await personaRun.dispose()
+
+    const toolFilterRun = await ctx.subagents.start('fork', {
+      label: 'x', prompt: [{ type: 'text', text: 'x' }], parent: lead, signal: SIGNAL,
+      toolFilter: { allow: ['probe'] },
+    })
+    expect(ctx.tools.get('spawn_teammate', toolFilterRun.localAgent)).toBeUndefined()
+    await toolFilterRun.dispose()
   })
 
   it('does not install Team tools on a plain fork of a non-member parent', async () => {

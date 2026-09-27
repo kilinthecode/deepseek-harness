@@ -120,7 +120,7 @@ kind: "package-reference"
 - **Agent 消息权限基于确切相邻关系**——`sendMessage()` 要求确切在线 sender；每个 sender 都可以指定直接可继续 child，只有具备驻留可继续 Activation 的 sender 可以指定自己的直接 parent。
 - **描述符仅进日志**——它是会话事件，不进入模型历史，并跨压缩（compaction）保留；可继续描述符会显式记录解析后的子级提供方、模型与推理强度，用于冷恢复。
 - **本 runtime 为子代理回答归档准入**（[接缝](../../workspace/workspace/README.zh.md)）——`workspace/session-activity` 把回合中的在线子代理子孙作为 `subagent` 族报告：按本包记录的持久化血缘查找（带 subagent 来源的 `parentSession`，任意深度，从不包括 fork），组合了 Session query 服务时经一次活会话 observation 从各 child 的描述符取名称，否则只报 id；`workspace/session-stop` 以父级原因逐个取消它们，一个拒绝取消的 child 只记日志，其兄弟仍会停止。父级自身的回合、它的任务以及已归档血缘的步骤门禁归 API Session Controller。
-- **纯 fork 依据持久化数据分类**——`plainForkParentOf()` 解析出通过 `subagent_fork` 以父级历史为种子、且未声明 persona 或工具过滤的子级的确切在线委派 parent；在 `agent.ctx` 上按运行时状态添加提示词小节或工具的安装逻辑，也必须为符合条件的 parent 的纯 fork 安装同样的内容，使 fork 声明的提示词与 parent 一致，让基于确切前缀匹配的提供方提示词缓存覆盖继承的历史。
+- **纯 fork 依据自身组合而非持久化历史分类**——`plainForkParentOf()` 解析出通过 `subagent_fork` 以父级历史为种子、且组合未安装 persona、工具过滤或结构化输出 runtime 的子级的确切在线委派 parent；该判断读取 `applyChildComposition` 在子级创建窗口中设置的进程内记录，一次性与可继续模式（含冷恢复）下一致；在 `agent.ctx` 上按运行时状态添加提示词小节或工具的安装逻辑，也必须为符合条件的 parent 的纯 fork 安装同样的内容，使 fork 声明的提示词与 parent 一致，让基于确切前缀匹配的提供方提示词缓存覆盖继承的历史。
 
 </details>
 
@@ -196,7 +196,6 @@ You are a delegated subagent: your permission scope was fixed when you were star
 - **不回放已接受但未记录的消息**——崩溃可能丢失从未写入子会话日志、已被接受的提示词；丢失的消息不会自动回放。
 - **没有持久化 parent mailbox**——child 到 parent 的消息要求驻留的可继续 child 与在线直接 parent，提供的是接受标识，不保证恰好一次投递。
 - **生命周期事件只供观察**——影响运行的 `subagent/end` 延续或决策接口仍需等待具体消费方。
-- **一次性 fork 的 persona、工具过滤与输出模式无法被分类识别**——`subagent/descriptor` 在 `mode: 'one-shot'` 下不记录它们，因为一次性 child 从不会被恢复；`plainForkParentOf()` 无法把带 persona 或工具过滤的一次性 fork 与纯 fork 区分开，因此按运行时状态安装的逻辑在这一狭窄组合上可能过度安装。
 
 <a id="dev-note"></a>
 ### 开发备注

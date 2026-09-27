@@ -1,9 +1,10 @@
 /**
- * `plainForkParentOf()` classifies a child from durable session data alone:
- * a completed-turn `subagent_fork` (one-shot or continuable, including cold
- * resume) with no persona and no tool filter resolves its exact live
- * delegating parent; every other shape, or a parent that is no longer live,
- * resolves `undefined`.
+ * `plainForkParentOf()` classifies a child from its header and its in-process
+ * composition record, never a session history read: a completed-turn
+ * `subagent_fork` (one-shot or continuable, including cold resume) whose
+ * composition installed no persona, tool filter, or structured-output runtime
+ * resolves its exact live delegating parent; every other shape, or a parent
+ * that is no longer live, resolves `undefined`.
  */
 
 import { afterEach, describe, expect, it, vi } from 'vitest'
@@ -189,6 +190,30 @@ describe('plainForkParentOf', () => {
     expect(plainForkParentOf(resumed)).toBe(parent)
   })
 
+  it('keeps excluding a continuable persona fork across a cold resume', async () => {
+    // `applyChildComposition` reruns on every cold resume (continuation-activation.ts's
+    // shared `setup` passes `inputs.composition` to both `agents.create` and
+    // `agents.resume`), reconstructing the scoped record from the persisted
+    // descriptor's `persona` before this agent republishes. If that
+    // reconstruction were skipped on resume, this would regress to `parent`.
+    const { ctx, parent } = await setup()
+    const childId = SessionId('cold-resume-persona-fork')
+    const started = await ctx.subagents.startContinuable({
+      childId,
+      provider: 'fork',
+      label: 'fork task',
+      request: { prompt: [{ type: 'text', text: 'fork task' }], parent, persona: 'You are a specialist.' },
+      signal: SIGNAL,
+    })
+    expect(plainForkParentOf(ctx.agents.get(started.childId)!)).toBeUndefined()
+    await waitNoActivation(ctx, childId)
+    await queueHostSubagentPrompt(
+      ctx.subagents, parent, childId, [{ type: 'text', text: 'continue' }], { kind: 'user' }, SIGNAL,
+    )
+    const resumed = await waitRunning(ctx, childId)
+    expect(plainForkParentOf(resumed)).toBeUndefined()
+  })
+
   it('resolves undefined once the delegating parent is disposed, without throwing', async () => {
     const { ctx, parent, disposeParent } = await setup()
     const run = await ctx.subagents.start('fork', {
@@ -204,10 +229,14 @@ describe('plainForkParentOf', () => {
     expect(plainForkParentOf(fork)).toBeUndefined()
   })
 
-  it('resolves undefined without throwing for a plain fork whose descriptor fails to parse', async () => {
-    // A structurally invalid current-version descriptor (mirroring a damaged
-    // cold-resumed continuable fork) must not veto the agent/created serial
-    // dispatch this function runs from; see plain-fork.ts.
+  it('ignores a damaged subagent/descriptor payload appended after creation', async () => {
+    // Classification no longer reads `subagent/descriptor` at all: the scoped
+    // record `applyChildComposition` sets during this agent's own (setup-less)
+    // creation window is the only thing `plainForkParentOf` consults besides
+    // the header. Appending a structurally invalid current-version descriptor
+    // after the fact (mirroring a damaged cold-resumed continuable fork; see
+    // archive-admission.spec.ts's equivalent damaged fixture) must not change
+    // the answer.
     const { ctx, parent } = await setup()
     const handle = await ctx.agents.create({
       sessionId: SessionId('damaged-descriptor-fork'),
@@ -217,14 +246,12 @@ describe('plainForkParentOf', () => {
       agentOptions: { provider: 'mock', model: 'mock' },
     })
     try {
-      // A current-version payload whose label is not a string fails the descriptor
-      // parse in foldSubagentDescriptor (mirrors archive-admission.spec.ts's damaged fixture).
       handle.agent.session.append(
         'subagent/descriptor',
         { version: SUBAGENT_DESCRIPTOR_VERSION, mode: 'continuable', provider: 'fork', label: 7 } as never,
       )
       expect(() => plainForkParentOf(handle.agent)).not.toThrow()
-      expect(plainForkParentOf(handle.agent)).toBeUndefined()
+      expect(plainForkParentOf(handle.agent)).toBe(parent)
     } finally {
       await handle.dispose()
     }
