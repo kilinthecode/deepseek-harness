@@ -2,12 +2,15 @@
  * Models settings page store: one snapshot joining the configurable-provider
  * directory (`llm/listProviders` joined with `llm/listConfigurableProviders`),
  * the settings namespaces (shared settings mirror),
- * and the referenced credentials (`credentials/describe`). The host stays the
+ * the referenced credentials (`credentials/describe`), and the sign-in flows
+ * the routes declare (`authorization/getState`, kept live by `authorization/watch`).
+ * The host stays the
  * single fact source — every mutation writes through the wire and the page
  * re-renders from the next describe, pushed or refetched.
  */
 
 import type { Context as ClientContext } from '@deepseek-ai/cordis'
+import type { AuthorizationFlowView, AuthorizationView } from '@deepseek-ai/dsh-api-authorization-controller/types'
 import type {
   CredentialInfo, LlmConfigurableProvider, LlmProviderInfo, SettingsNamespaceView,
 } from '@deepseek-ai/dsh-api-remotes/client'
@@ -31,7 +34,17 @@ export interface ProviderDirectoryEntry {
   readonly active: boolean
   readonly declared?: boolean
   readonly error?: string
+  /**
+   * The sign-in flow this route declares, when its adapter registers one:
+   * {@link ProviderAuthorization.key} names the credential record the flow
+   * writes, and {@link ProviderAuthorization.required} marks a route whose only
+   * way to authenticate is that stored sign-in.
+   */
+  readonly authorization?: ProviderAuthorization
 }
+
+/** One route's sign-in declaration, as the directory carries it. */
+export type ProviderAuthorization = NonNullable<LlmConfigurableProvider['authorization']>
 
 /**
  * Join declared configurable providers with the currently registered routes.
@@ -53,6 +66,7 @@ export function joinProviderDirectory(
     active: active.has(entry.provider),
     ...entry.declared === undefined ? {} : { declared: entry.declared },
     ...entry.error === undefined ? {} : { error: entry.error },
+    ...entry.authorization === undefined ? {} : { authorization: entry.authorization },
   }))
   for (const provider of registered) {
     if (declared.has(provider.id)) continue
@@ -90,6 +104,14 @@ export interface ProviderRow {
    * own derivation rule.
    */
   derivedCredential?: CredentialInfo
+  /**
+   * The registered sign-in flow {@link ProviderDirectoryEntry.authorization}
+   * names, once the authorization view lists it: whether a sign-in is stored
+   * ({@link AuthorizationFlowView.configured}) and whether this deployment's
+   * credential provider can write that record. A declaration no view lists —
+   * the adapter ships no such flow, or the read failed — leaves it undefined.
+   */
+  flow: AuthorizationFlowView | undefined
 }
 
 /** Page snapshot. */
@@ -99,12 +121,16 @@ export interface ModelsSettingsState {
   error: string | null
   /** Credential enrichment failure; provider/settings rows remain usable. */
   credentialError: string | null
+  /** Sign-in enrichment failure; provider/settings rows remain usable. */
+  authorizationError: string | null
   /** Whether the settings provider accepts writes. */
   writable: boolean
   /** Every configurable provider joined with its configured/credential state. */
   rows: readonly ProviderRow[]
   /** Namespace views by ns, for the editor's schema/layers/secrets. */
   namespaces: ReadonlyMap<string, SettingsNamespaceView>
+  /** Latest authorization view: one entry per sign-in flow, plus the in-flight attempt. */
+  authorization: AuthorizationView | null
 }
 
 /**
@@ -155,15 +181,32 @@ function apiKeyEnvOf(
 export class ModelsSettingsStore {
   /** The snapshot the section renders from (uSES-safe store). */
   readonly store: SnapshotStore<ModelsSettingsState> = createSnapshotStore<ModelsSettingsState>({
-    status: 'idle', error: null, credentialError: null, writable: false, rows: [], namespaces: new Map(),
+    status: 'idle',
+    error: null,
+    credentialError: null,
+    authorizationError: null,
+    writable: false,
+    rows: [],
+    namespaces: new Map(),
+    authorization: null,
   })
 
   /** Latest load wins; an older response never overwrites a newer one. */
   private generation = 0
 
   /**
-   * @param ctx - the page plugin's context, whose `remote.llm` and
-   * `remote.credentials` namespaces carry the directory and credential reads.
+   * Every sign-in publication the live stream has made: merged frames and
+   * stream ends. A load's authorization read starts before its other reads
+   * finish — and a pushed invalidation fires exactly this reload around a
+   * sign-in completing — so a publication that lands while the load is in
+   * flight is newer than that read, which must not then publish over it.
+   */
+  private liveRevision = 0
+
+  /**
+   * @param ctx - the page plugin's context, whose `remote.llm`,
+   * `remote.credentials`, and `remote.authorization` namespaces carry the
+   * directory, credential, and sign-in reads.
    * @param schema - settings-owned schema and immutable path operations.
    * @param describeFace - the shared mirror's describe face (namespace views and writability).
    */
@@ -178,15 +221,18 @@ export class ModelsSettingsStore {
    * settings answer in parallel, then one batched credential describe over
    * every referenced ref. Provider failure or absence of an initial settings
    * answer keeps the last good rows and surfaces an error; a failed settings
-   * refresh reuses the mirror's held view.
+   * refresh reuses the mirror's held view; a failed authorization read degrades
+   * the sign-in half of the rows alone.
    * @returns nothing; the snapshot carries the outcome.
    */
   async load(): Promise<void> {
     const generation = ++this.generation
+    const live = this.liveRevision
     this.store.update((s) => { s.status = 'loading'; s.error = null })
-    const [registered, declared] = await Promise.all([
+    const [registered, declared, authorization] = await Promise.all([
       this.ctx.remote.llm.listProviders(),
       this.ctx.remote.llm.listConfigurableProviders(),
+      readAuthorization(this.ctx),
       this.describeFace.ensure(),
     ])
     if (!registered.ok) { this.failLoad(generation, registered.error.message); return }
@@ -200,7 +246,7 @@ export class ModelsSettingsStore {
     const writable = mirrored.view.writable
     const views: readonly SettingsNamespaceView[] = mirrored.view.namespaces
     const namespaces = new Map(views.map(view => [view.ns, view]))
-    const rows: ProviderRow[] = providers.map((entry) => {
+    const rows: Omit<ProviderRow, 'flow'>[] = providers.map((entry) => {
       const namespace = namespaces.get(entry.settingsNs)
       const configured = namespace !== undefined
         && (entry.settingsPath.length === 0 || this.schema.getPath(namespace.value, entry.settingsPath) !== undefined)
@@ -235,12 +281,11 @@ export class ModelsSettingsStore {
       else credentialError = response.error.message
     }
     if (generation !== this.generation) return
-    this.store.update((s) => {
-      s.status = 'ready'
-      s.error = null
-      s.credentialError = credentialError
-      s.writable = writable
-      s.rows = rows.filter(row => row.entry.provider !== 'deepseek-account' || row.accountAvailable === true).map((row) => {
+    // The rows join the credentials before the snapshot write; each row's flow
+    // joins inside it, from whichever sign-in half the snapshot ends up with.
+    const rendered = rows
+      .filter(row => row.entry.provider !== 'deepseek-account' || row.accountAvailable === true)
+      .map((row) => {
         if (row.entry.provider === 'deepseek-account') return row
         const named = row.apiKeyEnv === undefined ? undefined : credentials[row.apiKeyEnv]
         const derived = row.apiKeyEnv !== undefined ? undefined : credentials[deriveKeyRef(row.entry.provider)]
@@ -250,8 +295,46 @@ export class ModelsSettingsStore {
           ...derived === undefined ? {} : { derivedCredential: derived },
         }
       })
+    this.store.update((s) => {
+      s.status = 'ready'
+      s.error = null
+      s.credentialError = credentialError
+      s.writable = writable
+      // A stream publication that landed while this load was reading is newer
+      // than the read, so the load leaves the sign-in half as the stream left
+      // it: the pushed view, and the failure text a stream end reported.
+      if (live === this.liveRevision) {
+        s.authorization = authorization.view
+        s.authorizationError = authorization.error
+      }
+      s.rows = joinFlows(rendered, s.authorization)
       s.namespaces = namespaces
     })
+  }
+
+  /**
+   * Merge one pushed authorization view: the watch stream hands over the whole
+   * view, so the snapshot takes it whole and re-joins each row's flow.
+   * @param view - the view the Host pushed.
+   * @returns nothing; the rows follow.
+   */
+  mergeAuthorization(view: AuthorizationView): void {
+    this.liveRevision += 1
+    this.store.update((s) => {
+      s.authorization = view
+      s.authorizationError = null
+      s.rows = joinFlows(s.rows, view)
+    })
+  }
+
+  /**
+   * Publish one authorization failure, keeping the rows' last known sign-in
+   * state.
+   * @param error - the thrown failure whose message the snapshot reports.
+   */
+  failAuthorization(error: unknown): void {
+    this.liveRevision += 1
+    this.store.update((s) => { s.authorizationError = failureText(error) })
   }
 
   /** Publish one load's failure text, unless a newer load already took over. */
@@ -264,21 +347,79 @@ export class ModelsSettingsStore {
   }
 }
 
+/** One authorization read: the view, or the failure text that degrades sign-in alone. */
+interface AuthorizationRead {
+  view: AuthorizationView | null
+  error: string | null
+}
+
+/**
+ * Read the authorization view. The provider rows never owe this read — a route
+ * without a sign-in flow needs nothing from it — so a refusal or a dropped call
+ * is reported as enrichment text instead of failing the page.
+ * @param ctx - the page plugin's context, whose `remote.authorization` namespace carries the read.
+ * @returns the view, or null with the failure text.
+ */
+async function readAuthorization(ctx: ClientContext): Promise<AuthorizationRead> {
+  try {
+    const response = await ctx.remote.authorization.getState()
+    return response.ok ? { view: response.value, error: null } : { view: null, error: response.error.message }
+  } catch (error) {
+    return { view: null, error: failureText(error) }
+  }
+}
+
+/**
+ * One failure's display text: an Error's message, or the thrown value verbatim.
+ * @param error - the thrown value.
+ * @returns the text the snapshot reports.
+ */
+function failureText(error: unknown): string {
+  return error instanceof Error ? error.message : String(error)
+}
+
+/**
+ * Re-join every row's sign-in state to one authorization view. A load and a
+ * pushed frame each publish a whole view, and every row derives its flow from
+ * the declaration its own directory entry carries.
+ * @param rows - the rows whose flows to re-join.
+ * @param view - the view the snapshot now holds.
+ * @returns the rows carrying that view's flows.
+ */
+function joinFlows(rows: readonly Omit<ProviderRow, 'flow'>[], view: AuthorizationView | null): ProviderRow[] {
+  return rows.map(row => ({ ...row, flow: flowOf(row.entry, view) }))
+}
+
+/**
+ * The registered sign-in flow one joined row's declaration names.
+ * @param entry - one joined directory row.
+ * @param view - the latest authorization view, or null before the first read.
+ * @returns the flow view the sign-in dialog drives, or undefined while no view lists the key.
+ */
+function flowOf(entry: ProviderDirectoryEntry, view: AuthorizationView | null): AuthorizationFlowView | undefined {
+  const key = entry.authorization?.key
+  if (key === undefined) return undefined
+  return view?.flows.find(flow => flow.key === key)
+}
+
 /**
  * Whether a joined row can serve model requests as it stands: the route is
  * registered with the adapter registry, and whatever credential its resolved
  * profile names is stored. A profile naming no reference authenticates through
  * the provider's own path (the Bedrock chain, Vertex ADC, a gateway that needs
- * nothing), as does a live route with no settings address at all, so neither
- * owes this page a key.
+ * nothing, an ambient environment variable), as does a live route with no
+ * settings address at all, so neither owes this page a key — except the route
+ * whose adapter declares a stored sign-in as its only way in, which is usable
+ * only once the authorization view reports that sign-in configured.
  * @param row - one joined provider row.
  * @returns whether the user already has this provider to talk to.
  */
 export function providerUsable(row: ProviderRow): boolean {
   if (!row.entry.active) return false
   if (row.entry.provider === 'deepseek-account') return row.accountAvailable === true
-  if (row.apiKeyEnv === undefined) return true
-  return row.credential?.configured === true
+  if (row.apiKeyEnv !== undefined) return row.credential?.configured === true
+  if (row.entry.authorization?.required === true) return row.flow?.configured === true
+  return true
 }
 
 /** First-run onboarding readiness derived only from the shared Models join. */

@@ -33,6 +33,8 @@
       "@deepseek-ai/dsh-api-gateway/stream-protocol": ["./packages/api/gateway/src/stream-protocol.ts"],
       "@deepseek-ai/dsh-api-account-controller": ["./packages/api/account-controller/src/index.ts"],
       "@deepseek-ai/dsh-api-account-controller/types": ["./packages/api/account-controller/src/types.ts"],
+      "@deepseek-ai/dsh-api-authorization-controller": ["./packages/api/authorization-controller/src/index.ts"],
+      "@deepseek-ai/dsh-api-authorization-controller/types": ["./packages/api/authorization-controller/src/types.ts"],
       "@deepseek-ai/dsh-deepseek-account-platform": ["./packages/credentials/deepseek-account-platform/src/index.ts"],
       "@deepseek-ai/dsh-deepseek-account-platform/types": ["./packages/credentials/deepseek-account-platform/src/types.ts"],
       "@deepseek-ai/dsh-deepseek-account": ["./packages/credentials/deepseek-account/src/index.ts"],

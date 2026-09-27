@@ -1,6 +1,8 @@
 /** Page-store join: directory × namespaces × credentials, with last-good rows on failure. */
 import { describe, expect, it } from 'vitest'
+import type { AuthorizationFlowView, AuthorizationView } from '@deepseek-ai/dsh-api-authorization-controller/types'
 import type { RpcResponse } from '@deepseek-ai/dsh-api-remotes/client'
+import type { CredentialKey } from '@deepseek-ai/dsh-credentials/types'
 import { RemoteError } from '@deepseek-ai/dsh-client-test-runtime'
 import { SettingsDescribeMirror } from '@deepseek-ai/dsh-client-ui-settings/src/client/settings-mirror.ts'
 import { settingsSchema } from './settings-schema.client.ts'
@@ -82,11 +84,15 @@ const NAMESPACES = [
   },
 ]
 
+/** An authorization view with no flow registered and no attempt running. */
+const NO_FLOWS: AuthorizationView = { flows: [], attempt: null }
+
 function api(overrides: {
   accountAvailable?: boolean
   providers?: () => Promise<RpcResponse<{ providers: typeof DIRECTORY }>>
   describeSettings?: () => Promise<RemoteAnswer<{ writable: boolean; hasDocument: boolean; namespaces: typeof NAMESPACES }>>
   describeCredentials?: (refs: readonly string[]) => Promise<RemoteAnswer<Record<string, unknown>>>
+  authorization?: () => Promise<RemoteAnswer<AuthorizationView>>
 } = {}) {
   const seenRefs: string[][] = []
   const providers = overrides.providers ?? (() => Promise.resolve(ok({ providers: DIRECTORY })))
@@ -110,6 +116,9 @@ function api(overrides: {
   const face = {
     session: { modelCatalog: async () => remoteOk({ groups: overrides.accountAvailable
       ? [{ id: 'deepseek-account', models: [{ id: 'deepseek-flash' }] }] : [] }) },
+    authorization: {
+      getState: overrides.authorization ?? (async () => remoteOk(NO_FLOWS)),
+    },
     llm: {
       listProviders: () => mapProviderBatch(rows => rows
         .filter(row => row.active)
@@ -352,6 +361,222 @@ describe('edge joins', () => {
   })
 })
 
+
+describe('sign-in joins', () => {
+  /** The record the ChatGPT subscription's flow writes: pi-ai scopes it by provider id. */
+  const CODEX_KEY = 'llm-pi-ai/openai-codex' as CredentialKey
+
+  /** The subscription's one registered sign-in flow, as the authorization view lists it. */
+  function codexFlow(configured: boolean): AuthorizationFlowView {
+    return {
+      key: CODEX_KEY,
+      label: 'ChatGPT',
+      methods: [{ id: 'oauth', label: 'ChatGPT' }],
+      inFlight: false,
+      configured,
+      writable: true,
+    }
+  }
+
+  /** The authorization view listing that flow alone. */
+  function codexView(configured: boolean): AuthorizationView {
+    return { flows: [codexFlow(configured)], attempt: null }
+  }
+
+  /**
+   * The page API over a directory whose only route is the subscription, with the
+   * authorization read scripted.
+   * @param options - the row's declaration, the flow's stored state, and the read's own script.
+   * @returns the context and the shared describe face.
+   */
+  function codexApi(options: {
+    configured: boolean
+    required?: boolean
+    authorization?: () => Promise<RemoteAnswer<AuthorizationView>>
+  }) {
+    return api({
+      providers: async () => ok({
+        providers: [{
+          provider: 'openai-codex', displayName: 'ChatGPT', settingsNs: 'llm-pi-ai',
+          settingsPath: ['providers', 'openai-codex'], active: true,
+          authorization: { key: CODEX_KEY, required: options.required ?? true },
+        }] as never,
+      }),
+      authorization: options.authorization ?? (async () => remoteOk(codexView(options.configured))),
+    })
+  }
+
+  /**
+   * Load the store over that page API.
+   * @param options - the row's declaration, the flow's stored state, and the read's own script.
+   * @returns the loaded controller.
+   */
+  async function loadCodex(options: {
+    configured: boolean
+    required?: boolean
+    authorization?: () => Promise<RemoteAnswer<AuthorizationView>>
+  }): Promise<ModelsSettingsStore> {
+    const { ctx, mirror } = codexApi(options)
+    const store = new ModelsSettingsStore(ctx, settingsSchema, mirror)
+    await store.load()
+    return store
+  }
+
+  it('joins the declared sign-in and the flow the view lists onto the row', async () => {
+    const store = await loadCodex({ configured: false })
+    const state = store.store.getSnapshot()
+    expect(state.authorization).toEqual(codexView(false))
+    expect(state.authorizationError).toBeNull()
+    const row = state.rows[0]!
+    expect(row.entry.authorization).toEqual({ key: CODEX_KEY, required: true })
+    expect(row.apiKeyEnv).toBeUndefined()
+    expect(row.flow).toEqual(codexFlow(false))
+  })
+
+  it('holds a route whose adapter requires the stored sign-in unusable until it is signed in', async () => {
+    const unsigned = await loadCodex({ configured: false })
+    expect(providerUsable(unsigned.store.getSnapshot().rows[0]!)).toBe(false)
+    const signed = await loadCodex({ configured: true })
+    expect(providerUsable(signed.store.getSnapshot().rows[0]!)).toBe(true)
+  })
+
+  it('leaves a keyless route usable while unsigned when its adapter requires no sign-in', async () => {
+    const store = await loadCodex({ configured: false, required: false })
+    const row = store.store.getSnapshot().rows[0]!
+    expect(row.flow?.configured).toBe(false)
+    expect(providerUsable(row)).toBe(true)
+  })
+
+  it.each([true, false])('keeps a row that names an API-key reference on its credential: %s', async (configured) => {
+    const { ctx, mirror } = api({
+      providers: async () => ok({
+        providers: [{
+          provider: 'openai', displayName: 'openai', settingsNs: 'llm-pi-ai',
+          settingsPath: ['providers', 'openai'], active: true,
+          authorization: { key: CODEX_KEY, required: true },
+        }] as never,
+      }),
+      describeCredentials: refs => Promise.resolve(remoteOk(
+        Object.fromEntries(refs.map(ref => [ref, { configured, writable: true }])),
+      )),
+      authorization: async () => remoteOk(codexView(true)),
+    })
+    const store = new ModelsSettingsStore(ctx, settingsSchema, mirror)
+    await store.load()
+    const row = store.store.getSnapshot().rows[0]!
+    // The stored reference is this route's own way in, so neither the flow's
+    // state nor the declaration decides usability for it.
+    expect(row.apiKeyEnv).toBe('OPENAI_API_KEY')
+    expect(row.flow?.configured).toBe(true)
+    expect(providerUsable(row)).toBe(configured)
+  })
+
+  it('degrades the sign-in enrichment, not the page, when the authorization read is refused', async () => {
+    const store = await loadCodex({
+      configured: false,
+      authorization: async () => remoteFail('authorization unavailable'),
+    })
+    const state = store.store.getSnapshot()
+    expect(state.status).toBe('ready')
+    expect(state.error).toBeNull()
+    expect(state.rows).toHaveLength(1)
+    expect(state.authorization).toBeNull()
+    expect(state.authorizationError).toBe('authorization unavailable')
+  })
+
+  it('reports a dropped authorization call as enrichment text', async () => {
+    const store = await loadCodex({
+      configured: false,
+      authorization: () => Promise.reject(new Error('connection reset')),
+    })
+    const state = store.store.getSnapshot()
+    expect(state.status).toBe('ready')
+    expect(state.rows).toHaveLength(1)
+    expect(state.authorization).toBeNull()
+    expect(state.authorizationError).toBe('connection reset')
+  })
+
+  it('reports a thrown non-Error authorization fault as its own text', async () => {
+    const carrierFault: unknown = 'the carrier closed the channel'
+    const store = await loadCodex({
+      configured: false,
+      authorization: async () => { throw carrierFault },
+    })
+    expect(store.store.getSnapshot().authorizationError).toBe('the carrier closed the channel')
+  })
+
+  it('merges a pushed view onto the rows without reading the directory again', async () => {
+    const store = await loadCodex({ configured: false })
+    const loaded = store.store.getSnapshot().rows[0]!
+    expect(providerUsable(loaded)).toBe(false)
+    store.mergeAuthorization(codexView(true))
+    const state = store.store.getSnapshot()
+    expect(state.authorization).toEqual(codexView(true))
+    expect(state.authorizationError).toBeNull()
+    // The pushed frame re-joins the directory entry the load produced.
+    expect(state.rows[0]?.entry).toBe(loaded.entry)
+    expect(state.rows[0]?.flow).toEqual(codexFlow(true))
+    expect(providerUsable(state.rows[0]!)).toBe(true)
+    // A frame that stops listing the key withdraws the row's flow again.
+    store.mergeAuthorization(NO_FLOWS)
+    expect(store.store.getSnapshot().rows[0]?.flow).toBeUndefined()
+  })
+
+  it('clears a recorded read failure on the next pushed frame', async () => {
+    const store = await loadCodex({
+      configured: false,
+      authorization: async () => remoteFail('authorization unavailable'),
+    })
+    expect(store.store.getSnapshot().authorizationError).toBe('authorization unavailable')
+    store.mergeAuthorization(codexView(true))
+    expect(store.store.getSnapshot().authorizationError).toBeNull()
+    expect(store.store.getSnapshot().authorization).toEqual(codexView(true))
+  })
+
+  it('keeps the rows and their flows when the watch reports a failure', async () => {
+    const store = await loadCodex({ configured: true })
+    store.failAuthorization('the sign-in stream ended')
+    const state = store.store.getSnapshot()
+    expect(state.authorizationError).toBe('the sign-in stream ended')
+    expect(state.authorization).toEqual(codexView(true))
+    expect(state.rows[0]?.flow).toEqual(codexFlow(true))
+    expect(providerUsable(state.rows[0]!)).toBe(true)
+  })
+
+  it('keeps the frame that landed while the load was still reading', async () => {
+    const pending = Promise.withResolvers<RemoteAnswer<AuthorizationView>>()
+    const { ctx, mirror } = codexApi({ configured: false, authorization: () => pending.promise })
+    const store = new ModelsSettingsStore(ctx, settingsSchema, mirror)
+
+    const loading = store.load()
+    // The frame arrives while the load's own read is in flight — what a pushed
+    // invalidation around a completed sign-in produces — so the frame, not the
+    // read the load started from, is the newer sign-in state.
+    store.mergeAuthorization(codexView(true))
+    pending.resolve(remoteOk(codexView(false)))
+    await loading
+
+    const state = store.store.getSnapshot()
+    expect(state.authorization).toEqual(codexView(true))
+    expect(state.rows[0]?.flow).toEqual(codexFlow(true))
+    expect(providerUsable(state.rows[0]!)).toBe(true)
+  })
+
+  it('keeps the stream failure that landed while the load was still reading', async () => {
+    const pending = Promise.withResolvers<RemoteAnswer<AuthorizationView>>()
+    const { ctx, mirror } = codexApi({ configured: false, authorization: () => pending.promise })
+    const store = new ModelsSettingsStore(ctx, settingsSchema, mirror)
+
+    const loading = store.load()
+    store.failAuthorization(new Error('the sign-in stream ended'))
+    pending.resolve(remoteOk(codexView(false)))
+    await loading
+
+    const state = store.store.getSnapshot()
+    expect(state.status).toBe('ready')
+    expect(state.authorizationError).toBe('the sign-in stream ended')
+  })
+})
 
 it.each([false, true])('uses account availability without asking for an API key: %s', async (accountAvailable) => {
   const { ctx, mirror, seenRefs } = api({ accountAvailable, providers: async () => ok({ providers: [{

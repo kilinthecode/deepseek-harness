@@ -15,7 +15,10 @@
  * nothing; the switch holds still while either panel has a write or an
  * endpoint interrogation in flight, since a switch underneath one would
  * orphan the answer. Each card kind owns its own open state, so closing one
- * never discards a draft in another. Every
+ * never discards a draft in another. A row whose route declares a sign-in flow
+ * carries that flow's state instead of a key: the status label a required
+ * sign-in shows, the Sign in / Sign out action beside the row's other actions,
+ * and the dialog that drives the controller's single attempt. Every
  * mutation writes through the wire, while a provider removal first requires
  * confirmation; the page re-renders from pushed invalidations or the
  * post-apply reload.
@@ -28,9 +31,10 @@ import type { InjectFace, PropsRenderSlots } from '@deepseek-ai/dsh-client-ui-sl
 import type { SettingsNamespaceView } from '@deepseek-ai/dsh-api-remotes/client'
 // Type-only: pulls this package's SlotMap merge (the two Models child slots).
 import type {} from './slot-contract.ts'
+import { AuthorizationDialog } from './AuthorizationDialog.tsx'
 import { CustomProviderCard } from './CustomProviderCard.tsx'
 import { deriveKeyRef, protocolChoices, providerUsable } from './store.ts'
-import type { ModelsSettingsStore, ProviderRow } from './store.ts'
+import type { ModelsSettingsStore, ProviderAuthorization, ProviderRow } from './store.ts'
 import type { ModelsOperations } from './operations.ts'
 import type { SettingsSchemaOperations } from './schema-operations.ts'
 import { ProviderEditor, type ProviderEditorProps } from './ProviderEditor.tsx'
@@ -104,6 +108,12 @@ interface AddableRow {
 interface CatalogDraft {
   target: EditorTarget
   namespace: SettingsNamespaceView
+}
+
+/** A subscription row whose sign-in dialog is open, with the declaration it drives. */
+interface SignInTarget extends ProviderIdentity {
+  /** The credential record the row's declaration names. */
+  key: ProviderAuthorization['key']
 }
 
 /** Values that vary around the shared provider-editor rendering. */
@@ -249,6 +259,11 @@ function Loaded({ injected, renderSlot }: { injected: ModelsSectionFace; renderS
   const [deleteFailure, setDeleteFailure] = useState<string | undefined>(undefined)
   const [savedTarget, setSavedTarget] = useState<ProviderIdentity | undefined>(undefined)
   const [dismissedSetup, setDismissedSetup] = useState<ReadonlySet<string>>(() => new Set())
+  /** The subscription row whose sign-in dialog is open. */
+  const [signInTarget, setSignInTarget] = useState<SignInTarget | undefined>(undefined)
+  /** The row a sign-out is running for, and the row a sign-out failed for. */
+  const [signingOut, setSigningOut] = useState<string | undefined>(undefined)
+  const [signOutFailure, setSignOutFailure] = useState<string | undefined>(undefined)
 
   const announceSaved = (target: ProviderIdentity): void => {
     // Announced only once the refreshed directory is in the snapshot the
@@ -292,6 +307,33 @@ function Loaded({ injected, renderSlot }: { injected: ModelsSectionFace; renderS
     if (deleting) return
     setDeleteTarget(undefined)
     setDeleteFailure(undefined)
+  }
+
+  /**
+   * Drop one subscription row's stored sign-in. A sign-out asks nothing extra,
+   * so it runs from the row action itself: the answer replaces the page's view
+   * and the row flips to unsigned, while a refusal or a dropped call reports
+   * the same line in place — there is no second step to retry.
+   * @param identity - the row being signed out of.
+   * @param key - the credential record the row's declaration names.
+   */
+  const signOut = (identity: ProviderIdentity, key: ProviderAuthorization['key']): void => {
+    setSigningOut(identity.provider)
+    setSignOutFailure(undefined)
+    void operations.signOutAuthorization(key).then(
+      (outcome) => {
+        setSigningOut(undefined)
+        if (outcome.kind === 'refused') {
+          setSignOutFailure(identity.provider)
+          return
+        }
+        controller.mergeAuthorization(outcome.view)
+      },
+      () => {
+        setSigningOut(undefined)
+        setSignOutFailure(identity.provider)
+      },
+    )
   }
 
   const confirmDelete = (): void => {
@@ -431,6 +473,10 @@ function Loaded({ injected, renderSlot }: { injected: ModelsSectionFace; renderS
           const credentialMissing = !credentialConfigured
             && row.apiKeyEnv !== undefined
             && row.credential?.configured === false
+          // A subscription route declares a sign-in flow instead of a key
+          // reference; the page's view says whether that sign-in is stored.
+          const authorization = row.entry.authorization
+          const flow = row.flow
           return (
             <li key={row.entry.provider} className={styles['rowCard']}>
               <div className={styles['rowHead']}>
@@ -463,6 +509,53 @@ function Loaded({ injected, renderSlot }: { injected: ModelsSectionFace; renderS
                       : null}
                 </span>
                 <span className={styles['rowActions']}>
+                  {authorization === undefined || row.apiKeyEnv !== undefined
+                    ? null
+                    : (
+                      <>
+                        {/* The status label is the row's answer to whether it can
+                            serve a request at all, so a required sign-in keeps
+                            saying so even where no action is offered. */}
+                        {authorization.required
+                          ? (
+                            <span className={styles['signInStatus']}>
+                              {flow !== undefined && flow.configured ? t('signedIn') : t('notSignedIn')}
+                            </span>
+                          )
+                          : null}
+                        {signOutFailure === row.entry.provider
+                          ? <span className={styles['error']} role="alert">{t('signOutFailed')}</span>
+                          : null}
+                        {flow === undefined || !flow.configured
+                          ? (
+                            <button
+                              type="button"
+                              className={styles['secondaryButton']}
+                              onClick={() => {
+                                setSignInTarget({
+                                  provider: row.entry.provider,
+                                  displayName: row.entry.displayName,
+                                  key: authorization.key,
+                                })
+                              }}
+                            >
+                              {t('signIn')}
+                            </button>
+                          )
+                          : flow.writable
+                            ? (
+                              <button
+                                type="button"
+                                className={styles['secondaryButton']}
+                                disabled={signingOut === row.entry.provider}
+                                onClick={() => { signOut(row.entry, authorization.key) }}
+                              >
+                                {t('signOut')}
+                              </button>
+                            )
+                            : null}
+                      </>
+                    )}
                   <button
                     type="button"
                     className={styles['secondaryButton']}
@@ -699,6 +792,19 @@ function Loaded({ injected, renderSlot }: { injected: ModelsSectionFace; renderS
       >
         {deleteFailure === undefined ? null : <p className={styles['error']}>{deleteFailure}</p>}
       </Modal>
+      {signInTarget === undefined
+        ? null
+        : (
+          <AuthorizationDialog
+            displayName={signInTarget.displayName}
+            authorizationKey={signInTarget.key}
+            view={state.authorization}
+            operations={operations}
+            t={t}
+            onClose={() => { setSignInTarget(undefined) }}
+            onView={(view) => { controller.mergeAuthorization(view) }}
+          />
+        )}
     </div>
   )
 }
