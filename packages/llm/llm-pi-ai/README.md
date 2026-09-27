@@ -191,7 +191,7 @@ Provider tokenization governs exact input. Retained images add the stable attach
 
 #### KV Cache effect
 
-Conversion preserves logical request order, while image handles and offload placeholders add model-visible text. A changed execution-world path rewrites a historical handle and can prevent reuse from that image even when attachment identity and request bytes stay stable. Changing adapter instance, provider, model, or another upstream token has the same suffix effect. An offload decision turns an earlier image into placeholder text, so reuse ends at that message; the omission never reverts, so the prefix stays stable afterwards.
+Conversion preserves logical request order, while image handles and offload placeholders add model-visible text. A changed execution-world path rewrites a historical handle and can prevent reuse from that image even when attachment identity and request bytes stay stable. Changing adapter instance, provider, model, or another upstream token has the same suffix effect. An offload decision turns an earlier image into placeholder text, so reuse ends at that message; the omission never reverts, so the prefix stays stable afterwards. On the `openai` and `openai-codex` routes against `api.openai.com`, a `GenerateOptions.cacheKey` distinct from the request's own `sessionId` replaces pi-ai's session-derived `prompt_cache_key` in the outgoing body with that shared key, so sibling and fork children in the same delegation tree route to the same provider-side cached prefix; it never adds a key `cacheRetention: 'none'` omitted, and every other route ignores it.
 
 ### Provider response
 

@@ -145,7 +145,7 @@ None, as the LLM service adds no content; adapters choose when to add the shared
 
 #### KV Cache effect
 
-Reasoning-effort materialization preserves the assembled request prefix. Image identity and request-preview text are deterministic, while an optional execution-world path is resolved for each request; a changed path or an offload decision can prevent reuse from that image.
+Reasoning-effort materialization preserves the assembled request prefix. Image identity and request-preview text are deterministic, while an optional execution-world path is resolved for each request; a changed path or an offload decision can prevent reuse from that image. `GenerateOptions.cacheKey`, when set, additionally names the provider cache-routing key this request should share; an adapter whose provider supports prompt-prefix cache routing maps it to that provider's own field, so requests carrying the same key can reuse a cached prefix under it regardless of their own `sessionId`.
 
 ## Known Limitations and Deferred Work
 
@@ -159,6 +159,7 @@ These limits define where this service stops and other packages or future work b
 - **Variants normally require a producer** — `prefill`, per-tool `strict`, block `cache` hints, and the `agent` message-source variant have no producer ([Agent Note](../../../.agents/notes/archived/simplification/2026-07-04-prune-producerless-vocabulary-variants.md)).
 - **`BlockAssembler` handles core block kinds only** — a plugin-added block type whose stream is never closed by `block-end` makes `blocks()` throw.
 - **`GenerateOptions.sessionId` is a locally-declared brand** — importing dsh-session's `SessionId` would create a dependency cycle.
+- **`GenerateOptions.cacheKey` is a plain string, not a branded session id** — it is a provider cache-routing hint the loop derives from session lineage today, not an identity other code resolves through the session registry.
 - **Tool updates require session history** — `GenerateOptions.tools` contains active definitions. `toolHistory` supplies the initial declarations and historically resolved additions from `Session.toolHistory()`. At adapter dispatch, `projectToolUpdates` constructs deferred declarations and retains removed definitions for `in-history`; `addition-only` omits removed definitions and removal messages. Unsupported routes receive active tools without developer messages or `deferLoading`. Missing history or a request prefix omitting recorded updates falls back to current declarations without developer messages. Explicitly deferred baseline tools remain deferred until their first retained addition block; declaring a deferred tool does not activate it.
 
 <a id="dev-note"></a>

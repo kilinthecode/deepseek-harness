@@ -177,6 +177,20 @@ You are a delegated subagent: your permission scope was fixed when you were star
 
 子级内部前缀稳定：该声明在子 agent 生命周期内绝不变化，因此只写入第一份运行时上下文快照一次。父级侧不会直接使缓存失效；具名工具消费方共同负责请求前缀的任何变化。
 
+### 提供方缓存路由
+
+#### 模型看到什么
+
+缓存路由是请求上携带的传输层元数据，不是提示词内容，因此永不到达模型。
+
+#### Token 影响
+
+缓存路由只改变对已缓存前缀的提供方选择，不改变请求内容，因此不增加任何 token。
+
+#### KV Cache 影响
+
+同一委派树中的每个子级——包括可续写 fork 的后代——都携带设为该树根会话 id 的 `GenerateOptions.cacheKey`（由 `dsh-agent-loop` 依据子级自身 `parentSession` 表头谱系逐请求标注），使兄弟与 fork 子级在支持该字段的适配器上路由到同一个提供方侧已缓存前缀，而非各自使用自己的会话 id 各起一份。
+
 ## 已知限制与延期工作
 
 <a id="known-limitations-and-deferred-work"></a>

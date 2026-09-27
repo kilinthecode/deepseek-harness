@@ -33,6 +33,7 @@ export { interruptedTurnClosers, TOOL_NOT_STARTED, TOOL_OUTCOME_UNKNOWN } from '
 export type { SessionSurface, SurfaceFoldReplacement, SurfaceFoldResult, SessionMessageProjection, SessionMessageProjectionContext } from './surface.ts'
 export { deriveEventMessage, foldSurface, isAppendSurfaceEvent, isReplacementSurfaceEvent, isSurfaceEvent, isSurfaceEligibleType } from './surface.ts'
 export { canonicalHeader, foldRequestHeader, headerEquals } from './request-header.ts'
+export { delegationTreeRoot } from './delegation.ts'
 export { KNOWN_SESSION_EVENT_TYPES } from './known-event-types.ts'
 
 declare module '@deepseek-ai/cordis' {

@@ -11,6 +11,7 @@ import type {
   ContentBlock, FinishReason, GenerateOptions, Message, RequestMessage, TokenUsage, ToolSchema,
 } from '@deepseek-ai/dsh-llm'
 import type { Agent } from '@deepseek-ai/dsh-agent'
+import { delegationTreeRoot } from '@deepseek-ai/dsh-session'
 
 interface SummaryConfig {
   readonly summarizationProvider: string
@@ -157,6 +158,7 @@ export async function summarizeWithLlm(
     ...input.tools === undefined ? {} : { tools: [...input.tools] },
     maxTokens: config.maxTokens,
     sessionId: agent.session.id,
+    cacheKey: String(delegationTreeRoot(agent.session.header, id => agent.ctx.sessions.get(id)?.header)),
     purpose: 'compaction',
     ...signal === undefined ? {} : { signal },
   }

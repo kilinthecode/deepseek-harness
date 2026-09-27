@@ -57,6 +57,7 @@ import type {
 } from '@deepseek-ai/dsh-llm'
 import type { AttachmentStore, ImageAttachmentRef } from '@deepseek-ai/dsh-attachment'
 import { idleWatchdog, timeoutOf } from '@deepseek-ai/dsh-timeout'
+import { clampOpenAIPromptCacheKey } from '@earendil-works/pi-ai/api/openai-prompt-cache'
 import type { ResolvedPiAiProviderProfile } from './config.ts'
 import { toPiContext } from './context.ts'
 import { createModels, getSupportedThinkingLevels } from './models.ts'
@@ -209,6 +210,53 @@ function requestHeaders(headers: Readonly<Record<string, string>> | undefined): 
     ...Object.fromEntries(Object.entries(headers ?? {}).filter(([name]) => !reserved.has(name.toLowerCase()))),
     ...attribution,
   }
+}
+
+/**
+ * Whether one resolved model's route is a ChatGPT/Codex OpenAI-family route
+ * this adapter shares a delegation-tree cache-routing key on: pi-ai's own
+ * `openai` or `openai-codex` builtin provider, talking to OpenAI's own host.
+ * Excludes `azure-openai-responses` and any OpenAI-compatible third-party
+ * catalog route, which route their own `prompt_cache_key` independently of a
+ * DSH delegation tree.
+ * @param model - the resolved model descriptor passed to pi-ai's `onPayload`.
+ * @returns whether {@link overridePromptCacheKey} may replace this request's `prompt_cache_key`.
+ */
+export function sharesPromptCacheKey(model: Model<Api>): boolean {
+  return (model.provider === 'openai' || model.provider === 'openai-codex')
+    && model.baseUrl.includes('api.openai.com')
+}
+
+/**
+ * Build the pi-ai `onPayload` hook that replaces this request's own
+ * session-derived `prompt_cache_key` with the delegation tree's shared
+ * `cacheKey`, so sibling and fork children route to the same provider-side
+ * cached prefix instead of each starting a separate one under its own session
+ * id. Only ever REPLACES a `prompt_cache_key` pi-ai itself already set: a
+ * `cacheRetention: 'none'` request, or a route {@link sharesPromptCacheKey}
+ * excludes, carries none, and this hook must not add one pi-ai omitted.
+ * @param cacheKey - the delegation tree's shared routing key (already confirmed distinct from this request's own session id).
+ * @returns the `onPayload` hook to pass through `SimpleStreamOptions`.
+ */
+export function overridePromptCacheKey(cacheKey: string): NonNullable<SimpleStreamOptions['onPayload']> {
+  return (payload, model) => {
+    if (!sharesPromptCacheKey(model) || typeof payload !== 'object' || payload === null) return undefined
+    const body = payload as { prompt_cache_key?: unknown }
+    if (body.prompt_cache_key === undefined) return undefined
+    return { ...payload, prompt_cache_key: clampOpenAIPromptCacheKey(cacheKey) }
+  }
+}
+
+/**
+ * The distinct cache-routing key this request should route under, or
+ * `undefined` when there is nothing to override: `GenerateOptions.cacheKey`
+ * is absent, or equal to this request's own `sessionId` (a top-level
+ * request, whose session-derived default already IS its cache-routing key).
+ * @param options - the assembled request.
+ * @returns the key {@link overridePromptCacheKey} should install, or `undefined` to leave pi-ai's own default untouched.
+ */
+export function resolveCacheKeyOverride(options: GenerateOptions): string | undefined {
+  return options.cacheKey !== undefined && options.cacheKey !== options.sessionId ? options.cacheKey : undefined
 }
 
 /**
@@ -377,11 +425,13 @@ export class PiAiAdapter extends LlmAdapter {
             maxBytes: profile.requestImageMaxBytes,
           },
         }, onReplayDegrade)
+      const cacheKeyOverride = resolveCacheKeyOverride(options)
       const events = snapshot.models.streamSimple(model, context, {
         ...profileOptions(profile, reasoning, apiKey),
         ...options.temperature === undefined ? {} : { temperature: options.temperature },
         ...options.maxTokens === undefined ? {} : { maxTokens: options.maxTokens },
         ...options.sessionId === undefined ? {} : { sessionId: String(options.sessionId) },
+        ...cacheKeyOverride === undefined ? {} : { onPayload: overridePromptCacheKey(cacheKeyOverride) },
         signal: watchdog.signal,
         // Profile headers are deployment-owned; attribution names are
         // Harness-owned and therefore win collisions.
