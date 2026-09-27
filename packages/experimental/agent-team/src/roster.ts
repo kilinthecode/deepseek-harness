@@ -481,10 +481,19 @@ export class TeamRoster {
     })
   }
 
-  /** Whether a Session's own suffix identifies a provider-owned subagent child. */
+  /**
+   * Whether a Session identifies a provider-owned subagent child, from the
+   * durable header alone. `childSessionMeta()` stamps `origin: 'subagent'`
+   * synchronously before either child shape publishes; a one-shot
+   * `subagent/descriptor` event is instead appended lazily, inside the
+   * child's first `agent/pre-step` — strictly after `agent/created` — so
+   * reading the descriptor here would misclassify a fresh one-shot subagent
+   * fork as an independent root for every caller resolving membership before
+   * that first step (in particular a scoped installer reacting to
+   * `agent/created`, such as `tool-agent-team`'s `maybeInstall`).
+   */
   private subagentDescriptor(agent: Agent): boolean {
-    // oxlint-disable-next-line typescript/no-deprecated -- Existing Session history read; migration deferred.
-    return foldSubagentDescriptor(agent.session.snapshotEvents(agent.session.inheritedEventCount)) !== undefined
+    return agent.session.header.origin === 'subagent'
   }
 }
 

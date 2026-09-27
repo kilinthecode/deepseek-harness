@@ -119,6 +119,7 @@ Successful local child creation appends a `subagent/catalog` fact to the parent 
 - **Agent-message authority is exact adjacency** — `sendMessage()` requires the exact live sender; every sender may target a direct continuable child, while only a sender with a resident continuable Activation may target its direct parent.
 - **The descriptor is log-only** — a session event absent from model history and retained across compaction; a continuable descriptor records the resolved child provider, model, and reasoning effort explicitly for cold resume.
 - **This runtime answers archive admission for children** ([seam](../../workspace/workspace/README.md)) — `workspace/session-activity` reports the live subagent descendants inside a turn as the `subagent` family, found by the durable lineage this package records (`parentSession` with the subagent origin, any depth, never a fork) and labelled from each child's descriptor through a live Session observation when the Session query service is composed, otherwise by id; `workspace/session-stop` cancels each of them with the parent cause, one at a time, so one child refusing its cancel is logged while its siblings still stop. The parent's own turn, its jobs, and the archived-lineage step gate belong to the API Session Controller.
+- **A plain fork classifies from durable data** — `plainForkParentOf()` resolves the exact live delegating parent of a child seeded through `subagent_fork` with no persona or tool filter; a runtime-gated installer that adds prompt sections or tools on `agent.ctx` must also install them on a plain fork of a qualifying agent, so the fork's declared prompt matches the parent's and a provider prompt cache covers the inherited history.
 
 </details>
 
@@ -194,6 +195,7 @@ These limits define when the seam is a poor fit or needs special operational car
 - **No replay of accepted-but-unlogged messages** — a crash can lose an accepted prompt that never reached the child's session log; the lost message is not replayed automatically.
 - **No durable parent mailbox** — child-to-parent messages require a resident continuable child and live direct parent, and provide acceptance identity rather than exactly-once delivery.
 - **Lifecycle events are observe-only** — a run-affecting `subagent/end` continuation or decision API waits for a concrete consumer.
+- **A one-shot fork's persona, tool filter, and output schema are not classifiable** — `subagent/descriptor` omits them for `mode: 'one-shot'` because a one-shot child is never resumed; `plainForkParentOf()` cannot distinguish a persona- or toolFilter-scoped one-shot fork from a plain one, so a runtime-gated installer may over-install on that narrow combination.
 
 <a id="dev-note"></a>
 ### Dev Note
