@@ -376,12 +376,7 @@ export function apply(ctx: Context, config: Config, session?: Session): void {
 
   const install = (runtimeCtx: Context, modelSelectionPolicy: ModelSelectionPolicy | undefined): void => {
     const modelSelectionEnabled = modelSelectionPolicy !== undefined
-    // A configured route (config.agentOptions naming provider+model) wins
-    // outright, so the default never applies and must not be advertised or
-    // preflighted; this mirrors the precedence requestedAgentOptions enforces
-    // (tool agentOptions route > policy default > provider agentRouteDefaults).
-    // Provider-owned agentRouteDefaults do NOT suppress the policy default:
-    // the policy default outranks them too, decided per delegation call below.
+    // A recorded default outranks provider route defaults; a configured tool route outranks the default.
     const configuredNamesRoute = config.agentOptions?.provider !== undefined
     const effectiveDefaultRoute = configuredNamesRoute ? undefined : modelSelectionPolicy?.defaultRoute
     if (modelSelectionPolicy !== undefined) {
@@ -520,10 +515,7 @@ export function apply(ctx: Context, config: Config, session?: Session): void {
           const requiresRoutePreflight = hasDelegationModelRequest(modelRequest)
             || hasConfiguredLlmSelection(config.agentOptions)
             || effectiveDefaultRoute !== undefined
-          // A recorded default outranks a provider's own agentRouteDefaults, so
-          // the provider defaults are merged into "configured" only when no
-          // default applies; requestedAgentOptions treats a configured route
-          // (named directly or, here, by this premerge) as winning outright.
+          // Only merge provider route defaults into "configured" when no recorded default applies.
           const configuredChildAgentOptions = requiresRoutePreflight && providerRouteDefaults !== undefined
             && effectiveDefaultRoute === undefined
             ? { ...providerRouteDefaults, ...config.agentOptions }
