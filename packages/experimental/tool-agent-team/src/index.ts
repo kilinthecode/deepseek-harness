@@ -8,7 +8,7 @@ import type { Agent, AgentOptions } from '@deepseek-ai/dsh-agent'
 import { brandString } from '@deepseek-ai/dsh-brand'
 import type { CommandDefinitionId, CommandResult } from '@deepseek-ai/dsh-commands'
 import { createUserMessage, ReasoningEffortId } from '@deepseek-ai/dsh-llm'
-import { parentAgentOptionsForDelegation } from '@deepseek-ai/dsh-subagent'
+import { parentAgentOptionsForDelegation, plainForkParentOf } from '@deepseek-ai/dsh-subagent'
 import {
   hasConfiguredLlmSelection,
   hasDelegationModelRequest,
@@ -631,6 +631,27 @@ async function startTeam(ctx: Context, agent: Agent, rawInput: string): Promise<
   return { kind: 'success', text: 'Agent Team started.' }
 }
 
+/**
+ * Whether `agent` qualifies for the Team section and tool set: either it
+ * currently has Team membership itself, or it is a plain fork
+ * ({@link plainForkParentOf}) of a parent that currently does. A plain fork
+ * of a member is not itself a member — `spawn_teammate`/`send_message`/etc.
+ * still resolve and authorize the calling agent through `ctx.agentTeams` at
+ * execution time and reject a non-member with `TEAM_NOT_MEMBER`, so a fork
+ * can never act as its parent — but its assembled prompt must match the
+ * parent's declared section and tools so a provider prompt cache keyed on
+ * the exact prefix covers the inherited history instead of missing on a
+ * dropped section.
+ * @param agent - the exact live candidate agent.
+ * @param ctx - the context whose `agentTeams` resolves membership.
+ * @returns whether `agent` qualifies for the Team installation.
+ */
+function qualifiesForTeamInstall(agent: Agent, ctx: Context): boolean {
+  if (ctx.agentTeams.tryMembership(agent) !== undefined) return true
+  const forkParent = plainForkParentOf(agent)
+  return forkParent !== undefined && ctx.agentTeams.tryMembership(forkParent) !== undefined
+}
+
 /** Install Team tools in every live or subsequently published Team member scope. */
 export function apply(ctx: Context, config: Config = {}): void {
   const resolved = resolveConfig(config)
@@ -646,7 +667,7 @@ export function apply(ctx: Context, config: Config = {}): void {
   })
   const installed = new Map<Agent, () => void>()
   const maybeInstall = (agent: Agent): void => {
-    if (installed.has(agent) || ctx.agentTeams.tryMembership(agent) === undefined) return
+    if (installed.has(agent) || !qualifiesForTeamInstall(agent, ctx)) return
     installed.set(agent, install(agent, ctx, resolved))
   }
   for (const agent of ctx.agents.list()) maybeInstall(agent)
