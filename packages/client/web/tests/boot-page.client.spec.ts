@@ -23,7 +23,7 @@ function mount() {
 const STATUS_MS = 3400
 /** Reduced motion shows the brand complete from mount, so the status follows sooner. */
 const REDUCED_STATUS_MS = 500
-/** Hold used where the host reports no animations (jsdom), then the leave fade. */
+/** Fallback-path (host reports no animations) total hold from mount when leave() runs early, then the leave fade. */
 const FALLBACK_HOLD_MS = 3840
 const LEAVE_MS = 560
 const SETTLE_REST_MS = 360
@@ -323,6 +323,19 @@ describe('BootPage', () => {
     expect(el.firstElementChild).not.toBeNull()
     await vi.advanceTimersByTimeAsync(1)
     expect(el.childNodes).toHaveLength(0)
+  })
+
+  it('still holds the rest and load margin on the fallback path when the boot becomes ready late', async () => {
+    const { el, page } = mount()
+    // Advance well past BRAND_END_MS (and the early-call total,
+    // FALLBACK_HOLD_MS) before the app signals ready, so the fallback
+    // path's own deadline has already elapsed by the time leave() runs.
+    await vi.advanceTimersByTimeAsync(FALLBACK_HOLD_MS + 1000)
+    page.leave()
+    await vi.advanceTimersByTimeAsync(SETTLE_REST_MS + LOAD_MARGIN_MS - 1)
+    expect(el.firstElementChild?.classList.contains(css.leaving!)).toBe(false)
+    await vi.advanceTimersByTimeAsync(1)
+    expect(el.firstElementChild?.classList.contains(css.leaving!)).toBe(true)
   })
 
   it('waits for the brand animations to finish before it starts to leave', async () => {
