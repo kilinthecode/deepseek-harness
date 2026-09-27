@@ -16072,7 +16072,7 @@
       "kind": "event",
       "event": "subagent/model-selection-policy",
       "surface": false,
-      "digest": "a6567ccb2e530606b775371eb4fa31468d72084339968e8b0440a516a23b39dc",
+      "digest": "fde25355968b1b7eacba0c45b16fa179d607295763e0cc2c1a79874296235a0b",
       "schema": {
         "root": 0,
         "nodes": [
@@ -16086,22 +16086,22 @@
               },
               {
                 "name": "ignorable",
-                "type": 5,
+                "type": 6,
                 "optional": true
               },
               {
                 "name": "seq",
-                "type": 6,
+                "type": 7,
                 "optional": false
               },
               {
                 "name": "time",
-                "type": 6,
+                "type": 7,
                 "optional": false
               },
               {
                 "name": "type",
-                "type": 7,
+                "type": 8,
                 "optional": false
               }
             ],
@@ -16114,6 +16114,11 @@
                 "name": "allowedModels",
                 "type": 2,
                 "optional": false
+              },
+              {
+                "name": "defaultModel",
+                "type": 5,
+                "optional": true
               }
             ],
             "indices": []
@@ -16141,6 +16146,27 @@
           {
             "kind": "primitive",
             "type": "string"
+          },
+          {
+            "kind": "object",
+            "properties": [
+              {
+                "name": "model",
+                "type": 4,
+                "optional": false
+              },
+              {
+                "name": "provider",
+                "type": 4,
+                "optional": false
+              },
+              {
+                "name": "reasoningEffort",
+                "type": 4,
+                "optional": true
+              }
+            ],
+            "indices": []
           },
           {
             "kind": "literal",
@@ -23444,7 +23470,7 @@
         "packages/llm/llm/src/types.ts#ReplayEnvelope"
       ],
       "sources": [
-        "packages/llm/llm/src/types.ts:430"
+        "packages/llm/llm/src/types.ts:439"
       ]
     },
     {
@@ -23586,53 +23612,6 @@
       },
       "names": [],
       "sources": []
-    },
-    {
-      "digest": "0d47a8f3d847243c4488e755ad4cab7a04ac5d4621b9c81865524cf3f4d8536f",
-      "schema": {
-        "root": 0,
-        "nodes": [
-          {
-            "kind": "object",
-            "properties": [
-              {
-                "name": "allowedModels",
-                "type": 1,
-                "optional": false
-              }
-            ],
-            "indices": []
-          },
-          {
-            "kind": "array",
-            "element": 2
-          },
-          {
-            "kind": "object",
-            "properties": [
-              {
-                "name": "model",
-                "type": 3,
-                "optional": false
-              },
-              {
-                "name": "provider",
-                "type": 3,
-                "optional": false
-              }
-            ],
-            "indices": []
-          },
-          {
-            "kind": "primitive",
-            "type": "string"
-          }
-        ]
-      },
-      "names": [],
-      "sources": [
-        "packages/subagent/tool-subagent/src/model-selection-state.ts:17"
-      ]
     },
     {
       "digest": "0e10d7c096b47e61defe372a5fc8bd37d835199410eac44367f95c45082498bd",
@@ -26302,7 +26281,7 @@
         "packages/llm/llm/src/types.ts#ImageBlock"
       ],
       "sources": [
-        "packages/llm/llm/src/types.ts:79"
+        "packages/llm/llm/src/types.ts:80"
       ]
     },
     {
@@ -32344,7 +32323,7 @@
       },
       "names": [],
       "sources": [
-        "packages/llm/llm/src/types.ts:157"
+        "packages/llm/llm/src/types.ts:158"
       ]
     },
     {
@@ -34090,7 +34069,7 @@
       },
       "names": [],
       "sources": [
-        "packages/llm/llm/src/types.ts:158"
+        "packages/llm/llm/src/types.ts:159"
       ]
     },
     {
@@ -34384,7 +34363,7 @@
       },
       "names": [],
       "sources": [
-        "packages/llm/llm/src/types.ts:455"
+        "packages/llm/llm/src/types.ts:464"
       ]
     },
     {
@@ -37984,7 +37963,7 @@
       },
       "names": [],
       "sources": [
-        "packages/llm/llm/src/types.ts:453"
+        "packages/llm/llm/src/types.ts:462"
       ]
     },
     {
@@ -44030,7 +44009,7 @@
         "packages/llm/llm/src/types.ts#ToolRemovalBlock"
       ],
       "sources": [
-        "packages/llm/llm/src/types.ts:127"
+        "packages/llm/llm/src/types.ts:128"
       ]
     },
     {
@@ -44948,7 +44927,7 @@
         "packages/llm/llm/src/types.ts#StreamChunk"
       ],
       "sources": [
-        "packages/llm/llm/src/types.ts:452"
+        "packages/llm/llm/src/types.ts:461"
       ]
     },
     {
@@ -46926,7 +46905,7 @@
         "packages/llm/llm/src/types.ts#TextBlock"
       ],
       "sources": [
-        "packages/llm/llm/src/types.ts:62",
+        "packages/llm/llm/src/types.ts:63",
         "packages/web/web-search-deepseek/src/provider.ts:66"
       ]
     },
@@ -52589,7 +52568,7 @@
         "packages/llm/llm/src/types.ts#FinishReason"
       ],
       "sources": [
-        "packages/llm/llm/src/types.ts:165"
+        "packages/llm/llm/src/types.ts:166"
       ]
     },
     {
@@ -53243,7 +53222,7 @@
         "packages/llm/llm/src/types.ts#LlmFailure"
       ],
       "sources": [
-        "packages/llm/llm/src/types.ts:41"
+        "packages/llm/llm/src/types.ts:42"
       ]
     },
     {
@@ -56595,7 +56574,7 @@
         "packages/llm/llm/src/types.ts#ToolSchema"
       ],
       "sources": [
-        "packages/llm/llm/src/types.ts:473"
+        "packages/llm/llm/src/types.ts:482"
       ]
     },
     {
@@ -60114,7 +60093,7 @@
       },
       "names": [],
       "sources": [
-        "packages/llm/llm/src/types.ts:161"
+        "packages/llm/llm/src/types.ts:162"
       ]
     },
     {
@@ -63087,7 +63066,7 @@
         "packages/llm/llm/src/types.ts#ContentBlockType"
       ],
       "sources": [
-        "packages/llm/llm/src/types.ts:148"
+        "packages/llm/llm/src/types.ts:149"
       ]
     },
     {
@@ -63674,7 +63653,7 @@
         "packages/llm/llm/src/types.ts#ContentBlock"
       ],
       "sources": [
-        "packages/llm/llm/src/types.ts:150"
+        "packages/llm/llm/src/types.ts:151"
       ]
     },
     {
@@ -63774,7 +63753,7 @@
         "packages/llm/llm/src/types.ts#ReasoningBlock"
       ],
       "sources": [
-        "packages/llm/llm/src/types.ts:68"
+        "packages/llm/llm/src/types.ts:69"
       ]
     },
     {
@@ -65465,7 +65444,7 @@
       },
       "names": [],
       "sources": [
-        "packages/llm/llm/src/types.ts:456"
+        "packages/llm/llm/src/types.ts:465"
       ]
     },
     {
@@ -66290,7 +66269,7 @@
       },
       "names": [],
       "sources": [
-        "packages/llm/llm/src/types.ts:160"
+        "packages/llm/llm/src/types.ts:161"
       ]
     },
     {
@@ -66337,7 +66316,7 @@
         "packages/llm/llm/src/types.ts#ToolAdditionBlock"
       ],
       "sources": [
-        "packages/llm/llm/src/types.ts:115"
+        "packages/llm/llm/src/types.ts:116"
       ]
     },
     {
@@ -67017,7 +66996,7 @@
       },
       "names": [],
       "sources": [
-        "packages/llm/llm/src/types.ts:454"
+        "packages/llm/llm/src/types.ts:463"
       ]
     },
     {
@@ -72344,7 +72323,7 @@
       },
       "names": [],
       "sources": [
-        "packages/llm/llm/src/types.ts:459"
+        "packages/llm/llm/src/types.ts:468"
       ]
     },
     {
@@ -72440,94 +72419,6 @@
           {
             "kind": "literal",
             "value": "workspace-write"
-          }
-        ]
-      },
-      "names": [],
-      "sources": []
-    },
-    {
-      "digest": "a6567ccb2e530606b775371eb4fa31468d72084339968e8b0440a516a23b39dc",
-      "schema": {
-        "root": 0,
-        "nodes": [
-          {
-            "kind": "object",
-            "properties": [
-              {
-                "name": "data",
-                "type": 1,
-                "optional": false
-              },
-              {
-                "name": "ignorable",
-                "type": 5,
-                "optional": true
-              },
-              {
-                "name": "seq",
-                "type": 6,
-                "optional": false
-              },
-              {
-                "name": "time",
-                "type": 6,
-                "optional": false
-              },
-              {
-                "name": "type",
-                "type": 7,
-                "optional": false
-              }
-            ],
-            "indices": []
-          },
-          {
-            "kind": "object",
-            "properties": [
-              {
-                "name": "allowedModels",
-                "type": 2,
-                "optional": false
-              }
-            ],
-            "indices": []
-          },
-          {
-            "kind": "array",
-            "element": 3
-          },
-          {
-            "kind": "object",
-            "properties": [
-              {
-                "name": "model",
-                "type": 4,
-                "optional": false
-              },
-              {
-                "name": "provider",
-                "type": 4,
-                "optional": false
-              }
-            ],
-            "indices": []
-          },
-          {
-            "kind": "primitive",
-            "type": "string"
-          },
-          {
-            "kind": "literal",
-            "value": true
-          },
-          {
-            "kind": "primitive",
-            "type": "number"
-          },
-          {
-            "kind": "literal",
-            "value": "subagent/model-selection-policy"
           }
         ]
       },
@@ -73754,7 +73645,7 @@
       "names": [],
       "sources": [
         "packages/core/session/src/types.ts:214",
-        "packages/llm/llm/src/types.ts:159"
+        "packages/llm/llm/src/types.ts:160"
       ]
     },
     {
@@ -77089,7 +76980,7 @@
         "packages/llm/llm/src/types.ts#ToolCallBlock"
       ],
       "sources": [
-        "packages/llm/llm/src/types.ts:105"
+        "packages/llm/llm/src/types.ts:106"
       ]
     },
     {
@@ -81164,7 +81055,7 @@
       },
       "names": [],
       "sources": [
-        "packages/llm/llm/src/types.ts:457"
+        "packages/llm/llm/src/types.ts:466"
       ]
     },
     {
@@ -90155,10 +90046,12 @@
         ]
       },
       "names": [
-        "packages/api/session-controller/src/types.ts#ModelSelection"
+        "packages/api/session-controller/src/types.ts#ModelSelection",
+        "packages/subagent/tool-subagent/src/model-selection.ts#DefaultChildRoute"
       ],
       "sources": [
-        "packages/api/session-controller/src/types.ts:100"
+        "packages/api/session-controller/src/types.ts:100",
+        "packages/subagent/tool-subagent/src/model-selection.ts:27"
       ]
     },
     {
@@ -90562,7 +90455,7 @@
       },
       "names": [],
       "sources": [
-        "packages/llm/llm/src/types.ts:458"
+        "packages/llm/llm/src/types.ts:467"
       ]
     },
     {
@@ -90713,7 +90606,7 @@
         "packages/llm/llm/src/types.ts#FileBlock"
       ],
       "sources": [
-        "packages/llm/llm/src/types.ts:98"
+        "packages/llm/llm/src/types.ts:99"
       ]
     },
     {
@@ -90731,7 +90624,7 @@
         "packages/llm/llm/src/types.ts#SystemPromptUpdate"
       ],
       "sources": [
-        "packages/llm/llm/src/types.ts:396"
+        "packages/llm/llm/src/types.ts:405"
       ]
     },
     {
@@ -97719,6 +97612,79 @@
       ]
     },
     {
+      "digest": "fc4318228624afc7ba81bb333cb5ea6f46b6c451143390c4834e53f37c2f6b0d",
+      "schema": {
+        "root": 0,
+        "nodes": [
+          {
+            "kind": "object",
+            "properties": [
+              {
+                "name": "allowedModels",
+                "type": 1,
+                "optional": false
+              },
+              {
+                "name": "defaultModel",
+                "type": 4,
+                "optional": true
+              }
+            ],
+            "indices": []
+          },
+          {
+            "kind": "array",
+            "element": 2
+          },
+          {
+            "kind": "object",
+            "properties": [
+              {
+                "name": "model",
+                "type": 3,
+                "optional": false
+              },
+              {
+                "name": "provider",
+                "type": 3,
+                "optional": false
+              }
+            ],
+            "indices": []
+          },
+          {
+            "kind": "primitive",
+            "type": "string"
+          },
+          {
+            "kind": "object",
+            "properties": [
+              {
+                "name": "model",
+                "type": 3,
+                "optional": false
+              },
+              {
+                "name": "provider",
+                "type": 3,
+                "optional": false
+              },
+              {
+                "name": "reasoningEffort",
+                "type": 3,
+                "optional": true
+              }
+            ],
+            "indices": []
+          }
+        ]
+      },
+      "names": [],
+      "sources": [
+        "packages/subagent/tool-subagent/src/model-selection-state.ts:21"
+      ]
+    },
+    {
       "digest": "fc8242857caf7450d7f68a1f509dce83e237bd21571666006895124cb2246a83",
       "schema": {
         "root": 0,
@@ -100633,6 +100599,120 @@
       "sources": []
     },
     {
+      "digest": "fde25355968b1b7eacba0c45b16fa179d607295763e0cc2c1a79874296235a0b",
+      "schema": {
+        "root": 0,
+        "nodes": [
+          {
+            "kind": "object",
+            "properties": [
+              {
+                "name": "data",
+                "type": 1,
+                "optional": false
+              },
+              {
+                "name": "ignorable",
+                "type": 6,
+                "optional": true
+              },
+              {
+                "name": "seq",
+                "type": 7,
+                "optional": false
+              },
+              {
+                "name": "time",
+                "type": 7,
+                "optional": false
+              },
+              {
+                "name": "type",
+                "type": 8,
+                "optional": false
+              }
+            ],
+            "indices": []
+          },
+          {
+            "kind": "object",
+            "properties": [
+              {
+                "name": "allowedModels",
+                "type": 2,
+                "optional": false
+              },
+              {
+                "name": "defaultModel",
+                "type": 5,
+                "optional": true
+              }
+            ],
+            "indices": []
+          },
+          {
+            "kind": "array",
+            "element": 3
+          },
+          {
+            "kind": "object",
+            "properties": [
+              {
+                "name": "model",
+                "type": 4,
+                "optional": false
+              },
+              {
+                "name": "provider",
+                "type": 4,
+                "optional": false
+              }
+            ],
+            "indices": []
+          },
+          {
+            "kind": "primitive",
+            "type": "string"
+          },
+          {
+            "kind": "object",
+            "properties": [
+              {
+                "name": "model",
+                "type": 4,
+                "optional": false
+              },
+              {
+                "name": "provider",
+                "type": 4,
+                "optional": false
+              },
+              {
+                "name": "reasoningEffort",
+                "type": 4,
+                "optional": true
+              }
+            ],
+            "indices": []
+          },
+          {
+            "kind": "literal",
+            "value": true
+          },
+          {
+            "kind": "primitive",
+            "type": "number"
+          },
+          {
+            "kind": "literal",
+            "value": "subagent/model-selection-policy"
+          }
+        ]
+      },
+      "names": [],
+      "sources": []
+    },
+    {
       "digest": "fe1a7acdeed4d0f5ab483396eaa5b3dc97263b7c10eb4da2f0028cb01728bfc9",
       "schema": {
         "root": 0,
@@ -100740,7 +100820,7 @@
         "packages/llm/llm/src/types.ts#TokenUsage"
       ],
       "sources": [
-        "packages/llm/llm/src/types.ts:175"
+        "packages/llm/llm/src/types.ts:176"
       ]
     },
     {
