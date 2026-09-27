@@ -15,7 +15,7 @@ import type { Agent } from '@deepseek-ai/dsh-agent'
 import AgentLoop from '@deepseek-ai/dsh-agent-loop'
 import { mountAgentLoopTestDependencies } from '@deepseek-ai/dsh-agent-loop-testkit'
 import { createUserMessage } from '@deepseek-ai/dsh-llm'
-import { SessionId } from '@deepseek-ai/dsh-session'
+import { SessionId, SessionLogOffset } from '@deepseek-ai/dsh-session'
 import JsonlSessionPersistence from '@deepseek-ai/dsh-session-persistence-jsonl'
 import { queueHostSubagentPrompt } from '@deepseek-ai/dsh-subagent/internal'
 import * as SubagentFork from '@deepseek-ai/dsh-subagent-fork-in-process'
@@ -119,6 +119,26 @@ describe('plainForkParentOf', () => {
     const child = ctx.agents.get(started.childId)
     expect(child).toBeDefined()
     expect(plainForkParentOf(child!)).toBe(parent)
+  })
+
+  it('resolves undefined for a raw hand-seeded agent that never recorded a subagent origin', async () => {
+    // Mirrors the "ordinary Lead fork" construction other suites use to
+    // simulate a host fork outside the subagent system: seeded and pointed
+    // at a live parentSession, but with no `origin: 'subagent'` meta.
+    const { ctx, parent } = await setup()
+    const seed = parent.session.snapshotEvents()
+    const handle = await ctx.agents.create({
+      sessionId: SessionId('raw-hand-seeded-fork'),
+      seed,
+      inheritedEventCount: SessionLogOffset(seed.length),
+      meta: { parentSession: parent.id, isSeeded: true },
+      agentOptions: { provider: 'mock', model: 'mock' },
+    })
+    try {
+      expect(plainForkParentOf(handle.agent)).toBeUndefined()
+    } finally {
+      await handle.dispose()
+    }
   })
 
   it('resolves undefined for a continuable fork carrying a persona', async () => {
