@@ -215,16 +215,16 @@ function requestHeaders(headers: Readonly<Record<string, string>> | undefined): 
 /**
  * Whether one resolved model's route is a ChatGPT/Codex OpenAI-family route
  * this adapter shares a delegation-tree cache-routing key on: pi-ai's own
- * `openai` or `openai-codex` builtin provider, talking to OpenAI's own host.
- * Excludes `azure-openai-responses` and any OpenAI-compatible third-party
- * catalog route, which route their own `prompt_cache_key` independently of a
- * DSH delegation tree.
+ * `openai` or `openai-codex` builtin provider. Excludes `azure-openai-responses`
+ * and any OpenAI-compatible third-party catalog route, which route their own
+ * `prompt_cache_key` independently of a DSH delegation tree. Provider alone
+ * decides this, not the route's host: pi-ai's `openai-codex` provider itself
+ * resolves to ChatGPT's own host, not OpenAI's platform API host.
  * @param model - the resolved model descriptor passed to pi-ai's `onPayload`.
  * @returns whether {@link overridePromptCacheKey} may replace this request's `prompt_cache_key`.
  */
 export function sharesPromptCacheKey(model: Model<Api>): boolean {
-  return (model.provider === 'openai' || model.provider === 'openai-codex')
-    && model.baseUrl.includes('api.openai.com')
+  return model.provider === 'openai' || model.provider === 'openai-codex'
 }
 
 /**
@@ -232,9 +232,12 @@ export function sharesPromptCacheKey(model: Model<Api>): boolean {
  * session-derived `prompt_cache_key` with the delegation tree's shared
  * `cacheKey`, so sibling and fork children route to the same provider-side
  * cached prefix instead of each starting a separate one under its own session
- * id. Only ever REPLACES a `prompt_cache_key` pi-ai itself already set: a
- * `cacheRetention: 'none'` request, or a route {@link sharesPromptCacheKey}
- * excludes, carries none, and this hook must not add one pi-ai omitted.
+ * id. Only ever REPLACES a `prompt_cache_key` pi-ai itself already set on the
+ * payload: `cacheRetention: 'none'` omits it for every API, and each pi-ai API
+ * module applies its own further condition (host, compat flags) before
+ * setting it. This hook defers to whichever of those pi-ai already decided
+ * rather than re-deriving per-API conditions itself, so it never adds a key
+ * pi-ai itself chose to omit.
  * @param cacheKey - the delegation tree's shared routing key (already confirmed distinct from this request's own session id).
  * @returns the `onPayload` hook to pass through `SimpleStreamOptions`.
  */

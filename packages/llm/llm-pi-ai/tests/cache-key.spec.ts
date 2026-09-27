@@ -8,6 +8,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import { Context } from '@deepseek-ai/cordis'
 import type { Model } from '@earendil-works/pi-ai'
 import { stream as streamCompletions } from '@earendil-works/pi-ai/api/openai-completions'
+import { stream as streamCodex } from '@earendil-works/pi-ai/api/openai-codex-responses'
 import LlmRuntime from '@deepseek-ai/dsh-llm'
 import type { GenerateOptions, ResolvedRetryPolicy } from '@deepseek-ai/dsh-llm'
 import { brandString } from '@deepseek-ai/dsh-brand'
@@ -32,7 +33,18 @@ function fakeSessionId(id: string): Branded<'SessionId'> {
   return brandString<Branded<'SessionId'>>(id)
 }
 
-function model<A extends 'openai-completions'>(api: A, provider: string, baseUrl: string): Model<A> {
+/**
+ * An unsigned JWT carrying the ChatGPT account claim `extractAccountId` in
+ * pi-ai's `openai-codex-responses` module reads; that module never verifies
+ * the signature segment, so a placeholder is enough to reach request building.
+ */
+function fakeCodexApiKey(accountId: string): string {
+  const claim = { 'https://api.openai.com/auth': { chatgpt_account_id: accountId } }
+  const payload = Buffer.from(JSON.stringify(claim), 'utf8').toString('base64')
+  return `header.${payload}.signature`
+}
+
+function model<A extends 'openai-completions' | 'openai-codex-responses'>(api: A, provider: string, baseUrl: string): Model<A> {
   return {
     id: 'm', name: 'm', api, provider, baseUrl, reasoning: false, input: ['text'],
     cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 }, contextWindow: 8192, maxTokens: 1024,
@@ -42,10 +54,15 @@ function model<A extends 'openai-completions'>(api: A, provider: string, baseUrl
 describe('sharesPromptCacheKey', () => {
   it.each([
     ['openai', 'https://api.openai.com/v1', true],
-    ['openai-codex', 'https://api.openai.com', true],
+    // pi-ai's real `openai-codex` provider resolves to ChatGPT's own host, not
+    // OpenAI's platform API host — this is the load-bearing row: the gate must
+    // recognize the provider regardless of host, or GPT-6/Codex-via-ChatGPT
+    // children (this feature's primary target) never share a cache key.
+    ['openai-codex', 'https://chatgpt.com/backend-api', true],
     ['azure-openai-responses', 'https://api.openai.com/v1', false],
-    ['openai', 'https://my-proxy.example.com/v1', false],
-    ['anthropic', 'https://api.openai.com/v1', false],
+    // Host alone grants nothing either: a non-shared provider is excluded even
+    // on the exact host a shared provider resolves to.
+    ['anthropic', 'https://chatgpt.com/backend-api', false],
   ] as const)('provider %s, baseUrl %s -> %s', (provider, baseUrl, expected) => {
     expect(sharesPromptCacheKey(model('openai-completions', provider, baseUrl))).toBe(expected)
   })
@@ -177,7 +194,7 @@ describe('adapter wiring: the shared cache key reaches the wire through the real
 })
 
 describe('real pi-ai openai-completions module: wire-level prompt_cache_key override', () => {
-  it('overrides prompt_cache_key against api.openai.com while sessionId-derived routing stays put', async () => {
+  it('overrides prompt_cache_key for the openai provider while sessionId-derived routing stays put', async () => {
     const server = await mockServer([{ events: textEvents }])
     const redirectFetch: typeof fetch = (input, init) => {
       const target = input instanceof URL ? input : new URL(typeof input === 'string' ? input : input.url)
@@ -212,5 +229,38 @@ describe('real pi-ai openai-completions module: wire-level prompt_cache_key over
     expect(server.requests).toHaveLength(1)
     const body = server.requests[0] as { prompt_cache_key?: string }
     expect(body.prompt_cache_key).toBeUndefined()
+  })
+})
+
+describe('real pi-ai openai-codex-responses module: wire-level prompt_cache_key override', () => {
+  it('overrides prompt_cache_key for the openai-codex provider while its own session-id header stays put', async () => {
+    const server = await mockServer([{ events: [
+      '{"type":"response.created","response":{"id":"resp_1"}}',
+      JSON.stringify({ type: 'response.completed', response: {
+        id: 'resp_1', status: 'completed', output: [], usage: { input_tokens: 3, output_tokens: 1, total_tokens: 4 },
+      } }),
+    ] }])
+    const redirectFetch: typeof fetch = (input, init) => {
+      const target = input instanceof URL ? input : new URL(typeof input === 'string' ? input : input.url)
+      return fetch(`${server.url}${target.pathname}${target.search}`, init)
+    }
+    // pi-ai's real openai-codex provider baseUrl is chatgpt.com/backend-api,
+    // not api.openai.com; this is the route sharesPromptCacheKey must accept.
+    const codexModel = model('openai-codex-responses', 'openai-codex', 'https://chatgpt.com/backend-api')
+    const context = { messages: [{ role: 'user' as const, content: 'hi', timestamp: 0 }] }
+    const events = streamCodex(codexModel, context, {
+      apiKey: fakeCodexApiKey('acct_test'),
+      sessionId: 'child-session',
+      transport: 'sse',
+      fetch: redirectFetch,
+      onPayload: overridePromptCacheKey('root-session'),
+    })
+    for await (const _event of events) { /* drain to completion; the mock server's captured request is the assertion. */ }
+    expect(server.requests).toHaveLength(1)
+    const body = server.requests[0] as { prompt_cache_key?: string }
+    expect(body.prompt_cache_key).toBe('root-session')
+    // The websocket/SSE session-id header keeps routing on this request's own
+    // session id; only the body's cache-routing field changes.
+    expect(server.headers[0]?.['session-id']).toBe('child-session')
   })
 })
