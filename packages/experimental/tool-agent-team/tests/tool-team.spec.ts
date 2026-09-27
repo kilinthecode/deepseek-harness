@@ -809,7 +809,7 @@ describe('plain fork parity with Team installation', () => {
     ['team_task_create', { subject: 'rogue task', description: 'unauthorized task' }],
     ['team_task_list', {}],
     ['team_task_get', { task_id: 'missing-task' }],
-    ['team_task_update', { task_id: 'missing-task', expected_revision: 1, action: 'complete' }],
+    ['team_task_update', { task_id: 'missing-task', expected_revision: 1, action: 'claim' }],
   ] as const
 
   it('covers every Team tool in the plain-fork denial table', () => {
