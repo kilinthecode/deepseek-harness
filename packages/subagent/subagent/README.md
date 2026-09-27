@@ -101,6 +101,7 @@ This section explains how the service is built and where the observable behavior
 | [`src/control.ts`](src/control.ts) | Browser control request validation and stable failure codes |
 | [`src/control-types.ts`](src/control-types.ts) | Client-safe catalog row, control requests, receipts, and failures |
 | [`src/archive-admission.ts`](src/archive-admission.ts) | The `subagent` family of the Workspace registry's archive admission: running descendants and their parent-cause cancel |
+| [`src/plain-fork.ts`](src/plain-fork.ts) | Classifies an exact live Agent as a plain fork of a qualifying parent, for runtime-gated prompt or tool installers |
 
 ### One-shot flow
 

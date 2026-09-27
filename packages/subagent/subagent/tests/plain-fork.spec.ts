@@ -22,7 +22,7 @@ import * as SubagentFork from '@deepseek-ai/dsh-subagent-fork-in-process'
 import * as SubagentSpawn from '@deepseek-ai/dsh-subagent-spawn-in-process'
 import { defineContentToolFixture } from '@deepseek-ai/dsh-tools'
 import { MockAdapter, textResponse } from '../../../core/agent-loop/tests/mock-adapter.ts'
-import SubagentRuntime from '../src/index.ts'
+import SubagentRuntime, { SUBAGENT_DESCRIPTOR_VERSION } from '../src/index.ts'
 import { plainForkParentOf } from '../src/plain-fork.ts'
 import { TestSessionQuery } from './test-session-query.ts'
 
@@ -202,5 +202,31 @@ describe('plainForkParentOf', () => {
     await disposeParent()
     expect(() => plainForkParentOf(fork)).not.toThrow()
     expect(plainForkParentOf(fork)).toBeUndefined()
+  })
+
+  it('resolves undefined without throwing for a plain fork whose descriptor fails to parse', async () => {
+    // A structurally invalid current-version descriptor (mirroring a damaged
+    // cold-resumed continuable fork) must not veto the agent/created serial
+    // dispatch this function runs from; see plain-fork.ts.
+    const { ctx, parent } = await setup()
+    const handle = await ctx.agents.create({
+      sessionId: SessionId('damaged-descriptor-fork'),
+      seed: [],
+      inheritedEventCount: SessionLogOffset(0),
+      meta: { parentSession: parent.id, isSeeded: true, origin: 'subagent' },
+      agentOptions: { provider: 'mock', model: 'mock' },
+    })
+    try {
+      // A current-version payload whose label is not a string fails the descriptor
+      // parse in foldSubagentDescriptor (mirrors archive-admission.spec.ts's damaged fixture).
+      handle.agent.session.append(
+        'subagent/descriptor',
+        { version: SUBAGENT_DESCRIPTOR_VERSION, mode: 'continuable', provider: 'fork', label: 7 } as never,
+      )
+      expect(() => plainForkParentOf(handle.agent)).not.toThrow()
+      expect(plainForkParentOf(handle.agent)).toBeUndefined()
+    } finally {
+      await handle.dispose()
+    }
   })
 })

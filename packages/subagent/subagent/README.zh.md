@@ -101,6 +101,7 @@ kind: "package-reference"
 | [`src/control.ts`](src/control.ts) | 浏览器控制请求校验与稳定失败分码 |
 | [`src/control-types.ts`](src/control-types.ts) | client-safe 的目录行、控制面请求、回执与失败 |
 | [`src/archive-admission.ts`](src/archive-admission.ts) | Workspace 注册表归档准入中的 `subagent` 族：运行中的子孙及其父级取消 |
+| [`src/plain-fork.ts`](src/plain-fork.ts) | 把一个确切在线 Agent 分类为符合条件 parent 的纯 fork，供运行时状态门控的提示词或工具安装器使用 |
 
 ### 一次性流程
 
