@@ -44,7 +44,7 @@ ACP v1 SDK 客户端先初始化 `dsh --profile acp`，再用绝对 `cwd` 与可
 
 #### 模型看到什么
 
-profile 在第一方指导之前提供 `You are a coding agent powered by the {{model}} model.`，并在独立的 persona 后缀中提供 `Your working directory is {{cwd}}.`。ACP 配置项的路由与每个 `session/new` 的 cwd 会解析其中的占位符。
+profile 在第一方指导之前提供 `You are a coding agent.`，并在独立的 persona 后缀中提供 `Your working directory is {{cwd}}.`。该 persona 不指定路由，因此无论 ACP 配置项的路由为何都渲染相同；每个 `session/new` 的 cwd 会解析剩余的占位符。
 
 #### Token 影响
 
@@ -52,7 +52,7 @@ profile 在第一方指导之前提供 `You are a coding agent powered by the {{
 
 #### KV Cache 影响
 
-固定 profile、提供方、模型与工具集合下保持稳定。随附 ACP profile 只在启动时加载 patch，因此 profile 更改会在下一个进程生效。
+固定 profile、提供方、模型与工具集合下保持稳定。随附 ACP profile 只在启动时加载 patch，因此 profile 更改会在下一个进程生效。会话中途的模型切换不会改变 persona 文本，因此不会仅因此触发系统提示词重写。
 
 ## 已知限制与待办事项
 
