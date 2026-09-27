@@ -172,6 +172,7 @@ Unattended memory review may only add a new name.
 - **并行的新名称写入只是检查存在竞态，写入本身不会**——两次并行的、使用同一新名称的 `memory_write` 调用都可以通过 `tools/pre-execute` 的仅添加检查；存储的仅创建写入仍会裁定这个平局：只有在存储串行写入区段中先轮到的那次调用才会提交，另一次会以 `already-exists` 明确失败，而不是悄悄覆盖。
 - **`memory_recall` 与失败调用同样会重置间隔**——每次名为 `memory_write`、`memory_recall` 或 `memory_forget` 的父级 `tool/call` 都会将 `turnsSinceReset` 重置为 `0`，无论调用是否成功，因此每轮都调用记忆工具的父级会无限期推迟回顾。
 - **路由到更便宜模型的摘要回顾**——使用更便宜路由模型的回顾被延期。
+- **子会话创建门控按调度窗口而非精确身份限定范围**——安装限制的 `agent/created` 监听器按父会话 id 匹配同步的 `ctx.subagents.start()` 调用（调用前 `dispatching.add`，其 `finally` 中 `dispatching.delete`），而不是按回顾子会话自身的身份；若在这个狭窄窗口内为同一父级创建了一个无关的子会话，它也会被限制。无法通过 `agent/created` 的 `signal` 载荷做精确识别：`packages/core/agent-loop/src/index.ts` 的 `prepare()` 总是构造一个融合了调用方 signal、owner fiber 卸载和工厂释放的全新 `AbortController`，因此该载荷绝不会与本插件传给 `start()` 的控制器是同一个对象。
 
 <a id="dev-note"></a>
 ### 开发备注
