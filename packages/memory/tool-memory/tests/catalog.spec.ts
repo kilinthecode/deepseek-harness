@@ -241,6 +241,26 @@ describe('renderSnapshot', () => {
     )
   })
 
+  it('collapses line breaks in an index-line description to single spaces, keeping a fitting block\'s description exactly as stored', () => {
+    // A description with line breaks cannot come from `write` (single-line
+    // guard), but a hand-edited record still loads one
+    // (`packages/memory/memory/tests/store.spec.ts`), so the snapshot must
+    // still render a single physical line for its index entry.
+    const tooBigForABlock = record('multiline-desc', 'user', 'global', 'line one\nline two\r\nline three line four line five', 'y'.repeat(5000))
+    expect(renderSnapshot([tooBigForABlock], 4096, noScan)).toBe(
+      `${SNAPSHOT_HEADER}\n- [user, global] multiline-desc — line one line two line three line four line five`,
+    )
+
+    const fitsAsABlock = record('short-multiline', 'user', 'global', 'line one\nline two', 'short content')
+    expect(renderSnapshot([fitsAsABlock], 4096, noScan)).toBe([
+      SNAPSHOT_HEADER,
+      '## short-multiline [user, global]',
+      'line one\nline two',
+      '',
+      'short content',
+    ].join('\n'))
+  })
+
   it('renders every fitting block before the index-line group, even when a higher-priority record only fits as an index line and a lower-priority record\'s block fits', () => {
     // 'a' (user, higher priority) is processed first by the greedy fill and
     // only fits as an index line; 'b' (feedback, lower priority) is

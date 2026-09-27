@@ -85,8 +85,26 @@ function recallBlock(record: MemoryRecord): string {
   return `## ${record.name} [${record.type}, ${record.scope}]\n${record.description}\n\n${record.content}`
 }
 
+/** One run of whitespace that contains a line break (`\r`, `\n`, U+2028, or U+2029), with its surrounding spaces and tabs. */
+const INDEX_LINE_BREAK_RUN = /[ \t]*[\r\n\u2028\u2029]+[ \t\r\n\u2028\u2029]*/g
+
+/**
+ * Collapse every line break in a description to a single space for the
+ * one-line index form. `write` rejects a multi-line description, but a
+ * hand-edited record can still hold one (`packages/memory/memory/tests/store.spec.ts`
+ * pins that it still loads); collapsing here keeps the snapshot's index-line
+ * group one physical line per record. A content block and `memory_recall`
+ * render the description exactly as stored; this transform is index-only and
+ * never touches the durable record.
+ * @param description - the stored description, as-is.
+ * @returns the description with every line-break run collapsed to one space.
+ */
+function collapseIndexDescription(description: string): string {
+  return description.replace(INDEX_LINE_BREAK_RUN, ' ')
+}
+
 function indexLine(record: MemoryRecord): string {
-  return `- [${record.type}, ${record.scope}] ${record.name} — ${record.description}`
+  return `- [${record.type}, ${record.scope}] ${record.name} — ${collapseIndexDescription(record.description)}`
 }
 
 function blockedIndexLine(record: MemoryRecord): string {
