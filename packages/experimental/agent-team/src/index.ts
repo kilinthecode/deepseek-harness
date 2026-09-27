@@ -225,6 +225,16 @@ export class TeamService extends TypertRemoteService {
   }
 
   /**
+   * Count of additional teammates the Team's durable roster can still accept
+   * before its configured member limit, without creating any of them.
+   * @param agent - exact live Team member used as the authority credential.
+   * @returns the configured member limit minus the Team's current durable member count.
+   */
+  remainingCapacity(agent: Agent): number {
+    return this.roster.remainingCapacity(agent)
+  }
+
+  /**
    * Record the Team subject in the Lead log; the latest record wins.
    * @param caller - exact live Team Lead.
    * @param subject - subject text, trimmed and at most 200 characters.

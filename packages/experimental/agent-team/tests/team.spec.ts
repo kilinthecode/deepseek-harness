@@ -245,6 +245,26 @@ describe('Team identity and provisioning', () => {
     await expect(spawn(ctx, lead, 'fresh-worker')).rejects.toMatchObject({ code: 'TEAM_MEMBER_NAME_TAKEN' })
   })
 
+  it('reports remaining member capacity that matches the enforced limit, without creating anyone', async () => {
+    const { ctx, lead } = await setup([], { maxMembers: 1 })
+    expect(ctx.agentTeams.remainingCapacity(lead)).toBe(1)
+    lead.session.append('team/member', {
+      version: 2,
+      teamId: TeamId(lead.id),
+      member: {
+        id: SessionId('capacity-member'),
+        name: 'capacity-worker',
+        description: 'capacity responsibility',
+        provider: 'spawn',
+        context: 'fresh',
+        phase: 'provisioning',
+      },
+    })
+    expect(ctx.agentTeams.remainingCapacity(lead)).toBe(0)
+    expect(ctx.agentTeams.listMembers(lead)).toHaveLength(2)
+    await expect(spawn(ctx, lead, 'over-capacity')).rejects.toMatchObject({ code: 'TEAM_MEMBER_LIMIT' })
+  })
+
   it('keeps every teammate on its recorded route after the child stops', async () => {
     const { ctx, lead } = await setup([
       textResponse('lead answer'),

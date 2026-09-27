@@ -69,6 +69,7 @@ async function setup(
   script: ConstructorParameters<typeof MockAdapter>[0],
   legacyControl = false,
   reasoning?: ConstructorParameters<typeof MockAdapter>[1],
+  teamConfig: ConstructorParameters<typeof TeamService>[1] = {},
 ) {
   const ctx = new Context()
   contexts.add(ctx)
@@ -82,7 +83,7 @@ async function setup(
   if (legacyControl) await ctx.plugin(ToolSubagentControl)
   await ctx.plugin(SubagentSpawn, { providerName: 'spawn' })
   await ctx.plugin(SubagentFork, { providerName: 'fork' })
-  await ctx.plugin(TeamService)
+  await ctx.plugin(TeamService, teamConfig)
   const fiber = await ctx.plugin(toolTeam)
   const adapter = new MockAdapter(script, reasoning)
   ctx.llm.registerAdapter(['mock'], adapter)
@@ -993,8 +994,12 @@ describe('teammate duties and the /team command', () => {
       .toThrow('tool-agent-team: duties.planner.instructions must be non-empty')
   })
 
-  async function withCommands(script: ConstructorParameters<typeof MockAdapter>[0], title = true) {
-    const context = await setup(script)
+  async function withCommands(
+    script: ConstructorParameters<typeof MockAdapter>[0],
+    title = true,
+    teamConfig: ConstructorParameters<typeof TeamService>[1] = {},
+  ) {
+    const context = await setup(script, false, undefined, teamConfig)
     await context.ctx.plugin(CommandRuntime)
     if (title) await context.ctx.plugin(SessionTitleService, { fallbackMaxWords: 6, fallbackMaxBytes: 80, maxTitleBytes: 80 })
     return context
@@ -1059,5 +1064,193 @@ describe('teammate duties and the /team command', () => {
     await fiber.dispose()
     expect(ctx.commands.list(lead).map(command => command.name)).not.toContain('team')
     expect(await ctx.commands.execute(lead, '/team Ship', [], SIGNAL)).toBeUndefined()
+  })
+
+  it('rejects every invalid --members invocation without recording a subject or spawning anyone', async () => {
+    const { ctx, lead } = await withCommands([])
+    const cases: [string, string][] = [
+      ['/team --members', 'Usage: /team --members <planner|executor,...> <subject>'],
+      ['/team --members planner', 'Usage: /team --members <planner|executor,...> <subject>'],
+      [
+        '/team --members ,executor Ship the parser',
+        '/team --members: empty duty in ",executor"; use a comma-separated list of planner or executor.',
+      ],
+      [
+        '/team --members bogus Ship the parser',
+        '/team --members: unknown duty "bogus"; use planner or executor.',
+      ],
+      [
+        '/team --members planner,planner Ship the parser',
+        '/team --members: at most one planner is allowed.',
+      ],
+    ]
+    for (const [line, expected] of cases) {
+      expect((await ctx.commands.execute(lead, line, [], SIGNAL))?.result).toEqual({ kind: 'error', text: expected })
+    }
+    expect(ctx.agentTeams.subjectOf(lead)).toBeUndefined()
+    expect(ctx.agentTeams.listMembers(lead)).toHaveLength(1)
+    expect(lead.session.snapshotEvents().some(event => event.type === 'turn/start')).toBe(false)
+  })
+
+  it('refuses --members over the Team\'s remaining capacity, changing nothing', async () => {
+    const { ctx, lead } = await withCommands([], true, { maxMembers: 1 })
+    const execution = await ctx.commands.execute(lead, '/team --members planner,executor Ship the parser', [], SIGNAL)
+    expect(execution?.result).toEqual({
+      kind: 'error',
+      text: '/team --members requests 2 teammates, but the Team has room for 1 more.',
+    })
+    expect(ctx.agentTeams.subjectOf(lead)).toBeUndefined()
+    expect(ctx.agentTeams.listMembers(lead)).toHaveLength(1)
+    expect(lead.session.snapshotEvents().some(event => event.type === 'session/title')).toBe(false)
+  })
+
+  it('starts a roster from /team --members: subject, ordered duties, then a Lead steer naming who started', async () => {
+    const { ctx, lead } = await withCommands(['hang', 'hang', 'hang'])
+    const execution = await ctx.commands.execute(
+      lead, '/team --members planner,executor,executor Ship the parser', [], SIGNAL,
+    )
+    expect(execution?.result).toEqual({ kind: 'success', text: 'Agent Team started.' })
+
+    expect(ctx.agentTeams.subjectOf(lead)).toBe('Ship the parser')
+    const listed = ctx.agentTeams.listMembers(lead)
+    expect(listed.map(member => [member.name, member.duty])).toEqual([
+      ['lead', undefined],
+      ['planner', 'planner'],
+      ['executor-1', 'executor'],
+      ['executor-2', 'executor'],
+    ])
+
+    const plannerChild = await waitRunning(ctx, listed[1]!.id)
+    const executor1Child = await waitRunning(ctx, listed[2]!.id)
+    const executor2Child = await waitRunning(ctx, listed[3]!.id)
+    expect(initialPrompt(plannerChild)).toEqual([
+      identity('planner', ['Your duty is "planner".', PLANNER]),
+      'Break "Ship the parser" into tasks on the Team board for the executors. Do not edit files yourself.',
+    ])
+    expect(initialPrompt(executor1Child)).toEqual([
+      identity('executor-1', ['Your duty is "executor".', EXECUTOR]),
+      'Coordinate with the planner and the Lead through messages and the board, then complete the tasks assigned to you for "Ship the parser".',
+    ])
+    expect(initialPrompt(executor2Child)).toEqual([
+      identity('executor-2', ['Your duty is "executor".', EXECUTOR]),
+      'Coordinate with the planner and the Lead through messages and the board, then complete the tasks assigned to you for "Ship the parser".',
+    ])
+
+    const events = lead.session.snapshotEvents()
+    const eventTypes = events.map(event => event.type)
+    const subjectIndex = eventTypes.indexOf('team/subject')
+    const memberIndexes = eventTypes.flatMap((type, index) => type === 'team/member' ? [index] : [])
+    const turnIndex = eventTypes.indexOf('turn/start')
+    expect(subjectIndex).toBeGreaterThanOrEqual(0)
+    expect(memberIndexes.length).toBeGreaterThanOrEqual(3)
+    expect(memberIndexes.every(index => index > subjectIndex)).toBe(true)
+    expect(turnIndex).toBeGreaterThan(Math.max(...memberIndexes))
+
+    const userMessage = events.find(event => event.type === 'user/message' && event.data.source.kind === 'user')
+    expect(userMessage?.type === 'user/message'
+      ? userMessage.data.content.flatMap(block => block.type === 'text' ? [block.text] : [])
+      : []).toEqual([
+      'Ship the parser',
+      'Started planner "planner" and executors "executor-1", "executor-2". You lead this Team: assign their work, review it, and integrate the result.',
+    ])
+  })
+
+  it('skips deterministic names already taken by earlier members, across both duties', async () => {
+    const { ctx, lead } = await withCommands(['hang', 'hang', 'hang', 'hang', 'hang'])
+    for (const name of ['planner', 'executor-1', 'executor-2']) {
+      const spawned = await execute(ctx, lead, 'spawn_teammate', { name, description: 'preexisting', prompt: 'wait' })
+      expect(spawned.isError, text(spawned)).toBe(false)
+    }
+    const execution = await ctx.commands.execute(lead, '/team --members planner,executor Ship the parser', [], SIGNAL)
+    expect(execution?.result).toEqual({ kind: 'success', text: 'Agent Team started.' })
+    expect(ctx.agentTeams.listMembers(lead).map(member => member.name)).toEqual([
+      'lead', 'planner', 'executor-1', 'executor-2', 'planner-1', 'executor-3',
+    ])
+  })
+
+  it('stops a --members batch after the second spawn fails, reporting what started and what remains', async () => {
+    const { ctx, lead } = await withCommands(['hang'])
+    const original = ctx.agentTeams.spawnTeammate.bind(ctx.agentTeams)
+    let callCount = 0
+    vi.spyOn(ctx.agentTeams, 'spawnTeammate').mockImplementation(async (caller, request) => {
+      callCount += 1
+      if (callCount === 2) throw new Error('provider unavailable')
+      return original(caller, request)
+    })
+    const execution = await ctx.commands.execute(
+      lead, '/team --members planner,executor,executor Ship the parser', [], SIGNAL,
+    )
+    expect(execution?.result).toEqual({
+      kind: 'error',
+      text: '/team --members stopped after teammate "executor-1" (executor) failed to start: provider unavailable. '
+        + 'Started: planner "planner". Not started: 1 executor.',
+    })
+    expect(ctx.agentTeams.subjectOf(lead)).toBe('Ship the parser')
+    expect(ctx.agentTeams.listMembers(lead).map(member => member.name)).toEqual(['lead', 'planner'])
+    expect(lead.session.snapshotEvents().some(event => event.type === 'user/message' && event.data.source.kind === 'user')).toBe(false)
+  })
+
+  it('stops a --members batch after the third spawn fails, with nothing left to start', async () => {
+    const { ctx, lead } = await withCommands(['hang', 'hang'])
+    const original = ctx.agentTeams.spawnTeammate.bind(ctx.agentTeams)
+    let callCount = 0
+    vi.spyOn(ctx.agentTeams, 'spawnTeammate').mockImplementation(async (caller, request) => {
+      callCount += 1
+      if (callCount === 3) throw new Error('provider unavailable')
+      return original(caller, request)
+    })
+    const execution = await ctx.commands.execute(
+      lead, '/team --members planner,executor,executor Ship the parser', [], SIGNAL,
+    )
+    expect(execution?.result).toEqual({
+      kind: 'error',
+      text: '/team --members stopped after teammate "executor-2" (executor) failed to start: provider unavailable. '
+        + 'Started: planner "planner" and executor "executor-1". Not started: none.',
+    })
+    expect(ctx.agentTeams.listMembers(lead).map(member => member.name)).toEqual(['lead', 'planner', 'executor-1'])
+  })
+
+  it('renders a non-Error --members spawn failure and names a not-started planner', async () => {
+    const { ctx, lead } = await withCommands([])
+    vi.spyOn(ctx.agentTeams, 'spawnTeammate').mockRejectedValue('provider offline')
+    const execution = await ctx.commands.execute(lead, '/team --members executor,planner Ship the parser', [], SIGNAL)
+    expect(execution?.result).toEqual({
+      kind: 'error',
+      text: '/team --members stopped after teammate "executor-1" (executor) failed to start: provider offline. '
+        + 'Started: none. Not started: 1 planner.',
+    })
+  })
+
+  it('reports a plural executor-only started roster when a later planner spawn fails', async () => {
+    const { ctx, lead } = await withCommands(['hang', 'hang'])
+    const original = ctx.agentTeams.spawnTeammate.bind(ctx.agentTeams)
+    let callCount = 0
+    vi.spyOn(ctx.agentTeams, 'spawnTeammate').mockImplementation(async (caller, request) => {
+      callCount += 1
+      if (callCount === 3) throw new Error('provider unavailable')
+      return original(caller, request)
+    })
+    const execution = await ctx.commands.execute(
+      lead, '/team --members executor,executor,planner Ship the parser', [], SIGNAL,
+    )
+    expect(execution?.result).toEqual({
+      kind: 'error',
+      text: '/team --members stopped after teammate "planner" (planner) failed to start: provider unavailable. '
+        + 'Started: executors "executor-1", "executor-2". Not started: none.',
+    })
+    expect(ctx.agentTeams.listMembers(lead).map(member => member.name)).toEqual(['lead', 'executor-1', 'executor-2'])
+  })
+
+  it('reports a plural all-executor not-started remainder when the first --members spawn fails', async () => {
+    const { ctx, lead } = await withCommands([])
+    vi.spyOn(ctx.agentTeams, 'spawnTeammate').mockRejectedValue(new Error('provider unavailable'))
+    const execution = await ctx.commands.execute(
+      lead, '/team --members executor,executor,executor Ship the parser', [], SIGNAL,
+    )
+    expect(execution?.result).toEqual({
+      kind: 'error',
+      text: '/team --members stopped after teammate "executor-1" (executor) failed to start: provider unavailable. '
+        + 'Started: none. Not started: 2 executors.',
+    })
   })
 })

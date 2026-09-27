@@ -556,20 +556,154 @@ function install(agent: Agent, ctx: Context, config: ResolvedConfig): () => void
   }
 }
 
+/** Usage text for `/team --members`, shown for any structurally invalid invocation. */
+const MEMBERS_USAGE = 'Usage: /team --members <planner|executor,...> <subject>'
+
+/** `--members` token, recognized only as a complete whitespace-bounded flag. */
+const MEMBERS_FLAG = /^--members(?=$|\s)/u
+
+/** Whether a roster-spec token names one of the two fixed duties. */
+function isTeamDuty(value: string): value is TeamDuty {
+  return value === 'planner' || value === 'executor'
+}
+
+/**
+ * Parse one `--members` roster-spec token into an ordered duty list.
+ * @param spec - comma-separated duty tokens with no surrounding whitespace.
+ * @returns the ordered duties, or a command-error message for an empty,
+ *   unknown, or over-represented duty.
+ */
+function parseRosterSpec(spec: string): readonly TeamDuty[] | string {
+  const duties: TeamDuty[] = []
+  let planners = 0
+  for (const token of spec.split(',')) {
+    if (!isTeamDuty(token)) {
+      return token.length === 0
+        ? `/team --members: empty duty in "${spec}"; use a comma-separated list of planner or executor.`
+        : `/team --members: unknown duty "${token}"; use planner or executor.`
+    }
+    if (token === 'planner') planners += 1
+    duties.push(token)
+  }
+  if (planners > 1) return '/team --members: at most one planner is allowed.'
+  return duties
+}
+
+/** One parsed `/team` invocation: a plain subject, or a subject plus an ordered roster. */
+type ParsedTeamCommand =
+  | { readonly kind: 'ok'; readonly subject: string; readonly duties?: readonly TeamDuty[] }
+  | { readonly kind: 'error'; readonly text: string }
+
+/**
+ * Parse `/team <subject>` or `/team --members <spec> <subject>` without any
+ * side effect. The plain form is unchanged: the complete trimmed input is the
+ * subject.
+ */
+function parseTeamCommand(rawInput: string): ParsedTeamCommand {
+  const trimmed = rawInput.trim()
+  const flag = MEMBERS_FLAG.exec(trimmed)
+  if (flag === null) {
+    if (trimmed.length === 0) return { kind: 'error', text: 'Usage: /team <subject>' }
+    return { kind: 'ok', subject: trimmed }
+  }
+  const rest = trimmed.slice(flag[0].length).trim()
+  const boundary = rest.search(/\s/u)
+  const specToken = boundary === -1 ? rest : rest.slice(0, boundary)
+  const subject = boundary === -1 ? '' : rest.slice(boundary).trim()
+  if (specToken.length === 0 || subject.length === 0) return { kind: 'error', text: MEMBERS_USAGE }
+  const duties = parseRosterSpec(specToken)
+  if (typeof duties === 'string') return { kind: 'error', text: duties }
+  return { kind: 'ok', subject, duties }
+}
+
+/**
+ * Deterministic, collision-avoiding name for one roster-batch member: the
+ * bare duty name for a planner, otherwise a numbered `executor-<n>`. Never
+ * returns a name already present on the durable roster.
+ */
+function allocateMemberName(existing: ReadonlySet<string>, duty: TeamDuty): string {
+  if (duty === 'planner' && !existing.has('planner')) return 'planner'
+  const prefix = duty === 'planner' ? 'planner' : 'executor'
+  for (let suffix = 1; suffix <= existing.size + 1; suffix += 1) {
+    const candidate = `${prefix}-${String(suffix)}`
+    if (!existing.has(candidate)) return candidate
+  }
+  /* v8 ignore next -- existing.size + 1 distinct candidates always contain a free name. */
+  throw new Error(`/team --members: could not allocate a name for duty "${duty}"`)
+}
+
+/** Short duty-specific initial task derived from the Team subject. */
+function dutyKickoff(duty: TeamDuty, subject: string): string {
+  return duty === 'planner'
+    ? `Break "${subject}" into tasks on the Team board for the executors. Do not edit files yourself.`
+    : `Coordinate with the planner and the Lead through messages and the board, then complete the tasks assigned to you for "${subject}".`
+}
+
+/** Render a caught spawn failure for the command's partial-failure report. */
+function spawnFailureMessage(error: unknown): string {
+  return error instanceof Error ? error.message : String(error)
+}
+
+/** Name every member of a started or requested roster batch, grouped by duty. */
+function describeMembers(members: readonly { readonly name: string; readonly duty: TeamDuty }[]): string {
+  if (members.length === 0) return 'none'
+  const planner = members.find(member => member.duty === 'planner')
+  const executors = members.filter(member => member.duty === 'executor').map(member => `"${member.name}"`)
+  const parts = [
+    ...planner === undefined ? [] : [`planner "${planner.name}"`],
+    ...executors.length === 0 ? [] : [`executor${executors.length > 1 ? 's' : ''} ${executors.join(', ')}`],
+  ]
+  return parts.join(' and ')
+}
+
+/** Count an unattempted roster remainder by duty, without inventing names for it. */
+function describeDutyCounts(duties: readonly TeamDuty[]): string {
+  if (duties.length === 0) return 'none'
+  const executors = duties.filter(duty => duty === 'executor').length
+  const parts = [
+    ...duties.includes('planner') ? ['1 planner'] : [],
+    ...executors === 0 ? [] : [`${String(executors)} executor${executors > 1 ? 's' : ''}`],
+  ]
+  return parts.join(' and ')
+}
+
 /**
  * Start an Agent Team on one subject: record it, which adds the subject policy
- * to every member's Team section, name the conversation after it, and wake the
- * Lead with the subject as the user's message.
+ * to every member's Team section, name the conversation after it, spawn a
+ * requested roster in order, and wake the Lead with the subject as the user's
+ * message.
+ * @param ctx - service context providing `agentTeams` and `sessionTitle`.
+ * @param agent - exact live conversation Agent that issued the command.
+ * @param rawInput - text following `/team`, before any parsing.
+ * @param config - resolved duty instructions, tools, and provider routing.
+ * @param signal - cancellation owned by the dispatching command invocation.
+ * @returns the command's rendered success or error result.
  */
-async function startTeam(ctx: Context, agent: Agent, rawInput: string): Promise<CommandResult> {
-  const subject = rawInput.trim()
-  if (subject.length === 0) return { kind: 'error', text: 'Usage: /team <subject>' }
+async function startTeam(
+  ctx: Context,
+  agent: Agent,
+  rawInput: string,
+  config: ResolvedConfig,
+  signal: AbortSignal,
+): Promise<CommandResult> {
+  const parsed = parseTeamCommand(rawInput)
+  if (parsed.kind === 'error') return { kind: 'error', text: parsed.text }
+  const { subject, duties } = parsed
   if (ctx.agentTeams.tryMembership(agent)?.role !== 'lead') {
     return { kind: 'error', text: 'Only the Team Lead conversation can start an Agent Team.' }
   }
   const titles = ctx.get('sessionTitle')
   if (titles === undefined) {
     return { kind: 'error', text: '/team needs the session-title service to name the conversation.' }
+  }
+  if (duties !== undefined) {
+    const remaining = ctx.agentTeams.remainingCapacity(agent)
+    if (duties.length > remaining) {
+      return {
+        kind: 'error',
+        text: `/team --members requests ${String(duties.length)} teammates, but the Team has room for ${String(remaining)} more.`,
+      }
+    }
   }
   try {
     await ctx.agentTeams.setSubject(agent, subject)
@@ -578,7 +712,52 @@ async function startTeam(ctx: Context, agent: Agent, rawInput: string): Promise<
     throw error
   }
   titles.rename(agent.session, subject)
-  agent.steer(createUserMessage({ content: [{ type: 'text', text: subject }], source: { kind: 'user' } }))
+
+  if (duties === undefined) {
+    agent.steer(createUserMessage({ content: [{ type: 'text', text: subject }], source: { kind: 'user' } }))
+    return { kind: 'success', text: 'Agent Team started.' }
+  }
+
+  const started: { readonly name: string; readonly duty: TeamDuty }[] = []
+  for (const [index, duty] of duties.entries()) {
+    const existing = new Set(ctx.agentTeams.listMembers(agent).map(member => member.name))
+    const memberName = allocateMemberName(existing, duty)
+    const toolFilter = dutyToolFilter(ctx, agent, config.duties[duty].tools)
+    try {
+      await ctx.agentTeams.spawnTeammate(agent, {
+        name: memberName,
+        description: duty === 'planner' ? 'Team planner for this subject' : 'Team executor for this subject',
+        prompt: [
+          { type: 'text', text: teammateReminder(memberName, duty, config) },
+          { type: 'text', text: dutyKickoff(duty, subject) },
+        ],
+        context: 'fresh',
+        provider: config.freshProvider,
+        duty,
+        ...toolFilter === undefined ? {} : { toolFilter },
+        signal,
+      })
+    } catch (error: unknown) {
+      const notStarted = duties.slice(index + 1)
+      return {
+        kind: 'error',
+        text: `/team --members stopped after teammate "${memberName}" (${duty}) failed to start: `
+          + `${spawnFailureMessage(error)}. Started: ${describeMembers(started)}. `
+          + `Not started: ${describeDutyCounts(notStarted)}.`,
+      }
+    }
+    started.push({ name: memberName, duty })
+  }
+  agent.steer(createUserMessage({
+    content: [
+      { type: 'text', text: subject },
+      {
+        type: 'text',
+        text: `Started ${describeMembers(started)}. You lead this Team: assign their work, review it, and integrate the result.`,
+      },
+    ],
+    source: { kind: 'user' },
+  }))
   return { kind: 'success', text: 'Agent Team started.' }
 }
 
@@ -590,9 +769,9 @@ export function apply(ctx: Context, config: Config = {}): void {
     commandCtx.commands.register({
       definitionId: CommandDefinitionId('@deepseek-ai/dsh-experimental-tool-agent-team/team'),
       name: 'team',
-      description: 'Start an Agent Team with a planner and executors for a subject',
-      input: { hint: 'subject' },
-      handler: ({ agent, rawInput }) => startTeam(ctx, agent, rawInput),
+      description: 'Start an Agent Team, optionally with a chosen roster, for a subject',
+      input: { hint: '[--members <planner|executor,...>] <subject>' },
+      handler: ({ agent, rawInput, signal }) => startTeam(ctx, agent, rawInput, resolved, signal),
     })
   })
   const installed = new Map<Agent, () => void>()

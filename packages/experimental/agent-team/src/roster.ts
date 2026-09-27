@@ -197,6 +197,17 @@ export class TeamRoster {
   }
 
   /**
+   * Count of additional teammates the Team's durable roster can still accept
+   * before {@link maxMembers}, without creating any of them.
+   * @param caller - exact live Team member used as the authority credential.
+   * @returns the configured member limit minus the Team's current durable member count.
+   */
+  remainingCapacity(caller: Agent): number {
+    const membership = this.membership(caller)
+    return this.maxMembers - this.journal.state(membership.root).members.length
+  }
+
+  /**
    * Create one named, continuable direct child of the Team Lead.
    * @param caller - exact live Lead Agent.
    * @param request - immutable name, description, prompt, context mode, provider, and cancellation.
