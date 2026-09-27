@@ -80,8 +80,17 @@ export interface AuthorizationDialogProps {
   t: (key: keyof typeof en) => string
   /** Dismiss the dialog; the caller owns whether it is rendered. */
   onClose: () => void
-  /** Take one command's answered view into the page snapshot. */
-  onView: (view: AuthorizationView) => void
+  /**
+   * The page's live-publication revision as of now. `settle` reads this right
+   * before issuing a command, so a late answer can be told apart from one a
+   * live frame has already overtaken.
+   */
+  authorizationRevision: () => number
+  /**
+   * Take one command's answered view into the page snapshot, alongside the
+   * revision `authorizationRevision` returned when that command was issued.
+   */
+  onView: (view: AuthorizationView, issuedAt: number) => void
 }
 
 /**
@@ -90,10 +99,32 @@ export interface AuthorizationDialogProps {
  * @returns the modal dialog.
  */
 export function AuthorizationDialog(props: AuthorizationDialogProps): ReactNode {
-  const { displayName, authorizationKey, view, operations, t, onClose, onView } = props
+  const { displayName, authorizationKey, view, operations, t, onClose, authorizationRevision, onView } = props
   const flow = flowOf(view, authorizationKey)
   const methods = flow === undefined ? [] : flow.methods
-  const attempt = attemptOf(view, authorizationKey)
+  const rawAttempt = attemptOf(view, authorizationKey)
+  /**
+   * Whether this dialog instance has ever seen this key's attempt in an
+   * active phase (see {@link ACTIVE_PHASES}). Latched during render, not in an
+   * effect: a command this dialog issues does not itself change `view` — the
+   * Host's leftover terminal attempt stays in it until a fresh view arrives —
+   * so latching on "issued a command" instead would adopt that leftover as
+   * this dialog's own on any incidental re-render before the fresh view
+   * lands. Once latched, every later phase of the same attempt (including its
+   * terminal outcome) keeps rendering, whether this dialog issued the
+   * command that started it or only observed it while active. `settle` also
+   * latches it on an accepted answer to one of this dialog's own commands, so
+   * an attempt that reaches a terminal phase in a single answer (no separate
+   * active-phase view ever arrives) is still this dialog's own.
+   */
+  const sawActive = useRef(false)
+  if (rawAttempt !== undefined && ACTIVE_PHASES.includes(rawAttempt.phase)) sawActive.current = true
+  /**
+   * An attempt neither active nor ever seen active by this dialog is stale:
+   * a previous dialog instance's leftover outcome, not this one's business.
+   */
+  const stale = rawAttempt !== undefined && !sawActive.current && !ACTIVE_PHASES.includes(rawAttempt.phase)
+  const attempt = stale ? undefined : rawAttempt
   const phase = attempt?.phase
   /** The method the user picked, or undefined for the flow's own default. */
   const [method, setMethod] = useState<string | undefined>(undefined)
@@ -109,17 +140,22 @@ export function AuthorizationDialog(props: AuthorizationDialogProps): ReactNode 
   /**
    * Settle one command: an answer replaces the page's view — which is what
    * flips the row and re-renders this dialog — while a refusal and a dropped
-   * call both read as one of the two lines this dialog owns.
+   * call both read as one of the two lines this dialog owns. The revision is
+   * read right before `issue` runs, before any `await`, so a live frame that
+   * lands while the command is in flight is never mistaken for one this
+   * command's own answer may still overwrite.
    */
-  const settle = (pending: Promise<AuthorizationOutcome>): void => {
-    void pending.then(
+  const settle = (issue: () => Promise<AuthorizationOutcome>): void => {
+    const issuedAt = authorizationRevision()
+    void issue().then(
       (outcome) => {
         if (outcome.kind === 'refused') {
           setRefusal(outcome.code === 'authorization/already-in-flight' ? 'signInRunning' : 'signInFailed')
           return
         }
         setRefusal(undefined)
-        onView(outcome.view)
+        sawActive.current = true
+        onView(outcome.view, issuedAt)
       },
       () => { setRefusal('signInFailed') },
     )
@@ -132,14 +168,17 @@ export function AuthorizationDialog(props: AuthorizationDialogProps): ReactNode 
   // for it rather than asking the Host to start a key it registers no flow for.
   // An attempt the page already holds is this dialog's to render, never a
   // second one to start; the ref keeps a later re-render from claiming the
-  // controller's single attempt slot twice.
+  // controller's single attempt slot twice. A stale attempt reads as absent
+  // here, so a fresh dialog instance restarts instead of adopting it.
   useEffect(() => {
     if (flow === undefined || choosing || attempt !== undefined || started.current) return
     started.current = true
-    settle(operations.startAuthorization(authorizationKey, method))
+    settle(() => operations.startAuthorization(authorizationKey, method))
   }, [attempt, choosing, flow, method])
 
   // The row's own state is the answer: a committed attempt leaves the dialog.
+  // A stale `authorized` attempt reads as absent above, so this only fires
+  // for one this dialog has seen active or itself received an answer for.
   useEffect(() => {
     if (phase === 'authorized') onClose()
   }, [phase, onClose])
@@ -157,7 +196,7 @@ export function AuthorizationDialog(props: AuthorizationDialogProps): ReactNode 
    * running behind a closed dialog, and the row follows whatever answer lands.
    */
   const dismiss = (): void => {
-    if (active) settle(operations.cancelAuthorization())
+    if (active) settle(() => operations.cancelAuthorization())
     onClose()
   }
 
@@ -181,7 +220,7 @@ export function AuthorizationDialog(props: AuthorizationDialogProps): ReactNode 
   /** Answer the prompt blocking the attempt, clearing the field for the next one. */
   const submit = (promptId: AuthorizationPromptId, value: string): void => {
     setAnswer('')
-    settle(operations.answerAuthorization(promptId, value))
+    settle(() => operations.answerAuthorization(promptId, value))
   }
 
   const notice = attempt?.notice
@@ -282,7 +321,7 @@ export function AuthorizationDialog(props: AuthorizationDialogProps): ReactNode 
                     </Button>
                   </div>
                 )}
-              <Button variant="ghost" onClick={() => { settle(operations.declineAuthorization(prompt.id)) }}>
+              <Button variant="ghost" onClick={() => { settle(() => operations.declineAuthorization(prompt.id)) }}>
                 {t('decline')}
               </Button>
             </div>

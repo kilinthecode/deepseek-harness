@@ -26,6 +26,9 @@
 /deepseek-ai-dsh-client-ui-settings-models/use-this-package/adding-and-deleting-providers:
   en: 9d533c65c82cd4a4
   zh: 0a5da334e127c035
+/deepseek-ai-dsh-client-ui-settings-models/use-this-package/signing-in-to-a-subscription-provider:
+  en: 36e392f1c1e485c6
+  zh: 935cd4abe3f9026c
 /deepseek-ai-dsh-client-ui-settings-models/use-this-package/first-run-dialogs:
   en: 589397a35f82244e
   zh: 342fbceee2c173a2
@@ -41,6 +44,9 @@
 /deepseek-ai-dsh-client-ui-settings-models/understand-the-implementation/concurrency-and-credentials:
   en: 670b8c066aed9b7a
   zh: 2bedba9a2e0e3fee
+/deepseek-ai-dsh-client-ui-settings-models/understand-the-implementation/sign-in-state:
+  en: 21917aaa31e2d7a8
+  zh: a488cab2c2c17ba0
 /deepseek-ai-dsh-client-ui-settings-models/understand-the-implementation/onboarding-coordinator:
   en: 5b18ec5319a96cfa
   zh: 0eaa3078e7d87cad
