@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 /** Sign-in dialog: method choice, notice link and code, prompts, and phase outcomes. */
-import { act, cleanup, fireEvent, render, screen } from '@testing-library/react'
+import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { afterEach, expect, it, vi } from 'vitest'
 import type {
   AuthorizationAttemptView,
@@ -13,6 +13,7 @@ import { RemoteError } from '@deepseek-ai/dsh-client-test-runtime'
 import type { CredentialKey } from '@deepseek-ai/dsh-credentials/types'
 import { AuthorizationDialog, type AuthorizationDialogProps } from '../src/client/AuthorizationDialog.tsx'
 import { createModelsOperations } from '../src/client/operations.ts'
+import { ModelsSettingsStore } from '../src/client/store.ts'
 import { en } from '../src/client/locales.ts'
 
 afterEach(() => {
@@ -74,8 +75,8 @@ function dialogProps(options: { view?: AuthorizationView | null; answer?: Answer
   }
   const onClose = vi.fn()
   const onView = vi.fn()
-  // Fixed: no test in this file exercises the revision guard itself (see
-  // store.client.spec.ts and the ModelsSection-level spec for that).
+  // A fixed stub: cases exercising the revision guard itself wire a real
+  // store instead (see realStoreProps below).
   const authorizationRevision = vi.fn(() => 0)
   const props: AuthorizationDialogProps = {
     displayName: 'ChatGPT',
@@ -323,14 +324,41 @@ it('withdraws the attempt when the dialog is closed mid-prompt', async () => {
   expect(onClose).toHaveBeenCalledOnce()
 })
 
-it('closes without cancelling while no attempt is running', async () => {
-  const { props, authorization, onClose } = dialogProps()
+it('closes without cancelling while nothing has been started', async () => {
+  // A multi-method flow with no choice made yet: the start effect has nothing
+  // to do, so this is the one case where the dialog has genuinely issued
+  // nothing for the Host to withdraw.
+  const { props, authorization, onClose } = dialogProps({
+    view: viewOf(null, [{ id: 'oauth', label: 'ChatGPT subscription' }, { id: 'api-key', label: 'API key' }]),
+  })
 
   render(<AuthorizationDialog {...props} />)
   await act(async () => { fireEvent.click(screen.getByRole('button', { name: en.cancel })) })
 
   expect(onClose).toHaveBeenCalledOnce()
   expect(authorization.cancel).not.toHaveBeenCalled()
+})
+
+// Bug: a fresh dialog restarting over a stale terminal attempt (or any other
+// start) has issued `start` before the view shows anything active — the
+// dialog's own `attempt` reads undefined until the first accepted frame or
+// answer. Cancelling in that window used to skip `cancelAuthorization`
+// entirely (only `active` gated it), leaving the Host's attempt parked with
+// nothing to ever withdraw it (pi-ai's select prompt has no timeout), so
+// every later sign-in was refused `already-in-flight`.
+it('withdraws a just-issued start on cancel, before any frame or answer arrives', async () => {
+  const { props, authorization, onClose } = dialogProps({ view: viewOf(attemptOf({ phase: 'cancelled' })) })
+
+  render(<AuthorizationDialog {...props} />)
+  expect(authorization.start).toHaveBeenCalledExactlyOnceWith(KEY, undefined)
+
+  // Cancel fires immediately: the start answer has not landed, so `attempt`
+  // (and therefore `active`) still reads as if nothing were running.
+  fireEvent.click(screen.getByRole('button', { name: en.cancel }))
+
+  expect(authorization.cancel).toHaveBeenCalledOnce()
+  expect(onClose).toHaveBeenCalledOnce()
+  await act(async () => {})
 })
 
 it('closes once an attempt this dialog started reaches authorized', async () => {
@@ -471,6 +499,173 @@ it('keeps showing the outcome of an attempt only ever observed active, without r
 
   expect(screen.getByText(en.signInCancelled)).toBeTruthy()
   expect(authorization.start).not.toHaveBeenCalled()
+})
+
+/**
+ * The dialog's props wired to a real {@link ModelsSettingsStore}:
+ * `authorizationRevision` and `onView` route through its `mergeCommandView`
+ * guard, exactly as `ModelsSection` wires the shipped dialog — so a bug in
+ * that wiring (e.g. dropping the `authorizationRevision` read) shows up here
+ * the same way it would for the row's real dialog.
+ * @param view - the store's initial authorization view.
+ * @param authorization - the scripted `remote.authorization` commands.
+ * @returns the store the props are wired to, and the props themselves.
+ */
+function realStoreProps(
+  view: AuthorizationView,
+  authorization: {
+    start: ReturnType<typeof vi.fn>
+    answer: ReturnType<typeof vi.fn>
+    decline: ReturnType<typeof vi.fn>
+    cancel: ReturnType<typeof vi.fn>
+    signOut: ReturnType<typeof vi.fn>
+  },
+) {
+  const store = new ModelsSettingsStore({} as never, {} as never, {} as never)
+  store.mergeAuthorization(view)
+  const props: AuthorizationDialogProps = {
+    displayName: 'ChatGPT',
+    authorizationKey: KEY,
+    view: store.store.getSnapshot().authorization,
+    operations: createModelsOperations({ remote: { authorization } } as never),
+    t,
+    onClose: vi.fn(),
+    authorizationRevision: () => store.authorizationRevision(),
+    onView: (nextView, issuedAt) => { store.mergeCommandView(nextView, issuedAt) },
+  }
+  return { store, props }
+}
+
+it('drops a stale answer to a prompt once a newer live frame has landed', async () => {
+  const pending = Promise.withResolvers<Answer>()
+  const authorization = {
+    start: vi.fn(), decline: vi.fn(), cancel: vi.fn(), signOut: vi.fn(),
+    answer: vi.fn(() => pending.promise),
+  }
+  const options = [{ id: 'browser', label: 'Browser login' }]
+  const { store, props } = realStoreProps(
+    promptView({ id: PROMPT_ID, kind: 'select', message: 'Which login?', options }),
+    authorization,
+  )
+
+  render(<AuthorizationDialog {...props} />)
+  fireEvent.click(screen.getByRole('button', { name: /^Browser login/ }))
+  expect(authorization.answer).toHaveBeenCalledExactlyOnceWith(PROMPT_ID, 'browser')
+
+  // A live frame lands while the answer is still in flight.
+  const runningView = viewOf(attemptOf({ phase: 'running' }))
+  await act(async () => { store.mergeAuthorization(runningView) })
+
+  // The late answer (an older, unrelated outcome) must not overwrite it.
+  await act(async () => {
+    pending.resolve({ ok: true, value: viewOf(attemptOf({ phase: 'cancelled' })) })
+    await pending.promise
+  })
+
+  expect(store.store.getSnapshot().authorization).toEqual(runningView)
+})
+
+it('drops a stale decline answer once a newer live frame has landed', async () => {
+  const pending = Promise.withResolvers<Answer>()
+  const authorization = {
+    start: vi.fn(), answer: vi.fn(), cancel: vi.fn(), signOut: vi.fn(),
+    decline: vi.fn(() => pending.promise),
+  }
+  const { store, props } = realStoreProps(
+    promptView({ id: PROMPT_ID, kind: 'text', message: 'Paste the code' }),
+    authorization,
+  )
+
+  render(<AuthorizationDialog {...props} />)
+  fireEvent.click(screen.getByRole('button', { name: en.decline }))
+  expect(authorization.decline).toHaveBeenCalledExactlyOnceWith(PROMPT_ID)
+
+  const runningView = viewOf(attemptOf({ phase: 'running' }))
+  await act(async () => { store.mergeAuthorization(runningView) })
+
+  await act(async () => {
+    pending.resolve({ ok: true, value: viewOf(attemptOf({ phase: 'cancelled' })) })
+    await pending.promise
+  })
+
+  expect(store.store.getSnapshot().authorization).toEqual(runningView)
+})
+
+it('drops a stale cancel answer once a newer live frame has landed', async () => {
+  const pending = Promise.withResolvers<Answer>()
+  const authorization = {
+    start: vi.fn(), answer: vi.fn(), decline: vi.fn(), signOut: vi.fn(),
+    cancel: vi.fn(() => pending.promise),
+  }
+  const { store, props } = realStoreProps(viewOf(attemptOf({ phase: 'running' })), authorization)
+
+  render(<AuthorizationDialog {...props} />)
+  fireEvent.click(screen.getByRole('button', { name: en.cancel }))
+  expect(authorization.cancel).toHaveBeenCalledOnce()
+
+  const promptingView = promptView({ id: PROMPT_ID, kind: 'text', message: 'Paste the code' })
+  await act(async () => { store.mergeAuthorization(promptingView) })
+
+  // The late cancel answer (reporting unsigned) must not overwrite it.
+  await act(async () => {
+    pending.resolve({ ok: true, value: viewOf(null) })
+    await pending.promise
+  })
+
+  expect(store.store.getSnapshot().authorization).toEqual(promptingView)
+})
+
+// The three "drops a stale ... answer" cases above only prove a late answer
+// gets dropped once something else moved the revision; on their own they
+// would not catch `authorizationRevision` being replaced by an arbitrary
+// constant that happens to differ from the post-interference revision too.
+// These pair with them: absent any interference, the command's own answer
+// must still apply — which only holds if the revision `settle` reads back
+// really is the one the store held at the moment the command was issued.
+
+it('applies its own answer to a prompt when no live frame intervened', async () => {
+  const expected = viewOf(attemptOf({ phase: 'cancelled' }))
+  const authorization = {
+    start: vi.fn(), decline: vi.fn(), cancel: vi.fn(), signOut: vi.fn(),
+    answer: vi.fn(() => Promise.resolve<Answer>({ ok: true, value: expected })),
+  }
+  const { store, props } = realStoreProps(
+    promptView({ id: PROMPT_ID, kind: 'select', message: 'Which login?', options: [{ id: 'browser', label: 'Browser login' }] }),
+    authorization,
+  )
+
+  render(<AuthorizationDialog {...props} />)
+  fireEvent.click(screen.getByRole('button', { name: /^Browser login/ }))
+
+  await waitFor(() => { expect(store.store.getSnapshot().authorization).toEqual(expected) })
+})
+
+it('applies its own decline answer when no live frame intervened', async () => {
+  const expected = viewOf(attemptOf({ phase: 'cancelled' }))
+  const authorization = {
+    start: vi.fn(), answer: vi.fn(), cancel: vi.fn(), signOut: vi.fn(),
+    decline: vi.fn(() => Promise.resolve<Answer>({ ok: true, value: expected })),
+  }
+  const { store, props } = realStoreProps(promptView({ id: PROMPT_ID, kind: 'text', message: 'Paste the code' }), authorization)
+
+  render(<AuthorizationDialog {...props} />)
+  fireEvent.click(screen.getByRole('button', { name: en.decline }))
+
+  await waitFor(() => { expect(store.store.getSnapshot().authorization).toEqual(expected) })
+})
+
+it('applies its own cancel answer when no live frame intervened', async () => {
+  const expected = viewOf(null)
+  const authorization = {
+    start: vi.fn(), answer: vi.fn(), decline: vi.fn(), signOut: vi.fn(),
+    cancel: vi.fn(() => Promise.resolve<Answer>({ ok: true, value: expected })),
+  }
+  const { store, props } = realStoreProps(viewOf(attemptOf({ phase: 'running' })), authorization)
+
+  render(<AuthorizationDialog {...props} />)
+  fireEvent.click(screen.getByRole('button', { name: en.cancel }))
+
+  await waitFor(() => { expect(store.store.getSnapshot().authorization).toEqual(expected) })
 })
 
 it('says a sign-in is already running when the start is refused that way', async () => {

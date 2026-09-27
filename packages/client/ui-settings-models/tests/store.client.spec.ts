@@ -541,6 +541,17 @@ describe('sign-in joins', () => {
     expect(store.authorizationRevision()).toBe(issuedAt + 1)
   })
 
+  it('drops a command answer that arrives after a stream failure bumped the revision', async () => {
+    const store = await loadCodex({ configured: false })
+    const issuedAt = store.authorizationRevision()
+    store.failAuthorization('the sign-in stream ended')
+    store.mergeCommandView(codexView(true), issuedAt)
+    // The failure is itself a publication, so the command's now-late answer
+    // (still reporting unsigned) is dropped rather than reapplied.
+    expect(store.store.getSnapshot().authorization).toEqual(codexView(false))
+    expect(store.store.getSnapshot().authorizationError).toBe('the sign-in stream ended')
+  })
+
   it('clears a recorded read failure on the next pushed frame', async () => {
     const store = await loadCodex({
       configured: false,
