@@ -522,6 +522,25 @@ describe('sign-in joins', () => {
     expect(store.store.getSnapshot().rows[0]?.flow).toBeUndefined()
   })
 
+  it('drops a command answer that arrives after a newer live frame', async () => {
+    const store = await loadCodex({ configured: false })
+    const issuedAt = store.authorizationRevision()
+    store.mergeAuthorization(codexView(true))
+    store.mergeCommandView(codexView(false), issuedAt)
+    // The live frame already advanced past the command's own revision, so its
+    // late answer (still reporting unsigned) is dropped rather than reapplied.
+    expect(store.store.getSnapshot().authorization).toEqual(codexView(true))
+  })
+
+  it('merges a command answer when no live frame arrived since it was issued', async () => {
+    const store = await loadCodex({ configured: false })
+    const issuedAt = store.authorizationRevision()
+    store.mergeCommandView(codexView(true), issuedAt)
+    expect(store.store.getSnapshot().authorization).toEqual(codexView(true))
+    // A merged command answer is itself a publication: the revision moves on.
+    expect(store.authorizationRevision()).toBe(issuedAt + 1)
+  })
+
   it('clears a recorded read failure on the next pushed frame', async () => {
     const store = await loadCodex({
       configured: false,

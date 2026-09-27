@@ -328,6 +328,32 @@ export class ModelsSettingsStore {
   }
 
   /**
+   * The live-publication revision as of now. A caller about to issue an
+   * authorization command reads this first, then passes it back to
+   * {@link mergeCommandView} so a late answer can tell whether a live frame
+   * beat it there.
+   * @returns the current live-publication revision.
+   */
+  authorizationRevision(): number {
+    return this.liveRevision
+  }
+
+  /**
+   * Merge one command's answered view, unless a live frame already landed
+   * since the command was issued: a stream push can carry a phase newer than
+   * the one the command's own HTTP answer captured (pi-ai's `select` prompt
+   * right after `start`, for example), and a late answer must never overwrite
+   * state a live frame already advanced past.
+   * @param view - the view the command's answer carried.
+   * @param issuedAt - the revision {@link authorizationRevision} returned right before the command was issued.
+   * @returns nothing; a stale answer is dropped without changing the snapshot.
+   */
+  mergeCommandView(view: AuthorizationView, issuedAt: number): void {
+    if (issuedAt !== this.liveRevision) return
+    this.mergeAuthorization(view)
+  }
+
+  /**
    * Publish one authorization failure, keeping the rows' last known sign-in
    * state.
    * @param error - the thrown failure whose message the snapshot reports.

@@ -74,6 +74,9 @@ function dialogProps(options: { view?: AuthorizationView | null; answer?: Answer
   }
   const onClose = vi.fn()
   const onView = vi.fn()
+  // Fixed: no test in this file exercises the revision guard itself (see
+  // store.client.spec.ts and the ModelsSection-level spec for that).
+  const authorizationRevision = vi.fn(() => 0)
   const props: AuthorizationDialogProps = {
     displayName: 'ChatGPT',
     authorizationKey: KEY,
@@ -81,9 +84,10 @@ function dialogProps(options: { view?: AuthorizationView | null; answer?: Answer
     operations: createModelsOperations({ remote: { authorization } } as never),
     t,
     onClose,
+    authorizationRevision,
     onView,
   }
-  return { props, authorization, onClose, onView }
+  return { props, authorization, onClose, authorizationRevision, onView }
 }
 
 /** Install one clipboard over the jsdom navigator, as the account dialog's spec does. */
@@ -109,7 +113,9 @@ it('starts a single-method flow as it opens and answers the page with the view',
   expect(screen.getByRole('dialog', { name: TITLE })).toBeTruthy()
   expect(authorization.start).toHaveBeenCalledExactlyOnceWith(KEY, undefined)
   await act(async () => {})
-  expect(onView).toHaveBeenCalledExactlyOnceWith(UNSIGNED)
+  // The second argument is the revision `settle` read before issuing the
+  // command (see the store's `mergeCommandView` guard).
+  expect(onView).toHaveBeenCalledExactlyOnceWith(UNSIGNED, 0)
 })
 
 it('offers the methods of a multi-method flow and starts the chosen one', async () => {
@@ -327,31 +333,144 @@ it('closes without cancelling while no attempt is running', async () => {
   expect(authorization.cancel).not.toHaveBeenCalled()
 })
 
-it('closes once the attempt is authorized', () => {
-  const { props, onClose } = dialogProps({ view: viewOf(attemptOf({ phase: 'authorized' })) })
+it('closes once an attempt this dialog started reaches authorized', async () => {
+  const { props, authorization, onClose } = dialogProps({ view: viewOf(null) })
+  const { rerender } = render(<AuthorizationDialog {...props} />)
+  expect(authorization.start).toHaveBeenCalledExactlyOnceWith(KEY, undefined)
+  await act(async () => {})
 
-  render(<AuthorizationDialog {...props} />)
+  // The Host's answer develops through an active phase before authorized, the
+  // way a real attempt this dialog started always does.
+  rerender(<AuthorizationDialog {...props} view={viewOf(attemptOf({ phase: 'running' }))} />)
+  rerender(<AuthorizationDialog {...props} view={viewOf(attemptOf({ phase: 'authorized' }))} />)
 
   expect(onClose).toHaveBeenCalledOnce()
 })
 
-it('says a withdrawn sign-in was cancelled', () => {
-  const { props } = dialogProps({ view: viewOf(attemptOf({ phase: 'cancelled' })) })
+// The Host keeps a finished attempt in its view until a new start, so a fresh
+// dialog instance opening onto one it never started (never seen active) is a
+// previous instance's leftover, not a cue of its own: it starts over instead
+// of adopting it.
+it('leaves a stale authorized attempt from another dialog alone instead of auto-closing', async () => {
+  const { props, authorization, onClose } = dialogProps({ view: viewOf(attemptOf({ phase: 'authorized' })) })
 
   render(<AuthorizationDialog {...props} />)
 
-  expect(screen.getByText(en.signInCancelled)).toBeTruthy()
+  expect(authorization.start).toHaveBeenCalledExactlyOnceWith(KEY, undefined)
+  expect(onClose).not.toHaveBeenCalled()
+  await act(async () => {})
 })
 
-it('shows the localized failure line instead of the flow code', () => {
-  const { props } = dialogProps({
+// The command that starts a fresh attempt does not itself change `view` — the
+// Host's leftover terminal attempt stays there until a new view arrives — so
+// this guards against adopting it just because this dialog has since issued
+// its own start (a re-render for any other reason before the fresh view
+// lands must not flash the leftover outcome back in).
+it('does not adopt a stale authorized attempt just because this dialog has since issued its own start', async () => {
+  const { props, authorization, onClose } = dialogProps({ view: viewOf(attemptOf({ phase: 'authorized' })) })
+  const { rerender } = render(<AuthorizationDialog {...props} />)
+  expect(authorization.start).toHaveBeenCalledExactlyOnceWith(KEY, undefined)
+  expect(onClose).not.toHaveBeenCalled()
+
+  rerender(<AuthorizationDialog {...props} view={viewOf(attemptOf({ phase: 'authorized' }))} />)
+
+  expect(onClose).not.toHaveBeenCalled()
+  expect(authorization.start).toHaveBeenCalledOnce()
+  await act(async () => {})
+})
+
+it('keeps showing "cancelled" for an attempt this dialog itself ran, without restarting', async () => {
+  const { props, authorization } = dialogProps({ view: viewOf(null) })
+  const { rerender } = render(<AuthorizationDialog {...props} />)
+  expect(authorization.start).toHaveBeenCalledExactlyOnceWith(KEY, undefined)
+  await act(async () => {})
+
+  rerender(<AuthorizationDialog {...props} view={viewOf(attemptOf({ phase: 'running' }))} />)
+  rerender(<AuthorizationDialog {...props} view={viewOf(attemptOf({ phase: 'cancelled' }))} />)
+
+  expect(screen.getByText(en.signInCancelled)).toBeTruthy()
+  expect(authorization.start).toHaveBeenCalledOnce()
+})
+
+it('discards a stale cancelled attempt from another dialog and starts fresh', async () => {
+  const { props, authorization } = dialogProps({ view: viewOf(attemptOf({ phase: 'cancelled' })) })
+
+  render(<AuthorizationDialog {...props} />)
+
+  expect(authorization.start).toHaveBeenCalledExactlyOnceWith(KEY, undefined)
+  expect(screen.queryByText(en.signInCancelled)).toBeNull()
+  await act(async () => {})
+})
+
+it('does not flash a stale cancelled line back in once this dialog has issued its own start', async () => {
+  const { props, authorization } = dialogProps({ view: viewOf(attemptOf({ phase: 'cancelled' })) })
+  const { rerender } = render(<AuthorizationDialog {...props} />)
+  expect(authorization.start).toHaveBeenCalledExactlyOnceWith(KEY, undefined)
+  expect(screen.queryByText(en.signInCancelled)).toBeNull()
+
+  rerender(<AuthorizationDialog {...props} view={viewOf(attemptOf({ phase: 'cancelled' }))} />)
+
+  expect(screen.queryByText(en.signInCancelled)).toBeNull()
+  expect(authorization.start).toHaveBeenCalledOnce()
+  await act(async () => {})
+})
+
+it('keeps showing the localized failure line for an attempt this dialog itself ran', async () => {
+  const { props, authorization } = dialogProps({ view: viewOf(null) })
+  const { rerender } = render(<AuthorizationDialog {...props} />)
+  expect(authorization.start).toHaveBeenCalledExactlyOnceWith(KEY, undefined)
+  await act(async () => {})
+
+  rerender(<AuthorizationDialog {...props} view={viewOf(attemptOf({ phase: 'running' }))} />)
+  rerender(<AuthorizationDialog {...props} view={viewOf(attemptOf({ phase: 'failed', failure: 'authorization/not-committed' }))} />)
+
+  expect(screen.getByText(en.signInFailed)).toBeTruthy()
+  expect(screen.queryByText('authorization/not-committed')).toBeNull()
+  expect(authorization.start).toHaveBeenCalledOnce()
+})
+
+it('discards a stale failed attempt from another dialog and starts fresh', async () => {
+  const { props, authorization } = dialogProps({
     view: viewOf(attemptOf({ phase: 'failed', failure: 'authorization/not-committed' })),
   })
 
   render(<AuthorizationDialog {...props} />)
 
-  expect(screen.getByText(en.signInFailed)).toBeTruthy()
-  expect(screen.queryByText('authorization/not-committed')).toBeNull()
+  expect(authorization.start).toHaveBeenCalledExactlyOnceWith(KEY, undefined)
+  expect(screen.queryByText(en.signInFailed)).toBeNull()
+  await act(async () => {})
+})
+
+it('renders an active prompting attempt from another dialog instead of restarting', async () => {
+  const { props, authorization } = dialogProps({
+    view: promptView({
+      id: PROMPT_ID,
+      kind: 'select',
+      message: 'Which account?',
+      options: [{ id: 'work', label: 'Work' }],
+    }),
+  })
+
+  render(<AuthorizationDialog {...props} />)
+
+  expect(screen.getByText('Which account?')).toBeTruthy()
+  await act(async () => {})
+  expect(authorization.start).not.toHaveBeenCalled()
+})
+
+// This dialog never started the attempt (mounted onto it already running), so
+// its terminal outcome is only trustworthy because this dialog saw it active
+// first — the other latch (an accepted answer to this dialog's own command)
+// never fires here.
+it('keeps showing the outcome of an attempt only ever observed active, without restarting', async () => {
+  const { props, authorization } = dialogProps({ view: viewOf(attemptOf({ phase: 'running' })) })
+  const { rerender } = render(<AuthorizationDialog {...props} />)
+  expect(authorization.start).not.toHaveBeenCalled()
+
+  rerender(<AuthorizationDialog {...props} view={viewOf(attemptOf({ phase: 'cancelled' }))} />)
+
+  expect(screen.getByText(en.signInCancelled)).toBeTruthy()
+  expect(authorization.start).not.toHaveBeenCalled()
 })
 
 it('says a sign-in is already running when the start is refused that way', async () => {

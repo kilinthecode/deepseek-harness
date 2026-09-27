@@ -2273,6 +2273,42 @@ describe('authorization rows', () => {
     await waitFor(() => { expect(authorization.start).toHaveBeenCalledExactlyOnceWith(CODEX_KEY, undefined) })
   })
 
+  it('keeps a newer live frame over a start answer that resolves after it', async () => {
+    const { authorization, controller } = await mountAuthorizationRow()
+    const pending = Promise.withResolvers<Answer>()
+    authorization.start.mockImplementation(() => pending.promise)
+
+    await act(async () => { fireEvent.click(screen.getByRole('button', { name: en.signIn })) })
+    expect(authorization.start).toHaveBeenCalledExactlyOnceWith(CODEX_KEY, undefined)
+
+    // pi-ai raises a `select` prompt right after `start`; the stream frame can
+    // reach the page before start's own HTTP answer, whose view was captured
+    // earlier at the `starting` phase.
+    const promptingView: AuthorizationView = {
+      flows: [FLOW],
+      attempt: {
+        key: CODEX_KEY,
+        method: 'oauth',
+        phase: 'prompting',
+        prompt: {
+          id: 'p1' as AuthorizationPromptId,
+          kind: 'select',
+          message: 'Browser login or device code?',
+          options: [{ id: 'browser', label: 'Browser login' }, { id: 'device', label: 'Device code login' }],
+        },
+      },
+    }
+    await act(async () => { controller.mergeAuthorization(promptingView) })
+    expect(screen.getByText('Browser login or device code?')).toBeTruthy()
+
+    // The late `starting` answer must not overwrite the newer prompting state.
+    const startingView: AuthorizationView = { flows: [FLOW], attempt: { key: CODEX_KEY, method: 'oauth', phase: 'starting' } }
+    await act(async () => { pending.resolve(remoteOk(startingView)); await pending.promise })
+
+    expect(screen.getByText('Browser login or device code?')).toBeTruthy()
+    expect(screen.queryByText(en.signInWaiting)).toBeNull()
+  })
+
   it('waits for the flow instead of starting a key the view lists none for', async () => {
     const { authorization } = await mountAuthorizationRow({ flow: null })
 
@@ -2322,6 +2358,26 @@ describe('authorization rows', () => {
 
     expect(screen.getByText(en.signOutFailed)).toBeTruthy()
     expect(screen.getByRole('button', { name: en.signOut }).hasAttribute('disabled')).toBe(false)
+  })
+
+  it('drops a stale sign-out answer after a newer live frame arrived', async () => {
+    const { authorization, controller } = await mountAuthorizationRow({ flow: { configured: true } })
+    const pending = Promise.withResolvers<Answer>()
+    authorization.signOut.mockImplementation(() => pending.promise)
+
+    fireEvent.click(screen.getByRole('button', { name: en.signOut }))
+    expect(authorization.signOut).toHaveBeenCalledExactlyOnceWith(CODEX_KEY)
+
+    // A live frame — another surface re-confirming the sign-in — supersedes
+    // the outstanding sign-out before its own answer resolves.
+    const reSignedIn: AuthorizationView = { flows: [{ ...FLOW, configured: true }], attempt: null }
+    await act(async () => { controller.mergeAuthorization(reSignedIn) })
+
+    // The late sign-out answer (still reporting unsigned) must not overwrite it.
+    await act(async () => { pending.resolve(remoteOk(UNSIGNED)); await pending.promise })
+
+    expect(screen.getByText(en.signedIn)).toBeTruthy()
+    expect(screen.getByRole('button', { name: en.signOut })).toBeTruthy()
   })
 
   it('signs in through the dialog and follows the answered view', async () => {

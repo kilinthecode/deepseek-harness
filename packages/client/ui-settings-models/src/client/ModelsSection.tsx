@@ -313,13 +313,16 @@ function Loaded({ injected, renderSlot }: { injected: ModelsSectionFace; renderS
    * Drop one subscription row's stored sign-in. A sign-out asks nothing extra,
    * so it runs from the row action itself: the answer replaces the page's view
    * and the row flips to unsigned, while a refusal or a dropped call reports
-   * the same line in place — there is no second step to retry.
+   * the same line in place — there is no second step to retry. The revision is
+   * read before the call so a live frame that lands while it is in flight is
+   * never overwritten by this answer once it resolves.
    * @param identity - the row being signed out of.
    * @param key - the credential record the row's declaration names.
    */
   const signOut = (identity: ProviderIdentity, key: ProviderAuthorization['key']): void => {
     setSigningOut(identity.provider)
     setSignOutFailure(undefined)
+    const issuedAt = controller.authorizationRevision()
     void operations.signOutAuthorization(key).then(
       (outcome) => {
         setSigningOut(undefined)
@@ -327,7 +330,7 @@ function Loaded({ injected, renderSlot }: { injected: ModelsSectionFace; renderS
           setSignOutFailure(identity.provider)
           return
         }
-        controller.mergeAuthorization(outcome.view)
+        controller.mergeCommandView(outcome.view, issuedAt)
       },
       () => {
         setSigningOut(undefined)
@@ -802,7 +805,8 @@ function Loaded({ injected, renderSlot }: { injected: ModelsSectionFace; renderS
             operations={operations}
             t={t}
             onClose={() => { setSignInTarget(undefined) }}
-            onView={(view) => { controller.mergeAuthorization(view) }}
+            authorizationRevision={() => controller.authorizationRevision()}
+            onView={(view, issuedAt) => { controller.mergeCommandView(view, issuedAt) }}
           />
         )}
     </div>
