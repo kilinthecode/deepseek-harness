@@ -22,11 +22,12 @@ import { createWorktree } from './create.ts'
 import { pathExists } from './fs-util.ts'
 import { GitRunner } from './git.ts'
 import {
-  assertNotTerminal, assertOpenOrRecoverable, assertOwnerAuthority, layoutForRepo, listRecords, requireRecordLocation,
+  assertOpen, assertOpenOrRecoverable, assertOwnerAuthority, layoutForRepo, listRecords, requireRecordLocation,
   toPublicRecord, updateExistingRecordAt,
 } from './records.ts'
-import { repoRootOf } from './repo.ts'
+import { repoIdentityOf } from './repo.ts'
 import { assertNoRunningWorkers } from './workers.ts'
+import { assertWorktreeId } from './worktree-id.ts'
 import type {
   AcceptOutcome,
   AcceptWorktreeRequest,
@@ -44,6 +45,7 @@ import type {
 export type * from './types.ts'
 export { renderReviewerPrompt, renderWorkerBrief, VERDICT_SCHEMA } from './text.ts'
 export type { ReviewerPromptFacts, WorkerBriefFacts } from './text.ts'
+export { assertWorktreeId } from './worktree-id.ts'
 
 declare module '@deepseek-ai/cordis' {
   interface Context {
@@ -77,6 +79,8 @@ export interface Config {
   requireDistinctReviewer: boolean
   /** Check command (argv) run in the review checkout before the reviewer; empty runs none. A nonzero exit rejects the change. */
   testCommand: string[]
+  /** Milliseconds the check command may run before it is terminated and the accept reports `checks-failed`. */
+  checkTimeoutMs: number
   /** Byte bound on the diff embedded in the reviewer prompt. */
   reviewDiffMaxBytes: number
   /** Remove the worktree directory and branch after a successful merge. */
@@ -97,6 +101,7 @@ const ConfigSchema: z<Config> = z.object({
   reviewerReasoningEffort: z.string().description('Reviewer reasoning effort; requires reviewerProvider and reviewerModel.'),
   requireDistinctReviewer: z.boolean().default(true).description('Reject a reviewer route equal to the worker route.'),
   testCommand: z.array(z.string().required()).default([]).description('Check command (argv) run in the review checkout before the reviewer. Empty runs none.'),
+  checkTimeoutMs: z.natural().min(1000).default(900_000).description('Milliseconds the check command may run before it is terminated and reported as checks-failed.'),
   reviewDiffMaxBytes: z.natural().min(1024).default(49152).description('Byte bound on the diff embedded in the reviewer prompt.'),
   removeOnMerge: z.boolean().default(true).description('Remove the worktree and its branch after a successful merge.'),
   commitAuthorName: z.string().description('Author name for harness commits, set together with commitAuthorEmail. Omitted uses the git configuration.'),
@@ -161,16 +166,22 @@ export class SubagentWorktrees extends Service {
    * Record one worker Session on an open worktree.
    * @param request - worktree id, owner, worker Session id, and route.
    * @returns the updated record.
+   * @throws when the id is malformed, no such worktree exists, the owner does not own it, or it is not `open`.
    */
   async attach(request: AttachWorkerRequest): Promise<WorktreeRecord> {
+    assertWorktreeId(request.id)
     const located = await requireRecordLocation(this.root, request.id)
     assertOwnerAuthority(located.record, request.owner, request.id)
-    assertNotTerminal(located.record, request.id)
-    const updated = await updateExistingRecordAt(located.path, request.id, current => ({
-      ...current,
-      workerSessionIds: [...current.workerSessionIds, request.workerSessionId],
-      workerRoute: request.workerRoute,
-    }))
+    // The state check runs under the record lock so an attach cannot slip
+    // between an accept's `open` -> `reviewing` transition and its commit.
+    const updated = await updateExistingRecordAt(located.layout, request.id, (current) => {
+      assertOpen(current, request.id)
+      return {
+        ...current,
+        workerSessionIds: [...current.workerSessionIds, request.workerSessionId],
+        workerRoute: request.workerRoute,
+      }
+    })
     return toPublicRecord(updated)
   }
 
@@ -202,8 +213,10 @@ export class SubagentWorktrees extends Service {
    * reviewer check the exact commit, and merge a passing change.
    * @param request - worktree id, owner, reviewer parent Agent, operator overrides, and cancellation.
    * @returns the accept outcome.
+   * @throws when the id is malformed, or a non-operator owner sets `testCommand` or `reviewer`; see {@link acceptWorktree}.
    */
-  accept(request: AcceptWorktreeRequest): Promise<AcceptOutcome> {
+  async accept(request: AcceptWorktreeRequest): Promise<AcceptOutcome> {
+    assertWorktreeId(request.id)
     return acceptWorktree({
       ctx: this.ctx,
       git: this.git,
@@ -215,27 +228,40 @@ export class SubagentWorktrees extends Service {
   }
 
   /**
-   * Delete one worktree and its branch without merging.
+   * Delete one worktree and its branch without merging. The record is claimed
+   * under its lock before any git change, so a concurrent `accept` or second
+   * `discard` cannot act on a worktree this call is deleting. A `merged` record
+   * is not changed: `discard` only removes a worktree directory or branch that
+   * a crash between the merge and its cleanup left behind.
    * @param request - worktree id, owner, and cancellation.
-   * @returns the `discarded` record.
+   * @returns the `discarded` record, or the unchanged `merged` record after cleaning up its leftovers.
+   * @throws when the id is malformed, no such worktree exists, the owner does not own it, an attached worker is
+   *   still running, the record is `discarded` or being accepted, or a git cleanup command fails.
    */
   async discard(request: DiscardWorktreeRequest): Promise<WorktreeRecord> {
+    assertWorktreeId(request.id)
     const located = await requireRecordLocation(this.root, request.id)
     assertOwnerAuthority(located.record, request.owner, request.id)
-    assertOpenOrRecoverable(located.record, request.id)
-    assertNoRunningWorkers(this.ctx, located.record, request.id)
 
-    const { record } = located
-    if (await pathExists(record.path)) {
-      await this.git.expect(['worktree', 'remove', '--force', record.path], 'git worktree remove', {
-        cwd: record.repoRoot, signal: request.signal,
-      })
+    const claimed = await updateExistingRecordAt(located.layout, request.id, (current) => {
+      if (current.state === 'merged') return current
+      assertOpenOrRecoverable(current, request.id)
+      assertNoRunningWorkers(this.ctx, current, request.id)
+      return { ...current, state: 'discarded' }
+    })
+
+    // Each step tolerates the thing it removes already being gone, so a
+    // discard that was interrupted after the claim can be finished by hand.
+    const cleanup = { cwd: claimed.repoRoot, signal: request.signal }
+    if (await pathExists(claimed.path)) {
+      await this.git.expect(['worktree', 'remove', '--force', claimed.path], 'git worktree remove', cleanup)
     }
-    await this.git.expect(['worktree', 'prune'], 'git worktree prune', { cwd: record.repoRoot, signal: request.signal })
-    await this.git.expect(['branch', '-D', record.branch], 'git branch -D', { cwd: record.repoRoot, signal: request.signal })
-
-    const updated = await updateExistingRecordAt(located.path, request.id, current => ({ ...current, state: 'discarded' }))
-    return toPublicRecord(updated)
+    await this.git.expect(['worktree', 'prune'], 'git worktree prune', cleanup)
+    const branch = await this.git.run(['rev-parse', '-q', '--verify', `refs/heads/${claimed.branch}`], cleanup)
+    if (branch.exitCode === 0) {
+      await this.git.expect(['branch', '-D', claimed.branch], 'git branch -D', cleanup)
+    }
+    return toPublicRecord(claimed)
   }
 
   /**
@@ -244,11 +270,11 @@ export class SubagentWorktrees extends Service {
    * @returns records ordered by creation time.
    */
   async list(request: ListWorktreesRequest): Promise<WorktreeRecord[]> {
-    const repoRoot = await repoRootOf(this.git, request.baseDir)
-    if (repoRoot === undefined) {
+    const identity = await repoIdentityOf(this.git, request.baseDir)
+    if (identity === undefined) {
       throw new Error(`subagent-worktree: "${request.baseDir}" is not inside a git work tree`)
     }
-    const layout = layoutForRepo(this.root, repoRoot)
+    const layout = layoutForRepo(this.root, identity.commonDir)
     const records = (await listRecords(layout)).filter((record) => {
       if (!request.includeClosed && (record.state === 'merged' || record.state === 'discarded')) return false
       if (request.owner !== undefined && !ownerMatches(record.owner, request.owner)) return false

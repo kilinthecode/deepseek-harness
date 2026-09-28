@@ -7,7 +7,7 @@
  */
 
 import { createHash } from 'node:crypto'
-import { basename, join } from 'node:path'
+import { basename, dirname, join } from 'node:path'
 import { assertWorktreeId } from './worktree-id.ts'
 
 /** Hexadecimal digest length kept from the repository-path hash in a `repoKey`. */
@@ -32,16 +32,20 @@ function sanitizePathSegment(segment: string): string {
 }
 
 /**
- * Stable per-repository directory name: a readable basename plus a content
- * hash of the canonical repository path, so two repositories that happen to
- * share a basename (for example two `worktree` checkouts of the same project)
- * never collide.
- * @param canonicalToplevel - the repository's realpath-resolved top-level directory.
- * @returns the `<basename>-<hash>` directory name under the configured root.
+ * Stable per-repository directory name: a readable name plus a content hash
+ * of the canonical git common directory, so two repositories that happen to
+ * share a name (for example two `worktree` checkouts of the same project)
+ * never collide, while every linked worktree of one repository, which shares
+ * one common directory, resolves the same key. The readable name is the
+ * directory that holds `.git` for an ordinary repository, and the common
+ * directory's own basename for a bare one.
+ * @param canonicalCommonDir - the repository's realpath-resolved git common directory.
+ * @returns the `<name>-<hash>` directory name under the configured root.
  */
-export function repoKeyFor(canonicalToplevel: string): string {
-  const digest = createHash('sha256').update(canonicalToplevel).digest('hex').slice(0, REPO_KEY_HASH_HEX_LENGTH)
-  return `${sanitizePathSegment(basename(canonicalToplevel))}-${digest}`
+export function repoKeyFor(canonicalCommonDir: string): string {
+  const digest = createHash('sha256').update(canonicalCommonDir).digest('hex').slice(0, REPO_KEY_HASH_HEX_LENGTH)
+  const readable = basename(canonicalCommonDir) === '.git' ? basename(dirname(canonicalCommonDir)) : basename(canonicalCommonDir)
+  return `${sanitizePathSegment(readable)}-${digest}`
 }
 
 /** Directory layout for one repository's worktrees, records, and review checkouts. */

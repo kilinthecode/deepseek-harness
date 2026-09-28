@@ -4,8 +4,9 @@
  * command, has an independent reviewer child check the exact commit (skipping
  * a repeat review for a commit that already passed), and merges only a
  * passing change into the base checkout. Every non-`merged` outcome leaves
- * the worktree `open`; any thrown error also returns it to `open` before
- * rethrowing.
+ * the worktree `open`; any error thrown before the merge lands also returns
+ * it to `open` before rethrowing. Once the merge commit exists the record is
+ * never reopened: the merge is a fact of the base checkout's history.
  *
  * @module @deepseek-ai/dsh-subagent-worktree/accept
  */
@@ -33,6 +34,14 @@ import type {
   AcceptOutcome, AcceptWorktreeRequest, ResolveReviewerRequest, WorktreeId, WorktreeRecord, WorktreeRoute, WorktreeVerdict,
 } from './types.ts'
 
+/**
+ * Milliseconds a contender waits for the per-repository merge lock: sized for
+ * one other accept's merge, which may run repository hooks, rather than for
+ * `withFileLock`'s file-work default. A fixed lifecycle constant, not a
+ * deployment tunable.
+ */
+const MERGE_LOCK_WAIT_MS = 10 * 60 * 1000
+
 /** Collaborators `accept` needs beyond the request itself. */
 export interface AcceptDeps {
   /** Host context with `subprocess`, `subagents`, and `agents`. */
@@ -53,8 +62,10 @@ export interface AcceptDeps {
 }
 
 /** Transition a record back to `open` and build the outcome from its public shape. */
-async function reopen(path: string, id: WorktreeId, build: (record: WorktreeRecord) => AcceptOutcome): Promise<AcceptOutcome> {
-  const reopened = await updateExistingRecordAt(path, id, current => ({ ...current, state: 'open' }))
+async function reopen(
+  layout: WorktreeLayout, id: WorktreeId, build: (record: WorktreeRecord) => AcceptOutcome,
+): Promise<AcceptOutcome> {
+  const reopened = await updateExistingRecordAt(layout, id, current => ({ ...current, state: 'open' }))
   return build(toPublicRecord(reopened))
 }
 
@@ -110,7 +121,7 @@ async function commitWorktreeChanges(deps: AcceptDeps, record: StoredWorktreeRec
       { cwd: record.path, signal },
     )
   }
-  const head = await deps.git.expect(['rev-parse', 'HEAD'], 'git rev-parse', { cwd: record.path, signal })
+  const head = await deps.git.expectComplete(['rev-parse', 'HEAD'], 'git rev-parse', { cwd: record.path, signal })
   return head.stdout.trim()
 }
 
@@ -135,13 +146,16 @@ async function checkAndReview(
   try {
     const testArgv = request.testCommand ?? deps.config.testCommand
     if (testArgv.length > 0) {
-      const checked = await runCheckCommand(deps.ctx.subprocess, testArgv, reviewPath, request.signal)
-      if (checked.exitCode !== 0) {
+      const checked = await runCheckCommand(deps.ctx.subprocess, testArgv, reviewPath, request.signal, deps.config.checkTimeoutMs)
+      if (checked.timedOut || checked.exitCode !== 0) {
+        const tail = tailChars(checked.combinedOutput, DIAGNOSTIC_TAIL_CHARS)
         return {
           kind: 'checks-failed',
           argv: testArgv,
           exitCode: checked.exitCode,
-          output: tailChars(checked.combinedOutput, DIAGNOSTIC_TAIL_CHARS),
+          output: checked.timedOut
+            ? `${tail}\n[the check command exceeded checkTimeoutMs (${deps.config.checkTimeoutMs} ms) and was terminated]`
+            : tail,
         }
       }
     }
@@ -168,32 +182,65 @@ async function checkAndReview(
 }
 
 /**
+ * Remove a merged worktree's directory and branch. Logs and returns `false`
+ * instead of throwing: the merge already landed and was recorded, so a cleanup
+ * failure must not turn a merged outcome into an error. `discard` finishes a
+ * leftover worktree or branch of a `merged` record.
+ * @returns whether both the directory and the branch were removed.
+ */
+async function removeMergedWorktree(
+  deps: AcceptDeps, record: StoredWorktreeRecord, mergeCommit: string, signal: AbortSignal,
+): Promise<boolean> {
+  try {
+    await deps.git.expect(['worktree', 'remove', '--force', record.path], 'git worktree remove', { cwd: record.repoRoot, signal })
+    await deps.git.expect(['branch', '-D', record.branch], 'git branch -D', { cwd: record.repoRoot, signal })
+    return true
+  } catch (error) {
+    deps.ctx.logger.warn(
+      `subagent-worktree: worktree ${record.id} merged as ${mergeCommit}, but removing its worktree and branch failed: ${String(error)}`,
+    )
+    return false
+  }
+}
+
+/**
  * Commit, check, review, and merge one worktree.
  * @param deps - host context, command runner, root, config, and `resolveReviewer`.
  * @param request - worktree id, owner, reviewer parent Agent, operator overrides, and cancellation.
  * @returns the accept outcome.
- * @throws when the record is not found, not owned by `request.owner`, not `open` (or stale `reviewing`),
- *   or an attached worker is still running; also rethrows any git, subprocess, or reviewer failure after
- *   returning a still-`reviewing` record to `open`.
+ * @throws when `request.testCommand` or `request.reviewer` is set by a non-operator owner, the record is not found,
+ *   not owned by `request.owner`, not `open` (or stale `reviewing`), or an attached worker is still running. Any git,
+ *   subprocess, or reviewer failure before the merge lands rethrows after returning a still-`reviewing` record to
+ *   `open`. A failure after the merge commit exists rethrows without touching the record's state; a failed write of
+ *   the `merged` state says the merge landed.
  */
 export async function acceptWorktree(deps: AcceptDeps, request: AcceptWorktreeRequest): Promise<AcceptOutcome> {
+  // `testCommand` runs an operator-supplied argv with host privileges and
+  // `reviewer` picks the model that judges the change: only the operator (the
+  // local user acting through `dsh agents`) may set either, never a session
+  // owner acting on a model's behalf.
+  if (request.owner.kind !== 'operator' && (request.testCommand !== undefined || request.reviewer !== undefined)) {
+    throw new Error('subagent-worktree: the testCommand and reviewer overrides of accept are operator-only')
+  }
+
   const located = await requireRecordLocation(deps.root, request.id)
   assertOwnerAuthority(located.record, request.owner, request.id)
-  assertNoRunningWorkers(deps.ctx, located.record, request.id)
 
-  // The open/stale-reviewing/terminal check runs only here, under the record
-  // lock: two concurrent accepts both pass ownership and worker checks on
-  // their own reads, but only the lock serializes the state transition, so
-  // checking state before acquiring it would not actually close the race.
-  const reviewing = await updateExistingRecordAt(located.path, request.id, (current) => {
+  // The state and running-worker checks run only here, under the record lock:
+  // two concurrent accepts (or an accept racing a worker restart) both pass
+  // any check made on their own earlier reads, but only the lock serializes
+  // the transition, so checking before acquiring it would not close the race.
+  const reviewing = await updateExistingRecordAt(located.layout, request.id, (current) => {
     assertOpenOrRecoverable(current, request.id)
-    return { ...current, state: 'reviewing', reviewingPid: process.pid, reviewingStartedAt: Date.now() }
+    assertNoRunningWorkers(deps.ctx, current, request.id)
+    return { ...current, state: 'reviewing', reviewingPid: process.pid }
   })
 
+  let mergeLanded = false
   try {
     const commit = await commitWorktreeChanges(deps, reviewing, request.id, request.signal)
     if (commit === reviewing.baseCommit) {
-      return await reopen(located.path, request.id, record => ({ kind: 'empty', record }))
+      return await reopen(located.layout, request.id, record => ({ kind: 'empty', record }))
     }
 
     const reused = reviewing.lastVerdict
@@ -203,50 +250,59 @@ export async function acceptWorktree(deps: AcceptDeps, request: AcceptWorktreeRe
     } else {
       const outcome = await checkAndReview(deps, located.layout, reviewing, request, commit)
       if (outcome.kind === 'checks-failed') {
-        return await reopen(located.path, request.id, record => ({
+        return await reopen(located.layout, request.id, record => ({
           kind: 'checks-failed', record, commit, argv: outcome.argv, exitCode: outcome.exitCode, output: outcome.output,
         }))
       }
       verdict = outcome.verdict
-      await updateExistingRecordAt(located.path, request.id, current => ({ ...current, lastVerdict: verdict }))
+      await updateExistingRecordAt(located.layout, request.id, current => ({ ...current, lastVerdict: verdict }))
     }
 
     if (verdict.verdict === 'fail') {
-      return await reopen(located.path, request.id, record => ({ kind: 'rejected', record, commit, verdict }))
+      return await reopen(located.layout, request.id, record => ({ kind: 'rejected', record, commit, verdict }))
     }
 
-    return await withFileLock(located.layout.mergeLockPath, async (): Promise<AcceptOutcome> => {
-      const mergeResult = await attemptMerge(deps.git, reviewing.repoRoot, request.id, reviewing.label, commit, request.signal)
-      if (mergeResult.kind === 'conflict') {
-        return reopen(located.path, request.id, record => ({ kind: 'conflict', record, commit, verdict, files: mergeResult.files }))
-      }
-      if (mergeResult.kind === 'blocked') {
-        return reopen(located.path, request.id, record => ({ kind: 'blocked', record, commit, verdict, reason: mergeResult.reason }))
-      }
-      // Record the merge fact before any cleanup that could still fail: the
-      // merge itself already landed, so a later cleanup failure must not make
-      // this report a state that contradicts the base checkout's real history.
-      const merged = await updateExistingRecordAt(located.path, request.id, current => ({
+    // The merge lock covers only the merge itself: recording the result and
+    // removing the worktree happen after it is released, so a slow removal
+    // never holds up another accept's merge into the same base checkout.
+    const mergeResult = await withFileLock(
+      located.layout.mergeLockPath,
+      () => attemptMerge(deps.git, reviewing.repoRoot, request.id, reviewing.label, commit, request.signal),
+      { waitMs: MERGE_LOCK_WAIT_MS },
+    )
+    if (mergeResult.kind === 'conflict') {
+      return await reopen(located.layout, request.id, record => ({ kind: 'conflict', record, commit, verdict, files: mergeResult.files }))
+    }
+    if (mergeResult.kind === 'blocked') {
+      return await reopen(located.layout, request.id, record => ({ kind: 'blocked', record, commit, verdict, reason: mergeResult.reason }))
+    }
+
+    // The merge commit now exists in the base checkout's history. From here no
+    // failure may reopen the record: reporting `open` for work that already
+    // landed would invite a second merge of the same branch.
+    mergeLanded = true
+    let merged: StoredWorktreeRecord
+    try {
+      merged = await updateExistingRecordAt(located.layout, request.id, current => ({
         ...current, state: 'merged', mergedCommit: mergeResult.mergeCommit,
       }))
-      let removed = false
-      if (deps.config.removeOnMerge) {
-        await deps.git.expect(['worktree', 'remove', '--force', reviewing.path], 'git worktree remove', {
-          cwd: reviewing.repoRoot, signal: request.signal,
-        })
-        await deps.git.expect(['branch', '-D', reviewing.branch], 'git branch -D', {
-          cwd: reviewing.repoRoot, signal: request.signal,
-        })
-        removed = true
-      }
-      return { kind: 'merged', record: toPublicRecord(merged), commit, mergeCommit: mergeResult.mergeCommit, verdict, removed }
-    })
+    } catch (error) {
+      throw new Error(
+        `subagent-worktree: the merge of worktree ${request.id} landed in the base checkout as ${mergeResult.mergeCommit}, `
+        + `but recording it failed; the worktree record still says reviewing: ${String(error)}`,
+        { cause: error },
+      )
+    }
+    const removed = deps.config.removeOnMerge && await removeMergedWorktree(deps, reviewing, mergeResult.mergeCommit, request.signal)
+    return { kind: 'merged', record: toPublicRecord(merged), commit, mergeCommit: mergeResult.mergeCommit, verdict, removed }
   } catch (error) {
-    await updateExistingRecordAt(located.path, request.id, current => (
-      current.state === 'reviewing' ? { ...current, state: 'open' } : current
-    )).catch((revertError: unknown) => {
-      deps.ctx.logger.warn(`subagent-worktree: could not reopen worktree ${request.id} after a failed accept: ${String(revertError)}`)
-    })
+    if (!mergeLanded) {
+      await updateExistingRecordAt(located.layout, request.id, current => (
+        current.state === 'reviewing' ? { ...current, state: 'open' } : current
+      )).catch((revertError: unknown) => {
+        deps.ctx.logger.warn(`subagent-worktree: could not reopen worktree ${request.id} after a failed accept: ${String(revertError)}`)
+      })
+    }
     throw error
   }
 }

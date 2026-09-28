@@ -13,21 +13,20 @@ import { dirname, join } from 'node:path'
 import { withFileLock, writeFileAtomic } from '@deepseek-ai/dsh-atomic-write'
 import { brandString } from '@deepseek-ai/dsh-brand'
 import { pathExists } from './fs-util.ts'
-import { layoutFor, recordPathFor, repoKeyFor } from './paths.ts'
+import { layoutFor, recordPathFor, repoKeyFor, worktreeDirFor } from './paths.ts'
 import type { WorktreeLayout } from './paths.ts'
 import type { WorktreeId, WorktreeOwner, WorktreeRecord, WorktreeRoute, WorktreeVerdict } from './types.ts'
+import { assertWorktreeId } from './worktree-id.ts'
 
 /**
  * On-disk representation of one worktree: the public record plus the
  * bookkeeping an in-flight `accept` needs to detect and recover from a
- * crashed holder. These two fields never appear on a `WorktreeRecord` a
- * public method returns; see {@link toPublicRecord}.
+ * crashed holder. This field never appears on a `WorktreeRecord` a public
+ * method returns; see {@link toPublicRecord}.
  */
 export interface StoredWorktreeRecord extends WorktreeRecord {
   /** Process id of the accept operation currently in the `reviewing` state; absent outside that state. */
   readonly reviewingPid?: number
-  /** Epoch milliseconds when the current `reviewing` state began; absent outside that state. */
-  readonly reviewingStartedAt?: number
 }
 
 /** Random bytes used to compose a {@link WorktreeId}. */
@@ -136,9 +135,46 @@ export function assertStoredWorktreeRecord(value: unknown, sourcePath: string): 
     || (value.lastVerdict !== undefined && !isWorktreeVerdict(value.lastVerdict))
     || (value.mergedCommit !== undefined && typeof value.mergedCommit !== 'string')
     || (value.reviewingPid !== undefined && typeof value.reviewingPid !== 'number')
-    || (value.reviewingStartedAt !== undefined && typeof value.reviewingStartedAt !== 'number')
   ) {
     throw new Error(`subagent-worktree: worktree record "${sourcePath}" is corrupt`)
+  }
+}
+
+/** Pattern every full git commit id in a stored record must match. */
+const COMMIT_ID_PATTERN = /^[0-9a-f]{40}$/
+
+/**
+ * Verify a shape-valid record is consistent with where it was loaded from: its
+ * own id names the file it came from, its worktree directory is the one this
+ * repository layout assigns that id, its branch names its id, and every commit
+ * id is a full 40-digit lowercase hexadecimal id. A record failing any of
+ * these was corrupted or edited on disk, and acting on it could aim a
+ * `git worktree remove --force` or a merge at a path or commit that was never
+ * this worktree's.
+ * @param record - the shape-validated record.
+ * @param layout - the repository layout the record was loaded under.
+ * @param id - the worktree id the record was loaded by (its file's own basename).
+ * @param sourcePath - the record file path, named in the thrown message.
+ * @throws when the record's id, worktree path, branch, or any commit id is inconsistent.
+ */
+function assertRecordIntegrity(record: StoredWorktreeRecord, layout: WorktreeLayout, id: WorktreeId, sourcePath: string): void {
+  if (record.id !== id) {
+    throw new Error(`subagent-worktree: worktree record "${sourcePath}" holds id "${record.id}", not "${id}"`)
+  }
+  if (record.path !== worktreeDirFor(layout, id)) {
+    throw new Error(`subagent-worktree: worktree record "${sourcePath}" names worktree directory "${record.path}", not the one its id maps to`)
+  }
+  if (!record.branch.endsWith(id)) {
+    throw new Error(`subagent-worktree: worktree record "${sourcePath}" names branch "${record.branch}", which does not end with its id`)
+  }
+  if (!COMMIT_ID_PATTERN.test(record.baseCommit)) {
+    throw new Error(`subagent-worktree: worktree record "${sourcePath}" has baseCommit "${record.baseCommit}", not a full commit id`)
+  }
+  if (record.mergedCommit !== undefined && !COMMIT_ID_PATTERN.test(record.mergedCommit)) {
+    throw new Error(`subagent-worktree: worktree record "${sourcePath}" has mergedCommit "${record.mergedCommit}", not a full commit id`)
+  }
+  if (record.lastVerdict !== undefined && !COMMIT_ID_PATTERN.test(record.lastVerdict.commit)) {
+    throw new Error(`subagent-worktree: worktree record "${sourcePath}" has a verdict commit "${record.lastVerdict.commit}", not a full commit id`)
   }
 }
 
@@ -153,7 +189,15 @@ function parseStoredWorktreeRecord(raw: string, sourcePath: string): StoredWorkt
   return parsed
 }
 
-async function loadRecordOrUndefined(path: string): Promise<StoredWorktreeRecord | undefined> {
+/**
+ * Read and validate one record by id under one repository layout.
+ * @param layout - the repository layout to look under.
+ * @param id - the worktree id; its file is `<recordsDir>/<id>.json`.
+ * @returns the validated record, or undefined when that file does not exist.
+ * @throws when the file is corrupt or fails {@link assertRecordIntegrity}.
+ */
+async function loadRecordOrUndefined(layout: WorktreeLayout, id: WorktreeId): Promise<StoredWorktreeRecord | undefined> {
+  const path = recordPathFor(layout, id)
   let raw: string
   try {
     raw = await readFile(path, 'utf8')
@@ -161,21 +205,25 @@ async function loadRecordOrUndefined(path: string): Promise<StoredWorktreeRecord
     if ((error as NodeJS.ErrnoException).code === 'ENOENT') return undefined
     throw error
   }
-  return parseStoredWorktreeRecord(raw, path)
+  const record = parseStoredWorktreeRecord(raw, path)
+  assertRecordIntegrity(record, layout, id, path)
+  return record
 }
 
-/** Hold `path`'s writer lock around a read-modify-write cycle and persist the updater's result. */
+/** Hold one record file's writer lock around a read-modify-write cycle and persist the updater's result. */
 async function updateRecord(
-  path: string,
+  layout: WorktreeLayout,
+  id: WorktreeId,
   updater: (current: StoredWorktreeRecord | undefined) => StoredWorktreeRecord,
 ): Promise<StoredWorktreeRecord> {
+  const path = recordPathFor(layout, id)
   // withFileLock creates `<path>.lock` directly with no recursive mkdir of its
   // own (its parent directory must already exist); the very first worktree for
   // a repository has no records/ directory yet, so this call creates it before
   // the lock file write is attempted.
   await mkdir(dirname(path), { recursive: true, mode: 0o700 })
   return withFileLock(path, async () => {
-    const current = await loadRecordOrUndefined(path)
+    const current = await loadRecordOrUndefined(layout, id)
     const next = updater(current)
     await writeFileAtomic(path, `${JSON.stringify(next, null, 2)}\n`, { mode: 0o600, dirMode: 0o700 })
     return next
@@ -193,9 +241,8 @@ async function updateRecord(
  * @throws when a record already exists for `record.id`.
  */
 export async function createRecord(layout: WorktreeLayout, record: StoredWorktreeRecord): Promise<StoredWorktreeRecord> {
-  const path = recordPathFor(layout, record.id)
-  return updateRecord(path, (current) => {
-    if (current !== undefined) throw new Error(`subagent-worktree: worktree record "${path}" already exists`)
+  return updateRecord(layout, record.id, (current) => {
+    if (current !== undefined) throw new Error(`subagent-worktree: worktree record "${recordPathFor(layout, record.id)}" already exists`)
     return record
   })
 }
@@ -221,6 +268,7 @@ export interface RecordLocation {
  * @returns the location, or undefined when no repository under `root` holds that id.
  */
 export async function locateRecord(root: string, id: WorktreeId): Promise<RecordLocation | undefined> {
+  assertWorktreeId(id)
   let repoKeys: string[]
   try {
     repoKeys = await readdir(root)
@@ -230,9 +278,8 @@ export async function locateRecord(root: string, id: WorktreeId): Promise<Record
   }
   for (const repoKey of repoKeys) {
     const layout = layoutFor(root, repoKey)
-    const path = recordPathFor(layout, id)
-    const record = await loadRecordOrUndefined(path)
-    if (record !== undefined) return { path, layout, record }
+    const record = await loadRecordOrUndefined(layout, id)
+    if (record !== undefined) return { path: recordPathFor(layout, id), layout, record }
   }
   return undefined
 }
@@ -251,20 +298,22 @@ export async function requireRecordLocation(root: string, id: WorktreeId): Promi
 }
 
 /**
- * Read-modify-write an existing record at a known path, failing loud if it
- * was removed since it was located.
- * @param path - the record file's absolute path, from a prior {@link RecordLocation}.
- * @param id - the worktree id, named in the not-found message.
- * @param updater - transform applied under the writer lock.
+ * Read-modify-write an existing record under its writer lock, failing loud if
+ * it was removed since it was located. The `updater` runs against the record
+ * as read under the lock, so a state precondition checked inside it — not one
+ * checked on an earlier read — is what actually serializes concurrent callers.
+ * @param layout - the repository layout, from a prior {@link RecordLocation}.
+ * @param id - the worktree id.
+ * @param updater - transform applied under the writer lock; a throw leaves the record unchanged.
  * @returns the persisted record.
- * @throws when `path` no longer has a record.
+ * @throws when the record no longer exists.
  */
 export async function updateExistingRecordAt(
-  path: string,
+  layout: WorktreeLayout,
   id: WorktreeId,
   updater: (current: StoredWorktreeRecord) => StoredWorktreeRecord,
 ): Promise<StoredWorktreeRecord> {
-  return updateRecord(path, (current) => {
+  return updateRecord(layout, id, (current) => {
     if (current === undefined) throw new Error(`subagent-worktree: no worktree "${id}"`)
     return updater(current)
   })
@@ -274,6 +323,7 @@ export async function updateExistingRecordAt(
  * List every worktree record for one repository.
  * @param layout - the repository's directory layout.
  * @returns every record under `layout.recordsDir`, or `[]` when no worktree was ever created for this repository.
+ * @throws when a record file's name is not a worktree id, or a record is corrupt or fails {@link assertRecordIntegrity}.
  */
 export async function listRecords(layout: WorktreeLayout): Promise<StoredWorktreeRecord[]> {
   let entries: string[]
@@ -286,8 +336,12 @@ export async function listRecords(layout: WorktreeLayout): Promise<StoredWorktre
   const records: StoredWorktreeRecord[] = []
   for (const entry of entries) {
     if (!entry.endsWith('.json')) continue
+    const id = entry.slice(0, -'.json'.length)
+    assertWorktreeId(id)
     const path = join(layout.recordsDir, entry)
-    records.push(parseStoredWorktreeRecord(await readFile(path, 'utf8'), path))
+    const record = parseStoredWorktreeRecord(await readFile(path, 'utf8'), path)
+    assertRecordIntegrity(record, layout, id, path)
+    records.push(record)
   }
   return records
 }
@@ -306,25 +360,27 @@ export async function countOpenSlots(layout: WorktreeLayout): Promise<number> {
 }
 
 /**
- * Strip the internal accept-bookkeeping fields before returning a record
+ * Strip the internal accept-bookkeeping field before returning a record
  * through the public service surface.
  * @param stored - the on-disk record.
  * @returns the public `WorktreeRecord` fields only.
  */
 export function toPublicRecord(stored: StoredWorktreeRecord): WorktreeRecord {
-  const { reviewingPid: _reviewingPid, reviewingStartedAt: _reviewingStartedAt, ...record } = stored
+  const { reviewingPid: _reviewingPid, ...record } = stored
   return record
 }
 
 /**
- * Compute a repository's directory layout from a base directory's resolved
- * top-level path.
+ * Compute a repository's directory layout from its shared git common
+ * directory. Every linked worktree of one repository resolves the same common
+ * directory, so all of them share one records directory, merge lock, and
+ * `maxWorktrees` count.
  * @param root - the service's configured or resolved worktree root.
- * @param repoRoot - the repository's realpath-resolved top-level directory.
+ * @param commonDir - the repository's realpath-resolved git common directory.
  * @returns the repository's directory layout.
  */
-export function layoutForRepo(root: string, repoRoot: string): WorktreeLayout {
-  return layoutFor(root, repoKeyFor(repoRoot))
+export function layoutForRepo(root: string, commonDir: string): WorktreeLayout {
+  return layoutFor(root, repoKeyFor(commonDir))
 }
 
 /** Whether a process id names a process the current host can still observe. */
@@ -354,16 +410,15 @@ export function assertOwnerAuthority(record: Pick<WorktreeRecord, 'owner'>, requ
 }
 
 /**
- * Refuse `attach` on a terminal record. `open` and `reviewing` — including a
- * `reviewing` record whose accepting process has exited — both remain
- * attachable: the state machine forbids only a *closed* worktree from
- * gaining a new worker.
+ * Enforce the `attach` precondition: only an `open` record gains a worker. A
+ * `reviewing` record is held by an in-flight `accept`, and attaching a worker
+ * to it would race that accept's commit; `merged` and `discarded` are closed.
  * @param record - the record being acted on.
  * @param id - the worktree id, named in the thrown message.
- * @throws when the record is `merged` or `discarded`.
+ * @throws `worktree <id> is <state>` when the record is not `open`.
  */
-export function assertNotTerminal(record: Pick<WorktreeRecord, 'state'>, id: WorktreeId): void {
-  if (record.state === 'merged' || record.state === 'discarded') {
+export function assertOpen(record: Pick<WorktreeRecord, 'state'>, id: WorktreeId): void {
+  if (record.state !== 'open') {
     throw new Error(`subagent-worktree: worktree ${id} is ${record.state}`)
   }
 }
@@ -371,7 +426,12 @@ export function assertNotTerminal(record: Pick<WorktreeRecord, 'state'>, id: Wor
 /**
  * Enforce the precondition shared by `accept` and `discard`: the record must
  * be `open`, or `reviewing` with its accepting process gone (crash recovery).
- * A live `reviewing` record and both terminal states are refused.
+ * A live `reviewing` record and both terminal states are refused. Liveness is
+ * the recorded process id answering a signal-0 probe, so a crashed accept
+ * whose process id an unrelated later process reused reads as live and keeps
+ * the worktree refused as "already being accepted" until an operator clears
+ * the record — the same accepted limit `withFileLock` documents for its own
+ * process-id lock takeover.
  * @param record - the record being acted on.
  * @param id - the worktree id, named in the thrown message.
  * @throws `worktree <id> is already being accepted` for a live `reviewing` record, or
