@@ -1139,6 +1139,9 @@ describe('accept: a merge that landed', () => {
 
   it('records merged, with no second review or merge, when a later accept finds the reviewed commit already landed', async () => {
     const { h, provisioned, mergeCommit, reviewerStarts } = await crashedAfterMerge()
+    // The base branch moved on after the crash, so the merge commit is no longer HEAD: it has to be looked up.
+    git(h.dir, 'commit', '--allow-empty', '-q', '-m', 'later work')
+    expect(git(h.dir, 'rev-parse', 'HEAD').trim()).not.toBe(mergeCommit)
 
     const outcome = await h.ctx.subagentWorktrees.accept(acceptRequest(provisioned.record.id))
 
