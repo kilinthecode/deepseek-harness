@@ -1352,6 +1352,30 @@ describe('accept: a merge that landed', () => {
     expect(git(h.dir, 'branch', '--list', provisioned.record.branch).trim()).toBe('')
   }, GIT_TEST_TIMEOUT_MS)
 
+  it('reviews newer unreviewed work instead of recording it merged because an older commit of the worktree landed', async () => {
+    const { h, provisioned, reviewerStarts } = await crashedAfterMerge({ verdicts: [PASS_VERDICT, FAIL_VERDICT] })
+    // The worker kept going after the crashed accept and left a change nobody reviewed.
+    await writeFile(join(provisioned.workDir, 'newer.txt'), 'newer')
+
+    const outcome = await h.ctx.subagentWorktrees.accept(acceptRequest(provisioned.record.id))
+
+    expect(outcome.kind).toBe('rejected')
+    expect(outcome.record.state).toBe('open')
+    expect(reviewerStarts()).toBe(2)
+    expect(await pathExists(provisioned.record.path)).toBe(true)
+    expect(git(h.dir, 'branch', '--list', provisioned.record.branch).trim()).not.toBe('')
+  }, GIT_TEST_TIMEOUT_MS)
+
+  it('discards, without recording it merged, a stale worktree that holds newer unreviewed work', async () => {
+    const { h, provisioned } = await crashedAfterMerge()
+    await writeFile(join(provisioned.workDir, 'newer.txt'), 'newer')
+
+    const record = await h.ctx.subagentWorktrees.discard({ id: provisioned.record.id, owner: OWNER, signal })
+
+    expect(record.state).toBe('discarded')
+    expect(record).not.toHaveProperty('mergedCommit')
+  }, GIT_TEST_TIMEOUT_MS)
+
   it('leaves the worktree in place when the recovered merge is found and removeOnMerge is off', async () => {
     const { h, provisioned } = await crashedAfterMerge({ config: { removeOnMerge: false } })
 

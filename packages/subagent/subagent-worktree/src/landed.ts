@@ -4,12 +4,14 @@
  * `git merge` exits 0 but before the `merged` write leaves the record
  * `reviewing` on a dead process id while the reviewed commit is already in the
  * base checkout's history; treating that record as `open` would run a second
- * review and a second merge of work that already landed.
+ * review and a second merge of work that already landed. Only a worktree that
+ * still holds exactly the reviewed commit is recovered: anything newer in it
+ * is work nobody reviewed, and an older commit that landed says nothing about it.
  *
  * @module @deepseek-ai/dsh-subagent-worktree/landed
  */
 
-import type { GitRunner } from './git.ts'
+import type { GitCommandResult, GitRunner } from './git.ts'
 import type { WorktreeLayout } from './paths.ts'
 import { isStaleReviewing, updateExistingRecordAt, withoutReviewingPid } from './records.ts'
 import type { StoredWorktreeRecord } from './records.ts'
@@ -37,28 +39,59 @@ async function firstMergeContaining(git: GitRunner, repoRoot: string, reviewed: 
 }
 
 /**
- * Before a stale `reviewing` record is treated as `open`, check whether its
- * reviewed commit is already an ancestor of the merge target's `HEAD`
- * (`git merge-base --is-ancestor`), and if so record `merged` instead. Records
- * that are not stale, that never had a verdict, or whose commit is not an
- * ancestor (or no longer exists) are left for the caller's ordinary handling.
+ * Run a git command whose answer decides whether a merge landed. A cancelled command has no exit code and so no
+ * answer, which is refused instead of being read as "no".
+ * @param what - the git subcommand, named in the thrown message.
+ * @throws when the command was cancelled.
+ */
+async function decisiveRun(
+  git: GitRunner, args: readonly string[], what: string, cwd: string, id: string, signal: AbortSignal,
+): Promise<GitCommandResult> {
+  const result = await git.run(args, { cwd, signal })
+  if (result.exitCode === null) {
+    throw new Error(`subagent-worktree: could not check whether worktree ${id} already merged (git ${what} was cancelled)`)
+  }
+  return result
+}
+
+/**
+ * Whether the worktree still holds exactly the reviewed commit: its directory exists, its `HEAD` is that commit,
+ * and nothing in it is modified, staged, or untracked. A worktree that holds more holds work nobody reviewed.
+ * @throws when a probe was cancelled.
+ */
+async function worktreeHoldsOnly(git: GitRunner, record: StoredWorktreeRecord, reviewed: string, signal: AbortSignal): Promise<boolean> {
+  if (!await pathExists(record.path)) return false
+  const head = await decisiveRun(git, ['rev-parse', 'HEAD'], 'rev-parse', record.path, record.id, signal)
+  if (head.exitCode !== 0 || head.stdout.trim() !== reviewed) return false
+  const status = await decisiveRun(git, ['status', '--porcelain'], 'status', record.path, record.id, signal)
+  return status.exitCode === 0 && status.stdout.trim() === ''
+}
+
+/**
+ * Before a stale `reviewing` record is treated as `open`, check whether the
+ * commit its worktree was reviewed at has already landed, and if so record
+ * `merged` instead. That takes a passing verdict, a worktree that still holds
+ * exactly the reviewed commit (its `HEAD` is that commit and it is clean), and
+ * that commit being an ancestor of the merge target's `HEAD`
+ * (`git merge-base --is-ancestor`). Any other record is left for the caller's
+ * ordinary handling, which reviews whatever the worktree holds now.
  * @param git - command runner.
  * @param layout - the repository layout the record is stored under.
  * @param record - the record as read.
  * @param signal - cancellation for the check.
  * @returns the recovery, or undefined when the record needs no recovery.
- * @throws when the ancestry check was cancelled and so has no answer.
+ * @throws when a check was cancelled and so has no answer.
  */
 export async function recoverLandedMerge(
   git: GitRunner, layout: WorktreeLayout, record: StoredWorktreeRecord, signal: AbortSignal,
 ): Promise<LandedRecovery | undefined> {
   const verdict = record.lastVerdict
-  if (verdict === undefined || !isStaleReviewing(record)) return undefined
-  const ancestor = await git.run(['merge-base', '--is-ancestor', verdict.commit, 'HEAD'], { cwd: record.repoRoot, signal })
-  if (ancestor.exitCode === null) {
-    throw new Error(`subagent-worktree: could not check whether worktree ${record.id} already merged (git merge-base was cancelled)`)
-  }
+  if (verdict === undefined || verdict.verdict !== 'pass' || !isStaleReviewing(record)) return undefined
+  const ancestor = await decisiveRun(
+    git, ['merge-base', '--is-ancestor', verdict.commit, 'HEAD'], 'merge-base', record.repoRoot, record.id, signal,
+  )
   if (ancestor.exitCode !== 0) return undefined
+  if (!await worktreeHoldsOnly(git, record, verdict.commit, signal)) return undefined
 
   const mergeCommit = await firstMergeContaining(git, record.repoRoot, verdict.commit, signal)
   // Tracked on an object: the updater runs later, under the record lock, and may find the record already moved on.

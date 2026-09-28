@@ -1,6 +1,6 @@
 import { spawnSync } from 'node:child_process'
 import { readFileSync, writeFileSync } from 'node:fs'
-import { mkdtemp, writeFile } from 'node:fs/promises'
+import { mkdtemp, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
@@ -10,6 +10,7 @@ import { pathExists } from '../src/fs-util.ts'
 import { GitRunner } from '../src/git.ts'
 import type { GitCommandResult, GitRunOptions } from '../src/git.ts'
 import { recoverLandedMerge, sweepWorktree } from '../src/landed.ts'
+import type { WorktreeLayout } from '../src/paths.ts'
 import { requireRecordLocation, updateExistingRecordAt } from '../src/records.ts'
 import type { StoredWorktreeRecord } from '../src/records.ts'
 import type { WorktreeOwner } from '../src/types.ts'
@@ -25,19 +26,30 @@ const signal = new AbortController().signal
 const OWNER: WorktreeOwner = { kind: 'session', sessionId: SessionId('lead') }
 const GIT_TEST_TIMEOUT_MS = 20_000
 
-/** Real git with two scripted exceptions: the ancestry check can be cancelled, and reading merges can run a side effect. */
+const KILLED: GitCommandResult = { exitCode: null, stdout: '', stderr: '', stdoutLossy: false }
+const FAILED_128: GitCommandResult = { exitCode: 128, stdout: '', stderr: 'fatal: scripted failure\n', stdoutLossy: false }
+
+/**
+ * Real git with scripted exceptions: the ancestry check, the worktree's `HEAD` read, and its status read can each
+ * be replaced by a result, and reading merges can run a side effect.
+ */
 class ScriptedGit extends GitRunner {
   constructor(
     subprocessRuntime: ConstructorParameters<typeof GitRunner>[0],
-    private readonly script: { readonly cancelAncestryCheck?: boolean; readonly beforeRevList?: () => void },
+    private readonly script: {
+      readonly ancestryCheck?: GitCommandResult
+      readonly headRead?: GitCommandResult
+      readonly statusRead?: GitCommandResult
+      readonly beforeRevList?: () => void
+    },
   ) {
     super(subprocessRuntime)
   }
 
   override async run(args: readonly string[], options: GitRunOptions): Promise<GitCommandResult> {
-    if (args[0] === 'merge-base' && this.script.cancelAncestryCheck === true) {
-      return { exitCode: null, stdout: '', stderr: '', stdoutLossy: false }
-    }
+    if (args[0] === 'merge-base' && this.script.ancestryCheck !== undefined) return this.script.ancestryCheck
+    if (args[0] === 'rev-parse' && args[1] === 'HEAD' && this.script.headRead !== undefined) return this.script.headRead
+    if (args[0] === 'status' && this.script.statusRead !== undefined) return this.script.statusRead
     if (args[0] === 'rev-list') this.script.beforeRevList?.()
     return super.run(args, options)
   }
@@ -51,7 +63,7 @@ async function fixture(): Promise<{
   record: StoredWorktreeRecord
   commit: string
   runner: GitRunner
-  makeStale: (commit: string) => Promise<StoredWorktreeRecord>
+  makeStale: (commit: string, verdict?: 'pass' | 'fail') => Promise<StoredWorktreeRecord>
 }> {
   const dir = await initFixtureRepo('dsh-landed-')
   cleanups.push(() => removeFixture(dir))
@@ -68,13 +80,13 @@ async function fixture(): Promise<{
   const dead = spawnSync(process.execPath, ['-e', '0']).pid
   if (dead === undefined) throw new Error('expected a spawned pid')
   const { layout } = await requireRecordLocation(root, provisioned.record.id)
-  const makeStale = (verdictCommit: string): Promise<StoredWorktreeRecord> => (
+  const makeStale = (verdictCommit: string, verdict: 'pass' | 'fail' = 'pass'): Promise<StoredWorktreeRecord> => (
     updateExistingRecordAt(layout, provisioned.record.id, current => ({
       ...current,
       state: 'reviewing',
       reviewingPid: dead,
       lastVerdict: {
-        verdict: 'pass', summary: 's', checks: [], findings: [], commit: verdictCommit,
+        verdict, summary: 's', checks: [], findings: [], commit: verdictCommit,
         reviewerSessionId: SessionId('reviewer'), reviewerRoute: { provider: 'p', model: 'm' }, at: 1,
       },
     }))
@@ -96,7 +108,7 @@ describe('recoverLandedMerge', () => {
     const f = await fixture()
     const stale = await f.makeStale(f.commit)
     const { layout } = await requireRecordLocation(f.root, f.record.id)
-    const command = new ScriptedGit(f.ctx.subprocess, { cancelAncestryCheck: true })
+    const command = new ScriptedGit(f.ctx.subprocess, { ancestryCheck: KILLED })
 
     await expect(recoverLandedMerge(command, layout, stale, signal))
       .rejects.toThrow(`could not check whether worktree ${f.record.id} already merged (git merge-base was cancelled)`)
@@ -127,6 +139,87 @@ describe('recoverLandedMerge', () => {
     const recovery = await recoverLandedMerge(f.runner, layout, stale, signal)
 
     expect(recovery?.record).toMatchObject({ state: 'merged', mergedCommit: mergeCommit })
+  }, GIT_TEST_TIMEOUT_MS)
+
+  /** The worktree's branch has landed by fast-forward, as after an accept whose merge landed and whose record write did not. */
+  async function landedFixture(): Promise<Awaited<ReturnType<typeof fixture>> & { layout: WorktreeLayout }> {
+    const f = await fixture()
+    const { layout } = await requireRecordLocation(f.root, f.record.id)
+    git(f.dir, 'merge', '--ff-only', f.record.branch)
+    return { ...f, layout }
+  }
+
+  it('does not recover when the worktree holds a newer commit than the one that landed, and deletes nothing', async () => {
+    const f = await landedFixture()
+    const stale = await f.makeStale(f.commit)
+    // The worker went on after the crashed accept and committed more, which nobody reviewed.
+    await writeFile(join(f.record.path, 'newer.txt'), 'newer')
+    git(f.record.path, 'add', '-A')
+    git(f.record.path, 'commit', '-q', '-m', 'newer work')
+
+    expect(await recoverLandedMerge(f.runner, f.layout, stale, signal)).toBeUndefined()
+
+    expect((await requireRecordLocation(f.root, f.record.id)).record.state).toBe('reviewing')
+    expect(await pathExists(f.record.path)).toBe(true)
+    expect(git(f.dir, 'branch', '--list', f.record.branch).trim()).not.toBe('')
+  }, GIT_TEST_TIMEOUT_MS)
+
+  it.each([
+    ['a modified tracked file', async (path: string) => { await writeFile(join(path, 'a.txt'), 'changed') }],
+    ['an untracked file', async (path: string) => { await writeFile(join(path, 'untracked.txt'), 'new') }],
+    ['a staged new file', async (path: string) => {
+      await writeFile(join(path, 'staged.txt'), 'new')
+      git(path, 'add', 'staged.txt')
+    }],
+  ])('does not recover when the worktree holds %s that nobody reviewed, and deletes nothing', async (_label, dirty) => {
+    const f = await landedFixture()
+    const stale = await f.makeStale(f.commit)
+    await dirty(f.record.path)
+
+    expect(await recoverLandedMerge(f.runner, f.layout, stale, signal)).toBeUndefined()
+
+    expect((await requireRecordLocation(f.root, f.record.id)).record.state).toBe('reviewing')
+    expect(await pathExists(f.record.path)).toBe(true)
+    expect(git(f.dir, 'branch', '--list', f.record.branch).trim()).not.toBe('')
+  }, GIT_TEST_TIMEOUT_MS)
+
+  it('does not recover a failing verdict, even when its commit has landed', async () => {
+    const f = await landedFixture()
+    const stale = await f.makeStale(f.commit, 'fail')
+
+    expect(await recoverLandedMerge(f.runner, f.layout, stale, signal)).toBeUndefined()
+    expect((await requireRecordLocation(f.root, f.record.id)).record.state).toBe('reviewing')
+  }, GIT_TEST_TIMEOUT_MS)
+
+  it('does not recover when the worktree directory is gone', async () => {
+    const f = await landedFixture()
+    const stale = await f.makeStale(f.commit)
+    await rm(f.record.path, { recursive: true, force: true })
+
+    expect(await recoverLandedMerge(f.runner, f.layout, stale, signal)).toBeUndefined()
+    expect((await requireRecordLocation(f.root, f.record.id)).record.state).toBe('reviewing')
+  }, GIT_TEST_TIMEOUT_MS)
+
+  it.each([
+    ['its HEAD cannot be read', { headRead: FAILED_128 }],
+    ['its status cannot be read', { statusRead: FAILED_128 }],
+  ])('does not recover when the worktree\'s state is unknown because %s', async (_label, script) => {
+    const f = await landedFixture()
+    const stale = await f.makeStale(f.commit)
+
+    expect(await recoverLandedMerge(new ScriptedGit(f.ctx.subprocess, script), f.layout, stale, signal)).toBeUndefined()
+    expect((await requireRecordLocation(f.root, f.record.id)).record.state).toBe('reviewing')
+  }, GIT_TEST_TIMEOUT_MS)
+
+  it.each([
+    ['HEAD read', 'rev-parse', { headRead: KILLED }],
+    ['status read', 'status', { statusRead: KILLED }],
+  ])('throws when the worktree %s was cancelled, because it has no answer', async (_label, subcommand, script) => {
+    const f = await landedFixture()
+    const stale = await f.makeStale(f.commit)
+
+    await expect(recoverLandedMerge(new ScriptedGit(f.ctx.subprocess, script), f.layout, stale, signal))
+      .rejects.toThrow(`could not check whether worktree ${f.record.id} already merged (git ${subcommand} was cancelled)`)
   }, GIT_TEST_TIMEOUT_MS)
 
   it('does not record merged when the record stopped being stale while the merge commit was looked up', async () => {
