@@ -82,16 +82,17 @@ describe('withContinuableReturnGuidance', () => {
     })
   })
 
-  it('tells a distinct-workspace child its parent works in a different directory, verbatim', () => {
+  it('tells a distinct-workspace child its parent cannot read its files and where to put its report, verbatim', () => {
     const [, guidance] = withContinuableReturnGuidance(parentId, prompt, false)
 
     expect(guidance).toEqual({
       type: 'text',
       text: 'Your parent agent id is "parent-1". Before you finish, send your result to that agent with '
         + 'send_message({ agent_id: "parent-1", message: "<self-contained result>" }). Your parent works in a '
-        + 'different directory and does not automatically receive your transcript, tool output, or reasoning. Send '
-        + 'earlier messages as well when a finding changes what the parent should do next; sending a message does '
-        + 'not end your turn.',
+        + 'different directory and cannot read your files; it does not automatically receive your transcript, tool '
+        + 'output, or reasoning. Put your report — the commands you ran, their results, and anything you did not '
+        + 'verify — in the send_message body. Send earlier messages as well when a finding changes what the parent '
+        + 'should do next; sending a message does not end your turn.',
     })
   })
 })

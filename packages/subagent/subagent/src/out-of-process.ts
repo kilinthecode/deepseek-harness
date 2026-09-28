@@ -83,8 +83,10 @@ export function assertPositiveFinite(prefix: string, name: string, value: number
  * Whether `path` names an existing directory the harness can ENTER. The
  * search-permission probe matters: `statSync().isDirectory()` is true for a
  * mode-600 directory, but a subprocess cwd needs `X_OK` or spawn fails EACCES.
+ * @param path - the candidate directory.
+ * @returns whether `path` exists, is a directory, and is enterable.
  */
-function isEnterableDirectory(path: string): boolean {
+export function isEnterableDirectory(path: string): boolean {
   try {
     if (!statSync(path).isDirectory()) return false
     accessSync(path, constants.X_OK)

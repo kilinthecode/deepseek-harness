@@ -1009,6 +1009,39 @@ describe('SubagentRuntime.startContinuable cwd', () => {
     expect((failure as SubagentError).message).toBe('subagent provider "fork" does not support the "cwd" capability')
     expect(ctx.agents.list().map(agent => agent.id)).toEqual([SessionId('parent')])
   })
+
+  it('reports the capability gap, not the path defect, when a capability-less provider also gets an invalid cwd', async () => {
+    const { ctx, parent } = await setup([])
+    // A relative path would fail `assertUsableCwd` too; the capability check
+    // must win because it runs first.
+    await expect(
+      ctx.subagents.startContinuable(startSpec(parent, 'fork', testSignal, { cwd: 'relative/dir' })),
+    ).rejects.toMatchObject({ code: 'UNSUPPORTED_CAPABILITY' })
+  })
+
+  it('fails loud instead of resuming a continuable child into a missing persisted cwd', async () => {
+    // A worktree-isolated child's cwd can disappear between activations: its
+    // worktree was merged or discarded after the child went idle.
+    const cwdRoot = mkdtempSync(join(tmpdir(), 'dsh-subagent-resume-cwd-'))
+    const { ctx, parent } = await setup([textResponse('first answer')])
+    const started = await ctx.subagents.startContinuable(startSpec(parent, 'spawn', testSignal, { cwd: cwdRoot }))
+    await waitNoActivation(ctx, started.childId)
+    rmSync(cwdRoot, { recursive: true, force: true })
+
+    let failure: unknown
+    try {
+      await queuePrompt(ctx, parent, started.childId, message('resume it'))
+    } catch (error: unknown) {
+      failure = error
+    }
+    expect(failure).toBeInstanceOf(SubagentError)
+    expect((failure as SubagentError).code).toBe('NOT_RESUMABLE')
+    expect((failure as SubagentError).message).toBe(
+      `subagent "${started.childId}" cannot resume: its working directory "${cwdRoot}" no longer exists`,
+    )
+    // The dead directory never reached agents.resume(): no child Agent came back live.
+    expect(ctx.agents.get(started.childId)).toBeUndefined()
+  })
 })
 
 describe('continuable return guidance workspace wording', () => {
@@ -1021,8 +1054,9 @@ describe('continuable return guidance workspace wording', () => {
     + 'The parent shares your workspace but does not automatically receive your transcript, tool output, or '
     + `reasoning. ${sendEarlierMessagesSentence}`
   const DISTINCT_WORKSPACE_GUIDANCE = sendMessageInstruction
-    + 'Your parent works in a different directory and does not automatically receive your transcript, tool output, '
-    + `or reasoning. ${sendEarlierMessagesSentence}`
+    + 'Your parent works in a different directory and cannot read your files; it does not automatically receive '
+    + 'your transcript, tool output, or reasoning. Put your report — the commands you ran, their results, and '
+    + `anything you did not verify — in the send_message body. ${sendEarlierMessagesSentence}`
 
   it("tells a child its parent shares the workspace when it inherits the parent's cwd", async () => {
     const { ctx, parent } = await setup([textResponse('answer')], { parentCwd: tmpdir(), sendMessageTool: true })
