@@ -1220,7 +1220,7 @@ class AbortFailsGit extends GitRunner {
 }
 
 describe('accept: a merge that cannot be aborted', () => {
-  it('reports the conflict and logs an error naming the merge that is still in progress', async () => {
+  it('throws that the base checkout is left mid-merge, without its path, reopens the record, and logs the path', async () => {
     const h = await harness()
     const logged = vi.spyOn(h.ctx.logger, 'error').mockImplementation(() => {})
     await writeFile(join(h.dir, 'shared.txt'), 'base\n')
@@ -1231,11 +1231,17 @@ describe('accept: a merge that cannot be aborted', () => {
     await writeFile(join(second.workDir, 'shared.txt'), 'from second\n')
     expect((await h.ctx.subagentWorktrees.accept(acceptRequest(first.record.id))).kind).toBe('merged')
 
-    const outcome = await acceptWorktree(directDeps(h, new AbortFailsGit(h.ctx.subprocess)), acceptRequest(second.record.id))
+    const failure = await acceptWorktree(directDeps(h, new AbortFailsGit(h.ctx.subprocess)), acceptRequest(second.record.id))
+      .catch((error: unknown) => error)
 
-    expect(outcome.kind).toBe('conflict')
+    // No outcome that says nothing was merged: the base checkout really is left mid-merge, and the error says so.
+    expect(String(failure)).toContain('could not be aborted: the base checkout is left mid-merge and must be aborted there with "git merge --abort"')
+    expect(String(failure)).not.toContain(second.record.repoRoot)
+    expect(String(failure)).not.toContain(h.dir)
     expect(git(h.dir, 'rev-parse', '-q', '--verify', 'MERGE_HEAD').trim()).not.toBe('')
-    expect(logged).toHaveBeenCalledWith(expect.stringContaining('could not be aborted and is still in progress'))
+    // The path stays in the host log, and the record is reopened for a retry once the checkout is clean.
+    expect(logged).toHaveBeenCalledWith(expect.stringContaining(`in "${second.record.repoRoot}" could not be aborted and is still in progress`))
+    expect((await requireRecordLocation(h.root, second.record.id)).record.state).toBe('open')
   }, GIT_TEST_TIMEOUT_MS)
 })
 

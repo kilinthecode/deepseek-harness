@@ -418,15 +418,17 @@ describe('attemptMerge: a merge that dies or fails after starting', () => {
     expect(git(dir, 'rev-parse', 'HEAD').trim()).toBe(baseHead)
   }, GIT_TEST_TIMEOUT_MS)
 
-  it('reports loudly, and still classifies the conflict, when the check that the abort worked fails', async () => {
+  it('reports loudly, and throws that the base checkout may be left mid-merge, when the check that the abort worked fails', async () => {
     const { dir, sideCommit, baseHead } = await repoWithConflictingSideBranch('dsh-merge-verify-fails-')
     const hooks = recordingHooks()
     // Probe 1 is the pre-merge refusal check, probe 2 establishes ownership, probe 3 checks that the abort worked.
     const command = await scripted({ mergeHeadProbeAt: { 3: FAILED_128 } })
 
-    const result = await attemptMerge(command, dir, 'wt-00000028', 'do the thing', sideCommit, signal, hooks)
+    const failure = await attemptMerge(command, dir, 'wt-00000028', 'do the thing', sideCommit, signal, hooks).catch((error: unknown) => error)
 
-    expect(result).toEqual({ kind: 'conflict', files: ['f.txt'] })
+    expect(String(failure)).toContain('the merge of worktree wt-00000028 could not be confirmed aborted: the base checkout may be left mid-merge')
+    expect(String(failure)).toContain('git merge --abort')
+    expect(String(failure)).not.toContain(dir)
     expect(hooks.reports).toHaveLength(1)
     expect(hooks.reports[0]).toContain(`the merge of ${sideCommit} in "${dir}" could not be confirmed aborted`)
     expect(hooks.reports[0]).toContain('git merge --abort')
@@ -454,11 +456,13 @@ describe('attemptMerge: a merge that dies or fails after starting', () => {
     const hooks = recordingHooks()
     const command = await scripted({ mergeHeadProbeAt: { 2: FAILED_128 } })
 
-    await expect(attemptMerge(command, dir, 'wt-00000029', 'do the thing', sideCommit, signal, hooks))
-      .rejects.toThrow('could not check the base checkout for a merge in progress (git rev-parse exited')
+    const failure = await attemptMerge(command, dir, 'wt-00000029', 'do the thing', sideCommit, signal, hooks).catch((error: unknown) => error)
 
+    expect(String(failure)).toContain('the merge of worktree wt-00000029 failed, and whether it left a merge in progress could not be checked')
+    expect(String(failure)).toContain('the base checkout may be left mid-merge')
+    expect(String(failure)).not.toContain(dir)
     expect(hooks.reports).toHaveLength(1)
-    expect(hooks.reports[0]).toContain(`after the merge of ${sideCommit} in "${dir}" failed, the base checkout could not be checked`)
+    expect(hooks.reports[0]).toContain(`the merge of ${sideCommit} in "${dir}" failed, and whether it left a merge in progress could not be checked`)
     expect(hooks.reports[0]).toContain('git merge --abort')
     expect(command.commands).not.toContainEqual(['merge', '--abort'])
     expect(git(dir, 'rev-parse', '-q', '--verify', 'MERGE_HEAD').trim()).toBe(sideCommit)
@@ -497,7 +501,7 @@ describe('attemptMerge: a merge that dies or fails after starting', () => {
     expect(git(dir, 'rev-parse', 'HEAD').trim()).toBe(baseHead)
   }, GIT_TEST_TIMEOUT_MS)
 
-  it('reports loudly, and still throws, when it cannot clear a MERGE_HEAD it left behind', async () => {
+  it('throws that the base checkout is left mid-merge, and logs the path, when it cannot clear a MERGE_HEAD it left behind', async () => {
     const { dir, sideCommit } = await repoWithSideBranch('dsh-merge-stuck-')
     const hooks = recordingHooks()
     const command = await scripted({
@@ -505,12 +509,36 @@ describe('attemptMerge: a merge that dies or fails after starting', () => {
       mergeAbort: FAILED_128,
     })
 
-    await expect(attemptMerge(command, dir, 'wt-00000014', 'do the thing', sideCommit, signal, hooks))
-      .rejects.toThrow('was killed before it finished')
+    const failure = await attemptMerge(command, dir, 'wt-00000014', 'do the thing', sideCommit, signal, hooks).catch((error: unknown) => error)
 
+    expect(String(failure)).toContain(
+      'the merge of worktree wt-00000014 could not be aborted: the base checkout is left mid-merge and must be aborted there with "git merge --abort"',
+    )
+    expect(String(failure)).not.toContain(dir)
     expect(hooks.reports).toHaveLength(1)
     expect(hooks.reports[0]).toContain(`the merge of ${sideCommit} in "${dir}" could not be aborted and is still in progress`)
     expect(hooks.reports[0]).toContain('git merge --abort')
+    expect(git(dir, 'rev-parse', '-q', '--verify', 'MERGE_HEAD').trim()).toBe(sideCommit)
+  }, GIT_TEST_TIMEOUT_MS)
+
+  it.each([
+    ['stopped on conflicts', undefined],
+    ['failed with a fatal exit after starting', FAILED_128],
+  ])('throws that the base checkout is left mid-merge, instead of returning an outcome, when the abort does not clear a merge that %s', async (_label, exit) => {
+    const { dir, sideCommit } = await repoWithConflictingSideBranch('dsh-merge-stuck-outcome-')
+    const hooks = recordingHooks()
+    const command = await scripted({
+      ...exit === undefined ? {} : { merge: { alongside: ['merge', '--no-ff', '--no-edit', sideCommit], result: exit } },
+      mergeAbort: FAILED_128,
+    })
+
+    const failure = await attemptMerge(command, dir, 'wt-00000031', 'do the thing', sideCommit, signal, hooks).catch((error: unknown) => error)
+
+    expect(failure).toBeInstanceOf(Error)
+    expect(String(failure)).toContain('the base checkout is left mid-merge and must be aborted there with "git merge --abort"')
+    expect(String(failure)).not.toContain(dir)
+    expect(hooks.reports).toHaveLength(1)
+    expect(hooks.reports[0]).toContain(`in "${dir}" could not be aborted and is still in progress`)
     expect(git(dir, 'rev-parse', '-q', '--verify', 'MERGE_HEAD').trim()).toBe(sideCommit)
   }, GIT_TEST_TIMEOUT_MS)
 })
