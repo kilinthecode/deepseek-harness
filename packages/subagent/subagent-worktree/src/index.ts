@@ -44,18 +44,24 @@ export interface Config {
   branchPrefix: string
   /** Maximum `open` or `reviewing` worktrees per repository. */
   maxWorktrees: number
-  /** Reviewer route; omitted uses the route of the Agent that accepts. */
-  reviewer?: WorktreeRoute
+  /** Reviewer provider route; set together with {@link reviewerModel}. Omitted uses the route of the Agent that accepts. */
+  reviewerProvider?: string
+  /** Reviewer model id; set together with {@link reviewerProvider}. */
+  reviewerModel?: string
+  /** Reviewer reasoning effort; requires {@link reviewerProvider} and {@link reviewerModel}. */
+  reviewerReasoningEffort?: string
   /** Reject a reviewer route equal to the worker's route. */
   requireDistinctReviewer: boolean
-  /** Check command run in the review checkout before the reviewer; a nonzero exit rejects the change. */
-  testCommand?: string[]
+  /** Check command (argv) run in the review checkout before the reviewer; empty runs none. A nonzero exit rejects the change. */
+  testCommand: string[]
   /** Byte bound on the diff embedded in the reviewer prompt. */
   reviewDiffMaxBytes: number
   /** Remove the worktree directory and branch after a successful merge. */
   removeOnMerge: boolean
-  /** Author identity for harness commits; omitted uses git's configured identity. */
-  commitAuthor?: { name: string; email: string }
+  /** Author name for harness commits; set together with {@link commitAuthorEmail}. Omitted uses git's configured identity. */
+  commitAuthorName?: string
+  /** Author email for harness commits; set together with {@link commitAuthorName}. */
+  commitAuthorEmail?: string
 }
 
 /**
@@ -71,19 +77,15 @@ export class SubagentWorktrees extends Service {
     root: z.string().description('Absolute directory holding worktrees, records, and review checkouts. Omitted resolves <DSH_HOME>/worktrees.'),
     branchPrefix: z.string().default('dsh/worktree/').description('Prefix of every worktree branch name.'),
     maxWorktrees: z.natural().min(1).default(16).description('Maximum open or reviewing worktrees per repository.'),
-    reviewer: z.object({
-      provider: z.string().required(),
-      model: z.string().required(),
-      reasoningEffort: z.string(),
-    }).description('Reviewer route. Omitted uses the route of the agent that accepts.'),
+    reviewerProvider: z.string().description('Reviewer provider route, set together with reviewerModel. Omitted uses the route of the agent that accepts.'),
+    reviewerModel: z.string().description('Reviewer model id, set together with reviewerProvider.'),
+    reviewerReasoningEffort: z.string().description('Reviewer reasoning effort; requires reviewerProvider and reviewerModel.'),
     requireDistinctReviewer: z.boolean().default(true).description('Reject a reviewer route equal to the worker route.'),
-    testCommand: z.array(z.string()).description('Check command (argv) run in the review checkout before the reviewer.'),
+    testCommand: z.array(z.string().required()).default([]).description('Check command (argv) run in the review checkout before the reviewer. Empty runs none.'),
     reviewDiffMaxBytes: z.natural().min(1024).default(49152).description('Byte bound on the diff embedded in the reviewer prompt.'),
     removeOnMerge: z.boolean().default(true).description('Remove the worktree and its branch after a successful merge.'),
-    commitAuthor: z.object({
-      name: z.string().required(),
-      email: z.string().required(),
-    }).description('Author identity for harness commits. Omitted uses the git configuration.'),
+    commitAuthorName: z.string().description('Author name for harness commits, set together with commitAuthorEmail. Omitted uses the git configuration.'),
+    commitAuthorEmail: z.string().description('Author email for harness commits, set together with commitAuthorName.'),
   })
 
   constructor(ctx: Context, protected readonly config: Config) {
@@ -92,7 +94,7 @@ export class SubagentWorktrees extends Service {
 
   /**
    * Create one linked worktree on a new branch from the base checkout's `HEAD`.
-   * @param request - owner, base directory, label, task, optional worker route, and cancellation.
+   * @param request - owner, base directory, label, task, worker route, and cancellation.
    * @returns the committed `open` record, the worker directory, and any uncommitted base changes left out.
    */
   create(request: CreateWorktreeRequest): Promise<ProvisionedWorktree> {
@@ -112,7 +114,8 @@ export class SubagentWorktrees extends Service {
 
   /**
    * Resolve the reviewer route (operator override, then configuration, then the
-   * accepting Agent's route) and enforce independence from the worker.
+   * accepting Agent's route) and enforce independence from the worker. Routes
+   * are equal when provider and model match; reasoning effort is ignored.
    * @param request - worker route, caller route, and optional override.
    * @returns the reviewer route.
    * @throws when `requireDistinctReviewer` is set and the resolved route equals the worker's.
