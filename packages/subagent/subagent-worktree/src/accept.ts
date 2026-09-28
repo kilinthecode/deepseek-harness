@@ -232,7 +232,7 @@ export async function acceptWorktree(deps: AcceptDeps, request: AcceptWorktreeRe
   // the transition, so checking before acquiring it would not close the race.
   const reviewing = await updateExistingRecordAt(located.layout, request.id, (current) => {
     assertOpenOrRecoverable(current, request.id)
-    assertNoRunningWorkers(deps.ctx, current, request.id)
+    assertNoRunningWorkers(deps.ctx.agents, current, request.id)
     return { ...current, state: 'reviewing', reviewingPid: process.pid }
   })
 

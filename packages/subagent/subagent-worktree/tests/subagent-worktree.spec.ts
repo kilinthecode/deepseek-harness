@@ -1,6 +1,6 @@
-import { mkdtemp } from 'node:fs/promises'
+import { mkdtemp, readdir, realpath, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { dirname, join } from 'node:path'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { Context } from '@deepseek-ai/cordis'
 import AgentRegistry from '@deepseek-ai/dsh-agent'
@@ -8,8 +8,9 @@ import { SessionId } from '@deepseek-ai/dsh-session'
 import LocalSubprocessRuntime from '@deepseek-ai/dsh-subprocess-local'
 import SubagentRuntime from '@deepseek-ai/dsh-subagent'
 import SubagentWorktrees from '../src/index.ts'
+import { pathExists } from '../src/fs-util.ts'
 import type { WorktreeId, WorktreeOwner } from '../src/types.ts'
-import { createWorktree, git, initFixtureRepo, removeFixture, setup } from './harness.ts'
+import { createWorktree, fakeAgent, git, initFixtureRepo, removeFixture, setup } from './harness.ts'
 
 const cleanups: Array<() => Promise<unknown>> = []
 afterEach(async () => {
@@ -26,7 +27,13 @@ const GIT_TEST_TIMEOUT_MS = 20_000
 
 /** Config fields a raw `ctx.plugin(SubagentWorktrees, ...)` call must always supply. */
 const RAW_BASE_CONFIG = {
-  branchPrefix: 'dsh/worktree/', maxWorktrees: 16, requireDistinctReviewer: true, testCommand: [], reviewDiffMaxBytes: 1024, removeOnMerge: true,
+  branchPrefix: 'dsh/worktree/',
+  maxWorktrees: 16,
+  requireDistinctReviewer: true,
+  testCommand: [],
+  checkTimeoutMs: 60_000,
+  reviewDiffMaxBytes: 1024,
+  removeOnMerge: true,
 }
 
 async function scratchRoot(): Promise<string> {
@@ -194,6 +201,115 @@ describe('discard', () => {
     await expect(ctx.subagentWorktrees.discard({ id: provisioned.record.id, owner: OWNER, signal }))
       .rejects.toThrow(`worktree ${provisioned.record.id} is discarded`)
   }, GIT_TEST_TIMEOUT_MS)
+})
+
+describe('worktree id validation at every public method', () => {
+  it.each(['attach', 'accept', 'discard'] as const)('%s rejects an id that is not a worktree id before touching the filesystem', async (method) => {
+    const root = await scratchRoot()
+    const { ctx, dispose } = await setup({ root })
+    cleanups.push(dispose)
+    const id = '../../etc/x' as WorktreeId
+    const attempts = {
+      attach: () => ctx.subagentWorktrees.attach({ id, owner: OWNER, workerSessionId: SessionId('w'), workerRoute: WORKER_ROUTE }),
+      accept: () => ctx.subagentWorktrees.accept({ id, owner: OWNER, parent: fakeAgent('parent', WORKER_ROUTE), signal }),
+      discard: () => ctx.subagentWorktrees.discard({ id, owner: OWNER, signal }),
+    }
+    await expect(attempts[method]()).rejects.toThrow('"../../etc/x" is not a worktree id')
+    expect(await readdir(root)).toEqual([])
+  })
+})
+
+describe('discard cleanup', () => {
+  it('finishes after the worktree directory was deleted out from under it, pruning the stale registration first', async () => {
+    const dir = await initFixtureRepo('dsh-discard-missing-dir-')
+    cleanups.push(() => removeFixture(dir))
+    git(dir, 'commit', '--allow-empty', '-q', '-m', 'base')
+    const { ctx, dispose } = await setup({ root: await scratchRoot() })
+    cleanups.push(dispose)
+    const provisioned = await createWorktree(ctx, OWNER, dir, 'x')
+    await rm(provisioned.record.path, { recursive: true, force: true })
+    // git still lists the deleted worktree and refuses to delete its checked-out branch until it is pruned.
+    expect(git(dir, 'worktree', 'list')).toContain(provisioned.record.path)
+    expect(() => git(dir, 'branch', '-D', provisioned.record.branch)).toThrow()
+
+    const updated = await ctx.subagentWorktrees.discard({ id: provisioned.record.id, owner: OWNER, signal })
+
+    expect(updated.state).toBe('discarded')
+    expect(git(dir, 'worktree', 'list')).not.toContain(provisioned.record.path)
+    expect(git(dir, 'branch', '--list', provisioned.record.branch).trim()).toBe('')
+  }, GIT_TEST_TIMEOUT_MS)
+
+  it('finishes when both the directory and the branch are already gone', async () => {
+    const dir = await initFixtureRepo('dsh-discard-all-gone-')
+    cleanups.push(() => removeFixture(dir))
+    git(dir, 'commit', '--allow-empty', '-q', '-m', 'base')
+    const { ctx, dispose } = await setup({ root: await scratchRoot() })
+    cleanups.push(dispose)
+    const provisioned = await createWorktree(ctx, OWNER, dir, 'x')
+    git(dir, 'worktree', 'remove', '--force', provisioned.record.path)
+    git(dir, 'branch', '-D', provisioned.record.branch)
+
+    const updated = await ctx.subagentWorktrees.discard({ id: provisioned.record.id, owner: OWNER, signal })
+    expect(updated.state).toBe('discarded')
+  }, GIT_TEST_TIMEOUT_MS)
+
+  it('claims the record before any git change, so a failing removal leaves it discarded rather than open', async () => {
+    const dir = await initFixtureRepo('dsh-discard-claims-')
+    cleanups.push(() => removeFixture(dir))
+    git(dir, 'commit', '--allow-empty', '-q', '-m', 'base')
+    const { ctx, dispose } = await setup({ root: await scratchRoot() })
+    cleanups.push(dispose)
+    const provisioned = await createWorktree(ctx, OWNER, dir, 'x')
+    // git refuses to remove a locked worktree, so the removal after the claim fails.
+    git(dir, 'worktree', 'lock', provisioned.record.path)
+    cleanups.push(async () => { git(dir, 'worktree', 'unlock', provisioned.record.path) })
+
+    await expect(ctx.subagentWorktrees.discard({ id: provisioned.record.id, owner: OWNER, signal }))
+      .rejects.toThrow('git worktree remove failed')
+
+    const [record] = await ctx.subagentWorktrees.list({ baseDir: dir, includeClosed: true })
+    expect(record?.state).toBe('discarded')
+    expect(await pathExists(provisioned.record.path)).toBe(true)
+  }, GIT_TEST_TIMEOUT_MS)
+})
+
+describe('linked-worktree bases', () => {
+  it('shares one records directory, slot count, and listing with the repository the base is a linked worktree of', async () => {
+    const dir = await initFixtureRepo('dsh-linked-base-')
+    cleanups.push(() => removeFixture(dir))
+    git(dir, 'commit', '--allow-empty', '-q', '-m', 'base')
+    const linkedParent = await mkdtemp(join(tmpdir(), 'dsh-linked-base-wt-'))
+    cleanups.push(() => removeFixture(linkedParent))
+    const linked = join(linkedParent, 'wt')
+    git(dir, 'worktree', 'add', '-q', '-b', 'linked-branch', linked)
+    const { ctx, dispose } = await setup({ root: await scratchRoot(), maxWorktrees: 2 })
+    cleanups.push(dispose)
+
+    const fromMain = await createWorktree(ctx, OWNER, dir, 'from main')
+    const fromLinked = await createWorktree(ctx, OWNER, linked, 'from linked')
+
+    // Each record keeps its own checkout as its merge target ...
+    expect(fromMain.record.repoRoot).toBe(await realpath(dir))
+    expect(fromLinked.record.repoRoot).toBe(await realpath(linked))
+    // ... while both live under one repository directory, are listed from either base, and share the slot count.
+    expect(dirname(fromLinked.record.path)).toBe(dirname(fromMain.record.path))
+    const expected = [fromMain.record.id, fromLinked.record.id].sort()
+    expect((await ctx.subagentWorktrees.list({ baseDir: dir })).map(r => r.id).sort()).toEqual(expected)
+    expect((await ctx.subagentWorktrees.list({ baseDir: linked })).map(r => r.id).sort()).toEqual(expected)
+    await expect(createWorktree(ctx, OWNER, linked, 'third')).rejects.toThrow('2 worktrees are already open')
+    await expect(createWorktree(ctx, OWNER, dir, 'third')).rejects.toThrow('2 worktrees are already open')
+  }, GIT_TEST_TIMEOUT_MS)
+})
+
+describe('Config schema', () => {
+  it('defaults the check deadline to fifteen minutes', () => {
+    expect(SubagentWorktrees.Config.dict?.checkTimeoutMs?.meta.default).toBe(900_000)
+  })
+
+  it('accepts a one second check deadline and rejects a shorter one', () => {
+    expect(SubagentWorktrees.Config({ ...RAW_BASE_CONFIG, checkTimeoutMs: 1_000 }).checkTimeoutMs).toBe(1_000)
+    expect(() => SubagentWorktrees.Config({ ...RAW_BASE_CONFIG, checkTimeoutMs: 999 })).toThrow()
+  })
 })
 
 describe('list', () => {

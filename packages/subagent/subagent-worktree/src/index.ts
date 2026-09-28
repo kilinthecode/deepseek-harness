@@ -246,7 +246,7 @@ export class SubagentWorktrees extends Service {
     const claimed = await updateExistingRecordAt(located.layout, request.id, (current) => {
       if (current.state === 'merged') return current
       assertOpenOrRecoverable(current, request.id)
-      assertNoRunningWorkers(this.ctx, current, request.id)
+      assertNoRunningWorkers(this.ctx.agents, current, request.id)
       return { ...current, state: 'discarded' }
     })
 

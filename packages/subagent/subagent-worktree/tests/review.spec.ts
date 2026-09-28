@@ -7,6 +7,7 @@ import LocalSubprocessRuntime from '@deepseek-ai/dsh-subprocess-local'
 import SubagentRuntime from '@deepseek-ai/dsh-subagent'
 import type { SubagentStartRequest } from '@deepseek-ai/dsh-subagent'
 import { GitRunner } from '../src/git.ts'
+import type { GitCommandResult, GitRunOptions } from '../src/git.ts'
 import { callerRouteOf, runReviewer } from '../src/review.ts'
 import { fakeAgent, git, initFixtureRepo, removeFixture } from './harness.ts'
 import { mountScriptedReviewer } from './scripted-reviewer.ts'
@@ -29,6 +30,14 @@ async function setup(verdicts: readonly ScriptedVerdict[], onStart?: (request: S
 
 const signal = new AbortController().signal
 const REVIEWER_ROUTE = { provider: 'reviewer-provider', model: 'reviewer-model' }
+
+/** Runs real git, but reports every `git diff` capture as lossy. */
+class LossyDiffGit extends GitRunner {
+  override async run(args: readonly string[], options: GitRunOptions): Promise<GitCommandResult> {
+    const result = await super.run(args, options)
+    return args[0] === 'diff' ? { ...result, stdoutLossy: true } : result
+  }
+}
 
 /** A real two-commit fixture repo: `base` is empty, `head` adds one file — a valid diffable range. */
 async function diffOfSize(byteLength: number): Promise<{ dir: string; base: string; head: string }> {
@@ -132,6 +141,39 @@ describe('runReviewer', () => {
       task: 'do it', label: 'do it', reviewerRoute: REVIEWER_ROUTE, reviewDiffMaxBytes: 1024, signal,
     })
     expect(verdict.verdict).toBe('fail')
+  }, 20_000)
+
+  it.each(['error', 'aborted', 'max-tokens', 'refusal'] as const)(
+    'fails closed on a %s stop even when a passing structured verdict came with it',
+    async (stopReason) => {
+      const { dir, base, head } = await diffOfSize(10)
+      const { ctx, git: runner } = await setup([{
+        stopReason, structured: { verdict: 'pass', summary: 'looks good', checks: ['tests: ok'], findings: [] },
+      }])
+      const verdict = await runReviewer(ctx, runner, {
+        parent: fakeAgent(`parent-${stopReason}`), reviewDir: dir, commit: head, baseCommit: base,
+        task: 'do it', label: 'do it', reviewerRoute: REVIEWER_ROUTE, reviewDiffMaxBytes: 1024, signal,
+      })
+      expect(verdict.verdict).toBe('fail')
+      expect(verdict.summary).toBe('the reviewer returned no structured verdict')
+      expect(verdict.findings).toEqual(['the reviewer returned no structured verdict'])
+      expect(verdict.checks).toEqual([])
+    },
+    20_000,
+  )
+
+  it('refuses to review a diff whose capture lost data instead of embedding a partial tail', async () => {
+    const { dir, base, head } = await diffOfSize(10)
+    let reviewerStarted = false
+    const { ctx } = await setup(
+      [{ structured: { verdict: 'pass', summary: 's', checks: [], findings: [] } }],
+      () => { reviewerStarted = true },
+    )
+    await expect(runReviewer(ctx, new LossyDiffGit(ctx.subprocess), {
+      parent: fakeAgent('parent-lossy'), reviewDir: dir, commit: head, baseCommit: base,
+      task: 'do it', label: 'do it', reviewerRoute: REVIEWER_ROUTE, reviewDiffMaxBytes: 1024, signal,
+    })).rejects.toThrow('git diff output exceeded its capture limit; refusing to parse a partial result')
+    expect(reviewerStarted).toBe(false)
   }, 20_000)
 
   describe('reviewer diff bounds', () => {

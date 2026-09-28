@@ -144,16 +144,16 @@ export function assertStoredWorktreeRecord(value: unknown, sourcePath: string): 
 const COMMIT_ID_PATTERN = /^[0-9a-f]{40}$/
 
 /**
- * Verify a shape-valid record is consistent with where it was loaded from: its
- * own id names the file it came from, its worktree directory is the one this
- * repository layout assigns that id, its branch names its id, and every commit
- * id is a full 40-digit lowercase hexadecimal id. A record failing any of
- * these was corrupted or edited on disk, and acting on it could aim a
- * `git worktree remove --force` or a merge at a path or commit that was never
- * this worktree's.
+ * Verify a shape-valid record is consistent with where it is stored, both when
+ * it is loaded and before it is written: its own id names its file, its
+ * worktree directory is the one this repository layout assigns that id, its
+ * branch names its id, and every commit id is a full 40-digit lowercase
+ * hexadecimal id. A record failing any of these was corrupted or edited on
+ * disk, and acting on it could aim a `git worktree remove --force` or a merge
+ * at a path or commit that was never this worktree's.
  * @param record - the shape-validated record.
- * @param layout - the repository layout the record was loaded under.
- * @param id - the worktree id the record was loaded by (its file's own basename).
+ * @param layout - the repository layout the record is stored under.
+ * @param id - the worktree id the record is stored by (its file's own basename).
  * @param sourcePath - the record file path, named in the thrown message.
  * @throws when the record's id, worktree path, branch, or any commit id is inconsistent.
  */
@@ -225,6 +225,9 @@ async function updateRecord(
   return withFileLock(path, async () => {
     const current = await loadRecordOrUndefined(layout, id)
     const next = updater(current)
+    // A record this check would reject on load must never reach disk: it would
+    // make every later operation on the worktree fail as corrupt.
+    assertRecordIntegrity(next, layout, id, path)
     await writeFileAtomic(path, `${JSON.stringify(next, null, 2)}\n`, { mode: 0o600, dirMode: 0o700 })
     return next
   })

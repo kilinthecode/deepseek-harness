@@ -1,4 +1,4 @@
-import { mkdir, mkdtemp, realpath, writeFile } from 'node:fs/promises'
+import { chmod, mkdir, mkdtemp, readdir, realpath, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
@@ -8,6 +8,8 @@ import { SessionId } from '@deepseek-ai/dsh-session'
 import { BASE_DIRTY_MAX_ENTRIES } from '../src/bounds.ts'
 import { createWorktree } from '../src/create.ts'
 import { GitRunner } from '../src/git.ts'
+import type { GitCommandResult, GitRunOptions } from '../src/git.ts'
+import { layoutForRepo } from '../src/records.ts'
 import { git, initFixtureRepo, removeFixture } from './harness.ts'
 import type { CreateWorktreeRequest } from '../src/types.ts'
 
@@ -129,5 +131,66 @@ describe('createWorktree', () => {
     const provisioned = await createWorktree(await runner(), root, 'dsh/worktree/', 16, request(dir))
     expect(provisioned.baseDirty?.total).toBe(BASE_DIRTY_MAX_ENTRIES)
     expect(provisioned.baseDirty?.entries).toHaveLength(BASE_DIRTY_MAX_ENTRIES)
+  }, GIT_TEST_TIMEOUT_MS)
+})
+
+/** Runs real git, except `git status` reports a lossy capture and `git worktree remove` blows up. */
+class BrokenStatusAndCleanupGit extends GitRunner {
+  override async run(args: readonly string[], options: GitRunOptions): Promise<GitCommandResult> {
+    if (args[0] === 'worktree' && args[1] === 'remove') throw new Error('cleanup blew up')
+    const result = await super.run(args, options)
+    return args[0] === 'status' ? { ...result, stdoutLossy: true } : result
+  }
+}
+
+describe('createWorktree: failure after `git worktree add`', () => {
+  it('fails loud, and removes the worktree and branch it just made, when git status output was cut short', async () => {
+    const dir = await initFixtureRepo('dsh-create-lossy-')
+    cleanups.push(() => removeFixture(dir))
+    git(dir, 'commit', '--allow-empty', '-q', '-m', 'base')
+    // More than the 1 MiB default capture: 6000 untracked files with ~200 character names.
+    const names = Array.from({ length: 6_000 }, (_, i) => `${'x'.repeat(190)}-${i}.txt`)
+    for (let i = 0; i < names.length; i += 200) {
+      await Promise.all(names.slice(i, i + 200).map(name => writeFile(join(dir, name), '')))
+    }
+    const root = await scratchRoot()
+
+    await expect(createWorktree(await runner(), root, 'dsh/worktree/', 16, request(dir)))
+      .rejects.toThrow('git status output exceeded its capture limit; refusing to parse a partial result')
+
+    expect(git(dir, 'worktree', 'list').trim().split('\n')).toHaveLength(1)
+    expect(git(dir, 'branch', '--list', 'dsh/worktree/*').trim()).toBe('')
+    expect(await readdir(join(root, ...(await readdir(root))))).toEqual([])
+  }, 60_000)
+
+  it('removes the worktree and branch it just made when persisting the record fails', async () => {
+    const dir = await initFixtureRepo('dsh-create-persist-fails-')
+    cleanups.push(() => removeFixture(dir))
+    git(dir, 'commit', '--allow-empty', '-q', '-m', 'base')
+    const root = await scratchRoot()
+    const layout = layoutForRepo(root, await realpath(join(dir, '.git')))
+    // A read-only records directory makes the record lock file, and so the write, fail.
+    await mkdir(layout.recordsDir, { recursive: true })
+    await chmod(layout.recordsDir, 0o555)
+    cleanups.push(() => chmod(layout.recordsDir, 0o755))
+
+    await expect(createWorktree(await runner(), root, 'dsh/worktree/', 16, request(dir))).rejects.toThrow(/EACCES|permission denied/i)
+
+    expect(git(dir, 'worktree', 'list').trim().split('\n')).toHaveLength(1)
+    expect(git(dir, 'branch', '--list', 'dsh/worktree/*').trim()).toBe('')
+    expect(await readdir(layout.repoDir)).toEqual(['records'])
+  }, GIT_TEST_TIMEOUT_MS)
+
+  it('surfaces the original failure when the cleanup itself fails too', async () => {
+    const dir = await initFixtureRepo('dsh-create-cleanup-fails-')
+    cleanups.push(() => removeFixture(dir))
+    git(dir, 'commit', '--allow-empty', '-q', '-m', 'base')
+    const root = await scratchRoot()
+    const ctx = new Context()
+    cleanups.push(() => ctx.fiber.dispose())
+    await ctx.plugin(LocalSubprocessRuntime)
+
+    await expect(createWorktree(new BrokenStatusAndCleanupGit(ctx.subprocess), root, 'dsh/worktree/', 16, request(dir)))
+      .rejects.toThrow('git status output exceeded its capture limit')
   }, GIT_TEST_TIMEOUT_MS)
 })

@@ -18,6 +18,8 @@ export interface ScriptedVerdict {
   stopReason?: SubagentResult['stopReason']
   /** When set, `run.result` rejects with this message instead of resolving — an infrastructure fault, not a verdict. */
   throws?: string
+  /** When set, `run.result` settles only after this promise resolves, keeping the review in flight for overlap tests. */
+  holdUntil?: Promise<void>
 }
 
 /** Options for the scripted `spawn` provider fixture. */
@@ -47,10 +49,15 @@ class ScriptedReviewerProvider implements SubagentProvider {
       stopReason: script?.stopReason ?? 'completed',
       ...script !== undefined && 'structured' in script ? { structured: script.structured } : {},
     }
+    const released = script?.holdUntil ?? Promise.resolve()
+    const settled = released.then((): SubagentResult => {
+      if (script?.throws !== undefined) throw new Error(script.throws)
+      return result
+    })
     return Promise.resolve({
       id: SessionId(`scripted-reviewer:${this.name}:${this.calls}`),
       localAgent: undefined,
-      result: script?.throws === undefined ? Promise.resolve(result) : Promise.reject(new Error(script.throws)),
+      result: settled,
       dispose: () => Promise.resolve(),
     })
   }

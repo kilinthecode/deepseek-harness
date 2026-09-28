@@ -102,10 +102,12 @@ export interface RunReviewerParams {
  * @param git - command runner.
  * @param params - review checkout, commit range, and the configured byte bound.
  * @returns the bounded diff text and whether it was truncated.
+ * @throws when the diff outgrew the raw collection cap: the subprocess layer keeps the tail of an overflowing
+ *   stream, so a lossy capture holds the wrong end of the diff and must not be embedded as if it were the head.
  */
 async function boundedDiff(git: GitRunner, params: RunReviewerParams): Promise<{ text: string; truncated: boolean }> {
   const collectBytes = Math.max(DIFF_COLLECT_FLOOR_BYTES, params.reviewDiffMaxBytes + 1)
-  const raw = await git.expect(['diff', `${params.baseCommit}..${params.commit}`], 'git diff', {
+  const raw = await git.expectComplete(['diff', `${params.baseCommit}..${params.commit}`], 'git diff', {
     cwd: params.reviewDir, signal: params.signal, maxBytes: collectBytes,
   })
   return truncateUtf8Prefix(raw.stdout, params.reviewDiffMaxBytes)

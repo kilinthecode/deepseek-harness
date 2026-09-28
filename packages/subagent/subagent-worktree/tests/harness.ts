@@ -39,10 +39,14 @@ export function removeFixture(dir: string): Promise<void> {
   return rm(dir, { recursive: true, force: true })
 }
 
-/** Build a minimal parent Agent: enough for `parentAgentOptionsForDelegation` and the reviewer's `parent` field. */
+/**
+ * Build a minimal parent Agent: exactly the three members `parentAgentOptionsForDelegation`
+ * and the reviewer's `parent` field read (`id`, `options`, `session`). `Agent` is an interface
+ * merged from many packages, so a literal of only these members needs one assertion.
+ */
 export function fakeAgent(id: string, options: AgentOptions = {}): Agent {
   const sessionId = SessionId(id)
-  return { id: sessionId, options, session: Session.create(sessionId) } as unknown as Agent
+  return { id: sessionId, options, session: Session.create(sessionId) } as Agent
 }
 
 /** Default worker route used by {@link createWorktree} when a test does not care about its exact value. */
@@ -56,6 +60,7 @@ const DEFAULT_TEST_CONFIG = {
   maxWorktrees: 16,
   requireDistinctReviewer: true,
   testCommand: [],
+  checkTimeoutMs: 60_000,
   reviewDiffMaxBytes: 1024,
   removeOnMerge: true,
 } satisfies Omit<Config, 'root'>
