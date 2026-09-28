@@ -1912,12 +1912,21 @@ importers:
       '@deepseek-ai/cordis-plugin-include':
         specifier: workspace:~
         version: link:../../../vendor/include
+      '@deepseek-ai/dsh-agent':
+        specifier: workspace:*
+        version: link:../../core/agent
       '@deepseek-ai/dsh-agent-loop':
         specifier: workspace:*
         version: link:../../core/agent-loop
       '@deepseek-ai/dsh-agent-loop-testkit':
         specifier: workspace:*
         version: link:../../test-support/agent-loop-testkit
+      '@deepseek-ai/dsh-scope':
+        specifier: workspace:*
+        version: link:../../core/scope
+      '@deepseek-ai/dsh-session':
+        specifier: workspace:*
+        version: link:../../core/session
       '@deepseek-ai/dsh-skill':
         specifier: workspace:*
         version: link:../../skill/skill

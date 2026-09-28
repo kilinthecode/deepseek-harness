@@ -25,7 +25,7 @@ kind: "package-reference"
 <a id="use-this-package"></a>
 ## 使用本包
 
-在任何提供 `isolation: "worktree"` 的 `subagent` 委派工具所在的组合中挂载本包（参见 `@deepseek-ai/dsh-tool-subagent` 的 `worktreeIsolation` 配置，以及 `@deepseek-ai/dsh-agent-crew` bundle）。它需要 `ctx.subagentWorktrees`（`@deepseek-ai/dsh-subagent-worktree`），该服务已经以惰性方式挂载在共享的 `dsh-base` 组合中。
+在任何提供 `isolation: "worktree"` 的 `subagent` 委派工具所在的组合中挂载本包，无论它经由工具条目的 `worktreeIsolation` 配置（参见 `@deepseek-ai/dsh-tool-subagent`），还是经由服务的 `offerIsolation` 设置（由 `@deepseek-ai/dsh-agent-crew` bundle 设置）。它需要 `ctx.subagentWorktrees`（`@deepseek-ai/dsh-subagent-worktree`），该服务已经以惰性方式挂载在共享的 `dsh-base` 组合中。
 
 ### 最小配置
 

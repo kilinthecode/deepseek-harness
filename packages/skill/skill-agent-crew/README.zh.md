@@ -29,7 +29,7 @@ agent（智能体）可以通过该内置提供方加载 `agent-crew` skill，�
 
 ### 何时选择
 
-当支持独立评审的工作 agent 委派可用、并值得作为一个命名工作流公开时，选择此提供方：与 `@deepseek-ai/dsh-tool-subagent-worktree`，以及启用了 `worktreeIsolation` 的 `subagent` 工具一起使用（`@deepseek-ai/dsh-agent-crew` bundle 会把三者一并挂载）。当这些工具未挂载时请跳过——该 skill 的正文直接点名这些工具，未挂载它们时加载该 skill 会让模型拿到无法执行的指令。
+当支持独立评审的工作 agent 委派可用、并值得作为一个命名工作流公开时，选择此提供方：与 `@deepseek-ai/dsh-tool-subagent-worktree`，以及提供 `isolation: "worktree"` 的 `subagent` 工具一起使用（`@deepseek-ai/dsh-agent-crew` bundle 会把三者一并提供）。当这些工具未挂载时请跳过——该 skill 的正文直接点名这些工具，未挂载它们时加载该 skill 会让模型拿到无法执行的指令。
 
 ### 启用插件
 

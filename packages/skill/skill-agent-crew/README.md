@@ -29,7 +29,7 @@ Enable the plugin to make the `agent-crew` skill available in the session skill 
 
 ### When to choose it
 
-Choose this provider where worker-agent delegation with independent review is available and worth surfacing as a named workflow: alongside `@deepseek-ai/dsh-tool-subagent-worktree` and a `subagent` tool with `worktreeIsolation` enabled (the `@deepseek-ai/dsh-agent-crew` bundle mounts all three together). Skip it where those tools are not mounted — the skill's instructions name them directly, so loading it without them leaves a model unable to follow the workflow.
+Choose this provider where worker-agent delegation with independent review is available and worth surfacing as a named workflow: alongside `@deepseek-ai/dsh-tool-subagent-worktree` and a `subagent` tool that offers `isolation: "worktree"` (the `@deepseek-ai/dsh-agent-crew` bundle provides all three together). Skip it where those tools are not mounted — the skill's instructions name them directly, so loading it without them leaves a model unable to follow the workflow.
 
 ### Enable the plugin
 

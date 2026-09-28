@@ -1,6 +1,6 @@
 {
   "name": "@deepseek-ai/dsh-agent-crew",
-  "description": "Optional bundle that switches the subagent tool to worktree isolation and adds the accept/discard/list worktree tools and the agent-crew skill",
+  "description": "Optional bundle that offers worktree isolation on the subagent tool and adds the accept/discard/list worktree tools and the agent-crew skill",
   "version": "0.1.7-rc.2",
   "icon": "./icon.svg",
   "publishConfig": {
@@ -42,8 +42,11 @@
   "devDependencies": {
     "@deepseek-ai/cordis": "workspace:~",
     "@deepseek-ai/cordis-plugin-include": "workspace:~",
+    "@deepseek-ai/dsh-agent": "workspace:*",
     "@deepseek-ai/dsh-agent-loop": "workspace:*",
     "@deepseek-ai/dsh-agent-loop-testkit": "workspace:*",
+    "@deepseek-ai/dsh-scope": "workspace:*",
+    "@deepseek-ai/dsh-session": "workspace:*",
     "@deepseek-ai/dsh-skill": "workspace:*",
     "@deepseek-ai/dsh-subagent": "workspace:*",
     "@deepseek-ai/dsh-subagent-spawn-in-process": "workspace:*",

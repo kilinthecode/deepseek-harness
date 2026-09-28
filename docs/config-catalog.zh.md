@@ -3962,8 +3962,10 @@ export interface Config {
    * `isolation: "worktree"`. Requires `ctx.subagentWorktrees`
    * (`@deepseek-ai/dsh-subagent-worktree`) and a provider with the `cwd`
    * capability — the seam's own capability check rejects a provider without
-   * it. Defaults to `false`: the schema omits the `isolation` parameter and
-   * the executor rejects it.
+   * it. Defaults to `false`: unless the service offers isolation on every
+   * delegation tool (`ctx.subagentWorktrees.offersIsolation`, read when the
+   * tool mounts, and only for a provider with the `cwd` capability), the
+   * schema omits the `isolation` parameter and the executor rejects it.
    */
   worktreeIsolation?: boolean
 }

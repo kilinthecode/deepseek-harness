@@ -25,7 +25,7 @@ English | [中文](README.zh.md)
 <a id="use-this-package"></a>
 ## Use this package
 
-Mount this package wherever a `subagent` delegation tool offers `isolation: "worktree"` (see `@deepseek-ai/dsh-tool-subagent`'s `worktreeIsolation` config and the `@deepseek-ai/dsh-agent-crew` bundle). It requires `ctx.subagentWorktrees` (`@deepseek-ai/dsh-subagent-worktree`), already mounted, inert, in the shared `dsh-base` composition.
+Mount this package wherever a `subagent` delegation tool offers `isolation: "worktree"`, whether through a tool row's `worktreeIsolation` config (see `@deepseek-ai/dsh-tool-subagent`) or through the service's `offerIsolation` setting, which the `@deepseek-ai/dsh-agent-crew` bundle sets. It requires `ctx.subagentWorktrees` (`@deepseek-ai/dsh-subagent-worktree`), already mounted, inert, in the shared `dsh-base` composition.
 
 ### Minimal configuration
 

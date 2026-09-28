@@ -118,8 +118,10 @@ export interface Config {
    * `isolation: "worktree"`. Requires `ctx.subagentWorktrees`
    * (`@deepseek-ai/dsh-subagent-worktree`) and a provider with the `cwd`
    * capability — the seam's own capability check rejects a provider without
-   * it. Defaults to `false`: the schema omits the `isolation` parameter and
-   * the executor rejects it.
+   * it. Defaults to `false`: unless the service offers isolation on every
+   * delegation tool (`ctx.subagentWorktrees.offersIsolation`, read when the
+   * tool mounts, and only for a provider with the `cwd` capability), the
+   * schema omits the `isolation` parameter and the executor rejects it.
    */
   worktreeIsolation?: boolean
 }
@@ -151,7 +153,8 @@ export const Config: z<Config> = z.object({
   maxDepth: z.union([z.natural().max(Number.MAX_SAFE_INTEGER), z.const('provider-managed' as const)]),
   worktreeIsolation: z.boolean().default(false).description(
     'Give each delegation its own git worktree, isolated until an independent reviewer approves merging it. '
-    + 'Requires the subagent-worktree service and a provider with the cwd capability.',
+    + 'Requires the subagent-worktree service and a provider with the cwd capability. '
+    + 'The service can also offer isolation on every delegation tool through its offerIsolation setting.',
   ),
 })
 
@@ -352,12 +355,12 @@ interface DelegationIsolationRequest {
   readonly isolation?: 'worktree'
 }
 
-/** Resolve the model's optional isolation request, enforcing the config gate. */
+/** Resolve the model's optional isolation request, enforcing the offer the schema made at mount. */
 function resolveDelegationIsolation(
   request: DelegationIsolationRequest,
-  worktreeIsolationEnabled: boolean,
+  isolationOffered: boolean,
 ): 'worktree' | undefined {
-  if (!worktreeIsolationEnabled) {
+  if (!isolationOffered) {
     // The validator permits undeclared keys, so schema omission also needs
     // execution-time enforcement.
     if (request.isolation !== undefined) {
@@ -430,7 +433,6 @@ export function apply(ctx: Context, config: Config, session?: Session): void {
   const backgroundEnabled = config.enableRunInBackground !== false
   const continuable = (config.backgroundMode ?? 'one-shot') === 'continuable'
   const toolName = config.toolName ?? 'subagent'
-  const worktreeIsolationEnabled = config.worktreeIsolation === true
 
   const modelSelectionCapable = config.modelSelectionSettings === true
   ctx.sessionProjections.register(subagentModelSelectionProjectionDefinition)
@@ -477,6 +479,11 @@ export function apply(ctx: Context, config: Config, session?: Session): void {
       assertSubagentProviderConfiguration(subagentProvider)
       const wording = providerWording(subagentProvider.inheritsParentContext)
       const providerRouteDefaults = subagentProvider.agentRouteDefaults
+      // The service's deployment-wide switch reaches a tool mounted inside an agent preset, whose row a bundle
+      // patch cannot change; a provider without the `cwd` capability cannot place a child in a worktree, so the
+      // switch never offers isolation on it. Read once per mount: the schema and the executor below share it.
+      const worktreeIsolationOffered = config.worktreeIsolation === true
+        || (subagentProvider.capabilities.cwd && runtimeCtx.get('subagentWorktrees')?.offersIsolation === true)
       const selectionDescription = providerRouteDefaults !== undefined
         ? ' Child LLM selection is optional. Omit `provider`, `model`, and `reasoning_effort` to use configured child defaults and this provider\'s route defaults. Supply `provider` and `model` together after using `list_subagent_models` to inspect advertised routes and efforts. Changing the effective route without naming an effort uses the selected model\'s default effort.'
         : ' Child LLM selection is optional. Omit `provider`, `model`, and `reasoning_effort` to use configured child defaults and inherit compatible missing values from the parent Agent. Supply `provider` and `model` together after using `list_subagent_models` to inspect advertised routes and efforts. Changing the effective route without naming an effort uses the selected model\'s default effort.'
@@ -507,7 +514,7 @@ export function apply(ctx: Context, config: Config, session?: Session): void {
             required: true,
             description: wording.promptDescription,
           },
-          ...worktreeIsolationEnabled ? {
+          ...worktreeIsolationOffered ? {
             isolation: {
               type: 'string' as const,
               enum: ['worktree'] as const,
@@ -671,7 +678,7 @@ export function apply(ctx: Context, config: Config, session?: Session): void {
           exec.signal.throwIfAborted()
           const maxDepth = runtimeCtx.subagents.resolveMaxDepth(config.maxDepth)
           const runSpec = resolveDelegationRun(args, { backgroundEnabled, continuable })
-          const isolation = resolveDelegationIsolation(args, worktreeIsolationEnabled)
+          const isolation = resolveDelegationIsolation(args, worktreeIsolationOffered)
 
           let isolationContext: WorktreeIsolationContext | undefined
           let promptText = args.prompt
