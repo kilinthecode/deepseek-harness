@@ -10,6 +10,7 @@
 import { realpath } from 'node:fs/promises'
 import { join, relative } from 'node:path'
 import { BASE_DIRTY_MAX_ENTRIES, boundedLines } from './bounds.ts'
+import { cleanupSignal } from './git.ts'
 import type { GitRunner } from './git.ts'
 import { worktreeDirFor } from './paths.ts'
 import { countOpenSlots, createRecord, generateWorktreeId, layoutForRepo, toPublicRecord } from './records.ts'
@@ -18,16 +19,22 @@ import { repoIdentityOf } from './repo.ts'
 import type { CreateWorktreeRequest, ProvisionedWorktree } from './types.ts'
 
 /**
- * Best-effort removal of a worktree and branch `git worktree add` just
- * created, after a later provisioning step failed. Uses `run`, not `expect`:
- * the caller's original error is what must reach the caller, so a further
- * failure here is swallowed rather than thrown — a leftover is recovered by a
- * later `git worktree prune` or an operator's cleanup.
+ * Best-effort removal of a worktree and branch that provisioning just created,
+ * after a later provisioning step failed. It runs on a fresh signal, because
+ * the request's own signal is often why provisioning failed and a command
+ * started on an aborted signal never runs. Each step is attempted whatever the
+ * other did — a worktree that will not remove must not also keep its branch —
+ * and uses `run`, not `expect`: the caller's original error is what must reach
+ * the caller, so a further failure here is swallowed rather than thrown. A
+ * leftover is recovered by a later prune or an operator's cleanup.
  */
-async function cleanupFailedWorktree(
-  git: GitRunner, repoRoot: string, worktreePath: string, branch: string, signal: AbortSignal,
-): Promise<void> {
-  await git.run(['worktree', 'remove', '--force', worktreePath], { cwd: repoRoot, signal })
+async function cleanupFailedWorktree(git: GitRunner, repoRoot: string, worktreePath: string, branch: string): Promise<void> {
+  const signal = cleanupSignal()
+  try {
+    await git.run(['worktree', 'remove', '--force', worktreePath], { cwd: repoRoot, signal })
+  } catch {
+    // The branch deletion below still runs, and the caller reports the original failure.
+  }
   await git.run(['branch', '-D', branch], { cwd: repoRoot, signal })
 }
 
@@ -112,7 +119,7 @@ export async function createWorktree(
     }
   } catch (error) {
     try {
-      await cleanupFailedWorktree(git, repoRoot, worktreePath, branch, request.signal)
+      await cleanupFailedWorktree(git, repoRoot, worktreePath, branch)
     } catch {
       // Best-effort: `error` below is what the caller must see; a leftover worktree/branch here is
       // recovered by a later `git worktree prune` or an operator's cleanup.
