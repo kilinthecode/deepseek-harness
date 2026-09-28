@@ -24,6 +24,22 @@ const DEFAULT_GIT_STDOUT_MAX_BYTES = 1024 * 1024
 /** In-memory stderr cap for every git command; diagnostics are inherently short. */
 const GIT_STDERR_MAX_BYTES = 64 * 1024
 
+/** Milliseconds one cleanup command may run on its own fresh signal; a fixed lifecycle constant, not a deployment tunable. */
+const CLEANUP_GRACE_MS = 30_000
+
+/**
+ * A fresh, non-aborted signal for the git commands that undo or classify a
+ * failed operation. The caller's own signal is often the reason the operation
+ * failed (it was cancelled), and a command started on an aborted signal never
+ * runs, so cleanup on that signal would leave the failure half undone: a merge
+ * still in progress, a worktree and branch still on disk. Bounded, so cleanup
+ * cannot hang.
+ * @returns a signal that aborts after a fixed grace period.
+ */
+export function cleanupSignal(): AbortSignal {
+  return AbortSignal.timeout(CLEANUP_GRACE_MS)
+}
+
 /** Settled git command facts; a nonzero exit is a result, not an exception — callers interpret it. */
 export interface GitCommandResult {
   readonly exitCode: number | null

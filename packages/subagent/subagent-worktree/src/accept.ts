@@ -19,7 +19,7 @@ import { DIAGNOSTIC_TAIL_CHARS, tailChars } from './bounds.ts'
 import { runCheckCommand } from './check-command.ts'
 import type { CommitAuthor } from './config.ts'
 import type { Config } from './index.ts'
-import { GitCommandError, type GitRunner } from './git.ts'
+import { cleanupSignal, GitCommandError, type GitRunner } from './git.ts'
 import { attemptMerge } from './merge.ts'
 import { reviewCheckoutPathFor, reviewCheckoutPrefixFor } from './paths.ts'
 import type { WorktreeLayout } from './paths.ts'
@@ -70,12 +70,14 @@ async function reopen(
 }
 
 /**
- * Best-effort `git worktree remove --force`, logging rather than throwing: a
- * leftover is cleaned up by the next review's stale-directory sweep.
+ * Best-effort `git worktree remove --force` on a fresh signal, logging rather
+ * than throwing: the accept's own signal is often why it is unwinding, and a
+ * command started on an aborted signal never runs. A leftover is cleaned up by
+ * the next review's stale-directory sweep.
  */
-async function removeReviewCheckout(deps: AcceptDeps, repoRoot: string, path: string, signal: AbortSignal): Promise<void> {
+async function removeReviewCheckout(deps: AcceptDeps, repoRoot: string, path: string): Promise<void> {
   try {
-    await deps.git.expect(['worktree', 'remove', '--force', path], 'git worktree remove', { cwd: repoRoot, signal })
+    await deps.git.expect(['worktree', 'remove', '--force', path], 'git worktree remove', { cwd: repoRoot, signal: cleanupSignal() })
   } catch (error) {
     deps.ctx.logger.warn(`subagent-worktree: could not remove review checkout "${path}": ${String(error)}`)
   }
@@ -86,7 +88,7 @@ async function removeReviewCheckout(deps: AcceptDeps, repoRoot: string, path: st
  * starting a new one (crash recovery).
  */
 async function cleanupStaleReviewDirs(
-  deps: AcceptDeps, layout: WorktreeLayout, repoRoot: string, id: WorktreeId, signal: AbortSignal,
+  deps: AcceptDeps, layout: WorktreeLayout, repoRoot: string, id: WorktreeId,
 ): Promise<void> {
   let entries: string[]
   try {
@@ -99,7 +101,7 @@ async function cleanupStaleReviewDirs(
   for (const entry of entries) {
     if (!entry.startsWith(prefix)) continue
     const path = join(layout.reviewsDir, entry)
-    if (await pathExists(path)) await removeReviewCheckout(deps, repoRoot, path, signal)
+    if (await pathExists(path)) await removeReviewCheckout(deps, repoRoot, path)
   }
 }
 
@@ -138,7 +140,7 @@ async function checkAndReview(
   request: AcceptWorktreeRequest,
   commit: string,
 ): Promise<CheckAndReviewOutcome> {
-  await cleanupStaleReviewDirs(deps, layout, record.repoRoot, request.id, request.signal)
+  await cleanupStaleReviewDirs(deps, layout, record.repoRoot, request.id)
   const reviewPath = reviewCheckoutPathFor(layout, request.id, Date.now())
   await deps.git.expect(['worktree', 'add', '--detach', reviewPath, commit], 'git worktree add', {
     cwd: record.repoRoot, signal: request.signal,
@@ -177,7 +179,7 @@ async function checkAndReview(
     })
     return { kind: 'reviewed', verdict }
   } finally {
-    await removeReviewCheckout(deps, record.repoRoot, reviewPath, request.signal)
+    await removeReviewCheckout(deps, record.repoRoot, reviewPath)
   }
 }
 
@@ -189,8 +191,9 @@ async function checkAndReview(
  * @returns whether both the directory and the branch were removed.
  */
 async function removeMergedWorktree(
-  deps: AcceptDeps, record: StoredWorktreeRecord, mergeCommit: string, signal: AbortSignal,
+  deps: AcceptDeps, record: StoredWorktreeRecord, mergeCommit: string,
 ): Promise<boolean> {
+  const signal = cleanupSignal()
   try {
     await deps.git.expect(['worktree', 'remove', '--force', record.path], 'git worktree remove', { cwd: record.repoRoot, signal })
     await deps.git.expect(['branch', '-D', record.branch], 'git branch -D', { cwd: record.repoRoot, signal })
@@ -236,7 +239,7 @@ export async function acceptWorktree(deps: AcceptDeps, request: AcceptWorktreeRe
     return { ...current, state: 'reviewing', reviewingPid: process.pid }
   })
 
-  let mergeLanded = false
+  const landing = { landed: false }
   try {
     const commit = await commitWorktreeChanges(deps, reviewing, request.id, request.signal)
     if (commit === reviewing.baseCommit) {
@@ -267,7 +270,10 @@ export async function acceptWorktree(deps: AcceptDeps, request: AcceptWorktreeRe
     // never holds up another accept's merge into the same base checkout.
     const mergeResult = await withFileLock(
       located.layout.mergeLockPath,
-      () => attemptMerge(deps.git, reviewing.repoRoot, request.id, reviewing.label, commit, request.signal),
+      () => attemptMerge(deps.git, reviewing.repoRoot, request.id, reviewing.label, commit, request.signal, {
+        onLanded: () => { landing.landed = true },
+        report: (message) => { deps.ctx.logger.error(message) },
+      }),
       { waitMs: MERGE_LOCK_WAIT_MS },
     )
     if (mergeResult.kind === 'conflict') {
@@ -277,10 +283,10 @@ export async function acceptWorktree(deps: AcceptDeps, request: AcceptWorktreeRe
       return await reopen(located.layout, request.id, record => ({ kind: 'blocked', record, commit, verdict, reason: mergeResult.reason }))
     }
 
-    // The merge commit now exists in the base checkout's history. From here no
-    // failure may reopen the record: reporting `open` for work that already
-    // landed would invite a second merge of the same branch.
-    mergeLanded = true
+    // The merge commit now exists in the base checkout's history (`onLanded`
+    // marked it the instant `git merge` exited 0). From here no failure may
+    // reopen the record: reporting `open` for work that already landed would
+    // invite a second merge of the same branch.
     let merged: StoredWorktreeRecord
     try {
       merged = await updateExistingRecordAt(located.layout, request.id, current => ({
@@ -293,10 +299,10 @@ export async function acceptWorktree(deps: AcceptDeps, request: AcceptWorktreeRe
         { cause: error },
       )
     }
-    const removed = deps.config.removeOnMerge && await removeMergedWorktree(deps, reviewing, mergeResult.mergeCommit, request.signal)
+    const removed = deps.config.removeOnMerge && await removeMergedWorktree(deps, reviewing, mergeResult.mergeCommit)
     return { kind: 'merged', record: toPublicRecord(merged), commit, mergeCommit: mergeResult.mergeCommit, verdict, removed }
   } catch (error) {
-    if (!mergeLanded) {
+    if (!landing.landed) {
       await updateExistingRecordAt(located.layout, request.id, current => (
         current.state === 'reviewing' ? { ...current, state: 'open' } : current
       )).catch((revertError: unknown) => {
