@@ -9,7 +9,7 @@ English | [中文](README.zh.md)
 
 ## Summary
 
-The skill family lets agents and users discover and load reusable task instructions only when needed. Use `skill/` to combine catalogs and expose one instruction set per name; choose `skill-filesystem` for project, custom, or user-directory discovery, `skill-badge` for the optional official badge, and `skill-office` for Word, PowerPoint, and Excel workflows. Add `tool-skill` when models should receive a sorted, durable session catalog, load full instructions through the `skill` tool, or accept direct `/name` invocation. Different sources produce the same model-visible format, and model access requires at least one source.
+The skill family lets agents and users discover and load reusable task instructions only when needed. Use `skill/` to combine catalogs and expose one instruction set per name; choose `skill-filesystem` for project, custom, or user-directory discovery, `skill-badge` for the optional official badge, `skill-office` for Word, PowerPoint, and Excel workflows, and `skill-agent-crew` for worktree-isolated goal decomposition. Add `tool-skill` when models should receive a sorted, durable session catalog, load full instructions through the `skill` tool, or accept direct `/name` invocation. Different sources produce the same model-visible format, and model access requires at least one source.
 
 ## Table of Contents
 
@@ -28,6 +28,7 @@ The skill family lets agents and users discover and load reusable task instructi
 | [`skill-filesystem/`](skill-filesystem/README.md) | Discovers skills from project, custom, and user directories and watches them for changes | registers on `ctx.skills` |
 | [`skill-badge/`](skill-badge/README.md) | Bundles the official "powered by dsh" badge skill, disabled by default | registers on `ctx.skills` |
 | [`skill-office/`](skill-office/README.md) | Bundles Word, PowerPoint, and Excel workflows with structural file checks | registers on `ctx.skills` |
+| [`skill-agent-crew/`](skill-agent-crew/README.md) | Bundles the worktree-isolated goal-decomposition skill, enabled by the `agent-crew` bundle | registers on `ctx.skills` |
 | [`tool-skill/`](tool-skill/README.md) | Publishes the session skill catalog and the model-facing `skill` loader tool | registers on `ctx.tools` |
 | [`tool-workspace-dependencies/`](tool-workspace-dependencies/README.md) | Reports bundled Office interpreter paths and versions for Desktop and SDK carriers | registers on `ctx.tools` |
 
