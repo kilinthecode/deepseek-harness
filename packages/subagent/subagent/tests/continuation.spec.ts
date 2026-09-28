@@ -1037,7 +1037,7 @@ describe('SubagentRuntime.startContinuable cwd', () => {
     expect(failure).toBeInstanceOf(SubagentError)
     expect((failure as SubagentError).code).toBe('NOT_RESUMABLE')
     expect((failure as SubagentError).message).toBe(
-      `subagent "${started.childId}" cannot resume: its working directory "${cwdRoot}" no longer exists`,
+      `subagent "${started.childId}" cannot resume: its working directory "${cwdRoot}" is no longer an accessible directory`,
     )
     // The dead directory never reached agents.resume(): no child Agent came back live.
     expect(ctx.agents.get(started.childId)).toBeUndefined()
@@ -1077,6 +1077,39 @@ describe('continuable return guidance workspace wording', () => {
     const loaded = await loadStoredSession(ctx.sessionPersistence, started.childId)
     expect(hasUserText(loaded.events, DISTINCT_WORKSPACE_GUIDANCE)).toBe(true)
     expect(hasUserText(loaded.events, SHARED_WORKSPACE_GUIDANCE)).toBe(false)
+  })
+
+  it("treats a trailing-slash spelling of the parent's cwd as the same workspace", async () => {
+    // realpath strips a trailing slash, so this spells the identical directory
+    // as `parentCwd` without being string-equal to it.
+    const { ctx, parent } = await setup(
+      [textResponse('answer')],
+      { parentCwd: tmpdir(), sendMessageTool: true },
+    )
+
+    const started = await ctx.subagents.startContinuable(
+      startSpec(parent, 'spawn', testSignal, { cwd: `${tmpdir()}/` }),
+    )
+    await waitNoActivation(ctx, started.childId)
+    const loaded = await loadStoredSession(ctx.sessionPersistence, started.childId)
+    expect(hasUserText(loaded.events, SHARED_WORKSPACE_GUIDANCE)).toBe(true)
+    expect(hasUserText(loaded.events, DISTINCT_WORKSPACE_GUIDANCE)).toBe(false)
+  })
+
+  it('falls back to the raw cwd spelling on both sides when the shared directory cannot be resolved', async () => {
+    // An unresolvable cwd (never independently validated when only inherited,
+    // unlike an explicit override) still compares equal to itself verbatim.
+    const missingParentCwd = join(tmpdir(), 'dsh-subagent-missing-parent-cwd-xyz')
+    const { ctx, parent } = await setup(
+      [textResponse('answer')],
+      { parentCwd: missingParentCwd, sendMessageTool: true },
+    )
+
+    const started = await ctx.subagents.startContinuable(startSpec(parent, 'spawn', testSignal))
+    await waitNoActivation(ctx, started.childId)
+    const loaded = await loadStoredSession(ctx.sessionPersistence, started.childId)
+    expect(hasUserText(loaded.events, SHARED_WORKSPACE_GUIDANCE)).toBe(true)
+    expect(hasUserText(loaded.events, DISTINCT_WORKSPACE_GUIDANCE)).toBe(false)
   })
 })
 
