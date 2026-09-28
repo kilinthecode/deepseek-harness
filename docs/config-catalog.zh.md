@@ -1042,7 +1042,8 @@ export interface InspectorOptions {
 
 ## `@deepseek-ai/dsh-experimental-peer-sessions`
 
-- `source`: [`packages/experimental/peer-sessions/src/index.ts:199`](../packages/experimental/peer-sessions/src/index.ts)
+- `inject`: `agents` · `sessions` · `sessionProjections`
+- `source`: [`packages/experimental/peer-sessions/src/index.ts:106`](../packages/experimental/peer-sessions/src/index.ts)
 
 ```ts config-catalog
 /** Peer-service deployment limits. Invalid values fail plugin load. */

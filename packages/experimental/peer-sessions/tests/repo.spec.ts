@@ -4,10 +4,13 @@ import { join } from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
 import { realpathNormalize } from '@deepseek-ai/dsh-workspace'
 import { peerRepoKey } from '../src/index.ts'
+import { mountPeerHarness, type PeerHarness } from './harness.ts'
 
 const roots: string[] = []
+const harnesses: PeerHarness[] = []
 
 afterEach(async () => {
+  for (const harness of harnesses.splice(0)) await harness.dispose()
   await Promise.all(roots.splice(0).map(root => rm(root, { recursive: true, force: true })))
 })
 
@@ -193,5 +196,34 @@ describe('peerRepoKey', () => {
     await chmod(join(gitdir, 'commondir'), 0o000)
     await writeFile(join(sealed, '.git'), `gitdir: ${gitdir}\n`)
     expect(await peerRepoKey(sealed)).toBe(`dir:${sealed}`)
+  })
+})
+
+describe('peers grouped by repository', () => {
+  it('lists and delivers across two worktrees of one checkout', async () => {
+    const harness = await mountPeerHarness({ peer: { pollMs: 60_000 } })
+    harnesses.push(harness)
+    // The harness workdir becomes a checkout, and each session starts in its
+    // own worktree directory of it.
+    await mkdir(join(harness.workdir, '.git'), { recursive: true })
+    const firstWorktree = join(harness.workdir, 'checkout-a')
+    const secondWorktree = join(harness.workdir, 'checkout-b')
+    await mkdir(firstWorktree, { recursive: true })
+    await mkdir(secondWorktree, { recursive: true })
+    const sender = await harness.create('peer-a', { cwd: firstWorktree })
+    const target = await harness.create('peer-b', { cwd: secondWorktree })
+    expect(await harness.ctx.peers.list(sender)).toEqual([{
+      kind: 'session',
+      id: 'peer-b',
+      name: 'peer-b',
+      status: 'idle',
+      cwd: secondWorktree,
+      provider: 'mock',
+      model: 'mock',
+    }])
+    expect((await harness.ctx.peers.send(sender, { to: 'peer-b', message: 'shared ref' })).status)
+      .toBe('delivered')
+    await target.whenIdle()
+    expect(harness.userMessages(target).map(message => message.source.kind)).toEqual(['peer-message'])
   })
 })

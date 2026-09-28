@@ -1,6 +1,13 @@
 import { Context } from '@deepseek-ai/cordis'
-import { describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it } from 'vitest'
 import PeerService, { Config, PeerError } from '../src/index.ts'
+import { mountPeerHarness, type PeerHarness } from './harness.ts'
+
+const harnesses: PeerHarness[] = []
+
+afterEach(async () => {
+  for (const harness of harnesses.splice(0)) await harness.dispose()
+})
 
 describe('PeerService configuration', () => {
   it('ships the documented peer limits and inbound mode', () => {
@@ -14,16 +21,22 @@ describe('PeerService configuration', () => {
     })
   })
 
-  it('accepts stated limits and an explicit deferred inbound mode', () => {
-    expect(() => new PeerService(new Context(), Config({
-      pollMs: 250,
-      maxPendingPerTarget: 8,
-      maxPendingPerSenderPerTarget: 8,
-      maxMessageBytes: 1_024,
-      maxIdleWatches: 1,
-      peerInbound: 'deferred',
-    }))).not.toThrow()
-    expect(() => new PeerService(new Context(), {})).not.toThrow()
+  it('accepts stated limits and an explicit deferred inbound mode', async () => {
+    const harness = await mountPeerHarness({
+      peer: {
+        pollMs: 250,
+        maxPendingPerTarget: 8,
+        maxPendingPerSenderPerTarget: 8,
+        maxMessageBytes: 1_024,
+        maxIdleWatches: 1,
+        peerInbound: 'deferred',
+      },
+    })
+    harnesses.push(harness)
+    expect(harness.ctx.peers).toBeInstanceOf(PeerService)
+    expect(typeof harness.ctx.peers.list).toBe('function')
+    expect(typeof harness.ctx.peers.send).toBe('function')
+    expect(typeof harness.ctx.peers.notifyIdle).toBe('function')
   })
 
   it('rejects a limit that is not a positive safe integer', () => {
@@ -42,37 +55,53 @@ describe('PeerService configuration', () => {
       .toThrow(/maxPendingPerSenderPerTarget must not exceed maxPendingPerTarget/)
   })
 
-  it('registers ctx.peers for a loaded fiber', async () => {
-    const ctx = new Context()
-    const fiber = await ctx.plugin(PeerService, { pollMs: 5 })
-    try {
-      expect(ctx.peers).toBeInstanceOf(PeerService)
-      expect(typeof ctx.peers.list).toBe('function')
-      expect(typeof ctx.peers.send).toBe('function')
-      expect(typeof ctx.peers.notifyIdle).toBe('function')
-    } finally {
-      await fiber.dispose()
-    }
-  })
-
   it('declares the schema as the plugin config slot', () => {
     expect(PeerService.Config).toBe(Config)
   })
 })
 
 describe('PeerService methods', () => {
-  it('rejects every unimplemented method until the mailbox provider lands', async () => {
-    const ctx = new Context()
-    const fiber = await ctx.plugin(PeerService, {})
-    try {
-      await expect(ctx.peers.list(undefined as never)).rejects.toThrow('not implemented')
-      await expect(ctx.peers.send(undefined as never, { to: 'peer', message: 'hello' }))
-        .rejects.toThrow('not implemented')
-      await expect(ctx.peers.notifyIdle(undefined as never, { to: 'peer' }))
-        .rejects.toThrow('not implemented')
-    } finally {
-      await fiber.dispose()
-    }
+  it('lists nothing when the caller is the only peer in its repository', async () => {
+    const harness = await mountPeerHarness()
+    harnesses.push(harness)
+    const agent = await harness.create('peer-a')
+    expect(await harness.ctx.peers.list(agent)).toEqual([])
+  })
+
+  it('refuses peer messaging for a caller with no working directory', async () => {
+    const harness = await mountPeerHarness()
+    harnesses.push(harness)
+    const agent = await harness.create('peer-a', { cwd: null })
+    await expect(harness.ctx.peers.list(agent))
+      .rejects.toThrow('This session has no working directory, so it cannot use peer messaging.')
+  })
+
+  it('reports an unknown peer by name with the exact model-visible failure', async () => {
+    const harness = await mountPeerHarness()
+    harnesses.push(harness)
+    const agent = await harness.create('peer-a')
+    await expect(harness.ctx.peers.send(agent, { to: 'ghost', message: 'hello' }))
+      .rejects.toThrow('No peer session named "ghost" is live in this repository.')
+    await expect(harness.ctx.peers.notifyIdle(agent, { to: 'ghost' }))
+      .rejects.toThrow('No peer session named "ghost" is live in this repository.')
+  })
+
+  it('delivers one framed message to an idle peer in the same repository', async () => {
+    const harness = await mountPeerHarness()
+    harnesses.push(harness)
+    const sender = await harness.create('peer-a')
+    const target = await harness.create('peer-b')
+    const result = await harness.ctx.peers.send(sender, { to: 'peer-b', message: 'please hold the ref' })
+    expect(result.status).toBe('delivered')
+    await target.whenIdle()
+    expect(harness.userMessages(target).map(message => message.source)).toEqual([{
+      kind: 'peer-message',
+      form: 'relay',
+      messageId: result.messageId,
+      senderSessionId: 'peer-a',
+      senderName: 'peer-a',
+      relayDepth: 1,
+    }])
   })
 })
 

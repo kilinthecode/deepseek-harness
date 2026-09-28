@@ -1,0 +1,46 @@
+# Bilingual-pair consistency record for README.md (docs/i18n/README.md): per heading
+# section, a hash of its English and Chinese blocks outside code blocks and generated regions.
+# After editing either side, bring the other along and re-record with:
+#   pnpm run verify-translation-pairing --write packages/experimental/peer-sessions/README.md
+/:
+  en: 7e02bbbd8fcc69ce
+  zh: e88610f7c6c3029c
+/deepseek-ai-dsh-experimental-peer-sessions:
+  en: f95cdd1f2e913518
+  zh: 434657ae9e676751
+/deepseek-ai-dsh-experimental-peer-sessions/summary:
+  en: e3137496e817842f
+  zh: d08cabf408120b46
+/deepseek-ai-dsh-experimental-peer-sessions/table-of-contents:
+  en: d152484eb41ac6b4
+  zh: f12de81680ba13a4
+/deepseek-ai-dsh-experimental-peer-sessions/use-this-package:
+  en: ad6c6b06809aea1d
+  zh: 702f28855342d5c8
+/deepseek-ai-dsh-experimental-peer-sessions/use-this-package/contract:
+  en: 1f33332074c15cbf
+  zh: 90e9de1c271d33b0
+/deepseek-ai-dsh-experimental-peer-sessions/use-this-package/repository-identity:
+  en: 890eb2d72683b2f6
+  zh: 99f01f76dddd553b
+/deepseek-ai-dsh-experimental-peer-sessions/use-this-package/configuration:
+  en: e2ff01994ecd9cae
+  zh: 44bf7a9d443860db
+/deepseek-ai-dsh-experimental-peer-sessions/understand-the-implementation:
+  en: 8eafc043527aac22
+  zh: 7992cb99e7d68a7f
+/deepseek-ai-dsh-experimental-peer-sessions/further-exploration:
+  en: 01fdabf42203bc6c
+  zh: dd9be00f84e0a3bf
+/deepseek-ai-dsh-experimental-peer-sessions/model-experience:
+  en: c29a38404f2d046f
+  zh: 408520360a5a88b2
+/deepseek-ai-dsh-experimental-peer-sessions/model-experience/kv-cache-effect:
+  en: 5f23a77acf4949b0
+  zh: a27c680d4689b8b1
+/deepseek-ai-dsh-experimental-peer-sessions/known-limitations-and-deferred-work:
+  en: e502d38d25e93447
+  zh: d0f73ec35e537eba
+/deepseek-ai-dsh-experimental-peer-sessions/known-limitations-and-deferred-work/dev-note:
+  en: eb48c2b77fcd6026
+  zh: 751ab2919b3c5479
