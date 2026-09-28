@@ -7,6 +7,7 @@
 
 import type { Agent } from '@deepseek-ai/dsh-agent'
 import type { Branded } from '@deepseek-ai/dsh-brand'
+import type { ReasoningEffortId } from '@deepseek-ai/dsh-llm'
 import type { SessionId } from '@deepseek-ai/dsh-session'
 
 /** Opaque worktree identity: `wt-` followed by eight lowercase hexadecimal digits. */
@@ -19,7 +20,7 @@ export interface WorktreeRoute {
   /** Provider-owned model id. */
   readonly model: string
   /** Adapter-owned reasoning effort; omission follows the route default. */
-  readonly reasoningEffort?: string
+  readonly reasoningEffort?: ReasoningEffortId
 }
 
 /**
@@ -82,8 +83,8 @@ export interface WorktreeRecord {
   readonly createdAt: number
   /** Worker Sessions attached in attachment order. */
   readonly workerSessionIds: readonly SessionId[]
-  /** Route of the most recently attached worker, when known. */
-  readonly workerRoute?: WorktreeRoute
+  /** Route of the most recently attached worker; the reviewer must differ from it when independence is required. */
+  readonly workerRoute: WorktreeRoute
   /** Latest reviewer verdict. */
   readonly lastVerdict?: WorktreeVerdict
   /** Merge commit id in the base checkout once merged. */
@@ -108,8 +109,8 @@ export interface CreateWorktreeRequest {
   readonly label: string
   /** Task text recorded for review. */
   readonly task: string
-  /** Route the first worker will run on, when known before it starts. */
-  readonly workerRoute?: WorktreeRoute
+  /** Route the first worker will run on. */
+  readonly workerRoute: WorktreeRoute
   /** Cancellation for provisioning. */
   readonly signal: AbortSignal
 }
@@ -133,7 +134,7 @@ export interface AttachWorkerRequest {
   /** Session id of the worker that works in the worktree. */
   readonly workerSessionId: SessionId
   /** Route the worker runs on. */
-  readonly workerRoute?: WorktreeRoute
+  readonly workerRoute: WorktreeRoute
 }
 
 /** Inputs for resolving the reviewer route and enforcing its independence from the worker. */

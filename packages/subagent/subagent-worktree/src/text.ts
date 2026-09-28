@@ -79,8 +79,9 @@ export function renderReviewerPrompt(facts: ReviewerPromptFacts): string {
     + '5. Does the change claim anything it does not do, in code, comments, or docs?\n\n'
     + 'This checkout is discarded after your review, so edits here change nothing; do not try to fix the change. '
     + 'Git commands that write (commit, add, checkout, reset, stash) fail here; read with git and change files '
-    + 'directly. Return the verdict "pass" only when the change is correct, verified, and honest; otherwise return '
-    + '"fail" with one finding per problem, each naming the file, what is wrong, and the observation that shows it.\n\n'
+    + 'directly. Report by calling the structured_output tool: the verdict "pass" only when the change is correct, '
+    + 'verified, and honest; otherwise "fail" with one finding per problem, each naming the file, what is wrong, and '
+    + 'the observation that shows it.\n\n'
     + `The change (git diff ${facts.baseCommit}..${facts.commit}):\n${facts.diff}${truncation}`
 }
 
