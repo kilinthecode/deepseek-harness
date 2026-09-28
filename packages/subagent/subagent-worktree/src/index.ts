@@ -93,6 +93,12 @@ export interface Config {
   commitAuthorName?: string
   /** Author email for harness commits; set together with {@link commitAuthorName}. */
   commitAuthorEmail?: string
+  /**
+   * Offer the `isolation: "worktree"` parameter on every subagent delegation tool, including tools mounted
+   * inside agent presets, whose nested rows a bundle patch cannot reach. Omitted or `false` leaves each tool to
+   * its own `worktreeIsolation` setting; read through {@link SubagentWorktrees.offersIsolation}.
+   */
+  offerIsolation?: boolean
 }
 
 /** Schemastery validation for {@link Config}. */
@@ -110,6 +116,7 @@ const ConfigSchema: z<Config> = z.object({
   removeOnMerge: z.boolean().default(true).description('Remove the worktree and its branch after a successful merge.'),
   commitAuthorName: z.string().description('Author name for harness commits, set together with commitAuthorEmail. Omitted uses the git configuration.'),
   commitAuthorEmail: z.string().description('Author email for harness commits, set together with commitAuthorName.'),
+  offerIsolation: z.boolean().default(false).description('Offer the isolation: "worktree" parameter on every subagent delegation tool, including tools mounted inside agent presets.'),
 })
 
 /** Whether a filter owner admits a record's owner: exact match, `operator` filtering only `operator` records. */
@@ -155,6 +162,17 @@ export class SubagentWorktrees extends Service {
   private get git(): GitRunner {
     this.gitRunner ??= new GitRunner(this.ctx.subprocess)
     return this.gitRunner
+  }
+
+  /**
+   * Whether this deployment offers worktree isolation on every subagent delegation tool, including tools
+   * mounted inside agent presets, whose nested rows a bundle patch cannot reach. Delegation tools consult it
+   * at mount time in addition to their own `worktreeIsolation` row setting. Read-only: it is set through
+   * `Config.offerIsolation`, at load.
+   * @returns `Config.offerIsolation`, or `false` when it is omitted.
+   */
+  get offersIsolation(): boolean {
+    return this.config.offerIsolation ?? false
   }
 
   /**

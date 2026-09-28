@@ -302,6 +302,29 @@ describe('linked-worktree bases', () => {
   }, GIT_TEST_TIMEOUT_MS)
 })
 
+describe('offersIsolation', () => {
+  it('is off by default: the schema resolves an omitted field to false, and a config without it reads false', async () => {
+    expect(SubagentWorktrees.Config.dict?.offerIsolation?.meta.default).toBe(false)
+    expect(SubagentWorktrees.Config({ ...RAW_BASE_CONFIG }).offerIsolation).toBe(false)
+
+    const { ctx, dispose } = await setup({ root: await scratchRoot() })
+    cleanups.push(dispose)
+    expect(ctx.subagentWorktrees.offersIsolation).toBe(false)
+  })
+
+  it('reads the configured value when the deployment turns isolation on', async () => {
+    const { ctx, dispose } = await setup({ root: await scratchRoot(), offerIsolation: true })
+    cleanups.push(dispose)
+    expect(ctx.subagentWorktrees.offersIsolation).toBe(true)
+  })
+
+  it('reads false when the deployment sets it to false explicitly', async () => {
+    const { ctx, dispose } = await setup({ root: await scratchRoot(), offerIsolation: false })
+    cleanups.push(dispose)
+    expect(ctx.subagentWorktrees.offersIsolation).toBe(false)
+  })
+})
+
 describe('Config schema', () => {
   it('defaults the check deadline to fifteen minutes', () => {
     expect(SubagentWorktrees.Config.dict?.checkTimeoutMs?.meta.default).toBe(900_000)
