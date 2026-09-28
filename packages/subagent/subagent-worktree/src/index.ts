@@ -11,12 +11,13 @@ import { isAbsolute } from 'node:path'
 import type { Context } from '@deepseek-ai/cordis'
 import { Service } from '@deepseek-ai/cordis'
 import { dshHomePath } from '@deepseek-ai/dsh-home-paths'
+import z from '@deepseek-ai/schemastery'
 import type {} from '@deepseek-ai/dsh-agent'
 import type {} from '@deepseek-ai/dsh-subagent'
 import type {} from '@deepseek-ai/dsh-subprocess'
 import { acceptWorktree } from './accept.ts'
-import { Config as ConfigSchema, resolveConfiguredCommitAuthor, resolveConfiguredReviewer } from './config.ts'
-import type { CommitAuthor, Config } from './config.ts'
+import { resolveConfiguredCommitAuthor, resolveConfiguredReviewer } from './config.ts'
+import type { CommitAuthor } from './config.ts'
 import { createWorktree } from './create.ts'
 import { pathExists } from './fs-util.ts'
 import { GitRunner } from './git.ts'
@@ -43,7 +44,6 @@ import type {
 export type * from './types.ts'
 export { renderReviewerPrompt, renderWorkerBrief, VERDICT_SCHEMA } from './text.ts'
 export type { ReviewerPromptFacts, WorkerBriefFacts } from './text.ts'
-export type { Config } from './config.ts'
 
 declare module '@deepseek-ai/cordis' {
   interface Context {
@@ -51,6 +51,57 @@ declare module '@deepseek-ai/cordis' {
     subagentWorktrees: SubagentWorktrees
   }
 }
+
+/**
+ * Deployment configuration for worktree placement, review, and merge. The
+ * reviewer route and commit author are flat scalar fields, not nested
+ * objects, because Schemastery materializes an omitted `z.object({...})`
+ * field as `{}` before validating its own `required()` sub-fields — see
+ * {@link resolveConfiguredReviewer} and {@link resolveConfiguredCommitAuthor}
+ * in `./config.ts`, which resolve and validate these flat fields once at load.
+ */
+export interface Config {
+  /** Absolute directory holding worktrees, records, and review checkouts; omitted resolves `<DSH_HOME>/worktrees` at load. */
+  root?: string
+  /** Prefix of every worktree branch name. */
+  branchPrefix: string
+  /** Maximum `open` or `reviewing` worktrees per repository. */
+  maxWorktrees: number
+  /** Reviewer provider route; set together with {@link reviewerModel}. Omitted uses the route of the Agent that accepts. */
+  reviewerProvider?: string
+  /** Reviewer model id; set together with {@link reviewerProvider}. */
+  reviewerModel?: string
+  /** Reviewer reasoning effort; requires {@link reviewerProvider} and {@link reviewerModel}. */
+  reviewerReasoningEffort?: string
+  /** Reject a reviewer route equal to the worker's route. */
+  requireDistinctReviewer: boolean
+  /** Check command (argv) run in the review checkout before the reviewer; empty runs none. A nonzero exit rejects the change. */
+  testCommand: string[]
+  /** Byte bound on the diff embedded in the reviewer prompt. */
+  reviewDiffMaxBytes: number
+  /** Remove the worktree directory and branch after a successful merge. */
+  removeOnMerge: boolean
+  /** Author name for harness commits; set together with {@link commitAuthorEmail}. Omitted uses git's configured identity. */
+  commitAuthorName?: string
+  /** Author email for harness commits; set together with {@link commitAuthorName}. */
+  commitAuthorEmail?: string
+}
+
+/** Schemastery validation for {@link Config}. */
+const ConfigSchema: z<Config> = z.object({
+  root: z.string().description('Absolute directory holding worktrees, records, and review checkouts. Omitted resolves <DSH_HOME>/worktrees.'),
+  branchPrefix: z.string().default('dsh/worktree/').description('Prefix of every worktree branch name.'),
+  maxWorktrees: z.natural().min(1).default(16).description('Maximum open or reviewing worktrees per repository.'),
+  reviewerProvider: z.string().description('Reviewer provider route, set together with reviewerModel. Omitted uses the route of the agent that accepts.'),
+  reviewerModel: z.string().description('Reviewer model id, set together with reviewerProvider.'),
+  reviewerReasoningEffort: z.string().description('Reviewer reasoning effort; requires reviewerProvider and reviewerModel.'),
+  requireDistinctReviewer: z.boolean().default(true).description('Reject a reviewer route equal to the worker route.'),
+  testCommand: z.array(z.string().required()).default([]).description('Check command (argv) run in the review checkout before the reviewer. Empty runs none.'),
+  reviewDiffMaxBytes: z.natural().min(1024).default(49152).description('Byte bound on the diff embedded in the reviewer prompt.'),
+  removeOnMerge: z.boolean().default(true).description('Remove the worktree and its branch after a successful merge.'),
+  commitAuthorName: z.string().description('Author name for harness commits, set together with commitAuthorEmail. Omitted uses the git configuration.'),
+  commitAuthorEmail: z.string().description('Author email for harness commits, set together with commitAuthorName.'),
+})
 
 /** Whether a filter owner admits a record's owner: exact match, `operator` filtering only `operator` records. */
 function ownerMatches(recordOwner: WorktreeOwner, filterOwner: WorktreeOwner): boolean {

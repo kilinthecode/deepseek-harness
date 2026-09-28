@@ -1,62 +1,18 @@
 /**
- * Deployment configuration for the `subagentWorktrees` service, split from
- * `index.ts` so implementation modules can depend on the `Config` type
- * without importing the service class itself. The reviewer route and commit
- * author are flat scalar fields, not nested objects: Schemastery
- * materializes an omitted `z.object({...})` field as `{}` before validating
- * its own `required()` sub-fields, which would reject the common "omitted
- * entirely" case for an optional struct-shaped field.
+ * Resolves and validates the flat `Config` fields that stand in for two
+ * optional struct-shaped values — the reviewer route and the commit author —
+ * once at load, so every later read uses a pre-validated value instead of
+ * re-deriving it from raw config fields. `Config` itself is declared in
+ * `./index.ts` (the generated config catalog only resolves a service's schema
+ * from its own module or another workspace package, not a sibling file in the
+ * same package).
  *
  * @module @deepseek-ai/dsh-subagent-worktree/config
  */
 
-import z from '@deepseek-ai/schemastery'
 import { ReasoningEffortId } from '@deepseek-ai/dsh-llm'
+import type { Config } from './index.ts'
 import type { WorktreeRoute } from './types.ts'
-
-/** Deployment configuration for worktree placement, review, and merge. */
-export interface Config {
-  /** Absolute directory holding worktrees, records, and review checkouts; omitted resolves `<DSH_HOME>/worktrees` at load. */
-  root?: string
-  /** Prefix of every worktree branch name. */
-  branchPrefix: string
-  /** Maximum `open` or `reviewing` worktrees per repository. */
-  maxWorktrees: number
-  /** Reviewer provider route; set together with {@link reviewerModel}. Omitted uses the route of the Agent that accepts. */
-  reviewerProvider?: string
-  /** Reviewer model id; set together with {@link reviewerProvider}. */
-  reviewerModel?: string
-  /** Reviewer reasoning effort; requires {@link reviewerProvider} and {@link reviewerModel}. */
-  reviewerReasoningEffort?: string
-  /** Reject a reviewer route equal to the worker's route. */
-  requireDistinctReviewer: boolean
-  /** Check command (argv) run in the review checkout before the reviewer; empty runs none. A nonzero exit rejects the change. */
-  testCommand: string[]
-  /** Byte bound on the diff embedded in the reviewer prompt. */
-  reviewDiffMaxBytes: number
-  /** Remove the worktree directory and branch after a successful merge. */
-  removeOnMerge: boolean
-  /** Author name for harness commits; set together with {@link commitAuthorEmail}. Omitted uses git's configured identity. */
-  commitAuthorName?: string
-  /** Author email for harness commits; set together with {@link commitAuthorName}. */
-  commitAuthorEmail?: string
-}
-
-/** Schemastery validation for {@link Config}. */
-export const Config: z<Config> = z.object({
-  root: z.string().description('Absolute directory holding worktrees, records, and review checkouts. Omitted resolves <DSH_HOME>/worktrees.'),
-  branchPrefix: z.string().default('dsh/worktree/').description('Prefix of every worktree branch name.'),
-  maxWorktrees: z.natural().min(1).default(16).description('Maximum open or reviewing worktrees per repository.'),
-  reviewerProvider: z.string().description('Reviewer provider route, set together with reviewerModel. Omitted uses the route of the agent that accepts.'),
-  reviewerModel: z.string().description('Reviewer model id, set together with reviewerProvider.'),
-  reviewerReasoningEffort: z.string().description('Reviewer reasoning effort; requires reviewerProvider and reviewerModel.'),
-  requireDistinctReviewer: z.boolean().default(true).description('Reject a reviewer route equal to the worker route.'),
-  testCommand: z.array(z.string().required()).default([]).description('Check command (argv) run in the review checkout before the reviewer. Empty runs none.'),
-  reviewDiffMaxBytes: z.natural().min(1024).default(49152).description('Byte bound on the diff embedded in the reviewer prompt.'),
-  removeOnMerge: z.boolean().default(true).description('Remove the worktree and its branch after a successful merge.'),
-  commitAuthorName: z.string().description('Author name for harness commits, set together with commitAuthorEmail. Omitted uses the git configuration.'),
-  commitAuthorEmail: z.string().description('Author email for harness commits, set together with commitAuthorName.'),
-})
 
 /** A resolved, validated commit author identity. */
 export interface CommitAuthor {

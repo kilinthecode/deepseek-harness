@@ -115,6 +115,7 @@ const WORKTREE_STATES: ReadonlySet<string> = new Set(['open', 'reviewing', 'merg
  * boundary for one worktree's persisted state.
  * @param value - the parsed JSON value.
  * @param sourcePath - the record file path, named in the thrown message.
+ * @returns an assertion that `value` is a validated stored worktree record.
  * @throws when `value` does not match the stored record shape.
  */
 export function assertStoredWorktreeRecord(value: unknown, sourcePath: string): asserts value is StoredWorktreeRecord {

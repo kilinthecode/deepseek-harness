@@ -102,7 +102,11 @@ export function reviewCheckoutPathFor(layout: WorktreeLayout, id: string, suffix
   return join(layout.reviewsDir, `${id}-${suffix}`)
 }
 
-/** Prefix shared by every review checkout directory belonging to one worktree id. */
+/**
+ * Prefix shared by every review checkout directory belonging to one worktree id.
+ * @param id - the worktree id.
+ * @returns the `<id>-` prefix every one of its review checkout directory names starts with.
+ */
 export function reviewCheckoutPrefixFor(id: string): string {
   return `${id}-`
 }
