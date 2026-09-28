@@ -8,7 +8,7 @@ import { SessionId } from '@deepseek-ai/dsh-session'
 import type { SubagentStartRequest } from '@deepseek-ai/dsh-subagent'
 import { requireRecordLocation, updateExistingRecordAt } from '../src/records.ts'
 import type { AcceptWorktreeRequest, WorktreeId, WorktreeOwner } from '../src/types.ts'
-import { fakeAgent, git, initFixtureRepo, removeFixture, setup } from './harness.ts'
+import { createWorktree, fakeAgent, git, initFixtureRepo, removeFixture, setup } from './harness.ts'
 import type { TestConfig } from './harness.ts'
 import { mountScriptedReviewer } from './scripted-reviewer.ts'
 import type { ScriptedVerdict } from './scripted-reviewer.ts'
@@ -52,17 +52,15 @@ async function harness(options: HarnessOptions = {}): Promise<Harness> {
   cleanups.push(() => removeFixture(dir))
   git(dir, 'commit', '--allow-empty', '-q', '-m', 'base')
   const root = await scratchRoot()
-  const { ctx, dispose } = await setup({ root, reviewer: REVIEWER_ROUTE, ...options.config })
+  const { ctx, dispose } = await setup({
+    root, reviewerProvider: REVIEWER_ROUTE.provider, reviewerModel: REVIEWER_ROUTE.model, ...options.config,
+  })
   cleanups.push(dispose)
   await mountScriptedReviewer(ctx, {
     verdicts: options.verdicts ?? [PASS_VERDICT],
     ...options.onReviewerStart === undefined ? {} : { onStart: options.onReviewerStart },
   })
   return { ctx, dir, root }
-}
-
-async function createWorktree(ctx: Context, dir: string, label = 'do the thing') {
-  return ctx.subagentWorktrees.create({ owner: OWNER, baseDir: dir, label, task: label, signal })
 }
 
 function acceptRequest(id: WorktreeId, overrides: Partial<AcceptWorktreeRequest> = {}): AcceptWorktreeRequest {
@@ -72,7 +70,7 @@ function acceptRequest(id: WorktreeId, overrides: Partial<AcceptWorktreeRequest>
 describe('accept: empty', () => {
   it('reports empty and reopens when nothing changed in the worktree', async () => {
     const { ctx, dir } = await harness()
-    const provisioned = await createWorktree(ctx, dir)
+    const provisioned = await createWorktree(ctx, OWNER, dir, 'do the thing')
     const outcome = await ctx.subagentWorktrees.accept(acceptRequest(provisioned.record.id))
     expect(outcome).toMatchObject({ kind: 'empty' })
     expect(outcome.record.state).toBe('open')
@@ -83,7 +81,7 @@ describe('accept: checks-failed', () => {
   it('stops before the reviewer when the check command fails', async () => {
     let reviewerStarted = false
     const { ctx, dir } = await harness({ onReviewerStart: () => { reviewerStarted = true } })
-    const provisioned = await createWorktree(ctx, dir)
+    const provisioned = await createWorktree(ctx, OWNER, dir, 'do the thing')
     await writeFile(join(provisioned.workDir, 'change.txt'), 'x')
 
     const outcome = await ctx.subagentWorktrees.accept(acceptRequest(provisioned.record.id, {
@@ -100,7 +98,7 @@ describe('accept: checks-failed', () => {
 describe('accept: rejected', () => {
   it('does not merge when the reviewer fails the change', async () => {
     const { ctx, dir } = await harness({ verdicts: [FAIL_VERDICT] })
-    const provisioned = await createWorktree(ctx, dir)
+    const provisioned = await createWorktree(ctx, OWNER, dir, 'do the thing')
     await writeFile(join(provisioned.workDir, 'change.txt'), 'x')
     const headBefore = git(dir, 'rev-parse', 'HEAD').trim()
 
@@ -114,7 +112,7 @@ describe('accept: rejected', () => {
 
   it('fails closed (rejects) when the reviewer returns a malformed structured verdict', async () => {
     const { ctx, dir } = await harness({ verdicts: [{ structured: { verdict: 'yes-ish' } }] })
-    const provisioned = await createWorktree(ctx, dir)
+    const provisioned = await createWorktree(ctx, OWNER, dir, 'do the thing')
     await writeFile(join(provisioned.workDir, 'change.txt'), 'x')
 
     const outcome = await ctx.subagentWorktrees.accept(acceptRequest(provisioned.record.id))
@@ -126,8 +124,8 @@ describe('accept: rejected', () => {
 
 describe('accept: commit identity', () => {
   it('commits with the configured author when set', async () => {
-    const { ctx, dir } = await harness({ config: { commitAuthor: { name: 'Harness Bot', email: 'harness-bot@example.com' } } })
-    const provisioned = await createWorktree(ctx, dir)
+    const { ctx, dir } = await harness({ config: { commitAuthorName: 'Harness Bot', commitAuthorEmail: 'harness-bot@example.com' } })
+    const provisioned = await createWorktree(ctx, OWNER, dir, 'do the thing')
     await writeFile(join(provisioned.workDir, 'change.txt'), 'x')
 
     const outcome = await ctx.subagentWorktrees.accept(acceptRequest(provisioned.record.id))
@@ -140,7 +138,7 @@ describe('accept: commit identity', () => {
 describe('accept: merge outcomes', () => {
   it('merges a passing change with --no-ff and reports the merge commit', async () => {
     const { ctx, dir } = await harness()
-    const provisioned = await createWorktree(ctx, dir)
+    const provisioned = await createWorktree(ctx, OWNER, dir, 'do the thing')
     await writeFile(join(provisioned.workDir, 'change.txt'), 'from worker')
 
     const outcome = await ctx.subagentWorktrees.accept(acceptRequest(provisioned.record.id))
@@ -155,7 +153,7 @@ describe('accept: merge outcomes', () => {
 
   it('keeps the worktree and branch when removeOnMerge is false', async () => {
     const { ctx, dir } = await harness({ config: { removeOnMerge: false } })
-    const provisioned = await createWorktree(ctx, dir)
+    const provisioned = await createWorktree(ctx, OWNER, dir, 'do the thing')
     await writeFile(join(provisioned.workDir, 'change.txt'), 'from worker')
 
     const outcome = await ctx.subagentWorktrees.accept(acceptRequest(provisioned.record.id))
@@ -168,8 +166,8 @@ describe('accept: merge outcomes', () => {
 
   it('merges two parallel worktrees on distinct files, the second landing as a true (non-fast-forward) merge', async () => {
     const { ctx, dir } = await harness()
-    const first = await createWorktree(ctx, dir, 'first change')
-    const second = await createWorktree(ctx, dir, 'second change')
+    const first = await createWorktree(ctx, OWNER, dir, 'first change')
+    const second = await createWorktree(ctx, OWNER, dir, 'second change')
     await writeFile(join(first.workDir, 'first.txt'), 'first')
     await writeFile(join(second.workDir, 'second.txt'), 'second')
 
@@ -189,8 +187,8 @@ describe('accept: merge outcomes', () => {
     const { ctx, dir } = await harness()
     await writeFile(join(dir, 'shared.txt'), 'base\n')
     git(dir, 'add', '-A'); git(dir, 'commit', '-q', '-m', 'add shared.txt')
-    const first = await createWorktree(ctx, dir, 'first change')
-    const second = await createWorktree(ctx, dir, 'second change')
+    const first = await createWorktree(ctx, OWNER, dir, 'first change')
+    const second = await createWorktree(ctx, OWNER, dir, 'second change')
     await writeFile(join(first.workDir, 'shared.txt'), 'from first\n')
     await writeFile(join(second.workDir, 'shared.txt'), 'from second\n')
 
@@ -206,7 +204,7 @@ describe('accept: merge outcomes', () => {
 
   it('reports blocked when an uncommitted base checkout change would be overwritten', async () => {
     const { ctx, dir } = await harness()
-    const provisioned = await createWorktree(ctx, dir)
+    const provisioned = await createWorktree(ctx, OWNER, dir, 'do the thing')
     await writeFile(join(provisioned.workDir, 'shared.txt'), 'from worker\n')
     // An untracked local file at the same path the merge would create.
     await writeFile(join(dir, 'shared.txt'), 'local uncommitted\n')
@@ -222,7 +220,7 @@ describe('accept: merge outcomes', () => {
   it('skips the reviewer on re-accept of an already-passed commit (retried after a blocked merge)', async () => {
     let reviewerCalls = 0
     const { ctx, dir } = await harness({ onReviewerStart: () => { reviewerCalls += 1 } })
-    const provisioned = await createWorktree(ctx, dir)
+    const provisioned = await createWorktree(ctx, OWNER, dir, 'do the thing')
     await writeFile(join(provisioned.workDir, 'shared.txt'), 'from worker\n')
     await writeFile(join(dir, 'shared.txt'), 'local uncommitted\n')
 
@@ -244,7 +242,7 @@ describe('accept: merge outcomes', () => {
 describe('accept: owner authority', () => {
   it('rejects a different session and allows the operator', async () => {
     const { ctx, dir } = await harness()
-    const provisioned = await createWorktree(ctx, dir)
+    const provisioned = await createWorktree(ctx, OWNER, dir, 'do the thing')
     await expect(ctx.subagentWorktrees.accept(acceptRequest(provisioned.record.id, {
       owner: { kind: 'session', sessionId: SessionId('someone-else') },
     }))).rejects.toThrow('belongs to another session')
@@ -257,7 +255,7 @@ describe('accept: owner authority', () => {
 describe('accept: state machine', () => {
   it.each(['merged', 'discarded'] as const)('rejects accept on a terminal %s worktree', async (state) => {
     const { ctx, dir } = await harness()
-    const provisioned = await createWorktree(ctx, dir)
+    const provisioned = await createWorktree(ctx, OWNER, dir, 'do the thing')
     if (state === 'discarded') {
       await ctx.subagentWorktrees.discard({ id: provisioned.record.id, owner: OWNER, signal })
     } else {
@@ -270,7 +268,7 @@ describe('accept: state machine', () => {
 
   it('rejects a concurrent accept: a live reviewingPid means another accept owns the transition', async () => {
     const { ctx, dir, root } = await harness()
-    const provisioned = await createWorktree(ctx, dir)
+    const provisioned = await createWorktree(ctx, OWNER, dir, 'do the thing')
     await writeFile(join(provisioned.workDir, 'change.txt'), 'x')
 
     // Simulate the moment right after another process's accept() claimed the
@@ -286,7 +284,7 @@ describe('accept: state machine', () => {
 
   it('recovers a reviewing worktree whose accepting process has exited (stale recovery)', async () => {
     const { ctx, dir, root } = await harness()
-    const provisioned = await createWorktree(ctx, dir)
+    const provisioned = await createWorktree(ctx, OWNER, dir, 'do the thing')
     await writeFile(join(provisioned.workDir, 'change.txt'), 'x')
 
     const dead = spawnSync(process.execPath, ['-e', '0']).pid

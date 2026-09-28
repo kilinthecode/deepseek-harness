@@ -9,7 +9,7 @@ import LocalSubprocessRuntime from '@deepseek-ai/dsh-subprocess-local'
 import SubagentRuntime from '@deepseek-ai/dsh-subagent'
 import SubagentWorktrees from '../src/index.ts'
 import type { WorktreeId, WorktreeOwner } from '../src/types.ts'
-import { git, initFixtureRepo, removeFixture, setup } from './harness.ts'
+import { createWorktree, git, initFixtureRepo, removeFixture, setup } from './harness.ts'
 
 const cleanups: Array<() => Promise<unknown>> = []
 afterEach(async () => {
@@ -20,8 +20,14 @@ afterEach(async () => {
 
 const signal = new AbortController().signal
 const OWNER: WorktreeOwner = { kind: 'session', sessionId: SessionId('lead') }
+const WORKER_ROUTE = { provider: 'worker-provider', model: 'worker-model' }
 const REVIEWER_ROUTE = { provider: 'reviewer-provider', model: 'reviewer-model' }
 const GIT_TEST_TIMEOUT_MS = 20_000
+
+/** Config fields a raw `ctx.plugin(SubagentWorktrees, ...)` call must always supply. */
+const RAW_BASE_CONFIG = {
+  branchPrefix: 'dsh/worktree/', maxWorktrees: 16, requireDistinctReviewer: true, testCommand: [], reviewDiffMaxBytes: 1024, removeOnMerge: true,
+}
 
 async function scratchRoot(): Promise<string> {
   const dir = await mkdtemp(join(tmpdir(), 'dsh-service-root-'))
@@ -43,10 +49,8 @@ describe('constructor: root resolution', () => {
     await ctx.plugin(LocalSubprocessRuntime)
     await ctx.plugin(AgentRegistry)
     await ctx.plugin(SubagentRuntime)
-    await ctx.plugin(SubagentWorktrees, {
-      branchPrefix: 'dsh/worktree/', maxWorktrees: 16, requireDistinctReviewer: true, reviewDiffMaxBytes: 1024, removeOnMerge: true,
-    })
-    const provisioned = await ctx.subagentWorktrees.create({ owner: OWNER, baseDir: dir, label: 'x', task: 'x', signal })
+    await ctx.plugin(SubagentWorktrees, RAW_BASE_CONFIG)
+    const provisioned = await createWorktree(ctx, OWNER, dir, 'x')
     expect(provisioned.record.path.startsWith(join(dshHome, 'worktrees'))).toBe(true)
   }, GIT_TEST_TIMEOUT_MS)
 
@@ -56,10 +60,38 @@ describe('constructor: root resolution', () => {
     await ctx.plugin(LocalSubprocessRuntime)
     await ctx.plugin(AgentRegistry)
     await ctx.plugin(SubagentRuntime)
-    await expect(ctx.plugin(SubagentWorktrees, {
-      root: 'relative/worktrees', branchPrefix: 'dsh/worktree/', maxWorktrees: 16,
-      requireDistinctReviewer: true, reviewDiffMaxBytes: 1024, removeOnMerge: true,
-    })).rejects.toThrow('subagent-worktree: configured root "relative/worktrees" must be an absolute path')
+    await expect(ctx.plugin(SubagentWorktrees, { root: 'relative/worktrees', ...RAW_BASE_CONFIG }))
+      .rejects.toThrow('subagent-worktree: configured root "relative/worktrees" must be an absolute path')
+  })
+
+  it('fails loud at load when reviewerProvider and reviewerModel are half-set', async () => {
+    const ctx = new Context()
+    cleanups.push(() => ctx.fiber.dispose())
+    await ctx.plugin(LocalSubprocessRuntime)
+    await ctx.plugin(AgentRegistry)
+    await ctx.plugin(SubagentRuntime)
+    await expect(ctx.plugin(SubagentWorktrees, { root: await scratchRoot(), ...RAW_BASE_CONFIG, reviewerProvider: 'p' }))
+      .rejects.toThrow('subagent-worktree: configured reviewerProvider and reviewerModel must be set together')
+  })
+
+  it('fails loud at load when reviewerReasoningEffort is set without a reviewer route', async () => {
+    const ctx = new Context()
+    cleanups.push(() => ctx.fiber.dispose())
+    await ctx.plugin(LocalSubprocessRuntime)
+    await ctx.plugin(AgentRegistry)
+    await ctx.plugin(SubagentRuntime)
+    await expect(ctx.plugin(SubagentWorktrees, { root: await scratchRoot(), ...RAW_BASE_CONFIG, reviewerReasoningEffort: 'high' }))
+      .rejects.toThrow('subagent-worktree: configured reviewerReasoningEffort requires reviewerProvider and reviewerModel')
+  })
+
+  it('fails loud at load when commitAuthorName and commitAuthorEmail are half-set', async () => {
+    const ctx = new Context()
+    cleanups.push(() => ctx.fiber.dispose())
+    await ctx.plugin(LocalSubprocessRuntime)
+    await ctx.plugin(AgentRegistry)
+    await ctx.plugin(SubagentRuntime)
+    await expect(ctx.plugin(SubagentWorktrees, { root: await scratchRoot(), ...RAW_BASE_CONFIG, commitAuthorName: 'Bot' }))
+      .rejects.toThrow('subagent-worktree: configured commitAuthorName and commitAuthorEmail must be set together')
   })
 })
 
@@ -71,7 +103,7 @@ describe('attach', () => {
     const root = await scratchRoot()
     const { ctx, dispose } = await setup({ root })
     cleanups.push(dispose)
-    const provisioned = await ctx.subagentWorktrees.create({ owner: OWNER, baseDir: dir, label: 'x', task: 'x', signal })
+    const provisioned = await createWorktree(ctx, OWNER, dir, 'x')
 
     const updated = await ctx.subagentWorktrees.attach({
       id: provisioned.record.id, owner: OWNER, workerSessionId: SessionId('worker-1'), workerRoute: { provider: 'p', model: 'm' },
@@ -87,9 +119,11 @@ describe('attach', () => {
     const root = await scratchRoot()
     const { ctx, dispose } = await setup({ root })
     cleanups.push(dispose)
-    const provisioned = await ctx.subagentWorktrees.create({ owner: OWNER, baseDir: dir, label: 'x', task: 'x', signal })
-    await ctx.subagentWorktrees.attach({ id: provisioned.record.id, owner: OWNER, workerSessionId: SessionId('w1') })
-    const updated = await ctx.subagentWorktrees.attach({ id: provisioned.record.id, owner: OWNER, workerSessionId: SessionId('w2') })
+    const provisioned = await createWorktree(ctx, OWNER, dir, 'x')
+    await ctx.subagentWorktrees.attach({ id: provisioned.record.id, owner: OWNER, workerSessionId: SessionId('w1'), workerRoute: WORKER_ROUTE })
+    const updated = await ctx.subagentWorktrees.attach({
+      id: provisioned.record.id, owner: OWNER, workerSessionId: SessionId('w2'), workerRoute: WORKER_ROUTE,
+    })
     expect(updated.workerSessionIds).toEqual(['w1', 'w2'])
   }, GIT_TEST_TIMEOUT_MS)
 
@@ -100,23 +134,25 @@ describe('attach', () => {
     const root = await scratchRoot()
     const { ctx, dispose } = await setup({ root })
     cleanups.push(dispose)
-    const provisioned = await ctx.subagentWorktrees.create({ owner: OWNER, baseDir: dir, label: 'x', task: 'x', signal })
+    const provisioned = await createWorktree(ctx, OWNER, dir, 'x')
 
     await expect(ctx.subagentWorktrees.attach({
-      id: provisioned.record.id, owner: { kind: 'session', sessionId: SessionId('other') }, workerSessionId: SessionId('w1'),
+      id: provisioned.record.id, owner: { kind: 'session', sessionId: SessionId('other') }, workerSessionId: SessionId('w1'), workerRoute: WORKER_ROUTE,
     })).rejects.toThrow('belongs to another session')
 
     await ctx.subagentWorktrees.discard({ id: provisioned.record.id, owner: OWNER, signal })
-    await expect(ctx.subagentWorktrees.attach({ id: provisioned.record.id, owner: OWNER, workerSessionId: SessionId('w1') }))
-      .rejects.toThrow(`worktree ${provisioned.record.id} is discarded`)
+    await expect(ctx.subagentWorktrees.attach({
+      id: provisioned.record.id, owner: OWNER, workerSessionId: SessionId('w1'), workerRoute: WORKER_ROUTE,
+    })).rejects.toThrow(`worktree ${provisioned.record.id} is discarded`)
   }, GIT_TEST_TIMEOUT_MS)
 
   it('fails loud for an unknown id', async () => {
     const root = await scratchRoot()
     const { ctx, dispose } = await setup({ root })
     cleanups.push(dispose)
-    await expect(ctx.subagentWorktrees.attach({ id: 'wt-00000000' as WorktreeId, owner: OWNER, workerSessionId: SessionId('w1') }))
-      .rejects.toThrow('no worktree "wt-00000000"')
+    await expect(ctx.subagentWorktrees.attach({
+      id: 'wt-00000000' as WorktreeId, owner: OWNER, workerSessionId: SessionId('w1'), workerRoute: WORKER_ROUTE,
+    })).rejects.toThrow('no worktree "wt-00000000"')
   })
 })
 
@@ -128,7 +164,7 @@ describe('discard', () => {
     const root = await scratchRoot()
     const { ctx, dispose } = await setup({ root })
     cleanups.push(dispose)
-    const provisioned = await ctx.subagentWorktrees.create({ owner: OWNER, baseDir: dir, label: 'x', task: 'x', signal })
+    const provisioned = await createWorktree(ctx, OWNER, dir, 'x')
 
     const updated = await ctx.subagentWorktrees.discard({ id: provisioned.record.id, owner: OWNER, signal })
     expect(updated.state).toBe('discarded')
@@ -143,7 +179,7 @@ describe('discard', () => {
     const root = await scratchRoot()
     const { ctx, dispose } = await setup({ root })
     cleanups.push(dispose)
-    const provisioned = await ctx.subagentWorktrees.create({ owner: OWNER, baseDir: dir, label: 'x', task: 'x', signal })
+    const provisioned = await createWorktree(ctx, OWNER, dir, 'x')
 
     await expect(ctx.subagentWorktrees.discard({
       id: provisioned.record.id, owner: { kind: 'session', sessionId: SessionId('other') }, signal,
@@ -151,7 +187,9 @@ describe('discard', () => {
 
     // An attached worker id absent from the live registry (never started here) does not block discard;
     // packages/subagent/subagent-worktree/tests/workers.spec.ts covers the running-worker refusal directly.
-    await ctx.subagentWorktrees.attach({ id: provisioned.record.id, owner: OWNER, workerSessionId: SessionId('never-started') })
+    await ctx.subagentWorktrees.attach({
+      id: provisioned.record.id, owner: OWNER, workerSessionId: SessionId('never-started'), workerRoute: WORKER_ROUTE,
+    })
     await ctx.subagentWorktrees.discard({ id: provisioned.record.id, owner: OWNER, signal })
     await expect(ctx.subagentWorktrees.discard({ id: provisioned.record.id, owner: OWNER, signal }))
       .rejects.toThrow(`worktree ${provisioned.record.id} is discarded`)
@@ -168,10 +206,10 @@ describe('list', () => {
     cleanups.push(dispose)
 
     const ownerB: WorktreeOwner = { kind: 'session', sessionId: SessionId('other-session') }
-    const first = await ctx.subagentWorktrees.create({ owner: OWNER, baseDir: dir, label: 'first', task: 'first', signal })
-    const second = await ctx.subagentWorktrees.create({ owner: ownerB, baseDir: dir, label: 'second', task: 'second', signal })
+    const first = await createWorktree(ctx, OWNER, dir, 'first')
+    const second = await createWorktree(ctx, ownerB, dir, 'second')
     await ctx.subagentWorktrees.discard({ id: second.record.id, owner: ownerB, signal })
-    const third = await ctx.subagentWorktrees.create({ owner: OWNER, baseDir: dir, label: 'third', task: 'third', signal })
+    const third = await createWorktree(ctx, OWNER, dir, 'third')
 
     const defaultView = await ctx.subagentWorktrees.list({ baseDir: dir })
     expect(defaultView.map(r => r.id)).toEqual([first.record.id, third.record.id])
@@ -202,8 +240,10 @@ describe('resolveReviewer', () => {
   const CONFIGURED_ROUTE = { provider: 'configured', model: 'configured-model' }
   const OVERRIDE_ROUTE = { provider: 'override', model: 'override-model' }
 
-  it('prefers override, then Config.reviewer, then the caller route', async () => {
-    const { ctx, dispose } = await setup({ root: await scratchRoot(), reviewer: CONFIGURED_ROUTE })
+  it('prefers override, then Config.reviewerProvider/Model, then the caller route', async () => {
+    const { ctx, dispose } = await setup({
+      root: await scratchRoot(), reviewerProvider: CONFIGURED_ROUTE.provider, reviewerModel: CONFIGURED_ROUTE.model,
+    })
     cleanups.push(dispose)
     expect(ctx.subagentWorktrees.resolveReviewer({ workerRoute: CALLER_ROUTE, callerRoute: CALLER_ROUTE, override: OVERRIDE_ROUTE }))
       .toEqual(OVERRIDE_ROUTE)
@@ -228,6 +268,15 @@ describe('resolveReviewer', () => {
     cleanups.push(dispose)
     expect(ctx.subagentWorktrees.resolveReviewer({ workerRoute: CALLER_ROUTE, callerRoute: CALLER_ROUTE })).toEqual(CALLER_ROUTE)
   })
+
+  it('ignores reasoning effort when comparing the reviewer route to the worker route', async () => {
+    const { ctx, dispose } = await setup({ root: await scratchRoot(), requireDistinctReviewer: true })
+    cleanups.push(dispose)
+    const workerRoute = { ...CALLER_ROUTE, reasoningEffort: 'low' as never }
+    const callerRoute = { ...CALLER_ROUTE, reasoningEffort: 'high' as never }
+    expect(() => ctx.subagentWorktrees.resolveReviewer({ workerRoute, callerRoute }))
+      .toThrow('so the review would not be independent')
+  })
 })
 
 describe('HMR / disposal', () => {
@@ -242,21 +291,19 @@ describe('HMR / disposal', () => {
     await ctx.plugin(AgentRegistry)
     await ctx.plugin(SubagentRuntime)
     const fiber = await ctx.plugin(SubagentWorktrees, {
-      root, branchPrefix: 'dsh/worktree/', maxWorktrees: 16, requireDistinctReviewer: true, reviewDiffMaxBytes: 1024,
-      removeOnMerge: true, reviewer: REVIEWER_ROUTE,
+      root, ...RAW_BASE_CONFIG, reviewerProvider: REVIEWER_ROUTE.provider, reviewerModel: REVIEWER_ROUTE.model,
     })
-    await ctx.subagentWorktrees.create({ owner: OWNER, baseDir: dir, label: 'x', task: 'x', signal })
+    await createWorktree(ctx, OWNER, dir, 'x')
     expect(ctx.get('subagentWorktrees')).toBeDefined()
 
     await fiber.dispose()
     expect(ctx.get('subagentWorktrees')).toBeUndefined()
 
     await ctx.plugin(SubagentWorktrees, {
-      root, branchPrefix: 'dsh/worktree/', maxWorktrees: 16, requireDistinctReviewer: true, reviewDiffMaxBytes: 1024,
-      removeOnMerge: true, reviewer: REVIEWER_ROUTE,
+      root, ...RAW_BASE_CONFIG, reviewerProvider: REVIEWER_ROUTE.provider, reviewerModel: REVIEWER_ROUTE.model,
     })
     cleanups.push(() => ctx.fiber.dispose())
-    const second = await ctx.subagentWorktrees.create({ owner: OWNER, baseDir: dir, label: 'y', task: 'y', signal })
+    const second = await createWorktree(ctx, OWNER, dir, 'y')
     expect(second.record.state).toBe('open')
   }, GIT_TEST_TIMEOUT_MS)
 })

@@ -35,12 +35,15 @@ const signal = new AbortController().signal
 // Each case runs a real `git worktree add`; generous under concurrent CI load.
 const GIT_TEST_TIMEOUT_MS = 20_000
 
+const WORKER_ROUTE = { provider: 'worker-provider', model: 'worker-model' }
+
 function request(baseDir: string, overrides: Partial<CreateWorktreeRequest> = {}): CreateWorktreeRequest {
   return {
     owner: { kind: 'session', sessionId: SessionId('s1') },
     baseDir,
     label: 'do the thing',
     task: 'do the thing',
+    workerRoute: WORKER_ROUTE,
     signal,
     ...overrides,
   }

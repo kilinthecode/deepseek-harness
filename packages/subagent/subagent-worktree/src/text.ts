@@ -31,10 +31,10 @@ export function renderWorkerBrief(facts: WorkerBriefFacts): string {
     + `${facts.baseCommit} of the repository at ${facts.repoRoot}. Other agents cannot see or change your files, `
     + 'and your parent sees your work only after it accepts the worktree: the harness then commits your changes, '
     + 'an independent reviewer checks them, and a passing change is merged. Do not run git commands that write '
-    + '(commit, add, checkout, switch, reset, stash, rebase, merge, worktree); this worktree\'s git metadata is '
+    + '(commit, add, checkout, switch, restore, reset, stash, rebase, merge, worktree); this worktree\'s git metadata is '
     + 'outside your write scope. If the project\'s dependencies are missing, install them from the local cache '
     + 'first (for example `pnpm install --offline --frozen-lockfile --ignore-scripts`). Run the checks that cover '
-    + 'your change, and end with the commands you ran, their results, and anything you did not verify.\n\n'
+    + 'your change, and report the commands you ran, their results, and anything you did not verify.\n\n'
 }
 
 /** Facts the reviewer prompt names. */
@@ -78,9 +78,11 @@ export function renderReviewerPrompt(facts: ReviewerPromptFacts): string {
     + `added), rerun the test, then restore the file (\`git show ${facts.commit}:<path> > <path>\`).\n`
     + '5. Does the change claim anything it does not do, in code, comments, or docs?\n\n'
     + 'This checkout is discarded after your review, so edits here change nothing; do not try to fix the change. '
-    + 'Git commands that write (commit, add, checkout, reset, stash) fail here; read with git and change files '
-    + 'directly. Return the verdict "pass" only when the change is correct, verified, and honest; otherwise return '
-    + '"fail" with one finding per problem, each naming the file, what is wrong, and the observation that shows it.\n\n'
+    + 'Git commands that write (commit, add, checkout, switch, restore, reset, stash) fail here; read with git and '
+    + 'change files directly. Report by calling the structured_output tool: the verdict "pass" only when the change '
+    + 'is correct, '
+    + 'verified, and honest; otherwise "fail" with one finding per problem, each naming the file, what is wrong, and '
+    + 'the observation that shows it.\n\n'
     + `The change (git diff ${facts.baseCommit}..${facts.commit}):\n${facts.diff}${truncation}`
 }
 

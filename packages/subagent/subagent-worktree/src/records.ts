@@ -131,7 +131,7 @@ export function assertStoredWorktreeRecord(value: unknown, sourcePath: string): 
     || typeof value.state !== 'string' || !WORKTREE_STATES.has(value.state)
     || typeof value.createdAt !== 'number'
     || !isStringArray(value.workerSessionIds)
-    || (value.workerRoute !== undefined && !isWorktreeRoute(value.workerRoute))
+    || !isWorktreeRoute(value.workerRoute)
     || (value.lastVerdict !== undefined && !isWorktreeVerdict(value.lastVerdict))
     || (value.mergedCommit !== undefined && typeof value.mergedCommit !== 'string')
     || (value.reviewingPid !== undefined && typeof value.reviewingPid !== 'number')

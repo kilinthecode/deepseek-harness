@@ -10,7 +10,6 @@
 
 import type { Context } from '@deepseek-ai/cordis'
 import type { Agent } from '@deepseek-ai/dsh-agent'
-import { ReasoningEffortId } from '@deepseek-ai/dsh-llm'
 import { parentAgentOptionsForDelegation } from '@deepseek-ai/dsh-subagent'
 import { truncateUtf8Prefix } from './bounds.ts'
 import type { GitRunner } from './git.ts'
@@ -142,9 +141,7 @@ export async function runReviewer(ctx: Context, git: GitRunner, params: RunRevie
     agentOptions: {
       provider: params.reviewerRoute.provider,
       model: params.reviewerRoute.model,
-      ...params.reviewerRoute.reasoningEffort === undefined
-        ? {}
-        : { reasoningEffort: ReasoningEffortId(params.reviewerRoute.reasoningEffort) },
+      ...params.reviewerRoute.reasoningEffort === undefined ? {} : { reasoningEffort: params.reviewerRoute.reasoningEffort },
     },
     signal: params.signal,
   })

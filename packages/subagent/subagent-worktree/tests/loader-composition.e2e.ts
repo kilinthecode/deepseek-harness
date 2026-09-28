@@ -51,7 +51,8 @@ async function realHarness(root: string, script: Script): Promise<{ ctx: Context
   await ctx.plugin(SpawnInProcess, { providerName: 'spawn' })
   ctx.llm.registerAdapter(['mock'], new MockAdapter(script))
   await ctx.plugin(SubagentWorktrees, {
-    root, branchPrefix: 'dsh/worktree/', maxWorktrees: 16, requireDistinctReviewer: false, reviewDiffMaxBytes: 8192, removeOnMerge: true,
+    root, branchPrefix: 'dsh/worktree/', maxWorktrees: 16, requireDistinctReviewer: false, testCommand: [],
+    reviewDiffMaxBytes: 8192, removeOnMerge: true,
   })
   const parent = await ctx.agentLoop.create(SessionId('operator'), { provider: 'mock', model: 'mock' })
   return { ctx, parent }
@@ -72,7 +73,7 @@ describe('real composition: reviewer through the shipping subagent stack', () =>
     ])
 
     const provisioned = await ctx.subagentWorktrees.create({
-      owner: OPERATOR, baseDir: dir, label: 'add proof.txt', task: 'add proof.txt containing "real-reviewer-proof"', signal,
+      owner: OPERATOR, baseDir: dir, label: 'add proof.txt', task: 'add proof.txt containing "real-reviewer-proof"', workerRoute: { provider: 'mock', model: 'mock' }, signal,
     })
     await writeFile(join(provisioned.workDir, 'proof.txt'), 'real-reviewer-proof')
 
@@ -93,7 +94,7 @@ describe('real composition: reviewer through the shipping subagent stack', () =>
     const { ctx, parent } = await realHarness(root, [textResponse('I looked at it and it seems fine.')])
 
     const provisioned = await ctx.subagentWorktrees.create({
-      owner: OPERATOR, baseDir: dir, label: 'add proof.txt', task: 'add proof.txt', signal,
+      owner: OPERATOR, baseDir: dir, label: 'add proof.txt', task: 'add proof.txt', workerRoute: { provider: 'mock', model: 'mock' }, signal,
     })
     await writeFile(join(provisioned.workDir, 'proof.txt'), 'proof')
 

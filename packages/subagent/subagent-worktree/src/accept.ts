@@ -16,7 +16,7 @@ import type { Context } from '@deepseek-ai/cordis'
 import { withFileLock } from '@deepseek-ai/dsh-atomic-write'
 import { DIAGNOSTIC_TAIL_CHARS, tailChars } from './bounds.ts'
 import { runCheckCommand } from './check-command.ts'
-import type { Config } from './config.ts'
+import type { CommitAuthor, Config } from './config.ts'
 import { GitCommandError, type GitRunner } from './git.ts'
 import { attemptMerge } from './merge.ts'
 import { reviewCheckoutPathFor, reviewCheckoutPrefixFor } from './paths.ts'
@@ -42,6 +42,11 @@ export interface AcceptDeps {
   readonly root: string
   /** The plugin's validated configuration. */
   readonly config: Config
+  /**
+   * The resolved, validated commit author (from `Config.commitAuthorName`/`commitAuthorEmail`),
+   * or `undefined` to use git's own identity.
+   */
+  readonly commitAuthor: CommitAuthor | undefined
   /** The service's own `resolveReviewer`, so `accept` shares its precedence and independence check. */
   readonly resolveReviewer: (request: ResolveReviewerRequest) => WorktreeRoute
 }
@@ -92,9 +97,9 @@ async function commitWorktreeChanges(deps: AcceptDeps, record: StoredWorktreeRec
   const staged = await deps.git.run(['diff', '--cached', '--quiet'], { cwd: record.path, signal })
   if (staged.exitCode !== 0 && staged.exitCode !== 1) throw new GitCommandError('git diff --cached --quiet', staged)
   if (staged.exitCode === 1) {
-    const authorArgs = deps.config.commitAuthor === undefined
+    const authorArgs = deps.commitAuthor === undefined
       ? []
-      : ['-c', `user.name=${deps.config.commitAuthor.name}`, '-c', `user.email=${deps.config.commitAuthor.email}`]
+      : ['-c', `user.name=${deps.commitAuthor.name}`, '-c', `user.email=${deps.commitAuthor.email}`]
     await deps.git.expect(
       [...authorArgs, 'commit', '--no-verify', '-m', `${record.label} (worktree ${id})`],
       'git commit',
@@ -125,7 +130,7 @@ async function checkAndReview(
   })
   try {
     const testArgv = request.testCommand ?? deps.config.testCommand
-    if (testArgv !== undefined && testArgv.length > 0) {
+    if (testArgv.length > 0) {
       const checked = await runCheckCommand(deps.ctx.subprocess, testArgv, reviewPath, request.signal)
       if (checked.exitCode !== 0) {
         return {
@@ -136,10 +141,9 @@ async function checkAndReview(
         }
       }
     }
-    const callerRoute = callerRouteOf(request.parent)
     const reviewerRoute = deps.resolveReviewer({
-      workerRoute: record.workerRoute ?? callerRoute,
-      callerRoute,
+      workerRoute: record.workerRoute,
+      callerRoute: callerRouteOf(request.parent),
       ...request.reviewer === undefined ? {} : { override: request.reviewer },
     })
     const verdict = await runReviewer(deps.ctx, deps.git, {

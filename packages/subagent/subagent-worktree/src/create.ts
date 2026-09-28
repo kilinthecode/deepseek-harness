@@ -77,7 +77,7 @@ export async function createWorktree(
     state: 'open',
     createdAt: Date.now(),
     workerSessionIds: [],
-    ...request.workerRoute === undefined ? {} : { workerRoute: request.workerRoute },
+    workerRoute: request.workerRoute,
   }
   const persisted = await createRecord(layout, record)
 

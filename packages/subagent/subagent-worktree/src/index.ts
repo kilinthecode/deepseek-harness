@@ -15,8 +15,8 @@ import type {} from '@deepseek-ai/dsh-agent'
 import type {} from '@deepseek-ai/dsh-subagent'
 import type {} from '@deepseek-ai/dsh-subprocess'
 import { acceptWorktree } from './accept.ts'
-import { Config as ConfigSchema } from './config.ts'
-import type { Config } from './config.ts'
+import { Config as ConfigSchema, resolveConfiguredCommitAuthor, resolveConfiguredReviewer } from './config.ts'
+import type { CommitAuthor, Config } from './config.ts'
 import { createWorktree } from './create.ts'
 import { pathExists } from './fs-util.ts'
 import { GitRunner } from './git.ts'
@@ -75,18 +75,26 @@ export class SubagentWorktrees extends Service {
   /** Git command runner shared by every operation. */
   private readonly git: GitRunner
 
+  /** Resolved once at load from the flat `reviewerProvider`/`reviewerModel`/`reviewerReasoningEffort` fields. */
+  private readonly configuredReviewer: WorktreeRoute | undefined
+
+  /** Resolved once at load from the flat `commitAuthorName`/`commitAuthorEmail` fields. */
+  private readonly commitAuthor: CommitAuthor | undefined
+
   constructor(ctx: Context, protected readonly config: Config) {
     super(ctx, 'subagentWorktrees')
     this.root = config.root ?? dshHomePath('worktrees')
     if (!isAbsolute(this.root)) {
       throw new Error(`subagent-worktree: configured root "${this.root}" must be an absolute path`)
     }
+    this.configuredReviewer = resolveConfiguredReviewer(config)
+    this.commitAuthor = resolveConfiguredCommitAuthor(config)
     this.git = new GitRunner(ctx.subprocess)
   }
 
   /**
    * Create one linked worktree on a new branch from the base checkout's `HEAD`.
-   * @param request - owner, base directory, label, task, optional worker route, and cancellation.
+   * @param request - owner, base directory, label, task, worker route, and cancellation.
    * @returns the committed `open` record, the worker directory, and any uncommitted base changes left out.
    */
   create(request: CreateWorktreeRequest): Promise<ProvisionedWorktree> {
@@ -105,20 +113,21 @@ export class SubagentWorktrees extends Service {
     const updated = await updateExistingRecordAt(located.path, request.id, current => ({
       ...current,
       workerSessionIds: [...current.workerSessionIds, request.workerSessionId],
-      ...request.workerRoute === undefined ? {} : { workerRoute: request.workerRoute },
+      workerRoute: request.workerRoute,
     }))
     return toPublicRecord(updated)
   }
 
   /**
    * Resolve the reviewer route (operator override, then configuration, then the
-   * accepting Agent's route) and enforce independence from the worker.
+   * accepting Agent's route) and enforce independence from the worker. Routes
+   * are equal when provider and model match; reasoning effort is ignored.
    * @param request - worker route, caller route, and optional override.
    * @returns the reviewer route.
    * @throws when `requireDistinctReviewer` is set and the resolved route equals the worker's.
    */
   resolveReviewer(request: ResolveReviewerRequest): WorktreeRoute {
-    const route = request.override ?? this.config.reviewer ?? request.callerRoute
+    const route = request.override ?? this.configuredReviewer ?? request.callerRoute
     if (
       this.config.requireDistinctReviewer
       && route.provider === request.workerRoute.provider
@@ -144,6 +153,7 @@ export class SubagentWorktrees extends Service {
       git: this.git,
       root: this.root,
       config: this.config,
+      commitAuthor: this.commitAuthor,
       resolveReviewer: req => this.resolveReviewer(req),
     }, request)
   }

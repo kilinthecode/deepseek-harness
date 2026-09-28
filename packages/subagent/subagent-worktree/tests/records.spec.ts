@@ -48,6 +48,7 @@ function baseRecord(overrides: Partial<StoredWorktreeRecord> = {}): StoredWorktr
     state: 'open',
     createdAt: 1_000,
     workerSessionIds: [],
+    workerRoute: { provider: 'worker-provider', model: 'worker-model' },
     ...overrides,
   }
 }
@@ -120,6 +121,7 @@ describe('assertStoredWorktreeRecord', () => {
     ['non-array workerSessionIds', { ...baseRecord(), workerSessionIds: 'nope' }],
     ['workerSessionIds with a non-string entry', { ...baseRecord(), workerSessionIds: [1] }],
     ['malformed workerRoute', { ...baseRecord(), workerRoute: { provider: 'p' } }],
+    ['missing workerRoute', { ...baseRecord(), workerRoute: undefined }],
     ['malformed lastVerdict', { ...baseRecord(), lastVerdict: { verdict: 'pass' } }],
     ['non-string mergedCommit', { ...baseRecord(), mergedCommit: 1 }],
     ['non-number reviewingPid', { ...baseRecord(), reviewingPid: 'p' }],
