@@ -8,6 +8,7 @@ import { SessionId } from '@deepseek-ai/dsh-session'
 import LocalSubprocessRuntime from '@deepseek-ai/dsh-subprocess-local'
 import SubagentRuntime from '@deepseek-ai/dsh-subagent'
 import SubagentWorktrees from '../src/index.ts'
+import type { Config } from '../src/index.ts'
 import { pathExists } from '../src/fs-util.ts'
 import type { WorktreeId, WorktreeOwner } from '../src/types.ts'
 import { createWorktree, fakeAgent, git, initFixtureRepo, removeFixture, setup } from './harness.ts'
@@ -29,7 +30,7 @@ const GIT_TEST_TIMEOUT_MS = 20_000
 const RAW_BASE_CONFIG = {
   branchPrefix: 'dsh/worktree/',
   maxWorktrees: 16,
-  requireDistinctReviewer: true,
+  requireDistinctReviewer: false,
   testCommand: [],
   checkTimeoutMs: 60_000,
   reviewDiffMaxBytes: 1024,
@@ -382,6 +383,19 @@ describe('resolveReviewer', () => {
     cleanups.push(disposeNoConfig)
     expect(ctxNoConfig.subagentWorktrees.resolveReviewer({ workerRoute: { provider: 'w', model: 'm' }, callerRoute: CALLER_ROUTE }))
       .toEqual(CALLER_ROUTE)
+  })
+
+  it('leaves requireDistinctReviewer off by default, so a worker on the accepting agent route is reviewed on it', async () => {
+    expect(SubagentWorktrees.Config.dict?.requireDistinctReviewer?.meta.default).toBe(false)
+    // Resolve a config that omits the flag through the real schema, so the shipped default is what applies.
+    const { requireDistinctReviewer: _omitted, ...withoutFlag } = RAW_BASE_CONFIG
+    const root = await scratchRoot()
+    const resolved = SubagentWorktrees.Config({ ...withoutFlag, root } as Config)
+    expect(resolved.requireDistinctReviewer).toBe(false)
+
+    const { ctx, dispose } = await setup({ ...resolved, root })
+    cleanups.push(dispose)
+    expect(ctx.subagentWorktrees.resolveReviewer({ workerRoute: CALLER_ROUTE, callerRoute: CALLER_ROUTE })).toEqual(CALLER_ROUTE)
   })
 
   it('rejects a reviewer route equal to the worker route when requireDistinctReviewer is set', async () => {

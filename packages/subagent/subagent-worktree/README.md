@@ -40,13 +40,15 @@ Mount this service so a delegation consumer can offer worktree isolation. Loadin
 | `maxWorktrees` | `16` | Maximum `open` or `reviewing` worktrees per repository |
 | `reviewerProvider` / `reviewerModel` | — | Reviewer route, set together; omitted uses the route of the agent that accepts |
 | `reviewerReasoningEffort` | — | Reviewer reasoning effort; requires `reviewerProvider` and `reviewerModel` |
-| `requireDistinctReviewer` | `true` | Reject a reviewer route equal to the worker's route (provider and model only; reasoning effort is ignored) |
+| `requireDistinctReviewer` | `false` | When `true`, reject a reviewer route equal to the worker's route (provider and model only; reasoning effort is ignored) |
 | `testCommand` | `[]` | Check command (argv) run in the review checkout before the reviewer; empty runs none |
 | `reviewDiffMaxBytes` | `49152` | Byte bound on the diff embedded in the reviewer prompt |
 | `removeOnMerge` | `true` | Remove the worktree directory and branch after a successful merge |
 | `commitAuthorName` / `commitAuthorEmail` | — | Author identity for harness commits, set together; omitted uses git's configured identity |
 
 `reviewerProvider`/`reviewerModel` and `commitAuthorName`/`commitAuthorEmail` each fail loud at load if only one half of the pair is set, and `reviewerReasoningEffort` fails loud if set without both reviewer fields. The generated [configuration catalog](../../../docs/config-catalog.md#deepseek-aidsh-subagent-worktree) is the exhaustive source for every accepted field and its JSDoc.
+
+By default the reviewer runs on the route of the accepting agent, so a worker started on a cheaper route is reviewed on the accepting agent's route automatically. To enforce a reviewer on a different model than the worker, configure `reviewerProvider`/`reviewerModel` and set `requireDistinctReviewer: true`.
 
 ### The service surface
 

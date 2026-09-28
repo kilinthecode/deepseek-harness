@@ -58,7 +58,7 @@ export type TestConfig = Partial<Config> & { root: string }
 const DEFAULT_TEST_CONFIG = {
   branchPrefix: 'dsh/worktree/',
   maxWorktrees: 16,
-  requireDistinctReviewer: true,
+  requireDistinctReviewer: false,
   testCommand: [],
   checkTimeoutMs: 60_000,
   reviewDiffMaxBytes: 1024,

@@ -75,7 +75,11 @@ export interface Config {
   reviewerModel?: string
   /** Reviewer reasoning effort; requires {@link reviewerProvider} and {@link reviewerModel}. */
   reviewerReasoningEffort?: string
-  /** Reject a reviewer route equal to the worker's route. */
+  /**
+   * Reject a reviewer route equal to the worker's route (provider and model). Off by default, so a worker
+   * that inherits the accepting Agent's route is reviewed on that same route; turn it on together with
+   * {@link reviewerProvider} and {@link reviewerModel} to enforce a reviewer on another model.
+   */
   requireDistinctReviewer: boolean
   /** Check command (argv) run in the review checkout before the reviewer; empty runs none. A nonzero exit rejects the change. */
   testCommand: string[]
@@ -99,7 +103,7 @@ const ConfigSchema: z<Config> = z.object({
   reviewerProvider: z.string().description('Reviewer provider route, set together with reviewerModel. Omitted uses the route of the agent that accepts.'),
   reviewerModel: z.string().description('Reviewer model id, set together with reviewerProvider.'),
   reviewerReasoningEffort: z.string().description('Reviewer reasoning effort; requires reviewerProvider and reviewerModel.'),
-  requireDistinctReviewer: z.boolean().default(true).description('Reject a reviewer route equal to the worker route.'),
+  requireDistinctReviewer: z.boolean().default(false).description('Reject a reviewer route equal to the worker route. Off by default: a worker that inherits the accepting agent route is reviewed on that route. Set it with reviewerProvider and reviewerModel to enforce a reviewer on another model.'),
   testCommand: z.array(z.string().required()).default([]).description('Check command (argv) run in the review checkout before the reviewer. Empty runs none.'),
   checkTimeoutMs: z.natural().min(1000).default(900_000).description('Milliseconds the check command may run before it is terminated and reported as checks-failed.'),
   reviewDiffMaxBytes: z.natural().min(1024).default(49152).description('Byte bound on the diff embedded in the reviewer prompt.'),

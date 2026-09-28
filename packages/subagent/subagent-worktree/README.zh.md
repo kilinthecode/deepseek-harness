@@ -40,13 +40,15 @@ kind: "package-reference"
 | `maxWorktrees` | `16` | 每个仓库允许的最大 `open` 或 `reviewing` 工作树数量 |
 | `reviewerProvider` / `reviewerModel` | — | 评审者路由,需成对设置;省略时使用接受操作所属智能体自身的路由 |
 | `reviewerReasoningEffort` | — | 评审者推理强度;需要同时设置 `reviewerProvider` 和 `reviewerModel` |
-| `requireDistinctReviewer` | `true` | 拒绝与工作者路由相同的评审者路由(仅比较 provider 与 model,忽略推理强度) |
+| `requireDistinctReviewer` | `false` | 为 `true` 时,拒绝与工作者路由相同的评审者路由(仅比较 provider 与 model,忽略推理强度) |
 | `testCommand` | `[]` | 在评审检出目录中、评审者启动前运行的检查命令(argv);为空则不运行任何检查 |
 | `reviewDiffMaxBytes` | `49152` | 嵌入评审者提示词中的 diff 的字节上限 |
 | `removeOnMerge` | `true` | 合并成功后删除工作树目录及其分支 |
 | `commitAuthorName` / `commitAuthorEmail` | — | 用于 harness 提交的作者身份,需成对设置;省略时使用 git 自身已配置的身份 |
 
 若 `reviewerProvider`/`reviewerModel` 或 `commitAuthorName`/`commitAuthorEmail` 中只设置了一半,会在加载时立即报错;若设置了 `reviewerReasoningEffort` 但未同时设置两个评审者字段,同样会立即报错。生成的[配置目录](../../../docs/config-catalog.zh.md#deepseek-aidsh-subagent-worktree)是每个可接受字段及其 JSDoc 的完整来源。
+
+默认情况下,评审者运行在执行接受操作的智能体自身的路由上,因此以更便宜的路由启动的工作者会自动由接受者的路由评审。若要强制评审者使用与工作者不同的模型,请配置 `reviewerProvider`/`reviewerModel` 并设置 `requireDistinctReviewer: true`。
 
 ### 服务接口
 
