@@ -99,6 +99,7 @@ session.deriveMessages()         // the derived model history
 | [`src/types.ts`](src/types.ts) | `SessionEventMap`、`SessionEvent`、`UserMessage`、`SessionHeader`、`TurnEndReasonMap` |
 | [`src/surface.ts`](src/surface.ts) | 有序 surface 投影、替换校验、`deriveEventMessage` |
 | [`src/request-header.ts`](src/request-header.ts) | `request/header` 折叠与重建 |
+| [`src/delegation.ts`](src/delegation.ts) | `delegationTreeRoot`：沿活跃 `parentSession` 谱系求出委派树的根，用作提供方缓存路由键 |
 | [`dsh-util-values`](../../util/values/README.zh.md) | 共享无损 JSON 校验与分离式快照 |
 | [`src/repair.ts`](src/repair.ts) | 崩溃遗留日志的冷修复 |
 | [`src/invariant.ts`](src/invariant.ts) | 不变式配套：序号、轮次／步骤闭合、工具调用／结果配对 |
