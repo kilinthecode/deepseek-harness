@@ -182,7 +182,7 @@ Start independent subagent delegations together in one assistant message and con
 
 #### 模型看到什么
 
-调用会保留描述与提示词。成功时只包含子 agent 的最终文本；其他结果变为 `Error: <stop reason>`，随后在存在时附上安全的提供方诊断，再附上任何部分 assistant 文本。子 agent 中间步骤不会进入父级。隔离调用成功时的文本会新增一行，指明 worktree id 与分支并引导模型调用 `accept_worktree`；未隔离的结果不受影响。
+调用会保留描述与提示词。成功时只包含子 agent 的最终文本；其他结果变为 `Error: <stop reason>`，随后在存在时附上安全的提供方诊断，再附上任何部分 assistant 文本。子 agent 中间步骤不会进入父级。隔离调用成功时的文本会新增一行，指明 worktree id 与分支并引导模型调用 `accept_worktree`；隔离的运行失败时，错误文本也会附上同样的指引，说明可调用 `accept_worktree` 或 `discard_worktree`，因此失败不会让模型找不到回到子 agent 更改的路径。未隔离的结果两种情况下都不受影响。
 
 #### Token 影响
 

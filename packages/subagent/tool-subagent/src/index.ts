@@ -8,8 +8,10 @@
  * @module @deepseek-ai/dsh-tool-subagent
  */
 
+import { randomUUID } from 'node:crypto'
 import type { Context } from '@deepseek-ai/cordis'
 import z from '@deepseek-ai/schemastery'
+import { brandString } from '@deepseek-ai/dsh-brand'
 import { scopeChainOf, scopeOf } from '@deepseek-ai/dsh-scope'
 import { defineTool } from '@deepseek-ai/dsh-tools'
 import type { Agent, AgentOptions } from '@deepseek-ai/dsh-agent'
@@ -17,10 +19,12 @@ import { ReasoningEffortId } from '@deepseek-ai/dsh-llm'
 import type { ContentBlock } from '@deepseek-ai/dsh-llm'
 import type { JsonValue } from '@deepseek-ai/dsh-util-values'
 import { SessionSeq } from '@deepseek-ai/dsh-session'
-import type { Session } from '@deepseek-ai/dsh-session'
+import type { Session, SessionId } from '@deepseek-ai/dsh-session'
 import {
   assertSubagentMaxDepth,
   parentAgentOptionsForDelegation,
+  resolveChildAgentOptions,
+  resolveChildDepth,
   settleRun,
 } from '@deepseek-ai/dsh-subagent'
 import type { ContinuableStart, SubagentProvider, SubagentResult, SubagentRun } from '@deepseek-ai/dsh-subagent'
@@ -195,14 +199,16 @@ function stopReasonError(result: SubagentResult): string | undefined {
 }
 
 /**
- * Append provider-authored failure detail and the child's preserved partial
- * answer to a stop-reason error, keeping diagnostic text separate from the
- * child's assistant output.
+ * Append provider-authored failure detail, the child's preserved partial
+ * answer, and (when isolated) the worktree holding the child's changes to a
+ * stop-reason error, keeping diagnostic text separate from the child's
+ * assistant output.
  * @param error - the stop-reason headline.
  * @param result - the child's terminal result.
- * @returns the headline, diagnostic, and partial text that are present.
+ * @param worktree - the isolation worktree the failed run's child worked in, when isolated.
+ * @returns the headline, diagnostic, partial text, and worktree pointer that are present.
  */
-function withDiagnosticAndPartialText(error: string, result: SubagentResult): string {
+function withDiagnosticAndPartialText(error: string, result: SubagentResult, worktree?: WorktreeResultInfo): string {
   const diagnostic = result.diagnostic === undefined
     ? ''
     : `\nDiagnostic: ${result.diagnostic}`
@@ -213,7 +219,12 @@ function withDiagnosticAndPartialText(error: string, result: SubagentResult): st
   const partial = text.length === 0
     ? ''
     : `\nPartial output before the run ended:\n${text}`
-  return `${error}${diagnostic}${partial}`
+  // A failed run still leaves the child's changes in its worktree; without
+  // this, a failure gives the caller no way back to them.
+  const worktreeNote = worktree === undefined
+    ? ''
+    : `\nWorktree ${worktree.id} (branch ${worktree.branch}) holds this child's changes; call accept_worktree or discard_worktree.`
+  return `${error}${diagnostic}${partial}${worktreeNote}`
 }
 
 /** The worktree fields a delegation result carries, verbatim from the durable record. */
@@ -244,7 +255,7 @@ async function settleForegroundRun(run: SubagentRun, worktree?: WorktreeResultIn
       if (error !== undefined) {
         // The registry converts this throw to isError; partial output is not
         // success, but the preserved partial answer still reaches the parent.
-        throw new Error(withDiagnosticAndPartialText(error, result))
+        throw new Error(withDiagnosticAndPartialText(error, result, worktree))
       }
       return {
         kind: 'foreground',
@@ -681,10 +692,13 @@ export function apply(ctx: Context, config: Config, session?: Session): void {
               throw new Error('subagent: worktree isolation requires the parent session to have a working directory')
             }
             const callerRoute = toWorktreeRoute(parentOptions)
-            const workerRoute = requestedChildAgentOptions?.provider !== undefined
-              && requestedChildAgentOptions.model !== undefined
-              ? toWorktreeRoute(requestedChildAgentOptions)
-              : callerRoute
+            // The same merge the child actually receives (parent inheritance,
+            // requested/model-selected overrides, and the route-changed effort
+            // reset), not just the requested fields — a requested override that
+            // names only one of provider/model, or only an effort, still
+            // resolves to the child's real effective route.
+            const childDepth = resolveChildDepth(parent, maxDepth)
+            const workerRoute = toWorktreeRoute(resolveChildAgentOptions(parent, requestedChildAgentOptions, childDepth))
             // Fail fast, before provisioning a worktree no worker will ever use.
             worktrees.resolveReviewer({ workerRoute, callerRoute })
             const owner: WorktreeOwner = { kind: 'session', sessionId: parent.id }
@@ -719,6 +733,30 @@ export function apply(ctx: Context, config: Config, session?: Session): void {
 
           if (runSpec.runInBackground) {
             if (continuable) {
+              // Isolated: reserve the child id and attach it BEFORE the child can
+              // become live, so no window exists where a running worker is
+              // unrecorded and accept's running-worker check could miss it. An
+              // attach failure here means no child was ever started.
+              let reservedChildId: SessionId | undefined
+              if (isolationContext !== undefined) {
+                reservedChildId = brandString<SessionId>(randomUUID())
+                try {
+                  await isolationContext.worktrees.attach({
+                    id: isolationContext.provisioned.record.id,
+                    owner: isolationContext.owner,
+                    workerSessionId: reservedChildId,
+                    workerRoute: isolationContext.workerRoute,
+                  })
+                } catch (error: unknown) {
+                  await discardWorktreeBestEffort(
+                    runtimeCtx,
+                    isolationContext.worktrees,
+                    isolationContext.provisioned.record.id,
+                    isolationContext.owner,
+                  )
+                  throw error
+                }
+              }
               // Resolves at inbox acceptance: the child owns its own turns from
               // there, so this call neither waits for nor collects a result.
               let started: ContinuableStart
@@ -728,6 +766,7 @@ export function apply(ctx: Context, config: Config, session?: Session): void {
                   label: args.description,
                   request,
                   signal: exec.signal,
+                  ...reservedChildId !== undefined ? { childId: reservedChildId } : {},
                 })
               } catch (error: unknown) {
                 if (isolationContext !== undefined) {
@@ -739,14 +778,6 @@ export function apply(ctx: Context, config: Config, session?: Session): void {
                   )
                 }
                 throw error
-              }
-              if (isolationContext !== undefined) {
-                await isolationContext.worktrees.attach({
-                  id: isolationContext.provisioned.record.id,
-                  owner: isolationContext.owner,
-                  workerSessionId: started.childId,
-                  workerRoute: isolationContext.workerRoute,
-                })
               }
               const baseDirty = isolationContext?.provisioned.baseDirty
               return {
@@ -801,12 +832,23 @@ export function apply(ctx: Context, config: Config, session?: Session): void {
             throw error
           }
           if (isolationContext !== undefined) {
-            await isolationContext.worktrees.attach({
-              id: isolationContext.provisioned.record.id,
-              owner: isolationContext.owner,
-              workerSessionId: run.id,
-              workerRoute: isolationContext.workerRoute,
-            })
+            try {
+              await isolationContext.worktrees.attach({
+                id: isolationContext.provisioned.record.id,
+                owner: isolationContext.owner,
+                workerSessionId: run.id,
+                workerRoute: isolationContext.workerRoute,
+              })
+            } catch (error: unknown) {
+              // The run already published: losing this attach means accept's
+              // running-worker check may miss this session (create() already
+              // recorded workerRoute on the worktree), not that the published
+              // run should be abandoned undisposed.
+              runtimeCtx.logger.warn(
+                `tool-subagent: failed to attach worker "${run.id}" to worktree `
+                + `"${isolationContext.provisioned.record.id}": ${String(error)}`,
+              )
+            }
           }
           return settleForegroundRun(
             run,
