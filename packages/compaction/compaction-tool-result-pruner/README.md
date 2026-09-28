@@ -57,7 +57,7 @@ Character counts are Unicode code points, so slicing never splits an emoji pair,
 
 ### When trimming runs
 
-Trimming only runs once a compaction trigger qualifies; a below-pressure conversation is never touched or previewed, and trimming itself makes no model call. Overflow recovery prunes unconditionally before it selects what to condense, since the retried request itself must fit. Proactive pressure previews the prune first: it lands alone only when the preview would clear a configured headroom below the threshold on its own; otherwise the oldest balanced span condenses first and trimming runs afterward over what remains, since that request already pays the cache-invalidation cost trimming would add.
+Trimming only runs once a compaction trigger qualifies; a below-pressure conversation is never touched or previewed, and trimming itself makes no model call. Overflow recovery prunes unconditionally before it selects what to condense, since the retried request itself must fit. Proactive pressure previews the prune first: a preview that would clear the configured headroom below the threshold on its own lands the prune alone, with no condensation, only if that landed trim actually clears the threshold; if it falls short, condensation still follows over the now-trimmed surface. When the preview does not clear that headroom, the oldest balanced span condenses first instead, and trimming runs afterward over what remains after every successful condensation, since that request already pays the cache-invalidation cost trimming would add. Even when no balanced span exists to condense, a mounted pruner still trims before the check declines.
 
 -----
 

@@ -12,8 +12,8 @@
   en: a15c7c13f167e5ac
   zh: 63bcc2ef60c2f344
 /agent-note-compaction-as-a-capability-seam-abstract-contract-basic-backend/decision/compaction-is-a-capability-seam-with-separate-service-definition-and-service-provider-roles:
-  en: 86d3b78fed8b74dc
-  zh: f10d14b893667d16
+  en: bb5d913c8811e831
+  zh: c94db835cc59603d
 /agent-note-compaction-as-a-capability-seam-abstract-contract-basic-backend/decision/the-contract-depends-on-dsh-session-and-dsh-llm-a-deliberate-deviation:
   en: 5c07a5a6429f6752
   zh: 8bf83da6e0563a66
@@ -21,8 +21,8 @@
   en: 62191e0e65c79673
   zh: cbaa5bece0f5b45a
 /agent-note-compaction-as-a-capability-seam-abstract-contract-basic-backend/decision/automatic-pressure-runs-after-successful-durable-step-work:
-  en: 4926f9d26052aa21
-  zh: e818580c1c9adab1
+  en: 6efbefb73620acb1
+  zh: 50c2d4c9f1195545
 /agent-note-compaction-as-a-capability-seam-abstract-contract-basic-backend/decision/retention-is-turn-agnostic-tool-pairing-balance-is-the-only-structural-guard:
   en: 3126c249c48e90b9
   zh: dc82bc9a37d90474
