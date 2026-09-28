@@ -23,6 +23,18 @@ describe('dsh-skill-agent-crew', () => {
     expect(loaded?.content).toContain('## When not to use')
     expect(loaded?.content).toContain('isolation: "worktree"')
     expect(loaded?.content).toContain('dsh agents run')
+
+    // The land/fix/discard workflow must name every tool the crew uses to
+    // settle a worktree, not just some of them.
+    const content = loaded?.content ?? ''
+    const sectionStart = content.indexOf('## Land, fix, or discard each part')
+    const sectionEnd = content.indexOf('## Report back')
+    expect(sectionStart).toBeGreaterThanOrEqual(0)
+    expect(sectionEnd).toBeGreaterThan(sectionStart)
+    const landSection = content.slice(sectionStart, sectionEnd)
+    for (const toolName of ['accept_worktree', 'send_message', 'discard_worktree', 'list_worktrees']) {
+      expect(landSection).toContain(toolName)
+    }
     expect(loaded?.resourceBase).toEqual({ kind: 'directory', path: resourcePath })
 
     await fiber.dispose()

@@ -4,7 +4,10 @@ import { brandString } from '@deepseek-ai/dsh-brand'
 import { SessionId } from '@deepseek-ai/dsh-session'
 import type { WorktreeId, WorktreeRecord, WorktreeVerdict } from '@deepseek-ai/dsh-subagent-worktree'
 
-export const WORKTREE_ID = brandString<WorktreeId>('wt-1')
+/** A realistic id, matching the service's `wt-` + eight lowercase hex digits shape. */
+export const WORKTREE_ID = brandString<WorktreeId>('wt-1a2b3c4d')
+/** A second realistic id, for tests that need to distinguish two records. */
+export const OTHER_WORKTREE_ID = brandString<WorktreeId>('wt-5e6f7a8b')
 export const COMMIT = '1234567890abcdef1234567890abcdef12345678'
 export const MERGE_COMMIT = 'abcdef1234567890abcdef1234567890abcdef12'
 
@@ -13,8 +16,8 @@ export function testRecord(overrides: Partial<WorktreeRecord> = {}): WorktreeRec
   return {
     id: WORKTREE_ID,
     repoRoot: '/repo',
-    path: '/repo-worktrees/wt-1',
-    branch: 'dsh/worktree/wt-1',
+    path: '/repo-worktrees/wt-1a2b3c4d',
+    branch: 'dsh/worktree/wt-1a2b3c4d',
     baseCommit: '0000000000000000000000000000000000000000',
     owner: { kind: 'session', sessionId: SessionId('caller') },
     label: 'fix bug',
