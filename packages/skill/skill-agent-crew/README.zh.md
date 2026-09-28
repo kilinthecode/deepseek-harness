@@ -65,13 +65,13 @@ agent（智能体）可以通过该内置提供方加载 `agent-crew` skill，�
 
 ### 设计理念
 
-该提供方是一个不可变、同步注册的 skill 来源：它以 `agent-crew` 作为提供方名称、按内置 skill rank（600）注册一个固定候选项，把随包分发的 `assets/` 目录作为该 skill 的目录资源基底公开，并在每次加载时从随包分发的 `assets/agent-crew.md` 文件读取 skill 正文。其实现与 `skill-badge` 完全同构。
+该提供方是一个不可变、同步注册的 skill 来源：它以 `agent-crew` 作为提供方名称、按内置 skill rank（600）注册一个固定候选项，把随包分发的 `assets/` 目录作为该 skill 的目录资源基底公开，并在每次加载时从随包分发的 `assets/agent-crew.md` 文件读取 skill 正文。该提供方来自 `@deepseek-ai/dsh-skill` 的 `bundledSkillProvider`，`skill-badge` 使用的是同一个辅助函数。
 
 ### 源码地图
 
 | 文件 | 职责 |
 |---|---|
-| [`src/index.ts`](src/index.ts) | 插件入口与不可变提供方：一个候选项、资源基底、正文加载 |
+| [`src/index.ts`](src/index.ts) | 插件入口与提供方，由 `@deepseek-ai/dsh-skill` 的 `bundledSkillProvider` 构建：一个候选项、资源基底、正文加载 |
 | [`assets/agent-crew.md`](assets/agent-crew.md) | 随包分发的 skill 正文：何时使用、如何拆分、工作简报、如何派生工作 agent，以及如何落地每一部分 |
 | — | 不发布运行时不变式伴生入口；本包只持有一个不可变的提供方注册，注册唯一性与生命周期检查由 skill 注册表负责。 |
 

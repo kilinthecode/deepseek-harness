@@ -10,6 +10,8 @@
  * @module @deepseek-ai/dsh-skill
  */
 
+import { readFile } from 'node:fs/promises'
+import { fileURLToPath } from 'node:url'
 import { Context, Service } from '@deepseek-ai/cordis'
 import type {} from '@deepseek-ai/dsh-llm'
 import { assertNever } from '@deepseek-ai/dsh-util-values'
@@ -272,6 +274,53 @@ export interface SkillProviderControl {
   readonly signal: AbortSignal
   /** Invalidate completed catalogs and notify consumers only while the exact registration remains active. */
   readonly invalidate: () => void
+}
+
+/** One packaged skill: its Markdown body and the asset directory the body's relative links resolve against. */
+export interface BundledSkillSpec {
+  /** Kebab-case skill name, also used as the provider name. */
+  readonly name: string
+  /** Routing description shown by discovery consumers. */
+  readonly description: string
+  /** File URL of the Markdown body, read each time the skill loads. */
+  readonly body: URL
+  /** File URL of the asset directory that relative resources in the body resolve against. */
+  readonly resources: URL
+}
+
+/**
+ * Build the provider for one packaged skill: a single immutable candidate that
+ * both the model and the user may invoke, ranked at {@link BUNDLED_SKILL_RANK}
+ * so a project or user skill of the same name still wins. The body file is
+ * read on every load.
+ * @param spec - the skill's name, description, body file, and asset directory.
+ * @returns a provider to pass to `ctx.skills.registerProvider`.
+ */
+export function bundledSkillProvider(spec: BundledSkillSpec): SkillProvider {
+  const resourceBase: SkillResourceBase = { kind: 'directory', path: fileURLToPath(spec.resources) }
+  const candidate: SkillCandidate = {
+    name: spec.name,
+    description: spec.description,
+    invocation: { modelInvocable: true, userInvocable: true },
+    provider: spec.name,
+    source: 'bundled',
+    resourceBase,
+    rank: BUNDLED_SKILL_RANK,
+    locator: spec.body,
+  }
+  return {
+    name: spec.name,
+    list: () => Promise.resolve([candidate]),
+    get: async () => ({
+      name: candidate.name,
+      description: candidate.description,
+      invocation: candidate.invocation,
+      provider: candidate.provider,
+      source: candidate.source,
+      resourceBase,
+      content: await readFile(spec.body, 'utf8'),
+    }),
+  }
 }
 
 /** Skill registry configuration. */

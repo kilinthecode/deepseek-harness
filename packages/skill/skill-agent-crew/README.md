@@ -65,13 +65,13 @@ This section explains how the bundled provider is wired; the observable behavior
 
 ### Design concept
 
-The provider is an immutable, synchronously registered skill source: it registers one fixed candidate at the bundled skill rank (600) under the provider name `agent-crew`, exposes its packaged `assets/` directory as the skill's directory resource base, and reads the skill body from the packaged `assets/agent-crew.md` file on every load. It copies the `skill-badge` shape exactly.
+The provider is an immutable, synchronously registered skill source: it registers one fixed candidate at the bundled skill rank (600) under the provider name `agent-crew`, exposes its packaged `assets/` directory as the skill's directory resource base, and reads the skill body from the packaged `assets/agent-crew.md` file on every load. The provider comes from `bundledSkillProvider` in `@deepseek-ai/dsh-skill`, the same helper `skill-badge` uses.
 
 ### Source map
 
 | File | Role |
 |---|---|
-| [`src/index.ts`](src/index.ts) | Plugin entry and the immutable provider: one candidate, resource base, body load |
+| [`src/index.ts`](src/index.ts) | Plugin entry and the provider, built with `bundledSkillProvider` from `@deepseek-ai/dsh-skill`: one candidate, resource base, body load |
 | [`assets/agent-crew.md`](assets/agent-crew.md) | Packaged skill body: when to use it, decomposition, the worker brief, spawning, and landing each part |
 | — | No runtime invariant companion is published; the package owns one immutable provider registration, while the skill registry owns registration uniqueness and lifecycle checks. |
 
