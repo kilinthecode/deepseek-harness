@@ -29,6 +29,26 @@ export interface StoredWorktreeRecord extends WorktreeRecord {
   readonly reviewingPid?: number
 }
 
+/**
+ * Fields an earlier build stored in a record file that no current build reads.
+ * They are dropped when a record is read, so the next write removes them from
+ * the file, and they never reach a public record.
+ */
+interface LegacyStoredFields {
+  /** When an earlier build's accept entered `reviewing`; superseded by the process id claim. */
+  readonly reviewingStartedAt?: number
+}
+
+/**
+ * The record without the fields an earlier build stored and no current build reads.
+ * @param record - a record as read from a file, or as handed to {@link toPublicRecord}.
+ * @returns the record with no {@link LegacyStoredFields}.
+ */
+function withoutLegacyFields(record: StoredWorktreeRecord & LegacyStoredFields): StoredWorktreeRecord {
+  const { reviewingStartedAt: _reviewingStartedAt, ...current } = record
+  return current
+}
+
 /** Random bytes used to compose a {@link WorktreeId}. */
 export const WORKTREE_ID_BYTES = 4
 
@@ -190,7 +210,7 @@ function parseStoredWorktreeRecord(raw: string, sourcePath: string): StoredWorkt
     throw new Error(`subagent-worktree: worktree record "${sourcePath}" is corrupt: ${(error as Error).message}`)
   }
   assertStoredWorktreeRecord(parsed, sourcePath)
-  return parsed
+  return withoutLegacyFields(parsed)
 }
 
 /**
@@ -409,13 +429,13 @@ export async function countOpenSlots(layout: WorktreeLayout, warn: ScanWarning =
 }
 
 /**
- * Strip the internal accept-bookkeeping field before returning a record
- * through the public service surface.
+ * Strip the internal accept-bookkeeping field, and any field an earlier build
+ * stored, before returning a record through the public service surface.
  * @param stored - the on-disk record.
  * @returns the public `WorktreeRecord` fields only.
  */
 export function toPublicRecord(stored: StoredWorktreeRecord): WorktreeRecord {
-  const { reviewingPid: _reviewingPid, ...record } = stored
+  const { reviewingPid: _reviewingPid, ...record } = withoutLegacyFields(stored)
   return record
 }
 

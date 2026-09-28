@@ -64,11 +64,22 @@ export interface AcceptDeps {
   readonly resolveReviewer: (request: ResolveReviewerRequest) => WorktreeRoute
 }
 
-/** Transition a record back to `open` and build the outcome from its public shape. */
+/**
+ * The record after an accept that did not merge: a `reviewing` record returns
+ * to `open` and releases its accept claim. A record in any other state was
+ * moved on while the accept ran (discarded, or recorded merged by a recovery)
+ * and is left as it is, so an accept never reopens a closed record.
+ */
+function reopenedRecord(current: StoredWorktreeRecord): StoredWorktreeRecord {
+  if (current.state !== 'reviewing') return current
+  return { ...withoutReviewingPid(current), state: 'open' }
+}
+
+/** Return a still-`reviewing` record to `open` and build the outcome from the record as stored afterwards. */
 async function reopen(
   layout: WorktreeLayout, id: WorktreeId, build: (record: WorktreeRecord) => AcceptOutcome,
 ): Promise<AcceptOutcome> {
-  const reopened = await updateExistingRecordAt(layout, id, current => ({ ...current, state: 'open' }))
+  const reopened = await updateExistingRecordAt(layout, id, reopenedRecord)
   return build(toPublicRecord(reopened))
 }
 
@@ -378,9 +389,7 @@ export async function acceptWorktree(deps: AcceptDeps, request: AcceptWorktreeRe
     return { kind: 'merged', record: toPublicRecord(merged), commit, mergeCommit: step.mergeCommit, verdict, removed }
   } catch (error) {
     if (!landing.landed) {
-      await updateExistingRecordAt(located.layout, request.id, current => (
-        current.state === 'reviewing' ? { ...current, state: 'open' } : current
-      )).catch((revertError: unknown) => {
+      await updateExistingRecordAt(located.layout, request.id, reopenedRecord).catch((revertError: unknown) => {
         deps.ctx.logger.warn(`subagent-worktree: could not reopen worktree ${request.id} after a failed accept: ${String(revertError)}`)
       })
     }

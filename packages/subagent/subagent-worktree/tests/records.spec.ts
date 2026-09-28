@@ -432,6 +432,35 @@ describe('toPublicRecord', () => {
     expect(publicRecord).not.toHaveProperty('reviewingPid')
     expect(publicRecord.id).toBe(stored.id)
   })
+
+  it('strips the reviewingStartedAt field an older build stored', () => {
+    const stored = { ...baseRecord({ state: 'reviewing', reviewingPid: 123 }), reviewingStartedAt: 456 }
+    const publicRecord = toPublicRecord(stored)
+    expect(publicRecord).not.toHaveProperty('reviewingStartedAt')
+    expect(publicRecord).not.toHaveProperty('reviewingPid')
+    expect(publicRecord.id).toBe(stored.id)
+  })
+})
+
+describe('records an older build wrote', () => {
+  const id = 'wt-aaaaaaaa'
+
+  it('drops the reviewingStartedAt field when a record is read, and the next update removes it from the file', async () => {
+    const root = await scratchRoot('dsh-wt-legacy-field-')
+    const layout = layoutFor(root, 'repo-key')
+    const path = await writeRecordFile(layout, id, { ...recordIn(layout, id, { state: 'reviewing', reviewingPid: 123 }), reviewingStartedAt: 456 })
+
+    expect((await requireRecordLocation(root, id as WorktreeId)).record).not.toHaveProperty('reviewingStartedAt')
+    expect((await listRecords(layout))[0]).not.toHaveProperty('reviewingStartedAt')
+    expect(JSON.parse(await readFile(path, 'utf8'))).toHaveProperty('reviewingStartedAt', 456)
+
+    const updated = await updateExistingRecordAt(layout, id as WorktreeId, current => ({ ...current, label: 'renamed' }))
+
+    expect(updated).not.toHaveProperty('reviewingStartedAt')
+    const persisted: unknown = JSON.parse(await readFile(path, 'utf8'))
+    expect(persisted).not.toHaveProperty('reviewingStartedAt')
+    expect(persisted).toMatchObject({ label: 'renamed', reviewingPid: 123 })
+  })
 })
 
 describe('assertOwnerAuthority', () => {

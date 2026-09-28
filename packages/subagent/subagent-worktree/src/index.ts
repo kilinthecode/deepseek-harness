@@ -255,14 +255,15 @@ export class SubagentWorktrees extends Service {
 
   /**
    * Delete one worktree and its branch without merging. The record is claimed
-   * under its lock before any git change, so a concurrent `accept` or second
-   * `discard` cannot act on a worktree this call is deleting. A `merged` record
-   * is not changed: `discard` only removes a worktree directory or branch that
-   * a crash between the merge and its cleanup left behind.
+   * under its lock before any git change, so a concurrent `accept` cannot act on
+   * a worktree this call is deleting. A `merged` or `discarded` record is not
+   * changed: `discard` only removes a worktree directory or branch that a crash
+   * between the merge and its cleanup, or a failed earlier `discard`, left behind,
+   * so a retry after a failure finishes the cleanup.
    * @param request - worktree id, owner, and cancellation.
-   * @returns the `discarded` record, or the unchanged `merged` record after cleaning up its leftovers.
+   * @returns the `discarded` record, or the unchanged `merged` or `discarded` record after cleaning up its leftovers.
    * @throws when the id is malformed, no such worktree exists, the owner does not own it, an attached worker is
-   *   still running, the record is `discarded` or being accepted, or a git cleanup command fails.
+   *   still running, the record is being accepted, or a git cleanup command fails.
    */
   async discard(request: DiscardWorktreeRequest): Promise<WorktreeRecord> {
     assertWorktreeId(request.id)
@@ -273,7 +274,7 @@ export class SubagentWorktrees extends Service {
     // recording it) is recorded `merged`, and then only its leftovers are swept.
     const recovery = await recoverLandedMerge(this.git, located.layout, located.record, request.signal)
     const claimed = recovery?.record ?? await updateExistingRecordAt(located.layout, request.id, (current) => {
-      if (current.state === 'merged') return current
+      if (current.state === 'merged' || current.state === 'discarded') return current
       assertOpenOrRecoverable(current, request.id)
       assertNoRunningWorkers(this.ctx.agents, current, request.id)
       return { ...current, state: 'discarded' }

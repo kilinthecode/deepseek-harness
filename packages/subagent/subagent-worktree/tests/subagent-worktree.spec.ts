@@ -181,7 +181,7 @@ describe('discard', () => {
     expect(git(dir, 'branch', '--list', provisioned.record.branch).trim()).toBe('')
   }, GIT_TEST_TIMEOUT_MS)
 
-  it('rejects owner mismatch and a second discard of an already-discarded worktree', async () => {
+  it('rejects owner mismatch, and a second discard of an already-discarded worktree returns it unchanged', async () => {
     const dir = await initFixtureRepo('dsh-discard-guard-')
     cleanups.push(() => removeFixture(dir))
     git(dir, 'commit', '--allow-empty', '-q', '-m', 'base')
@@ -189,19 +189,24 @@ describe('discard', () => {
     const { ctx, dispose } = await setup({ root })
     cleanups.push(dispose)
     const provisioned = await createWorktree(ctx, OWNER, dir, 'x')
+    const other: WorktreeOwner = { kind: 'session', sessionId: SessionId('other') }
 
-    await expect(ctx.subagentWorktrees.discard({
-      id: provisioned.record.id, owner: { kind: 'session', sessionId: SessionId('other') }, signal,
-    })).rejects.toThrow('belongs to another session')
+    await expect(ctx.subagentWorktrees.discard({ id: provisioned.record.id, owner: other, signal }))
+      .rejects.toThrow('belongs to another session')
 
     // An attached worker id absent from the live registry (never started here) does not block discard;
     // packages/subagent/subagent-worktree/tests/workers.spec.ts covers the running-worker refusal directly.
     await ctx.subagentWorktrees.attach({
       id: provisioned.record.id, owner: OWNER, workerSessionId: SessionId('never-started'), workerRoute: WORKER_ROUTE,
     })
-    await ctx.subagentWorktrees.discard({ id: provisioned.record.id, owner: OWNER, signal })
-    await expect(ctx.subagentWorktrees.discard({ id: provisioned.record.id, owner: OWNER, signal }))
-      .rejects.toThrow(`worktree ${provisioned.record.id} is discarded`)
+    const first = await ctx.subagentWorktrees.discard({ id: provisioned.record.id, owner: OWNER, signal })
+    const second = await ctx.subagentWorktrees.discard({ id: provisioned.record.id, owner: OWNER, signal })
+
+    expect(first.state).toBe('discarded')
+    expect(second).toEqual(first)
+    // The retry is still an authorized operation.
+    await expect(ctx.subagentWorktrees.discard({ id: provisioned.record.id, owner: other, signal }))
+      .rejects.toThrow('belongs to another session')
   }, GIT_TEST_TIMEOUT_MS)
 })
 
@@ -272,6 +277,27 @@ describe('discard cleanup', () => {
     const [record] = await ctx.subagentWorktrees.list({ baseDir: dir, includeClosed: true })
     expect(record?.state).toBe('discarded')
     expect(await pathExists(provisioned.record.path)).toBe(true)
+  }, GIT_TEST_TIMEOUT_MS)
+
+  it('finishes the cleanup when discard is retried after a removal failed, leaving the record discarded', async () => {
+    const dir = await initFixtureRepo('dsh-discard-retry-')
+    cleanups.push(() => removeFixture(dir))
+    git(dir, 'commit', '--allow-empty', '-q', '-m', 'base')
+    const { ctx, dispose } = await setup({ root: await scratchRoot() })
+    cleanups.push(dispose)
+    const provisioned = await createWorktree(ctx, OWNER, dir, 'x')
+    git(dir, 'worktree', 'lock', provisioned.record.path)
+    await expect(ctx.subagentWorktrees.discard({ id: provisioned.record.id, owner: OWNER, signal }))
+      .rejects.toThrow('git worktree remove failed')
+    expect(await pathExists(provisioned.record.path)).toBe(true)
+    git(dir, 'worktree', 'unlock', provisioned.record.path)
+
+    const retried = await ctx.subagentWorktrees.discard({ id: provisioned.record.id, owner: OWNER, signal })
+
+    expect(retried.state).toBe('discarded')
+    expect(await pathExists(provisioned.record.path)).toBe(false)
+    expect(git(dir, 'worktree', 'list')).not.toContain(provisioned.record.path)
+    expect(git(dir, 'branch', '--list', provisioned.record.branch).trim()).toBe('')
   }, GIT_TEST_TIMEOUT_MS)
 })
 

@@ -114,13 +114,20 @@ function acceptRequest(id: WorktreeId, overrides: Partial<AcceptWorktreeRequest>
   return { id, owner: OWNER, parent: fakeAgent('lead-agent', CALLER_ROUTE), signal, ...overrides }
 }
 
+/** Rewrite a record file as `discarded`, the way another process discarding the worktree would. */
+function markDiscardedOnDisk(path: string): void {
+  const stored = JSON.parse(readFileSync(path, 'utf8')) as Record<string, unknown>
+  writeFileSync(path, JSON.stringify({ ...stored, state: 'discarded' }))
+}
+
 describe('accept: empty', () => {
-  it('reports empty and reopens when nothing changed in the worktree', async () => {
-    const { ctx, dir } = await harness()
+  it('reports empty and reopens when nothing changed in the worktree, releasing the accept claim', async () => {
+    const { ctx, dir, root } = await harness()
     const provisioned = await createWorktree(ctx, OWNER, dir, 'do the thing')
     const outcome = await ctx.subagentWorktrees.accept(acceptRequest(provisioned.record.id))
     expect(outcome).toMatchObject({ kind: 'empty' })
     expect(outcome.record.state).toBe('open')
+    expect((await requireRecordLocation(root, provisioned.record.id)).record).not.toHaveProperty('reviewingPid')
   }, GIT_TEST_TIMEOUT_MS)
 })
 
@@ -193,8 +200,8 @@ describe('accept: checks-failed', () => {
 })
 
 describe('accept: rejected', () => {
-  it('does not merge when the reviewer fails the change', async () => {
-    const { ctx, dir } = await harness({ verdicts: [FAIL_VERDICT] })
+  it('does not merge when the reviewer fails the change, and releases the accept claim', async () => {
+    const { ctx, dir, root } = await harness({ verdicts: [FAIL_VERDICT] })
     const provisioned = await createWorktree(ctx, OWNER, dir, 'do the thing')
     await writeFile(join(provisioned.workDir, 'change.txt'), 'x')
     const headBefore = git(dir, 'rev-parse', 'HEAD').trim()
@@ -204,7 +211,27 @@ describe('accept: rejected', () => {
     if (outcome.kind !== 'rejected') throw new Error('unreachable')
     expect(outcome.verdict.findings).toEqual(['x.ts: broken'])
     expect(outcome.record.state).toBe('open')
+    expect((await requireRecordLocation(root, provisioned.record.id)).record).not.toHaveProperty('reviewingPid')
     expect(git(dir, 'rev-parse', 'HEAD').trim()).toBe(headBefore)
+  }, GIT_TEST_TIMEOUT_MS)
+
+  it('does not reopen a record that changed state while the review ran, and reports it as stored', async () => {
+    const pendingChange: { path: string | undefined } = { path: undefined }
+    const { ctx, dir, root } = await harness({
+      verdicts: [FAIL_VERDICT],
+      onReviewerStart: () => {
+        if (pendingChange.path !== undefined) markDiscardedOnDisk(pendingChange.path)
+      },
+    })
+    const provisioned = await createWorktree(ctx, OWNER, dir, 'do the thing')
+    await writeFile(join(provisioned.workDir, 'change.txt'), 'x')
+    pendingChange.path = (await requireRecordLocation(root, provisioned.record.id)).path
+
+    const outcome = await ctx.subagentWorktrees.accept(acceptRequest(provisioned.record.id))
+
+    expect(outcome.kind).toBe('rejected')
+    expect(outcome.record.state).toBe('discarded')
+    expect((await requireRecordLocation(root, provisioned.record.id)).record.state).toBe('discarded')
   }, GIT_TEST_TIMEOUT_MS)
 
   it('fails closed (rejects) when the reviewer returns a malformed structured verdict', async () => {
@@ -1011,8 +1038,8 @@ describe('accept: state machine', () => {
     expect(await pathExists(unrelatedPath)).toBe(true)
   }, GIT_TEST_TIMEOUT_MS)
 
-  it('returns a still-reviewing record to open and rethrows on an infrastructure failure', async () => {
-    const { ctx, dir } = await harness({ verdicts: [{ throws: 'reviewer infrastructure boom' }] })
+  it('returns a still-reviewing record to open, releasing the accept claim, and rethrows on an infrastructure failure', async () => {
+    const { ctx, dir, root } = await harness({ verdicts: [{ throws: 'reviewer infrastructure boom' }] })
     const provisioned = await createWorktree(ctx, OWNER, dir, 'do the thing')
     await writeFile(join(provisioned.workDir, 'change.txt'), 'x')
 
@@ -1021,6 +1048,7 @@ describe('accept: state machine', () => {
 
     const relisted = await ctx.subagentWorktrees.list({ baseDir: dir, owner: OWNER })
     expect(relisted.find(r => r.id === provisioned.record.id)?.state).toBe('open')
+    expect((await requireRecordLocation(root, provisioned.record.id)).record).not.toHaveProperty('reviewingPid')
   }, GIT_TEST_TIMEOUT_MS)
 
   it('removes the review checkout on a fresh signal even when the caller cancelled the accept during the review', async () => {
@@ -1091,9 +1119,7 @@ describe('accept: state machine', () => {
       verdicts: [{ throws: 'reviewer infrastructure boom' }],
       onReviewerStart: () => {
         // Someone else moved the record on while this accept was mid-review (here: discarded it).
-        if (pendingChange.path === undefined) return
-        const stored = JSON.parse(readFileSync(pendingChange.path, 'utf8')) as Record<string, unknown>
-        writeFileSync(pendingChange.path, JSON.stringify({ ...stored, state: 'discarded' }))
+        if (pendingChange.path !== undefined) markDiscardedOnDisk(pendingChange.path)
       },
     })
     const provisioned = await createWorktree(ctx, OWNER, dir, 'do the thing')
