@@ -21,14 +21,14 @@
   en: 0f8ab5469d9ad7e1
   zh: d1ba6d72f6d6568f
 /deepseek-ai-dsh-tool-subagent-worktree/use-this-package/accept-worktree:
-  en: a19b61d1d2bf775e
-  zh: d2c3f2e6a21c0c3f
+  en: 09bac6ff92f7dac0
+  zh: b3469dd4f4eeeb92
 /deepseek-ai-dsh-tool-subagent-worktree/use-this-package/discard-worktree:
   en: e1033daf1d56d901
   zh: db1aab293ca29e26
 /deepseek-ai-dsh-tool-subagent-worktree/use-this-package/list-worktrees:
-  en: 535f5f5f59783ea8
-  zh: c0b215db5c5e65b0
+  en: 688593a3d482957e
+  zh: 018e6dd24257a5f9
 /deepseek-ai-dsh-tool-subagent-worktree/understand-the-implementation:
   en: 42b15ac6321706aa
   zh: 4ed0861911abaf5d
@@ -105,8 +105,8 @@
   en: 655e448a4bfdfe70
   zh: ee164d0bedb914ed
 /deepseek-ai-dsh-tool-subagent-worktree/model-experience/list-worktrees-result/what-the-model-sees:
-  en: 811b989284abd8bb
-  zh: 7d45b7b122c7bfeb
+  en: 365c16ee5ee228bd
+  zh: 2c680d65043003bd
 /deepseek-ai-dsh-tool-subagent-worktree/model-experience/list-worktrees-result/token-effect:
   en: da4359ec9142c96a
   zh: bac4b7e6481fe0de
@@ -114,8 +114,8 @@
   en: 263b83d9c6a536cc
   zh: ac9ebe68ab3515ed
 /deepseek-ai-dsh-tool-subagent-worktree/known-limitations-and-deferred-work:
-  en: b6f24a7c4b91c00e
-  zh: eaae54764d3170e1
+  en: 80c09bce0e586e43
+  zh: 5906c1915c159f2b
 /deepseek-ai-dsh-tool-subagent-worktree/known-limitations-and-deferred-work/dev-note:
   en: e67f633dc6fe7773
   zh: 3bb0c20c93f16f98

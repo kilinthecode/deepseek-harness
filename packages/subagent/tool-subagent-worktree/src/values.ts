@@ -16,9 +16,14 @@ function terminated(text: string): string {
   return /[.!?]$/.test(text) ? text : `${text}.`
 }
 
+/** Quote text containing whitespace so a reader takes it as one token. */
+function quoteIfSpaced(text: string): string {
+  return /\s/.test(text) ? JSON.stringify(text) : text
+}
+
 /** Render argv so a reader can reproduce it: quote any element containing whitespace. */
 function renderArgv(argv: readonly string[]): string {
-  return argv.map(arg => /\s/.test(arg) ? JSON.stringify(arg) : arg).join(' ')
+  return argv.map(quoteIfSpaced).join(' ')
 }
 
 const REVIEWER_SCHEMA = {
@@ -187,7 +192,8 @@ export function renderAcceptToolValue(value: AcceptToolValue): string {
       const findings = value.findings.map(finding => `- ${finding}`).join('\n')
       return `Review failed for worktree ${value.id} at commit ${value.commit} (reviewer ${value.reviewer.provider}/${value.reviewer.model}): ${value.summary}\n`
         + `Findings:\n${findings}\n`
-        + 'Send these findings to the child with send_message, wait for it to finish, then accept again.'
+        + 'If the child is a background subagent, send these findings to it with send_message, wait for it to finish, then accept again. '
+        + 'A foreground child cannot receive messages: discard the worktree and start a new background worker with the task and these findings.'
     }
     case 'checks-failed': {
       const outcome = value.exitCode === undefined ? 'was stopped before it exited' : `exited ${String(value.exitCode)}`
@@ -248,7 +254,10 @@ export const LIST_VALUE_SCHEMA = {
       id: { type: 'string', required: true },
       state: { type: 'string', required: true, enum: ['open', 'reviewing', 'merged', 'discarded'] },
       branch: { type: 'string', required: true },
+      path: { type: 'string', required: true },
       label: { type: 'string', required: true },
+      // The id `send_message` takes for the latest attached worker; absent when no worker was recorded.
+      workerAgentId: { type: 'string' },
       // Absent until the worktree's first review verdict is recorded.
       verdict: { type: 'string', enum: ['pass', 'fail'] },
     },
@@ -261,16 +270,22 @@ export type ListToolValue = InferValue<typeof LIST_VALUE_SCHEMA>
 /**
  * Project the listed {@link WorktreeRecord}s into the tool's declared value.
  * @param records - the records `ctx.subagentWorktrees.list()` returned.
- * @returns the canonical `list_worktrees` result, one row per record.
+ * @returns the canonical `list_worktrees` result, one row per record. A row names the most recently
+ *   attached worker, so a caller that lost its context can still message that worker.
  */
 export function toListToolValue(records: readonly WorktreeRecord[]): ListToolValue {
-  return records.map(record => ({
-    id: record.id,
-    state: record.state,
-    branch: record.branch,
-    label: record.label,
-    ...record.lastVerdict === undefined ? {} : { verdict: record.lastVerdict.verdict },
-  }))
+  return records.map((record) => {
+    const worker = record.workerSessionIds.at(-1)
+    return {
+      id: record.id,
+      state: record.state,
+      branch: record.branch,
+      path: record.path,
+      label: record.label,
+      ...worker === undefined ? {} : { workerAgentId: worker },
+      ...record.lastVerdict === undefined ? {} : { verdict: record.lastVerdict.verdict },
+    }
+  })
 }
 
 /**
@@ -281,6 +296,7 @@ export function toListToolValue(records: readonly WorktreeRecord[]): ListToolVal
 export function renderListToolValue(value: ListToolValue): string {
   if (value.length === 0) return 'No open worktrees.'
   return value.map(row =>
-    `${row.id}  state=${row.state}  branch=${row.branch}  review=${row.verdict ?? 'not reviewed'}  label=${JSON.stringify(row.label)}`,
+    `${row.id}  state=${row.state}  branch=${row.branch}  path=${quoteIfSpaced(row.path)}  worker=${row.workerAgentId ?? 'none'}  `
+    + `review=${row.verdict ?? 'not reviewed'}  label=${JSON.stringify(row.label)}`,
   ).join('\n')
 }
