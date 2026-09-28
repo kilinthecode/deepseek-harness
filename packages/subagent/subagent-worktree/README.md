@@ -109,6 +109,7 @@ Cleanup that must run after the caller cancelled — aborting this accept's own 
 | [`src/index.ts`](src/index.ts) | The `SubagentWorktrees` service: the `Config` interface and schema, thin method bodies, the exported `assertWorktreeId`, and the constructor, which resolves `root`, the reviewer route, and the commit author once at load (`create` and `list` resolve the repository through `repoIdentityOf` on each call) |
 | [`src/config.ts`](src/config.ts) | Resolves and validates the flat reviewer-route and commit-author `Config` fields once at load; `Config` itself is declared in `src/index.ts` |
 | [`src/worktree-id.ts`](src/worktree-id.ts) | The `wt-` id format: `assertWorktreeId`, applied at every public method and before any path is built from an id, and the non-throwing `isWorktreeId` that record listing uses to skip stray files |
+| [`src/guards.ts`](src/guards.ts) | The structural type guards (`isPlainObject`, `isStringArray`) shared by stored-record validation and reviewer-result validation |
 | [`src/git.ts`](src/git.ts) | Argv git commands through `ctx.subprocess`, with a scrubbed non-interactive environment, bounded output, and a lossy-capture check for output that is parsed |
 | [`src/check-command.ts`](src/check-command.ts) | Runs the configured (non-git) check command under its deadline and collects its combined output |
 | [`src/paths.ts`](src/paths.ts) | Pure directory-layout computation: the per-repository key and every path under it |

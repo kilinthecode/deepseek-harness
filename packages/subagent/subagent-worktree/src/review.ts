@@ -13,6 +13,7 @@ import type { Agent } from '@deepseek-ai/dsh-agent'
 import { parentAgentOptionsForDelegation } from '@deepseek-ai/dsh-subagent'
 import { truncateUtf8Prefix } from './bounds.ts'
 import type { GitRunner } from './git.ts'
+import { isPlainObject, isStringArray } from './guards.ts'
 import { renderReviewerPrompt, VERDICT_SCHEMA } from './text.ts'
 import type { WorktreeRoute, WorktreeVerdict } from './types.ts'
 
@@ -55,14 +56,6 @@ export function callerRouteOf(parent: Agent): WorktreeRoute {
     model: options.model,
     ...options.reasoningEffort === undefined ? {} : { reasoningEffort: options.reasoningEffort },
   }
-}
-
-function isPlainObject(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null && !Array.isArray(value)
-}
-
-function isStringArray(value: unknown): value is string[] {
-  return Array.isArray(value) && value.every(item => typeof item === 'string')
 }
 
 /** Structural validation of the reviewer's `structured` result against {@link VERDICT_SCHEMA}, in host code. */

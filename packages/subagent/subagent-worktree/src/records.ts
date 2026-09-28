@@ -13,6 +13,7 @@ import { dirname, join } from 'node:path'
 import { withFileLock, writeFileAtomic } from '@deepseek-ai/dsh-atomic-write'
 import { brandString } from '@deepseek-ai/dsh-brand'
 import { pathExists } from './fs-util.ts'
+import { isPlainObject, isStringArray } from './guards.ts'
 import { layoutFor, recordPathFor, repoKeyFor, worktreeDirFor } from './paths.ts'
 import type { WorktreeLayout } from './paths.ts'
 import type { WorktreeId, WorktreeOwner, WorktreeRecord, WorktreeRoute, WorktreeVerdict } from './types.ts'
@@ -92,14 +93,6 @@ export async function pickWorktreeId(
  */
 export function generateWorktreeId(layout: WorktreeLayout): Promise<WorktreeId> {
   return pickWorktreeId(async id => pathExists(recordPathFor(layout, id)))
-}
-
-function isPlainObject(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null && !Array.isArray(value)
-}
-
-function isStringArray(value: unknown): value is string[] {
-  return Array.isArray(value) && value.every(item => typeof item === 'string')
 }
 
 function isWorktreeOwner(value: unknown): value is WorktreeOwner {

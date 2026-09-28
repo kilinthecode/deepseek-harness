@@ -109,6 +109,7 @@ kind: "package-reference"
 | [`src/index.ts`](src/index.ts) | `SubagentWorktrees` 服务:`Config` 接口与 schema、精简的方法体、导出的 `assertWorktreeId`,以及构造函数——它在加载时一次性解析 `root`、评审者路由与提交作者(`create` 与 `list` 则在每次调用时通过 `repoIdentityOf` 解析仓库) |
 | [`src/config.ts`](src/config.ts) | 在加载时一次性解析并校验扁平化的评审者路由与提交作者 `Config` 字段;`Config` 本身声明在 `src/index.ts` 中 |
 | [`src/worktree-id.ts`](src/worktree-id.ts) | `wt-` id 格式:在每个公开方法处以及据 id 构造任何路径之前使用的 `assertWorktreeId`,以及记录列表用来跳过无关文件的、不抛异常的 `isWorktreeId` |
+| [`src/guards.ts`](src/guards.ts) | 存储记录校验与评审结果校验共用的结构化类型守卫(`isPlainObject`、`isStringArray`) |
 | [`src/git.ts`](src/git.ts) | 通过 `ctx.subprocess` 执行的 argv 形式 git 命令,带有经过清理的非交互式环境、有边界的输出,以及对需要解析的输出的有损捕获检查 |
 | [`src/check-command.ts`](src/check-command.ts) | 在时限内运行已配置的(非 git)检查命令并收集其合并输出 |
 | [`src/paths.ts`](src/paths.ts) | 纯粹的目录布局计算:按仓库划分的键及其下的每一条路径 |
