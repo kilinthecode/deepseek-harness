@@ -1,17 +1,15 @@
-# Optional agent-crew bundle: switches the subagent tool to worktree
-# isolation and adds the tools and skill that land, discard, and list those
-# worktrees. An id-targeted patch replaces the whole config, so the
-# tool-subagent row restates its dsh-base fields alongside the new
-# worktreeIsolation switch. It does not add modelSelectionSettings: a row
-# outside an agent preset rejects that flag at load, so worker route
-# selection stays with the preset rows that set it.
+# Optional agent-crew bundle: offers worktree isolation on every subagent
+# delegation tool and adds the tools and skill that land, discard, and list
+# those worktrees. The switch is the shared subagent-worktree row's
+# offerIsolation setting, not a tool-subagent row's worktreeIsolation: agent
+# presets mount their own tool-subagent rows, which an id-targeted patch cannot
+# reach, while every tool reads this service when it mounts. The base row
+# carries no config, so this patch replaces nothing. A later patch on the row
+# replaces this whole config and must restate offerIsolation.
 
-- id: tool-subagent
+- id: subagent-worktree
   config:
-    provider: spawn
-    toolName: subagent
-    backgroundMode: continuable
-    worktreeIsolation: true
+    offerIsolation: true
 
 - insert:
     - id: tool-subagent-worktree

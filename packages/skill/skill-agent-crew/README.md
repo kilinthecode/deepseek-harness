@@ -29,7 +29,7 @@ Enable the plugin to make the `agent-crew` skill available in the session skill 
 
 ### When to choose it
 
-Choose this provider where worker-agent delegation with independent review is available and worth surfacing as a named workflow: alongside `@deepseek-ai/dsh-tool-subagent-worktree` and a `subagent` tool with `worktreeIsolation` enabled (the `@deepseek-ai/dsh-agent-crew` bundle mounts all three together). Skip it where those tools are not mounted — the skill's instructions name them directly, so loading it without them leaves a model unable to follow the workflow.
+Choose this provider where worker-agent delegation with independent review is available and worth surfacing as a named workflow: alongside `@deepseek-ai/dsh-tool-subagent-worktree` and a `subagent` tool that offers `isolation: "worktree"` (the `@deepseek-ai/dsh-agent-crew` bundle provides all three together). Skip it where those tools are not mounted — the skill's instructions name them directly, so loading it without them leaves a model unable to follow the workflow.
 
 ### Enable the plugin
 
@@ -65,13 +65,13 @@ This section explains how the bundled provider is wired; the observable behavior
 
 ### Design concept
 
-The provider is an immutable, synchronously registered skill source: it registers one fixed candidate at the bundled skill rank (600) under the provider name `agent-crew`, exposes its packaged `assets/` directory as the skill's directory resource base, and reads the skill body from the packaged `assets/agent-crew.md` file on every load. It copies the `skill-badge` shape exactly.
+The provider is an immutable, synchronously registered skill source: it registers one fixed candidate at the bundled skill rank (600) under the provider name `agent-crew`, exposes its packaged `assets/` directory as the skill's directory resource base, and reads the skill body from the packaged `assets/agent-crew.md` file on every load. The provider comes from `bundledSkillProvider` in `@deepseek-ai/dsh-skill`, the same helper `skill-badge` uses.
 
 ### Source map
 
 | File | Role |
 |---|---|
-| [`src/index.ts`](src/index.ts) | Plugin entry and the immutable provider: one candidate, resource base, body load |
+| [`src/index.ts`](src/index.ts) | Plugin entry and the provider, built with `bundledSkillProvider` from `@deepseek-ai/dsh-skill`: one candidate, resource base, body load |
 | [`assets/agent-crew.md`](assets/agent-crew.md) | Packaged skill body: when to use it, decomposition, the worker brief, spawning, and landing each part |
 | — | No runtime invariant companion is published; the package owns one immutable provider registration, while the skill registry owns registration uniqueness and lifecycle checks. |
 

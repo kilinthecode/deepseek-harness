@@ -25,7 +25,7 @@ English | [中文](README.zh.md)
 <a id="use-this-package"></a>
 ## Use this package
 
-Mount this package wherever a `subagent` delegation tool offers `isolation: "worktree"` (see `@deepseek-ai/dsh-tool-subagent`'s `worktreeIsolation` config and the `@deepseek-ai/dsh-agent-crew` bundle). It requires `ctx.subagentWorktrees` (`@deepseek-ai/dsh-subagent-worktree`), already mounted, inert, in the shared `dsh-base` composition.
+Mount this package wherever a `subagent` delegation tool offers `isolation: "worktree"`, whether through a tool row's `worktreeIsolation` config (see `@deepseek-ai/dsh-tool-subagent`) or through the service's `offerIsolation` setting, which the `@deepseek-ai/dsh-agent-crew` bundle sets. It requires `ctx.subagentWorktrees` (`@deepseek-ai/dsh-subagent-worktree`), already mounted, inert, in the shared `dsh-base` composition.
 
 ### Minimal configuration
 
@@ -58,7 +58,7 @@ Lists the caller's own still-open worktrees (`open` and `reviewing` states), eac
 
 ### Design concept
 
-Each tool converts the calling Agent into the service's request shape and nothing more: owner is always `{ kind: 'session', sessionId: <calling Agent id> }`, `accept_worktree`'s parent is the calling Agent itself, and `list_worktrees`'s `baseDir` is the calling Session's `header.cwd`. The tools hold no state of their own; every id, state, and verdict comes from `ctx.subagentWorktrees`'s durable record.
+Each tool converts the calling Agent into the service's request shape and nothing more: owner is always `{ kind: 'session', sessionId: <calling Agent id> }`, `accept_worktree`'s parent is the calling Agent itself, and `list_worktrees`'s `baseDir` is the calling Session's `header.cwd`. The `worktree_id` argument of `accept_worktree` and `discard_worktree` is checked with the service's exported `assertWorktreeId` before the service is called, so a malformed id from the model is rejected at the tool boundary with the service's own message. The tools hold no state of their own; every id, state, and verdict comes from `ctx.subagentWorktrees`'s durable record.
 
 ### Declared results and rendered text
 

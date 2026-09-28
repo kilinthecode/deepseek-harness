@@ -260,7 +260,7 @@ describe('dsh agents command-line provider', () => {
       const { values, observed } = await bootStartup(['--help'])
       expect(values).toBeUndefined()
       expect(observed.exits).toEqual([0])
-      expect(observed.out).toContain('Split a task across worker agents')
+      expect(observed.out).toContain('Run a task in a worker agent\'s own git worktree')
     })
 
     it('prints run-specific help and exits 0', async () => {

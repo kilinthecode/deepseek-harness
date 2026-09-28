@@ -359,10 +359,11 @@
       config:
         providerName: fork
 
-    # Inert until an optional bundle switches the subagent tool to worktree
-    # isolation: no tools, prompt section, or session events of its own. One
-    # instance is shared by every bundle that needs it, so it lives in the
-    # shared base rather than in each consumer's own patch layer.
+    # Inert until an optional bundle offers worktree isolation on the subagent
+    # tool through this row's offerIsolation setting: no tools, prompt section,
+    # or session events of its own. One instance is shared by every bundle that
+    # needs it, so it lives in the shared base rather than in each consumer's
+    # own patch layer.
     - id: subagent-worktree
       name: '@deepseek-ai/dsh-subagent-worktree'
 

@@ -124,7 +124,10 @@ describe('tool-subagent-worktree wiring', () => {
         const result = await callTool(ctx, toolName, { worktree_id: badId }, agent)
 
         expect(result.isError).toBe(true)
-        expect(text(result)).toContain('is not a worktree id')
+        // The rejection is the service's own id check, applied here so a malformed id never reaches the service.
+        expect(text(result)).toContain(
+          `subagent-worktree: "${badId}" is not a worktree id (expected "wt-" followed by eight lowercase hexadecimal digits)`,
+        )
         expect(fake.acceptCalls).toHaveLength(0)
         expect(fake.discardCalls).toHaveLength(0)
       })

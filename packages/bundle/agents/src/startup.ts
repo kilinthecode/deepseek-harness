@@ -176,8 +176,8 @@ export function apply(ctx: Context): void {
   const program = new Command()
     .name('dsh agents')
     .description(
-      'Split a task across worker agents that each work in their own git worktree, with an independent '
-      + 'reviewer checking every change before it merges.',
+      'Run a task in a worker agent\'s own git worktree, with an independent reviewer checking the '
+      + 'change before it merges.',
     )
     .helpOption('-h, --help', 'show this help')
 
