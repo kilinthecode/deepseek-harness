@@ -199,6 +199,9 @@ importers:
       '@deepseek-ai/dsh-acp-app':
         specifier: workspace:*
         version: link:../../packages/bundle/acp-app
+      '@deepseek-ai/dsh-agent-crew':
+        specifier: workspace:*
+        version: link:../../packages/bundle/agent-crew
       '@deepseek-ai/dsh-agent-instructions':
         specifier: workspace:*
         version: link:../../packages/context/agent-instructions
@@ -1891,6 +1894,25 @@ importers:
         specifier: workspace:~
         version: link:../../../vendor/include
 
+  packages/bundle/agent-crew:
+    dependencies:
+      '@deepseek-ai/dsh-skill-agent-crew':
+        specifier: workspace:*
+        version: link:../../skill/skill-agent-crew
+      '@deepseek-ai/dsh-tool-subagent-worktree':
+        specifier: workspace:*
+        version: link:../../subagent/tool-subagent-worktree
+    devDependencies:
+      '@deepseek-ai/cordis':
+        specifier: workspace:~
+        version: link:../../../vendor/cordis
+      '@deepseek-ai/cordis-plugin-include':
+        specifier: workspace:~
+        version: link:../../../vendor/include
+      js-yaml:
+        specifier: ^4.2.0
+        version: 4.3.1
+
   packages/bundle/base:
     dependencies:
       '@deepseek-ai/cordis-plugin-timer':
@@ -2091,6 +2113,9 @@ importers:
       '@deepseek-ai/dsh-subagent-spawn-in-process':
         specifier: workspace:*
         version: link:../../subagent/subagent-spawn-in-process
+      '@deepseek-ai/dsh-subagent-worktree':
+        specifier: workspace:*
+        version: link:../../subagent/subagent-worktree
       '@deepseek-ai/dsh-subprocess-local':
         specifier: workspace:*
         version: link:../../subprocess/subprocess-local
@@ -11670,6 +11695,15 @@ importers:
         specifier: workspace:*
         version: link:../../core/scope
 
+  packages/skill/skill-agent-crew:
+    devDependencies:
+      '@deepseek-ai/cordis':
+        specifier: workspace:~
+        version: link:../../../vendor/cordis
+      '@deepseek-ai/dsh-skill':
+        specifier: workspace:*
+        version: link:../skill
+
   packages/skill/skill-badge:
     devDependencies:
       '@deepseek-ai/cordis':
@@ -12758,6 +12792,37 @@ importers:
       '@deepseek-ai/dsh-subagent-spawn-in-process':
         specifier: workspace:*
         version: link:../subagent-spawn-in-process
+      '@deepseek-ai/dsh-tools':
+        specifier: workspace:*
+        version: link:../../core/tools
+
+  packages/subagent/tool-subagent-worktree:
+    dependencies:
+      '@deepseek-ai/dsh-brand':
+        specifier: workspace:*
+        version: link:../../util/brand
+      '@deepseek-ai/dsh-util-values':
+        specifier: workspace:*
+        version: link:../../util/values
+    devDependencies:
+      '@deepseek-ai/cordis':
+        specifier: workspace:~
+        version: link:../../../vendor/cordis
+      '@deepseek-ai/dsh-agent':
+        specifier: workspace:*
+        version: link:../../core/agent
+      '@deepseek-ai/dsh-agent-loop':
+        specifier: workspace:*
+        version: link:../../core/agent-loop
+      '@deepseek-ai/dsh-agent-loop-testkit':
+        specifier: workspace:*
+        version: link:../../test-support/agent-loop-testkit
+      '@deepseek-ai/dsh-session':
+        specifier: workspace:*
+        version: link:../../core/session
+      '@deepseek-ai/dsh-subagent-worktree':
+        specifier: workspace:*
+        version: link:../subagent-worktree
       '@deepseek-ai/dsh-tools':
         specifier: workspace:*
         version: link:../../core/tools
