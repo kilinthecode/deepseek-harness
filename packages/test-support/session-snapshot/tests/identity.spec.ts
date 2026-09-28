@@ -167,6 +167,54 @@ describe('session snapshot identity redaction', () => {
     expect(redacted).toBe(source)
   })
 
+  it('mints a repoKey token for the worktree service per-repository directory segment', () => {
+    const repoKeyA = 'harness-1a2b3c4d5e6f'
+    const repoKeyB = 'harness-fedcba987654'
+    const source = [
+      JSON.stringify({
+        type: 'user/message',
+        data: {
+          role: 'user',
+          content: [{
+            type: 'text',
+            text: `You work in your own git worktree at /tmp/work/.dsh/worktrees/${repoKeyA}/${worktreeId} on branch dsh/worktree/${worktreeId}.`,
+          }],
+          source: { kind: 'user' },
+        },
+      }),
+      JSON.stringify({
+        type: 'tool/result',
+        data: {
+          reviewDir: `/tmp/work/.dsh/worktrees/${repoKeyB}/reviews/${worktreeId}-1`,
+        },
+      }),
+      '',
+    ].join('\n')
+
+    const [redacted] = redactSessionSnapshotIds([source])
+    expect(redacted).toContain('/worktrees/{{repoKey:1}}/{{worktree:1}}')
+    expect(redacted).toContain('/worktrees/{{repoKey:2}}/reviews/{{worktree:1}}-1')
+    expect(redacted).not.toContain(repoKeyA)
+    expect(redacted).not.toContain(repoKeyB)
+    expect(redactSessionSnapshotIds([redacted!])).toEqual([redacted])
+  })
+
+  it('leaves a bare repository-like segment outside a worktrees directory untouched', () => {
+    const source = [
+      JSON.stringify({
+        type: 'example',
+        data: {
+          notAWorktreePath: '/tmp/work/harness-1a2b3c4d5e6f/subdir',
+          missingTrailingSegment: '/tmp/work/.dsh/worktrees/harness-1a2b3c4d5e6f',
+        },
+      }),
+      '',
+    ].join('\n')
+
+    const [redacted] = redactSessionSnapshotIds([source])
+    expect(redacted).toBe(source)
+  })
+
   it('keeps a canonical token first seen through a generic id key', () => {
     const canonical = '{{message:7}}'
     const nextMessage = 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb'

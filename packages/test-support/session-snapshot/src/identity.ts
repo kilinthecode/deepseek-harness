@@ -2,14 +2,14 @@
 
 const UUID_FRAGMENT_RE = /[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/i
 const LEGACY_TOKEN_RE = /^\{\{(?:sessionId|messageId)\}\}$/
-const CANONICAL_TOKEN_RE = /^\{\{(session|message|approval|workflow|command|rpc|retry|id|worktree|commit):([1-9]\d*)\}\}$/
+const CANONICAL_TOKEN_RE = /^\{\{(session|message|approval|workflow|command|rpc|retry|id|worktree|commit|repoKey):([1-9]\d*)\}\}$/
 const ID_KEY_RE = /(?:^id$|Id$|Ids$)/
 // A value that IS one of these ids owns that kind even when a generic id-shaped
 // key discovers it first, so one relationship never splits across two kinds.
 const WORKTREE_ID_RE = /^wt-[0-9a-f]{8}$/
 const COMMIT_ID_RE = /^[0-9a-f]{40}$/
 
-type IdentityKind = 'session' | 'message' | 'approval' | 'workflow' | 'command' | 'rpc' | 'retry' | 'id' | 'worktree' | 'commit'
+type IdentityKind = 'session' | 'message' | 'approval' | 'workflow' | 'command' | 'rpc' | 'retry' | 'id' | 'worktree' | 'commit' | 'repoKey'
 
 interface ParsedLog {
   readonly records: Record<string, unknown>[]
@@ -92,6 +92,14 @@ export function redactSessionSnapshotIds(logs: readonly string[]): string[] {
       // so a 40-character window inside a longer digest is not a commit.
       for (const match of value.matchAll(/\bwt-[0-9a-f]{8}\b/g)) claim(match[0], 'worktree')
       for (const match of value.matchAll(/(?<![0-9a-fA-F])[0-9a-f]{40}(?![0-9a-fA-F])/g)) claim(match[0], 'commit')
+      // The worktree service's per-repository directory name — a sanitized repo
+      // basename plus a 12-hex digest of its canonical path (`repoKeyFor` in
+      // dsh-subagent-worktree) — changes with the checkout path, so the segment
+      // right after the literal `worktrees` directory needs its own token
+      // distinct from the `{{cwd}}` prefix that covers the rest of the path.
+      // Anchored on that literal directory name, so `always` bypasses the
+      // generic shape check the same way a `commandId`/`rpcId` field does.
+      for (const match of value.matchAll(/\/worktrees\/([A-Za-z0-9._-]+-[0-9a-f]{12})(?=\/)/g)) claim(match[1], 'repoKey', true)
       return
     }
     if (Array.isArray(value)) {
