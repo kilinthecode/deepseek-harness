@@ -216,7 +216,7 @@ export class SubagentRuntime extends TypertRemoteService {
     this.emitLifecycle = createLifecycleEmitter(this.ctx, parent => scopeTarget(this, parent))
     ctx.inject(['agents'], (childCtx: Context) => {
       const manager = new SubagentContinuationManager(childCtx, {
-        prepareContinuable: (name, request) => this.prepareContinuable(name, request),
+        prepareContinuable: (name, request, cwd) => this.prepareContinuable(name, request, cwd),
         observeActivation: (provider, childId, parent) => this.observeActivation(provider, childId, parent),
       }, () => this.config.maxActiveSubagents.get())
       this.continuations = manager
@@ -591,13 +591,22 @@ export class SubagentRuntime extends TypertRemoteService {
   /**
    * Resolve one provider's detached continuable-creation contribution. Method
    * presence on the provider IS the capability, so a provider without it is
-   * rejected before the manager reserves any child resources.
+   * rejected before the manager reserves any child resources. `cwd` is
+   * validated here too — where the provider is resolved — because a
+   * continuable child is composed by the continuation manager itself and
+   * never reaches {@link assertCapabilities}.
+   * @param name - the provider to resolve.
+   * @param request - the provider-facing continuable-creation request.
+   * @param cwd - the request's validated child cwd override, or `undefined`
+   *   when the child inherits the parent's; never forwarded to the provider.
    */
   private async prepareContinuable(
     name: string,
     request: ContinuableCreateRequest,
+    cwd: string | undefined,
   ): Promise<ContinuableCreateSpec> {
     const provider = this.expectProvider(name)
+    if (cwd !== undefined) this.assertCapability(provider, 'cwd')
     if (provider.prepareContinuable === undefined) {
       throw new SubagentError(
         `subagent provider "${provider.name}" does not support continuable children `
@@ -651,12 +660,17 @@ export class SubagentRuntime extends TypertRemoteService {
       { when: request.cwd !== undefined, cap: 'cwd' },
     ]
     for (const { when, cap } of needs) {
-      if (when && !provider.capabilities[cap]) {
-        throw new SubagentError(
-          `subagent provider "${provider.name}" does not support the "${cap}" capability`,
-          'UNSUPPORTED_CAPABILITY',
-        )
-      }
+      if (when) this.assertCapability(provider, cap)
+    }
+  }
+
+  /** Reject `cap` when `provider` does not advertise it. */
+  private assertCapability(provider: SubagentProvider, cap: keyof SubagentCapabilities): void {
+    if (!provider.capabilities[cap]) {
+      throw new SubagentError(
+        `subagent provider "${provider.name}" does not support the "${cap}" capability`,
+        'UNSUPPORTED_CAPABILITY',
+      )
     }
   }
 }

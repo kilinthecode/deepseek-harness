@@ -68,8 +68,13 @@ type ChildDeliveryOptions =
 
 /** Package-private hooks supplied by the owning service. */
 interface ContinuationHost {
-  /** Resolve one provider's detached continuable-creation contribution. */
-  prepareContinuable(name: string, request: ContinuableCreateRequest): Promise<ContinuableCreateSpec>
+  /**
+   * Resolve one provider's detached continuable-creation contribution.
+   * @param cwd - the request's validated child cwd override, or `undefined`;
+   *   the host rejects it against the provider's `cwd` capability but never
+   *   forwards it to the provider.
+   */
+  prepareContinuable(name: string, request: ContinuableCreateRequest, cwd: string | undefined): Promise<ContinuableCreateSpec>
   /** Build the lifecycle observer for one Activation residency epoch. */
   observeActivation(provider: string, childId: SessionId, parent: Agent): ActivationObserver
 }
@@ -143,7 +148,7 @@ export class SubagentContinuationManager {
         sessionId: childId,
         parent,
         signal: spec.signal,
-      })
+      }, childCwd)
       spec.signal.throwIfAborted()
       this.activations.assertAdmitting(parent)
 
@@ -178,10 +183,11 @@ export class SubagentContinuationManager {
           signal: spec.signal,
         })
         const childHeader = activation.handle.agent.session.header
+        const sharesWorkspace = childHeader.cwd === parent.session.header.cwd
         return await this.submitMaterialized(
           activation,
           isAdjacentAgentSendMessageTool(this.ctx.get('tools')?.get('send_message', activation.handle.agent))
-            ? withContinuableReturnGuidance(parent.id, request.prompt)
+            ? withContinuableReturnGuidance(parent.id, request.prompt, sharesWorkspace)
             : request.prompt,
           { source: { kind: 'user' }, signal: spec.signal, delivery: 'queue' },
           parent,

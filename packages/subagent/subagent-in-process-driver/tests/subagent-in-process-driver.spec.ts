@@ -1,3 +1,4 @@
+import { tmpdir } from 'node:os'
 import { ToolCallId, createUserMessage } from '@deepseek-ai/dsh-llm'
 import type { ContextFormed } from '@deepseek-ai/dsh-llm'
 import { describe, expect, it } from 'vitest'
@@ -87,6 +88,32 @@ describe('startInProcessRun', () => {
     expect(child.session.header.cwd).toBe('/workspace')
     await expect(run.result).resolves.toMatchObject({ stopReason: 'completed' })
     await run.dispose()
+  })
+
+  it("lets a request cwd override win over the parent's in the child SessionHeader.cwd", async () => {
+    const { ctx } = await setup([textResponse('driver answer')])
+    const parent = await ctx.agentLoop.create(SessionId('cwd-override-parent'), {}, { cwd: '/workspace' })
+    const run = await startInProcessRun({ ...request(parent), cwd: tmpdir() }, {})
+
+    const child = ctx.agents.get(run.id)!
+    expect(child.session.header.cwd).toBe(tmpdir())
+    expect(child.session.header.cwd).not.toBe('/workspace')
+    await run.dispose()
+  })
+
+  it('rejects a relative request cwd before creating a child', async () => {
+    const { ctx, parent } = await setup([])
+    await expect(startInProcessRun({ ...request(parent), cwd: 'relative/dir' }, {}))
+      .rejects.toThrow('must be an absolute path')
+    expect(ctx.agents.list().map(agent => agent.id)).toEqual([SessionId('parent')])
+  })
+
+  it('rejects a nonexistent request cwd before creating a child', async () => {
+    const { ctx, parent } = await setup([])
+    const missing = `${tmpdir()}/dsh-subagent-driver-cwd-does-not-exist-xyz`
+    await expect(startInProcessRun({ ...request(parent), cwd: missing }, {}))
+      .rejects.toThrow('is not an accessible directory')
+    expect(ctx.agents.list().map(agent => agent.id)).toEqual([SessionId('parent')])
   })
 
   it('reports a prompt a pre-step rejection discarded as refusal, not completion', async () => {

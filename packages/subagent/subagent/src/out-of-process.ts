@@ -51,8 +51,11 @@ function normalizeSubagentDiagnostic(result: SubagentResult): SubagentResult {
 /**
  * The capability advertisement of an out-of-process backend: NONE. A child in
  * another process cannot honor parent-enforced start features
- * (`agentOptions`/`outputSchema`/`maxDepth`/`toolFilter`/`persona`), so the service rejects a
- * request needing any of them before `start` runs — never accepted-then-ignored.
+ * (`agentOptions`/`outputSchema`/`maxDepth`/`toolFilter`/`persona`/`cwd`), so the service rejects a
+ * request needing any of them before `start` runs — never accepted-then-ignored. An out-of-process
+ * backend still resolves a working directory for the child, from its own `cwd` configuration or the
+ * delegating parent session's workspace ({@link resolveChildCwd}); it just cannot honor a PER-REQUEST
+ * override yet.
  */
 export const NO_START_CAPABILITIES: SubagentCapabilities = Object.freeze({
   agentOptions: false,
