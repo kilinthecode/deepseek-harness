@@ -924,6 +924,9 @@ describe('room collective decisions', () => {
     await addLiveParticipant(ctx, lead, 'alice')
     await expect(ctx.agentTeams.roomPropose(lead, { statement: 'no timer here', signal: SIGNAL }))
       .rejects.toMatchObject({ code: 'TEAM_TIMER_REQUIRED' })
+    // The refusal precedes the append, so the room owns no decision that
+    // nothing could ever settle.
+    expect(ctx.agentTeams.roomView(lead).proposals).toEqual([])
   })
 
 

@@ -26,11 +26,11 @@ const OFFICIAL_BUILD_PROFILE = 'official'
  * never mix across HMR; the Portal hero mark waits on its own declaration,
  * because a composition without a Conversation still shows the sidebar brand.
  *
- * The `official` pair is upstream's own occupant set, kept in its place so an
- * upstream sync and the expectation files that pin the shipped brand both keep
- * holding; every other dressed profile shows this fork's brand. A profile this
- * package does not dress leaves every slot on its declaring package's fallback.
- * The Portal name entry declares the shared `common` namespace so the render
+ * The `official` profile renders the shipped upstream brand — the fish mark and
+ * the `DeepSeek Harness` wordmark, which the committed expectations pin — and
+ * every other dressed profile shows this fork's brand. A profile this package
+ * does not dress leaves every slot on its declaring package's fallback. The
+ * Portal name entry declares the shared `common` namespace so the render
  * machinery synthesizes the `t` seat that carries its wordmark copy.
  * @param ctx - Client root context.
  */

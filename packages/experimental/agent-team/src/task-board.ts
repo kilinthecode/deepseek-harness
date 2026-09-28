@@ -148,7 +148,11 @@ export class TeamTaskBoard {
               'TEAM_TASK_INVALID_TRANSITION',
             )
           }
-          next = this.withoutOwner({ ...current, status: 'pending' })
+          // A recorded verdict judged the submission of the owner holding the
+          // task; returning the task to the pool ends that submission, and
+          // keeping the verdict would let its own verifier claim the task, which
+          // the fold refuses.
+          next = this.withoutVerification(this.withoutOwner({ ...current, status: 'pending' }))
           break
         case 'edit':
           authorizeOwner()
@@ -243,13 +247,16 @@ export class TeamTaskBoard {
               'TEAM_TASK_INVALID_TRANSITION',
             )
           }
+          // The verdict judged the previous owner's submission, so handing the
+          // task on clears it: a new owner must submit its own work, and the
+          // recorded verifier must be able to hold the task it judged.
           if (request.owner === undefined || request.owner.trim().length === 0) {
-            next = this.withoutOwner({ ...current, status: 'pending' })
+            next = this.withoutVerification(this.withoutOwner({ ...current, status: 'pending' }))
             break
           }
           if (!this.taskReady(state, current)) throw new TeamError(`team task "${current.id}" is blocked`, 'TEAM_TASK_BLOCKED')
           const assignee = resolveActiveMember(root, state, request.owner)
-          next = { ...current, status: 'in_progress', ownerId: assignee.id }
+          next = this.withoutVerification({ ...current, status: 'in_progress', ownerId: assignee.id })
           break
         }
         case 'delete': {

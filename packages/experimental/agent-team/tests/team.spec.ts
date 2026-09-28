@@ -874,6 +874,104 @@ describe('Team shared task DAG', () => {
     expect(completed.status).toBe('completed')
   })
 
+  it('clears a recorded verdict when the task changes hands', async () => {
+    // A rejection returns the task to its owner, so the Lead may hand that work
+    // to the peer that judged it; the recorded verdict goes with the submission
+    // it judged, or the fold would refuse the new owner.
+    const { ctx, lead } = await setup([
+      'hang',
+      'hang',
+      textResponse('lead noted the submission'),
+      textResponse('owner noted the verdict'),
+    ])
+    const ownerStarted = await spawn(ctx, lead, 'owner')
+    const owner = await waitRunning(ctx, ownerStarted.member.id)
+    const verifierStarted = await spawn(ctx, lead, 'verifier')
+    const verifier = await waitRunning(ctx, verifierStarted.member.id)
+
+    const task = await ctx.agentTeams.createTask(owner, { subject: 'work', description: 'work' })
+    const claimed = await ctx.agentTeams.updateTask(owner, {
+      taskId: task.id,
+      expectedRevision: task.revision,
+      action: 'claim',
+    })
+    const submitted = await ctx.agentTeams.updateTask(owner, {
+      taskId: task.id,
+      expectedRevision: claimed.revision,
+      action: 'submit',
+    })
+    const rejected = await ctx.agentTeams.updateTask(verifier, {
+      taskId: task.id,
+      expectedRevision: submitted.revision,
+      action: 'verify',
+      verdict: 'rejected',
+      reason: 'the cache bound is unchecked',
+    })
+    expect(rejected).toMatchObject({ status: 'in_progress', verification: { verdict: 'rejected' } })
+
+    const reassigned = await ctx.agentTeams.updateTask(lead, {
+      taskId: task.id,
+      expectedRevision: rejected.revision,
+      action: 'reassign',
+      owner: 'verifier',
+    })
+    expect(reassigned).toMatchObject({ status: 'in_progress', ownerName: 'verifier' })
+    expect(reassigned.verification).toBeUndefined()
+    // The log still folds, so the new owner can submit its own work.
+    const resubmitted = await ctx.agentTeams.updateTask(verifier, {
+      taskId: task.id,
+      expectedRevision: reassigned.revision,
+      action: 'submit',
+    })
+    expect(resubmitted.status).toBe('verifying')
+  })
+
+  it('lets the peer that rejected a released task claim it', async () => {
+    const { ctx, lead } = await setup([
+      'hang',
+      'hang',
+      textResponse('lead noted the submission'),
+      textResponse('owner noted the verdict'),
+    ])
+    const ownerStarted = await spawn(ctx, lead, 'owner')
+    const owner = await waitRunning(ctx, ownerStarted.member.id)
+    const verifierStarted = await spawn(ctx, lead, 'verifier')
+    const verifier = await waitRunning(ctx, verifierStarted.member.id)
+
+    const task = await ctx.agentTeams.createTask(owner, { subject: 'work', description: 'work' })
+    const claimed = await ctx.agentTeams.updateTask(owner, {
+      taskId: task.id,
+      expectedRevision: task.revision,
+      action: 'claim',
+    })
+    const submitted = await ctx.agentTeams.updateTask(owner, {
+      taskId: task.id,
+      expectedRevision: claimed.revision,
+      action: 'submit',
+    })
+    const rejected = await ctx.agentTeams.updateTask(verifier, {
+      taskId: task.id,
+      expectedRevision: submitted.revision,
+      action: 'verify',
+      verdict: 'rejected',
+      reason: 'the cache bound is unchecked',
+    })
+
+    const released = await ctx.agentTeams.updateTask(owner, {
+      taskId: task.id,
+      expectedRevision: rejected.revision,
+      action: 'release',
+    })
+    expect(released).toMatchObject({ status: 'pending' })
+    expect(released.verification).toBeUndefined()
+    const reclaimed = await ctx.agentTeams.updateTask(verifier, {
+      taskId: task.id,
+      expectedRevision: released.revision,
+      action: 'claim',
+    })
+    expect(reclaimed).toMatchObject({ status: 'in_progress', ownerName: 'verifier' })
+  })
+
   it('refuses verification of unsubmitted work and submissions that block on peers', async () => {
     const { ctx, lead } = await setup(['hang', 'hang'])
     const ownerStarted = await spawn(ctx, lead, 'owner')

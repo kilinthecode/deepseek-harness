@@ -198,6 +198,9 @@ export class TeamRoom {
   async propose(caller: Agent, request: ProposeRoomDecisionRequest): Promise<RoomProposalView> {
     const membership = this.membership(caller)
     const statement = requiredText(request.statement, 'statement', 4_000)
+    // Resolve the deadline owner first: a composition that cannot serve one must
+    // refuse before the room commits a decision nothing could ever settle.
+    this.requireTimer()
     const proposal = await this.journal.transact(membership.root.id, async () => {
       request.signal.throwIfAborted()
       const state = this.journal.state(membership.root)
@@ -236,16 +239,12 @@ export class TeamRoom {
       return next
     })
     this.published(membership.root.id)
-    // Resolve the timer before asking anyone, so a composition that cannot serve
-    // a deadline fails before the room delivers its requests.
-    this.requireTimer()
     try {
       await this.requestReviews(caller, proposal)
     } finally {
-      // The decision is durable and open from the append above, so it takes its
-      // deadline even when a delivery failure aborted the asks part-way. Arming
-      // here, once the asks settled, starts every window the room just opened
-      // rather than a deadline computed before any reviewer was told.
+      // The decision is durable and open, so it takes its deadline even when a
+      // delivery failure aborted the asks part-way. Arming here, once the asks
+      // settled, starts every window the room just opened.
       this.armReview(membership.root, proposal)
     }
     return this.proposalView(membership.root.id, proposal.id)
@@ -560,8 +559,11 @@ export class TeamRoom {
   ): Promise<void> {
     await this.journal.transact(root.id, async () => {
       const current = this.journal.state(root).roomProposals.find(candidate => candidate.id === proposal.id)
-      /* v8 ignore next -- only a concurrent settle can close the decision this sweep just read. */
-      if (current === undefined || current.phase !== 'open') return
+      // The escalation belongs to the revision whose windows expired. A settle
+      // closes the decision, and a supersede reopens it at the next revision
+      // with windows of its own, which this record must not cut short.
+      /* v8 ignore next -- reaching this needs a settle or supersede inside the sweep's own await. */
+      if (current === undefined || current.phase !== 'open' || current.revision !== proposal.revision) return
       await this.journal.appendAndFlush(root, 'room/proposal', {
         version: 1,
         teamId: TeamId(root.id),
