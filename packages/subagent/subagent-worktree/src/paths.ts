@@ -8,6 +8,7 @@
 
 import { createHash } from 'node:crypto'
 import { basename, join } from 'node:path'
+import { assertWorktreeId } from './worktree-id.ts'
 
 /** Hexadecimal digest length kept from the repository-path hash in a `repoKey`. */
 const REPO_KEY_HASH_HEX_LENGTH = 12
@@ -76,8 +77,10 @@ export function layoutFor(root: string, repoKey: string): WorktreeLayout {
  * @param layout - the repository's directory layout.
  * @param id - the worktree id.
  * @returns `<repoDir>/<id>`.
+ * @throws when `id` is not a valid worktree id.
  */
 export function worktreeDirFor(layout: WorktreeLayout, id: string): string {
+  assertWorktreeId(id)
   return join(layout.repoDir, id)
 }
 
@@ -86,8 +89,10 @@ export function worktreeDirFor(layout: WorktreeLayout, id: string): string {
  * @param layout - the repository's directory layout.
  * @param id - the worktree id.
  * @returns `<recordsDir>/<id>.json`.
+ * @throws when `id` is not a valid worktree id.
  */
 export function recordPathFor(layout: WorktreeLayout, id: string): string {
+  assertWorktreeId(id)
   return join(layout.recordsDir, `${id}.json`)
 }
 
@@ -97,8 +102,10 @@ export function recordPathFor(layout: WorktreeLayout, id: string): string {
  * @param id - the worktree id under review.
  * @param suffix - a value distinguishing this checkout from a prior attempt for the same id.
  * @returns `<reviewsDir>/<id>-<suffix>`.
+ * @throws when `id` is not a valid worktree id.
  */
 export function reviewCheckoutPathFor(layout: WorktreeLayout, id: string, suffix: string | number): string {
+  assertWorktreeId(id)
   return join(layout.reviewsDir, `${id}-${suffix}`)
 }
 
@@ -106,7 +113,9 @@ export function reviewCheckoutPathFor(layout: WorktreeLayout, id: string, suffix
  * Prefix shared by every review checkout directory belonging to one worktree id.
  * @param id - the worktree id.
  * @returns the `<id>-` prefix every one of its review checkout directory names starts with.
+ * @throws when `id` is not a valid worktree id.
  */
 export function reviewCheckoutPrefixFor(id: string): string {
+  assertWorktreeId(id)
   return `${id}-`
 }

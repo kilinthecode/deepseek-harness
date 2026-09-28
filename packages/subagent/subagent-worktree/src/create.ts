@@ -14,8 +14,22 @@ import type { GitRunner } from './git.ts'
 import { worktreeDirFor } from './paths.ts'
 import { countOpenSlots, createRecord, generateWorktreeId, layoutForRepo, toPublicRecord } from './records.ts'
 import type { StoredWorktreeRecord } from './records.ts'
-import { repoRootOf } from './repo.ts'
+import { repoIdentityOf } from './repo.ts'
 import type { CreateWorktreeRequest, ProvisionedWorktree } from './types.ts'
+
+/**
+ * Best-effort removal of a worktree and branch `git worktree add` just
+ * created, after a later provisioning step failed. Uses `run`, not `expect`:
+ * the caller's original error is what must reach the caller, so a further
+ * failure here is swallowed rather than thrown — a leftover is recovered by a
+ * later `git worktree prune` or an operator's cleanup.
+ */
+async function cleanupFailedWorktree(
+  git: GitRunner, repoRoot: string, worktreePath: string, branch: string, signal: AbortSignal,
+): Promise<void> {
+  await git.run(['worktree', 'remove', '--force', worktreePath], { cwd: repoRoot, signal })
+  await git.run(['branch', '-D', branch], { cwd: repoRoot, signal })
+}
 
 /**
  * Create one worktree for `request`.
@@ -25,7 +39,9 @@ import type { CreateWorktreeRequest, ProvisionedWorktree } from './types.ts'
  * @param maxWorktrees - `Config.maxWorktrees`.
  * @param request - owner, base directory, label, task, optional worker route, and cancellation.
  * @returns the committed `open` record, the worker directory, and any uncommitted base changes left out.
- * @throws when `request.baseDir` is not inside a git work tree, or the repository already has `maxWorktrees` open worktrees.
+ * @throws when `request.baseDir` is not inside a git work tree, or the repository already has `maxWorktrees`
+ *   open worktrees. `maxWorktrees` is advisory under concurrency: two `create` calls for the same repository
+ *   that both read the slot count before either persists a record can both pass this check.
  */
 export async function createWorktree(
   git: GitRunner,
@@ -34,11 +50,17 @@ export async function createWorktree(
   maxWorktrees: number,
   request: CreateWorktreeRequest,
 ): Promise<ProvisionedWorktree> {
-  const repoRoot = await repoRootOf(git, request.baseDir, request.signal)
-  if (repoRoot === undefined) {
+  const identity = await repoIdentityOf(git, request.baseDir, request.signal)
+  if (identity === undefined) {
     throw new Error(`subagent-worktree: "${request.baseDir}" is not inside a git work tree, so no isolated worktree can be created`)
   }
-  const layout = layoutForRepo(root, repoRoot)
+  const { repoRoot } = identity
+  // Keyed by the shared git common directory, not repoRoot: every linked
+  // worktree of one repository resolves the same commonDir, so worktrees
+  // created from different linked checkouts still share one records
+  // directory, merge lock, and maxWorktrees count. repoRoot — this specific
+  // checkout's own top-level directory — stays the record's merge target.
+  const layout = layoutForRepo(root, identity.commonDir)
 
   const openSlots = await countOpenSlots(layout)
   if (openSlots >= maxWorktrees) {
@@ -51,39 +73,50 @@ export async function createWorktree(
   await git.expect(['worktree', 'add', '-b', branch, worktreePath, 'HEAD'], 'git worktree add', {
     cwd: repoRoot, signal: request.signal,
   })
-  const head = await git.expect(['rev-parse', 'HEAD'], 'git rev-parse', { cwd: worktreePath, signal: request.signal })
-  const baseCommit = head.stdout.trim()
 
-  // Canonicalize both sides before computing the relative path: repoRoot is
-  // already a realpath, and baseDir may reach the same directory through a
-  // symlinked prefix (for example macOS's /tmp -> /private/tmp), which would
-  // otherwise turn an empty relative path into a spurious "../.." traversal.
-  const canonicalBaseDir = await realpath(request.baseDir)
-  const relativeBaseDir = relative(repoRoot, canonicalBaseDir)
-  const workDir = relativeBaseDir === '' ? worktreePath : join(worktreePath, relativeBaseDir)
+  try {
+    const head = await git.expectComplete(['rev-parse', 'HEAD'], 'git rev-parse', { cwd: worktreePath, signal: request.signal })
+    const baseCommit = head.stdout.trim()
 
-  const status = await git.expect(['status', '--porcelain'], 'git status', { cwd: repoRoot, signal: request.signal })
-  const { entries, total } = boundedLines(status.stdout, BASE_DIRTY_MAX_ENTRIES)
+    // Canonicalize both sides before computing the relative path: repoRoot is
+    // already a realpath, and baseDir may reach the same directory through a
+    // symlinked prefix (for example macOS's /tmp -> /private/tmp), which would
+    // otherwise turn an empty relative path into a spurious "../.." traversal.
+    const canonicalBaseDir = await realpath(request.baseDir)
+    const relativeBaseDir = relative(repoRoot, canonicalBaseDir)
+    const workDir = relativeBaseDir === '' ? worktreePath : join(worktreePath, relativeBaseDir)
 
-  const record: StoredWorktreeRecord = {
-    id,
-    repoRoot,
-    path: worktreePath,
-    branch,
-    baseCommit,
-    owner: request.owner,
-    label: request.label,
-    task: request.task,
-    state: 'open',
-    createdAt: Date.now(),
-    workerSessionIds: [],
-    workerRoute: request.workerRoute,
-  }
-  const persisted = await createRecord(layout, record)
+    const status = await git.expectComplete(['status', '--porcelain'], 'git status', { cwd: repoRoot, signal: request.signal })
+    const { entries, total } = boundedLines(status.stdout, BASE_DIRTY_MAX_ENTRIES)
 
-  return {
-    record: toPublicRecord(persisted),
-    workDir,
-    ...total === 0 ? {} : { baseDirty: { entries, total } },
+    const record: StoredWorktreeRecord = {
+      id,
+      repoRoot,
+      path: worktreePath,
+      branch,
+      baseCommit,
+      owner: request.owner,
+      label: request.label,
+      task: request.task,
+      state: 'open',
+      createdAt: Date.now(),
+      workerSessionIds: [],
+      workerRoute: request.workerRoute,
+    }
+    const persisted = await createRecord(layout, record)
+
+    return {
+      record: toPublicRecord(persisted),
+      workDir,
+      ...total === 0 ? {} : { baseDirty: { entries, total } },
+    }
+  } catch (error) {
+    try {
+      await cleanupFailedWorktree(git, repoRoot, worktreePath, branch, request.signal)
+    } catch {
+      // Best-effort: `error` below is what the caller must see; a leftover worktree/branch here is
+      // recovered by a later `git worktree prune` or an operator's cleanup.
+    }
+    throw error
   }
 }
