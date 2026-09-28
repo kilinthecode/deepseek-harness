@@ -18,23 +18,23 @@
   en: 76b014a66a385177
   zh: ac75327ff6761b8d
 /deepseek-ai-dsh-subagent-worktree/use-this-package/minimal-configuration:
-  en: 14a8ba8d90404790
-  zh: 5ece40c23abc0f8f
+  en: c104846def174521
+  zh: 2ddaadddaa4bd4bd
 /deepseek-ai-dsh-subagent-worktree/use-this-package/the-service-surface:
-  en: 118954779c3d200b
-  zh: d61cf70d0d3f12d0
+  en: 79ea139a19ef5ffa
+  zh: 48337ef97d5479b3
 /deepseek-ai-dsh-subagent-worktree/understand-the-implementation:
   en: b2345b933a935e3b
   zh: 569241afb6ed43fb
 /deepseek-ai-dsh-subagent-worktree/understand-the-implementation/design-concept:
-  en: e70938c35c23d127
-  zh: b3acb556b503e123
+  en: 7af0308a2b96f952
+  zh: 42a0007dd4feecbb
 /deepseek-ai-dsh-subagent-worktree/understand-the-implementation/run-flow-accept:
-  en: d627f9c3bfe955cd
-  zh: f4f8ebe58c8ecca8
+  en: b541f7a6cd29f9f0
+  zh: 1b8610b726295bd4
 /deepseek-ai-dsh-subagent-worktree/understand-the-implementation/source-map:
-  en: beb44e339a90bf76
-  zh: ce621da3ec0dd80f
+  en: f414dc08969fde94
+  zh: 15f74acaf869a65c
 /deepseek-ai-dsh-subagent-worktree/understand-the-implementation/host-realm-git:
   en: 2eb29de7af8fc523
   zh: f1cc6ad8367733bc
@@ -48,17 +48,17 @@
   en: acc730769dda106f
   zh: 3d939e243616b5dd
 /deepseek-ai-dsh-subagent-worktree/model-experience/worker-brief-and-reviewer-prompt-indirectly-through-consumers/what-the-model-sees:
-  en: a423ff95f193784b
-  zh: d8720473307bb0c0
+  en: e986fe96f184dbcb
+  zh: 7fcb74399905ca76
 /deepseek-ai-dsh-subagent-worktree/model-experience/worker-brief-and-reviewer-prompt-indirectly-through-consumers/token-effect:
-  en: 5fc84848fc615bd3
-  zh: e99dd1f7ed30029d
+  en: 05a3c24cd7485f80
+  zh: 92178e399742dede
 /deepseek-ai-dsh-subagent-worktree/model-experience/worker-brief-and-reviewer-prompt-indirectly-through-consumers/kv-cache-effect:
   en: a54ee1b58ac629d5
   zh: 42e79ba1cde57d8d
 /deepseek-ai-dsh-subagent-worktree/known-limitations-and-deferred-work:
-  en: 86f377de9541b60e
-  zh: a2c49317ed151388
+  en: e3f501541e3594b8
+  zh: 7f0c209d36fc6cf0
 /deepseek-ai-dsh-subagent-worktree/known-limitations-and-deferred-work/dev-note:
   en: e67f633dc6fe7773
   zh: de49618653126af1

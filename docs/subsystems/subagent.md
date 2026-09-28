@@ -708,6 +708,7 @@ create(request: CreateWorktreeRequest): Promise<ProvisionedWorktree>
  * Record one worker Session on an open worktree.
  * @param request - worktree id, owner, worker Session id, and route.
  * @returns the updated record.
+ * @throws when the id is malformed, no such worktree exists, the owner does not own it, or it is not `open`.
  */
 async attach(request: AttachWorkerRequest): Promise<WorktreeRecord>
 
@@ -726,13 +727,21 @@ resolveReviewer(request: ResolveReviewerRequest): WorktreeRoute
  * reviewer check the exact commit, and merge a passing change.
  * @param request - worktree id, owner, reviewer parent Agent, operator overrides, and cancellation.
  * @returns the accept outcome.
+ * @throws when the id is malformed, or a non-operator owner sets `testCommand` or `reviewer`; see {@link acceptWorktree}.
  */
-accept(request: AcceptWorktreeRequest): Promise<AcceptOutcome>
+async accept(request: AcceptWorktreeRequest): Promise<AcceptOutcome>
 
 /**
- * Delete one worktree and its branch without merging.
+ * Delete one worktree and its branch without merging. The record is claimed
+ * under its lock before any git change, so a concurrent `accept` cannot act on
+ * a worktree this call is deleting. A `merged` or `discarded` record is not
+ * changed: `discard` only removes a worktree directory or branch that a crash
+ * between the merge and its cleanup, or a failed earlier `discard`, left behind,
+ * so a retry after a failure finishes the cleanup.
  * @param request - worktree id, owner, and cancellation.
- * @returns the `discarded` record.
+ * @returns the `discarded` record, or the unchanged `merged` or `discarded` record after cleaning up its leftovers.
+ * @throws when the id is malformed, no such worktree exists, the owner does not own it, an attached worker is
+ *   still running, the record is being accepted, or a git cleanup command fails.
  */
 async discard(request: DiscardWorktreeRequest): Promise<WorktreeRecord>
 

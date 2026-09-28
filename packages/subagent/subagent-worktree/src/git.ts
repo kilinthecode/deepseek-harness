@@ -24,11 +24,34 @@ const DEFAULT_GIT_STDOUT_MAX_BYTES = 1024 * 1024
 /** In-memory stderr cap for every git command; diagnostics are inherently short. */
 const GIT_STDERR_MAX_BYTES = 64 * 1024
 
+/** Milliseconds one cleanup command may run on its own fresh signal; a fixed lifecycle constant, not a deployment tunable. */
+const CLEANUP_GRACE_MS = 30_000
+
+/**
+ * A fresh, non-aborted signal for the git commands that undo or classify a
+ * failed operation. The caller's own signal is often the reason the operation
+ * failed (it was cancelled), and a command started on an aborted signal never
+ * runs, so cleanup on that signal would leave the failure half undone: a merge
+ * still in progress, a worktree and branch still on disk. Bounded, so cleanup
+ * cannot hang.
+ * @returns a signal that aborts after a fixed grace period.
+ */
+export function cleanupSignal(): AbortSignal {
+  return AbortSignal.timeout(CLEANUP_GRACE_MS)
+}
+
 /** Settled git command facts; a nonzero exit is a result, not an exception — callers interpret it. */
 export interface GitCommandResult {
   readonly exitCode: number | null
   readonly stdout: string
   readonly stderr: string
+  /**
+   * Whether `stdout` lost data to its collection byte cap. A caller that only
+   * checks `exitCode` (`git add`, `git commit`, `git merge`) can ignore this;
+   * a caller that parses `stdout` (`rev-parse`, `status`, `diff --name-only`)
+   * must never act on a partial tail — see {@link GitRunner.expectComplete}.
+   */
+  readonly stdoutLossy: boolean
 }
 
 /** Per-command spawn facts. */
@@ -59,9 +82,18 @@ export class GitRunner {
 
   constructor(private readonly subprocess: SubprocessRuntime) {}
 
-  /** Resolve and cache the `git` executable for this runner's lifetime. */
+  /**
+   * Resolve and cache the `git` executable for this runner's lifetime. Only a
+   * fulfilled lookup is cached: a rejection (for example a transient resolver
+   * error, or an aborted `signal` on this very call) clears the cached promise
+   * first, so the failure does not poison every later command with the same
+   * rejected promise — the next call resolves fresh.
+   */
   private resolveExecutable(signal: AbortSignal | undefined): Promise<string> {
-    this.executable ??= this.subprocess.resolveExecutable('git', undefined, signal)
+    this.executable ??= this.subprocess.resolveExecutable('git', undefined, signal).catch((error: unknown) => {
+      this.executable = undefined
+      throw error
+    })
     return this.executable
   }
 
@@ -95,10 +127,13 @@ export class GitRunner {
     })
     const outcome = await handle.done
     /* v8 ignore start -- collect-mode stdio always yields both readers (seam contract). */
-    const stdout = handle.collected.stdout?.readFrom(0).text ?? ''
-    const stderr = handle.collected.stderr?.readFrom(0).text ?? ''
+    const stdoutRead = handle.collected.stdout?.readFrom(0)
+    const stderrRead = handle.collected.stderr?.readFrom(0)
+    const stdout = stdoutRead?.text ?? ''
+    const stderr = stderrRead?.text ?? ''
+    const stdoutLossy = stdoutRead?.lossy ?? false
     /* v8 ignore stop */
-    return { exitCode: outcome.exitCode, stdout, stderr }
+    return { exitCode: outcome.exitCode, stdout, stderr, stdoutLossy }
   }
 
   /**
@@ -112,6 +147,27 @@ export class GitRunner {
   async expect(args: readonly string[], what: string, options: GitRunOptions): Promise<GitCommandResult> {
     const result = await this.run(args, options)
     if (result.exitCode !== 0) throw new GitCommandError(what, result)
+    return result
+  }
+
+  /**
+   * {@link expect}, additionally failing loud when the captured stdout lost
+   * data to its collection byte cap. Use this instead of {@link expect} for
+   * every command whose `stdout` the caller goes on to parse (`rev-parse`,
+   * `status --porcelain`, `diff`, `diff --name-only`) — a caller that only
+   * checks the exit code has no need for it.
+   * @param args - git arguments; never shell-interpreted.
+   * @param what - short command description for the thrown message.
+   * @param options - working directory, output cap, and cancellation.
+   * @returns the successful result, with `stdout` guaranteed complete.
+   * @throws {GitCommandError} when the command exits nonzero.
+   * @throws when the command's `stdout` lost data to its byte cap.
+   */
+  async expectComplete(args: readonly string[], what: string, options: GitRunOptions): Promise<GitCommandResult> {
+    const result = await this.expect(args, what, options)
+    if (result.stdoutLossy) {
+      throw new Error(`subagent-worktree: ${what} output exceeded its capture limit; refusing to parse a partial result`)
+    }
     return result
   }
 }

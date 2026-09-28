@@ -12,6 +12,13 @@ describe('renderWorkerBrief', () => {
     expect(brief).toContain('/repo')
     expect(brief.endsWith('\n\n')).toBe(true)
   })
+
+  it('tells the worker not to run the commands that write to git, listing them', () => {
+    const brief = renderWorkerBrief({
+      workDir: '/worktrees/repo/wt-1', branch: 'dsh/worktree/wt-1', baseCommit: 'a'.repeat(40), repoRoot: '/repo',
+    })
+    expect(brief).toContain('Do not run git commands that write (commit, add, checkout, switch, restore, reset, stash, rebase, merge, worktree)')
+  })
 })
 
 describe('renderReviewerPrompt', () => {

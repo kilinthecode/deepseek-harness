@@ -23,11 +23,12 @@ export function git(cwd: string, ...args: string[]): string {
  * Create a temporary git repository with a local commit identity and no GPG
  * signing, so an automated `git commit` never blocks on host or global config.
  * @param prefix - `mkdtemp` prefix.
+ * @param objectFormat - `sha256` for a SHA-256 repository, whose commit ids have 64 digits; default SHA-1.
  * @returns the repository's absolute directory.
  */
-export async function initFixtureRepo(prefix: string): Promise<string> {
+export async function initFixtureRepo(prefix: string, objectFormat: 'sha1' | 'sha256' = 'sha1'): Promise<string> {
   const dir = await mkdtemp(join(tmpdir(), prefix))
-  git(dir, 'init', '-q', '-b', 'main')
+  git(dir, 'init', '-q', '-b', 'main', `--object-format=${objectFormat}`)
   git(dir, 'config', 'user.name', 'Worktree Test')
   git(dir, 'config', 'user.email', 'worktree-test@example.com')
   git(dir, 'config', 'commit.gpgsign', 'false')
@@ -39,10 +40,14 @@ export function removeFixture(dir: string): Promise<void> {
   return rm(dir, { recursive: true, force: true })
 }
 
-/** Build a minimal parent Agent: enough for `parentAgentOptionsForDelegation` and the reviewer's `parent` field. */
+/**
+ * Build a minimal parent Agent: exactly the three members `parentAgentOptionsForDelegation`
+ * and the reviewer's `parent` field read (`id`, `options`, `session`). `Agent` is an interface
+ * merged from many packages, so a literal of only these members needs one assertion.
+ */
 export function fakeAgent(id: string, options: AgentOptions = {}): Agent {
   const sessionId = SessionId(id)
-  return { id: sessionId, options, session: Session.create(sessionId) } as unknown as Agent
+  return { id: sessionId, options, session: Session.create(sessionId) } as Agent
 }
 
 /** Default worker route used by {@link createWorktree} when a test does not care about its exact value. */
@@ -54,11 +59,21 @@ export type TestConfig = Partial<Config> & { root: string }
 const DEFAULT_TEST_CONFIG = {
   branchPrefix: 'dsh/worktree/',
   maxWorktrees: 16,
-  requireDistinctReviewer: true,
+  requireDistinctReviewer: false,
   testCommand: [],
+  checkTimeoutMs: 60_000,
   reviewDiffMaxBytes: 1024,
   removeOnMerge: true,
 } satisfies Omit<Config, 'root'>
+
+/**
+ * The complete `Config` `setup` mounts the service with: the test defaults with `config` laid over them.
+ * @param config - `root` plus any `Config` overrides.
+ * @returns the full configuration, for tests that call an internal operation directly with their own git runner.
+ */
+export function resolveTestConfig(config: TestConfig): Config {
+  return { ...DEFAULT_TEST_CONFIG, ...config }
+}
 
 /**
  * Mount the real subprocess, subagent, and worktree services in a fresh context.
@@ -70,7 +85,7 @@ export async function setup(config: TestConfig): Promise<{ ctx: Context; dispose
   await ctx.plugin(LocalSubprocessRuntime)
   await ctx.plugin(AgentRegistry)
   await ctx.plugin(SubagentRuntime)
-  await ctx.plugin(SubagentWorktrees, { ...DEFAULT_TEST_CONFIG, ...config })
+  await ctx.plugin(SubagentWorktrees, resolveTestConfig(config))
   return { ctx, dispose: () => ctx.fiber.dispose() }
 }
 

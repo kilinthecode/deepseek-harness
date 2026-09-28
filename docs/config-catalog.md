@@ -178,6 +178,47 @@ export interface Config {
 ```
 <!-- END GENERATED config-catalog:@deepseek-ai/dsh-agent-tool-presentation -->
 
+<!-- BEGIN GENERATED config-catalog:@deepseek-ai/dsh-agents -->
+<a id="deepseek-aidsh-agents"></a>
+
+## `@deepseek-ai/dsh-agents`
+
+- `inject`: `agentDefaultModel` · `agents` · `sessions` · `subagents` · `subagentWorktrees`
+- `source`: [`packages/bundle/agents/src/index.ts:36`](../packages/bundle/agents/src/index.ts)
+
+```ts config-catalog
+/** Plugin config: one verb and its options, resolved from this app's injected startup provider. */
+export interface Config {
+  /** The requested verb. */
+  verb: 'run' | 'list' | 'accept' | 'discard'
+  /** `run`: the task text. */
+  task?: string
+  /** `run`: `--name`. */
+  name?: string
+  /** `run`: `--model`. */
+  model?: string
+  /** `run`: `--effort`. */
+  effort?: string
+  /** `run`/`accept`: `--reviewer`. */
+  reviewer?: string
+  /** `run`/`accept`: `--reviewer-effort`. */
+  reviewerEffort?: string
+  /** `run`/`accept`: `--test`. */
+  test?: string
+  /** `run`: `--worktree`. */
+  worktree?: string
+  /** `run`: `--fix-rounds`. */
+  fixRounds?: number
+  /** `list`: `--all`. */
+  all?: boolean
+  /** `accept`/`discard`: the worktree id. */
+  id?: string
+  /** Whether stdout carries the machine-readable event stream instead of human-readable text. */
+  json: boolean
+}
+```
+<!-- END GENERATED config-catalog:@deepseek-ai/dsh-agents -->
+
 <!-- BEGIN GENERATED config-catalog:@deepseek-ai/dsh-api-gateway -->
 <a id="deepseek-aidsh-api-gateway"></a>
 
@@ -3316,7 +3357,7 @@ export interface Config {
 ## `@deepseek-ai/dsh-subagent-worktree`
 
 - `inject`: `subprocess` · `subagents` · `agents`
-- `source`: [`packages/subagent/subagent-worktree/src/index.ts:63`](../packages/subagent/subagent-worktree/src/index.ts)
+- `source`: [`packages/subagent/subagent-worktree/src/index.ts:66`](../packages/subagent/subagent-worktree/src/index.ts)
 
 ```ts config-catalog
 /**
@@ -3340,10 +3381,16 @@ export interface Config {
   reviewerModel?: string
   /** Reviewer reasoning effort; requires {@link reviewerProvider} and {@link reviewerModel}. */
   reviewerReasoningEffort?: string
-  /** Reject a reviewer route equal to the worker's route. */
+  /**
+   * Reject a reviewer route equal to the worker's route (provider and model). Off by default, so a worker
+   * that inherits the accepting Agent's route is reviewed on that same route; turn it on together with
+   * {@link reviewerProvider} and {@link reviewerModel} to enforce a reviewer on another model.
+   */
   requireDistinctReviewer: boolean
   /** Check command (argv) run in the review checkout before the reviewer; empty runs none. A nonzero exit rejects the change. */
   testCommand: string[]
+  /** Milliseconds the check command may run before it is terminated and the accept reports `checks-failed`. */
+  checkTimeoutMs: number
   /** Byte bound on the diff embedded in the reviewer prompt. */
   reviewDiffMaxBytes: number
   /** Remove the worktree directory and branch after a successful merge. */
@@ -3352,6 +3399,12 @@ export interface Config {
   commitAuthorName?: string
   /** Author email for harness commits; set together with {@link commitAuthorName}. */
   commitAuthorEmail?: string
+  /**
+   * Offer the `isolation: "worktree"` parameter on every subagent delegation tool, including tools mounted
+   * inside agent presets, whose nested rows a bundle patch cannot reach. Omitted or `false` leaves each tool to
+   * its own `worktreeIsolation` setting; read through {@link SubagentWorktrees.offersIsolation}.
+   */
+  offerIsolation?: boolean
 }
 ```
 <!-- END GENERATED config-catalog:@deepseek-ai/dsh-subagent-worktree -->
@@ -3842,7 +3895,7 @@ export interface Config {
 
 - `inject`: `tools` · `subagents` · `systemPrompt` · `sessionProjections`
 - `refs`: [`AgentOptions`](subsystems/core.md)
-- `source`: [`packages/subagent/tool-subagent/src/index.ts:48`](../packages/subagent/tool-subagent/src/index.ts)
+- `source`: [`packages/subagent/tool-subagent/src/index.ts:60`](../packages/subagent/tool-subagent/src/index.ts)
 
 ```ts config-catalog
 /** Config: which registered provider this tool delegates to, plus child defaults. */
@@ -3902,6 +3955,15 @@ export interface Config {
    * the current Host subagent depth setting (default `1`) at each delegation.
    */
   maxDepth?: number | 'provider-managed'
+  /**
+   * Give each delegation its own git worktree when the model sets
+   * `isolation: "worktree"`. Requires `ctx.subagentWorktrees`
+   * (`@deepseek-ai/dsh-subagent-worktree`) and a provider with the `cwd`
+   * capability — the seam's own capability check rejects a provider without
+   * it. Defaults to `false`: the schema omits the `isolation` parameter and
+   * the executor rejects it.
+   */
+  worktreeIsolation?: boolean
 }
 ```
 <!-- END GENERATED config-catalog:@deepseek-ai/dsh-tool-subagent -->
@@ -4438,6 +4500,7 @@ These load from a `cordis.yml` entry with no `config:` block; they declare no co
 | `@deepseek-ai/dsh-session-stats` | `sessionProjections` | [`packages/session/session-stats/src/index.ts`](../packages/session/session-stats/src/index.ts) |
 | `@deepseek-ai/dsh-session-turn-outline` | `sessionProjections` | [`packages/session/session-turn-outline/src/index.ts`](../packages/session/session-turn-outline/src/index.ts) |
 | `@deepseek-ai/dsh-settings` | `configEditor` · `profileContext` | [`packages/settings/settings/src/index.ts`](../packages/settings/settings/src/index.ts) |
+| `@deepseek-ai/dsh-skill-agent-crew` | `skills` | [`packages/skill/skill-agent-crew/src/index.ts`](../packages/skill/skill-agent-crew/src/index.ts) |
 | `@deepseek-ai/dsh-skill-badge` | `skills` | [`packages/skill/skill-badge/src/index.ts`](../packages/skill/skill-badge/src/index.ts) |
 | `@deepseek-ai/dsh-storage` | — | [`packages/storage/storage/src/index.ts`](../packages/storage/storage/src/index.ts) |
 | `@deepseek-ai/dsh-subprocess-local` | — | [`packages/subprocess/subprocess-local/src/index.ts`](../packages/subprocess/subprocess-local/src/index.ts) |
@@ -4447,6 +4510,7 @@ These load from a `cordis.yml` entry with no `config:` block; they declare no co
 | `@deepseek-ai/dsh-tool-call-timeout-policy` | `tools` | [`packages/guard/timeout-policy/src/index.ts`](../packages/guard/timeout-policy/src/index.ts) |
 | `@deepseek-ai/dsh-tool-cordis` | `tools` · `cordisInspect` | [`packages/extensions/tool-cordis/src/index.ts`](../packages/extensions/tool-cordis/src/index.ts) |
 | `@deepseek-ai/dsh-tool-subagent-control` | `tools` · `subagents` | [`packages/subagent/tool-subagent-control/src/index.ts`](../packages/subagent/tool-subagent-control/src/index.ts) |
+| `@deepseek-ai/dsh-tool-subagent-worktree` | `tools` · `subagentWorktrees` | [`packages/subagent/tool-subagent-worktree/src/index.ts`](../packages/subagent/tool-subagent-worktree/src/index.ts) |
 | `@deepseek-ai/dsh-user-questions` | — | [`packages/interaction/user-questions/src/index.ts`](../packages/interaction/user-questions/src/index.ts) |
 | `@deepseek-ai/dsh-webhook` | `agents` · `agentDefaultModel` · `agentPresets` · `permissionPresets` · `sessionTitle` · `workspaceRegistry` | [`packages/webhook/webhook/src/index.ts`](../packages/webhook/webhook/src/index.ts) |
 | `@deepseek-ai/dsh-workspace` | `storageDomain` · `sessionPersistence` | [`packages/workspace/workspace/src/index.ts`](../packages/workspace/workspace/src/index.ts) |
@@ -4484,6 +4548,7 @@ Imported as libraries by other packages; a `cordis.yml` cannot load them.
 <!-- BEGIN GENERATED config-catalog:library -->
 | `package` | `inject` | `source` |
 | --- | --- | --- |
+| `@deepseek-ai/dsh-agent-crew` | — | [`packages/bundle/agent-crew/src/index.ts`](../packages/bundle/agent-crew/src/index.ts) |
 | `@deepseek-ai/dsh-agent-loop-testkit` | — | [`packages/test-support/agent-loop-testkit/src/index.ts`](../packages/test-support/agent-loop-testkit/src/index.ts) |
 | `@deepseek-ai/dsh-anonymous-user-id` | — | [`packages/identity/anonymous-user-id/src/index.ts`](../packages/identity/anonymous-user-id/src/index.ts) |
 | `@deepseek-ai/dsh-app-boot` | — | [`packages/boot/app-boot/src/index.ts`](../packages/boot/app-boot/src/index.ts) |

@@ -13,6 +13,7 @@ import type { Agent } from '@deepseek-ai/dsh-agent'
 import { parentAgentOptionsForDelegation } from '@deepseek-ai/dsh-subagent'
 import { truncateUtf8Prefix } from './bounds.ts'
 import type { GitRunner } from './git.ts'
+import { isPlainObject, isStringArray } from './guards.ts'
 import { renderReviewerPrompt, VERDICT_SCHEMA } from './text.ts'
 import type { WorktreeRoute, WorktreeVerdict } from './types.ts'
 
@@ -57,14 +58,6 @@ export function callerRouteOf(parent: Agent): WorktreeRoute {
   }
 }
 
-function isPlainObject(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null && !Array.isArray(value)
-}
-
-function isStringArray(value: unknown): value is string[] {
-  return Array.isArray(value) && value.every(item => typeof item === 'string')
-}
-
 /** Structural validation of the reviewer's `structured` result against {@link VERDICT_SCHEMA}, in host code. */
 function isReviewerVerdictShape(value: unknown): value is { verdict: 'pass' | 'fail'; summary: string; checks: string[]; findings: string[] } {
   return isPlainObject(value)
@@ -102,10 +95,12 @@ export interface RunReviewerParams {
  * @param git - command runner.
  * @param params - review checkout, commit range, and the configured byte bound.
  * @returns the bounded diff text and whether it was truncated.
+ * @throws when the diff outgrew the raw collection cap: the subprocess layer keeps the tail of an overflowing
+ *   stream, so a lossy capture holds the wrong end of the diff and must not be embedded as if it were the head.
  */
 async function boundedDiff(git: GitRunner, params: RunReviewerParams): Promise<{ text: string; truncated: boolean }> {
   const collectBytes = Math.max(DIFF_COLLECT_FLOOR_BYTES, params.reviewDiffMaxBytes + 1)
-  const raw = await git.expect(['diff', `${params.baseCommit}..${params.commit}`], 'git diff', {
+  const raw = await git.expectComplete(['diff', `${params.baseCommit}..${params.commit}`], 'git diff', {
     cwd: params.reviewDir, signal: params.signal, maxBytes: collectBytes,
   })
   return truncateUtf8Prefix(raw.stdout, params.reviewDiffMaxBytes)
@@ -116,7 +111,9 @@ async function boundedDiff(git: GitRunner, params: RunReviewerParams): Promise<{
  * output as a {@link WorktreeVerdict} — fail closed (verdict `fail`, with the
  * single finding {@link NO_VERDICT_MESSAGE}) when it is missing or malformed,
  * whether because the run produced no structured value, failed schema
- * validation, or did not complete.
+ * validation, or did not itself report `stopReason: 'completed'` (an error,
+ * a cancellation, or any other non-`completed` stop is untrusted even when a
+ * structured value happens to be present).
  * @param ctx - host context with the `subagents` registry.
  * @param git - command runner, for the bounded diff.
  * @param params - review checkout, commit range, task, route, and cancellation.
@@ -152,7 +149,7 @@ export async function runReviewer(ctx: Context, git: GitRunner, params: RunRevie
     await run.dispose()
   }
   const at = Date.now()
-  if (!isReviewerVerdictShape(result.structured)) {
+  if (result.stopReason !== 'completed' || !isReviewerVerdictShape(result.structured)) {
     return {
       verdict: 'fail',
       summary: NO_VERDICT_MESSAGE,

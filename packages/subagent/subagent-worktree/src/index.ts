@@ -19,14 +19,16 @@ import { acceptWorktree } from './accept.ts'
 import { resolveConfiguredCommitAuthor, resolveConfiguredReviewer } from './config.ts'
 import type { CommitAuthor } from './config.ts'
 import { createWorktree } from './create.ts'
-import { pathExists } from './fs-util.ts'
 import { GitRunner } from './git.ts'
+import { recoverLandedMerge, sweepWorktree } from './landed.ts'
 import {
-  assertNotTerminal, assertOpenOrRecoverable, assertOwnerAuthority, layoutForRepo, listRecords, requireRecordLocation,
+  assertOpen, assertOpenOrRecoverable, assertOwnerAuthority, layoutForRepo, listRecords, requireRecordLocation,
   toPublicRecord, updateExistingRecordAt,
 } from './records.ts'
-import { repoRootOf } from './repo.ts'
+import type { ScanWarning } from './records.ts'
+import { repoIdentityOf } from './repo.ts'
 import { assertNoRunningWorkers } from './workers.ts'
+import { assertWorktreeId } from './worktree-id.ts'
 import type {
   AcceptOutcome,
   AcceptWorktreeRequest,
@@ -44,6 +46,7 @@ import type {
 export type * from './types.ts'
 export { renderReviewerPrompt, renderWorkerBrief, VERDICT_SCHEMA } from './text.ts'
 export type { ReviewerPromptFacts, WorkerBriefFacts } from './text.ts'
+export { assertWorktreeId } from './worktree-id.ts'
 
 declare module '@deepseek-ai/cordis' {
   interface Context {
@@ -73,10 +76,16 @@ export interface Config {
   reviewerModel?: string
   /** Reviewer reasoning effort; requires {@link reviewerProvider} and {@link reviewerModel}. */
   reviewerReasoningEffort?: string
-  /** Reject a reviewer route equal to the worker's route. */
+  /**
+   * Reject a reviewer route equal to the worker's route (provider and model). Off by default, so a worker
+   * that inherits the accepting Agent's route is reviewed on that same route; turn it on together with
+   * {@link reviewerProvider} and {@link reviewerModel} to enforce a reviewer on another model.
+   */
   requireDistinctReviewer: boolean
   /** Check command (argv) run in the review checkout before the reviewer; empty runs none. A nonzero exit rejects the change. */
   testCommand: string[]
+  /** Milliseconds the check command may run before it is terminated and the accept reports `checks-failed`. */
+  checkTimeoutMs: number
   /** Byte bound on the diff embedded in the reviewer prompt. */
   reviewDiffMaxBytes: number
   /** Remove the worktree directory and branch after a successful merge. */
@@ -85,6 +94,12 @@ export interface Config {
   commitAuthorName?: string
   /** Author email for harness commits; set together with {@link commitAuthorName}. */
   commitAuthorEmail?: string
+  /**
+   * Offer the `isolation: "worktree"` parameter on every subagent delegation tool, including tools mounted
+   * inside agent presets, whose nested rows a bundle patch cannot reach. Omitted or `false` leaves each tool to
+   * its own `worktreeIsolation` setting; read through {@link SubagentWorktrees.offersIsolation}.
+   */
+  offerIsolation?: boolean
 }
 
 /** Schemastery validation for {@link Config}. */
@@ -95,12 +110,14 @@ const ConfigSchema: z<Config> = z.object({
   reviewerProvider: z.string().description('Reviewer provider route, set together with reviewerModel. Omitted uses the route of the agent that accepts.'),
   reviewerModel: z.string().description('Reviewer model id, set together with reviewerProvider.'),
   reviewerReasoningEffort: z.string().description('Reviewer reasoning effort; requires reviewerProvider and reviewerModel.'),
-  requireDistinctReviewer: z.boolean().default(true).description('Reject a reviewer route equal to the worker route.'),
+  requireDistinctReviewer: z.boolean().default(false).description('Reject a reviewer route equal to the worker route. Off by default: a worker that inherits the accepting agent route is reviewed on that route. Set it with reviewerProvider and reviewerModel to enforce a reviewer on another model.'),
   testCommand: z.array(z.string().required()).default([]).description('Check command (argv) run in the review checkout before the reviewer. Empty runs none.'),
+  checkTimeoutMs: z.natural().min(1000).default(900_000).description('Milliseconds the check command may run before it is terminated and reported as checks-failed.'),
   reviewDiffMaxBytes: z.natural().min(1024).default(49152).description('Byte bound on the diff embedded in the reviewer prompt.'),
   removeOnMerge: z.boolean().default(true).description('Remove the worktree and its branch after a successful merge.'),
   commitAuthorName: z.string().description('Author name for harness commits, set together with commitAuthorEmail. Omitted uses the git configuration.'),
   commitAuthorEmail: z.string().description('Author email for harness commits, set together with commitAuthorName.'),
+  offerIsolation: z.boolean().default(false).description('Offer the isolation: "worktree" parameter on every subagent delegation tool, including tools mounted inside agent presets.'),
 })
 
 /** Whether a filter owner admits a record's owner: exact match, `operator` filtering only `operator` records. */
@@ -132,6 +149,9 @@ export class SubagentWorktrees extends Service {
   /** Resolved once at load from the flat `commitAuthorName`/`commitAuthorEmail` fields. */
   private readonly commitAuthor: CommitAuthor | undefined
 
+  /** Logs a candidate directory or stray file that a record scan skipped instead of failing on. */
+  private readonly warnScan: ScanWarning = (message) => { this.ctx.logger.warn(message) }
+
   constructor(ctx: Context, protected readonly config: Config) {
     super(ctx, 'subagentWorktrees')
     this.root = config.root ?? dshHomePath('worktrees')
@@ -149,28 +169,45 @@ export class SubagentWorktrees extends Service {
   }
 
   /**
+   * Whether this deployment offers worktree isolation on every subagent delegation tool, including tools
+   * mounted inside agent presets, whose nested rows a bundle patch cannot reach. Delegation tools consult it
+   * at mount time in addition to their own `worktreeIsolation` row setting. Read-only: it is set through
+   * `Config.offerIsolation`, at load.
+   * @returns `Config.offerIsolation`, or `false` when it is omitted.
+   */
+  get offersIsolation(): boolean {
+    return this.config.offerIsolation ?? false
+  }
+
+  /**
    * Create one linked worktree on a new branch from the base checkout's `HEAD`.
    * @param request - owner, base directory, label, task, worker route, and cancellation.
    * @returns the committed `open` record, the worker directory, and any uncommitted base changes left out.
    */
   create(request: CreateWorktreeRequest): Promise<ProvisionedWorktree> {
-    return createWorktree(this.git, this.root, this.config.branchPrefix, this.config.maxWorktrees, request)
+    return createWorktree(this.git, this.root, this.config.branchPrefix, this.config.maxWorktrees, request, this.warnScan)
   }
 
   /**
    * Record one worker Session on an open worktree.
    * @param request - worktree id, owner, worker Session id, and route.
    * @returns the updated record.
+   * @throws when the id is malformed, no such worktree exists, the owner does not own it, or it is not `open`.
    */
   async attach(request: AttachWorkerRequest): Promise<WorktreeRecord> {
-    const located = await requireRecordLocation(this.root, request.id)
+    assertWorktreeId(request.id)
+    const located = await requireRecordLocation(this.root, request.id, this.warnScan)
     assertOwnerAuthority(located.record, request.owner, request.id)
-    assertNotTerminal(located.record, request.id)
-    const updated = await updateExistingRecordAt(located.path, request.id, current => ({
-      ...current,
-      workerSessionIds: [...current.workerSessionIds, request.workerSessionId],
-      workerRoute: request.workerRoute,
-    }))
+    // The state check runs under the record lock so an attach cannot slip
+    // between an accept's `open` -> `reviewing` transition and its commit.
+    const updated = await updateExistingRecordAt(located.layout, request.id, (current) => {
+      assertOpen(current, request.id)
+      return {
+        ...current,
+        workerSessionIds: [...current.workerSessionIds, request.workerSessionId],
+        workerRoute: request.workerRoute,
+      }
+    })
     return toPublicRecord(updated)
   }
 
@@ -202,8 +239,10 @@ export class SubagentWorktrees extends Service {
    * reviewer check the exact commit, and merge a passing change.
    * @param request - worktree id, owner, reviewer parent Agent, operator overrides, and cancellation.
    * @returns the accept outcome.
+   * @throws when the id is malformed, or a non-operator owner sets `testCommand` or `reviewer`; see {@link acceptWorktree}.
    */
-  accept(request: AcceptWorktreeRequest): Promise<AcceptOutcome> {
+  async accept(request: AcceptWorktreeRequest): Promise<AcceptOutcome> {
+    assertWorktreeId(request.id)
     return acceptWorktree({
       ctx: this.ctx,
       git: this.git,
@@ -215,27 +254,36 @@ export class SubagentWorktrees extends Service {
   }
 
   /**
-   * Delete one worktree and its branch without merging.
+   * Delete one worktree and its branch without merging. The record is claimed
+   * under its lock before any git change, so a concurrent `accept` cannot act on
+   * a worktree this call is deleting. A `merged` or `discarded` record is not
+   * changed: `discard` only removes a worktree directory or branch that a crash
+   * between the merge and its cleanup, or a failed earlier `discard`, left behind,
+   * so a retry after a failure finishes the cleanup.
    * @param request - worktree id, owner, and cancellation.
-   * @returns the `discarded` record.
+   * @returns the `discarded` record, or the unchanged `merged` or `discarded` record after cleaning up its leftovers.
+   * @throws when the id is malformed, no such worktree exists, the owner does not own it, an attached worker is
+   *   still running, the record is being accepted, or a git cleanup command fails.
    */
   async discard(request: DiscardWorktreeRequest): Promise<WorktreeRecord> {
-    const located = await requireRecordLocation(this.root, request.id)
+    assertWorktreeId(request.id)
+    const located = await requireRecordLocation(this.root, request.id, this.warnScan)
     assertOwnerAuthority(located.record, request.owner, request.id)
-    assertOpenOrRecoverable(located.record, request.id)
-    assertNoRunningWorkers(this.ctx, located.record, request.id)
 
-    const { record } = located
-    if (await pathExists(record.path)) {
-      await this.git.expect(['worktree', 'remove', '--force', record.path], 'git worktree remove', {
-        cwd: record.repoRoot, signal: request.signal,
-      })
-    }
-    await this.git.expect(['worktree', 'prune'], 'git worktree prune', { cwd: record.repoRoot, signal: request.signal })
-    await this.git.expect(['branch', '-D', record.branch], 'git branch -D', { cwd: record.repoRoot, signal: request.signal })
+    // A stale `reviewing` record whose reviewed commit already landed (an earlier accept crashed before
+    // recording it) is recorded `merged`, and then only its leftovers are swept.
+    const recovery = await recoverLandedMerge(this.git, located.layout, located.record, request.signal)
+    const claimed = recovery?.record ?? await updateExistingRecordAt(located.layout, request.id, (current) => {
+      if (current.state === 'merged' || current.state === 'discarded') return current
+      assertOpenOrRecoverable(current, request.id)
+      assertNoRunningWorkers(this.ctx.agents, current, request.id)
+      return { ...current, state: 'discarded' }
+    })
 
-    const updated = await updateExistingRecordAt(located.path, request.id, current => ({ ...current, state: 'discarded' }))
-    return toPublicRecord(updated)
+    // Each removal tolerates the thing it removes already being gone, so a
+    // discard that was interrupted after the claim can be finished by hand.
+    await sweepWorktree(this.git, claimed, request.signal)
+    return toPublicRecord(claimed)
   }
 
   /**
@@ -244,12 +292,12 @@ export class SubagentWorktrees extends Service {
    * @returns records ordered by creation time.
    */
   async list(request: ListWorktreesRequest): Promise<WorktreeRecord[]> {
-    const repoRoot = await repoRootOf(this.git, request.baseDir)
-    if (repoRoot === undefined) {
+    const identity = await repoIdentityOf(this.git, request.baseDir)
+    if (identity === undefined) {
       throw new Error(`subagent-worktree: "${request.baseDir}" is not inside a git work tree`)
     }
-    const layout = layoutForRepo(this.root, repoRoot)
-    const records = (await listRecords(layout)).filter((record) => {
+    const layout = layoutForRepo(this.root, identity.commonDir)
+    const records = (await listRecords(layout, this.warnScan)).filter((record) => {
       if (!request.includeClosed && (record.state === 'merged' || record.state === 'discarded')) return false
       if (request.owner !== undefined && !ownerMatches(record.owner, request.owner)) return false
       return true

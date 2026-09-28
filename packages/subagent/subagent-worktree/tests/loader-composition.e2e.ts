@@ -51,7 +51,7 @@ async function realHarness(root: string, script: Script): Promise<{ ctx: Context
   await ctx.plugin(SpawnInProcess, { providerName: 'spawn' })
   ctx.llm.registerAdapter(['mock'], new MockAdapter(script))
   await ctx.plugin(SubagentWorktrees, {
-    root, branchPrefix: 'dsh/worktree/', maxWorktrees: 16, requireDistinctReviewer: false, testCommand: [],
+    root, branchPrefix: 'dsh/worktree/', maxWorktrees: 16, requireDistinctReviewer: false, testCommand: [], checkTimeoutMs: 60_000,
     reviewDiffMaxBytes: 8192, removeOnMerge: true,
   })
   const parent = await ctx.agentLoop.create(SessionId('operator'), { provider: 'mock', model: 'mock' })

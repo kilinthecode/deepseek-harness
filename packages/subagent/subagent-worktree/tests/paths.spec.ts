@@ -9,6 +9,20 @@ describe('repoKeyFor', () => {
     expect(key).toMatch(/^my-repo-[0-9a-f]{12}$/)
   })
 
+  it('names an ordinary repository after the directory that holds its .git, not after .git itself', () => {
+    expect(repoKeyFor('/home/user/my-repo/.git')).toMatch(/^my-repo-[0-9a-f]{12}$/)
+    expect(repoKeyFor('/home/user/other-repo/.git')).toMatch(/^other-repo-[0-9a-f]{12}$/)
+  })
+
+  it('names a bare repository after its own directory', () => {
+    expect(repoKeyFor('/srv/git/project.git')).toMatch(/^project\.git-[0-9a-f]{12}$/)
+  })
+
+  it('keys the common directory apart from the checkout directory that holds it', () => {
+    expect(repoKeyFor('/home/user/my-repo/.git')).toBe(repoKeyFor('/home/user/my-repo/.git'))
+    expect(repoKeyFor('/home/user/my-repo/.git')).not.toBe(repoKeyFor('/home/user/my-repo'))
+  })
+
   it('is deterministic for the same path and distinct for different paths', () => {
     expect(repoKeyFor('/a/repo')).toBe(repoKeyFor('/a/repo'))
     expect(repoKeyFor('/a/repo')).not.toBe(repoKeyFor('/b/repo'))
@@ -50,5 +64,26 @@ describe('directory layout', () => {
     expect(recordPathFor(layout, 'wt-aabbccdd')).toBe('/root/repo-key/records/wt-aabbccdd.json')
     expect(reviewCheckoutPathFor(layout, 'wt-aabbccdd', 42)).toBe('/root/repo-key/reviews/wt-aabbccdd-42')
     expect(reviewCheckoutPrefixFor('wt-aabbccdd')).toBe('wt-aabbccdd-')
+  })
+})
+
+describe('paths built from a worktree id', () => {
+  const layout = layoutFor('/root', 'repo-key')
+  const badIds = ['../x', 'wt-../../x', 'wt-AABBCCDD', 'wt-aabbccd', 'wt-aabbccdde', '', 'wt-aabbccdd/..', 'x/wt-aabbccdd']
+
+  it.each(badIds)('worktreeDirFor refuses %j before joining it into a path', (id) => {
+    expect(() => worktreeDirFor(layout, id)).toThrow('is not a worktree id')
+  })
+
+  it.each(badIds)('recordPathFor refuses %j before joining it into a path', (id) => {
+    expect(() => recordPathFor(layout, id)).toThrow('is not a worktree id')
+  })
+
+  it.each(badIds)('reviewCheckoutPathFor refuses %j before joining it into a path', (id) => {
+    expect(() => reviewCheckoutPathFor(layout, id, 1)).toThrow('is not a worktree id')
+  })
+
+  it.each(badIds)('reviewCheckoutPrefixFor refuses %j', (id) => {
+    expect(() => reviewCheckoutPrefixFor(id)).toThrow('is not a worktree id')
   })
 })

@@ -1550,6 +1550,7 @@ describe('subagent tool worktree isolation', () => {
       maxWorktrees: 4,
       requireDistinctReviewer: false,
       testCommand: [],
+      checkTimeoutMs: 900_000,
       reviewDiffMaxBytes: 4096,
       removeOnMerge: true,
     })

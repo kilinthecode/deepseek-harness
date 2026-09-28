@@ -7,7 +7,8 @@
  */
 
 import { createHash } from 'node:crypto'
-import { basename, join } from 'node:path'
+import { basename, dirname, join } from 'node:path'
+import { assertWorktreeId } from './worktree-id.ts'
 
 /** Hexadecimal digest length kept from the repository-path hash in a `repoKey`. */
 const REPO_KEY_HASH_HEX_LENGTH = 12
@@ -31,16 +32,20 @@ function sanitizePathSegment(segment: string): string {
 }
 
 /**
- * Stable per-repository directory name: a readable basename plus a content
- * hash of the canonical repository path, so two repositories that happen to
- * share a basename (for example two `worktree` checkouts of the same project)
- * never collide.
- * @param canonicalToplevel - the repository's realpath-resolved top-level directory.
- * @returns the `<basename>-<hash>` directory name under the configured root.
+ * Stable per-repository directory name: a readable name plus a content hash
+ * of the canonical git common directory, so two repositories that happen to
+ * share a name (for example two `worktree` checkouts of the same project)
+ * never collide, while every linked worktree of one repository, which shares
+ * one common directory, resolves the same key. The readable name is the
+ * directory that holds `.git` for an ordinary repository, and the common
+ * directory's own basename for a bare one.
+ * @param canonicalCommonDir - the repository's realpath-resolved git common directory.
+ * @returns the `<name>-<hash>` directory name under the configured root.
  */
-export function repoKeyFor(canonicalToplevel: string): string {
-  const digest = createHash('sha256').update(canonicalToplevel).digest('hex').slice(0, REPO_KEY_HASH_HEX_LENGTH)
-  return `${sanitizePathSegment(basename(canonicalToplevel))}-${digest}`
+export function repoKeyFor(canonicalCommonDir: string): string {
+  const digest = createHash('sha256').update(canonicalCommonDir).digest('hex').slice(0, REPO_KEY_HASH_HEX_LENGTH)
+  const readable = basename(canonicalCommonDir) === '.git' ? basename(dirname(canonicalCommonDir)) : basename(canonicalCommonDir)
+  return `${sanitizePathSegment(readable)}-${digest}`
 }
 
 /** Directory layout for one repository's worktrees, records, and review checkouts. */
@@ -76,8 +81,10 @@ export function layoutFor(root: string, repoKey: string): WorktreeLayout {
  * @param layout - the repository's directory layout.
  * @param id - the worktree id.
  * @returns `<repoDir>/<id>`.
+ * @throws when `id` is not a valid worktree id.
  */
 export function worktreeDirFor(layout: WorktreeLayout, id: string): string {
+  assertWorktreeId(id)
   return join(layout.repoDir, id)
 }
 
@@ -86,8 +93,10 @@ export function worktreeDirFor(layout: WorktreeLayout, id: string): string {
  * @param layout - the repository's directory layout.
  * @param id - the worktree id.
  * @returns `<recordsDir>/<id>.json`.
+ * @throws when `id` is not a valid worktree id.
  */
 export function recordPathFor(layout: WorktreeLayout, id: string): string {
+  assertWorktreeId(id)
   return join(layout.recordsDir, `${id}.json`)
 }
 
@@ -97,8 +106,10 @@ export function recordPathFor(layout: WorktreeLayout, id: string): string {
  * @param id - the worktree id under review.
  * @param suffix - a value distinguishing this checkout from a prior attempt for the same id.
  * @returns `<reviewsDir>/<id>-<suffix>`.
+ * @throws when `id` is not a valid worktree id.
  */
 export function reviewCheckoutPathFor(layout: WorktreeLayout, id: string, suffix: string | number): string {
+  assertWorktreeId(id)
   return join(layout.reviewsDir, `${id}-${suffix}`)
 }
 
@@ -106,7 +117,9 @@ export function reviewCheckoutPathFor(layout: WorktreeLayout, id: string, suffix
  * Prefix shared by every review checkout directory belonging to one worktree id.
  * @param id - the worktree id.
  * @returns the `<id>-` prefix every one of its review checkout directory names starts with.
+ * @throws when `id` is not a valid worktree id.
  */
 export function reviewCheckoutPrefixFor(id: string): string {
+  assertWorktreeId(id)
   return `${id}-`
 }
