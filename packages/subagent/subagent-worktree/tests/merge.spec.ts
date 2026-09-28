@@ -300,6 +300,20 @@ describe('attemptMerge: a merge that dies or fails after starting', () => {
     expect(git(dir, 'rev-parse', 'HEAD').trim()).toBe(baseHead)
   }, GIT_TEST_TIMEOUT_MS)
 
+  it('does not call a merge that failed with a fatal exit a conflict, even when it left unmerged paths: it aborts and throws', async () => {
+    const { dir, sideCommit, baseHead } = await repoWithConflictingSideBranch('dsh-merge-fatal-with-conflicts-')
+    const command = await scripted({
+      merge: { alongside: ['merge', '--no-ff', '--no-edit', sideCommit], result: FAILED_128 },
+    })
+
+    await expect(attemptMerge(command, dir, 'wt-00000021', 'do the thing', sideCommit, signal, recordingHooks()))
+      .rejects.toThrow('merge of worktree wt-00000021 failed unexpectedly after starting: fatal: scripted failure')
+
+    expect(() => git(dir, 'rev-parse', '-q', '--verify', 'MERGE_HEAD')).toThrow()
+    expect(git(dir, 'status', '--porcelain').trim()).toBe('')
+    expect(git(dir, 'rev-parse', 'HEAD').trim()).toBe(baseHead)
+  }, GIT_TEST_TIMEOUT_MS)
+
   it('reports blocked, not an error, for a refusal that started no merge', async () => {
     const { dir, sideCommit } = await repoWithSideBranch('dsh-merge-refused-')
     const command = await scripted({
