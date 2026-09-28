@@ -105,10 +105,10 @@ export async function bench(options: BenchOptions = {}): Promise<Bench> {
   // The real SessionStore has no observable flush hook; wrap its one instance
   // method so `calls.operator` records the flush the runner performs.
   const originalFlush = ctx.sessions.flush.bind(ctx.sessions)
-  ctx.sessions.flush = (async (session) => {
+  ctx.sessions.flush = async (session) => {
     calls.operator.push('flush')
     return originalFlush(session)
-  }) as typeof ctx.sessions.flush
+  }
 
   ctx.agents.setFactory({
     async createAgent(ownerCtx: Context, createOptions: CreateAgentOptions): Promise<AgentHandle> {
