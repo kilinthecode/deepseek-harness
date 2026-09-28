@@ -10,7 +10,7 @@ Split a goal into independently verifiable parts, hand each to a worker agent in
 
 ## When not to use
 
-Do not use this for a small, single-step edit, a change that must land as one atomic commit, or a task with no natural split. Spawning a crew adds a worktree, a commit, a review round trip, and a merge for every part; that overhead pays off only when parts are genuinely independent. Skip it too when a part has no objective acceptance check — a reviewer that cannot verify anything concrete degrades to a coin flip.
+Do not use this for a small, single-step edit, a change that must land as one atomic commit, or a task with no natural split. Every part costs a worktree, a commit, a review round trip, and a merge; that pays off only when parts are genuinely independent. Skip it too when a part has no objective acceptance check — a reviewer that cannot verify anything concrete degrades to a coin flip.
 
 ## Decompose the goal
 
@@ -24,7 +24,7 @@ A part with no acceptance criterion is not ready to hand off.
 
 ## Write the worker's brief
 
-Give each worker everything it needs and nothing it must guess. A brief that omits context makes the worker re-derive it, or assume something wrong; one that includes irrelevant history wastes the worker's own budget. Cover:
+Give each worker everything it needs and nothing it must guess: omitted context gets re-derived or assumed wrongly, and irrelevant history wastes the worker's own budget. Cover:
 
 1. **Goal context** — the one or two sentences of the larger goal this part serves, so the worker can make good calls at the edges of its scope.
 2. **Exact scope** — the files or directories it owns, and what is explicitly out of scope.
@@ -41,23 +41,25 @@ subagent({
   description: "<short label>",
   prompt: "<the worker's brief>",
   isolation: "worktree",
-  provider: "<cheaper provider than your own, if the tool offers one>",
-  model: "<cheaper model than your own, if the tool offers one>",
+  // Include the next two fields only if the tool lists provider and model:
+  provider: "<cheaper provider than your own>",
+  model: "<cheaper model than your own>",
 })
 ```
 
-Prefer a worker model cheaper than your own when the tool exposes `provider`/`model`: a decomposed, well-specified part needs less capability than the planning you already did. Never use `subagent_fork` for a crew member — it has no model selection and inherits your conversation, defeating both the cost saving and the context isolation this skill exists for.
+Leave `run_in_background` unset: each worker then runs as a background child you can message, which the fix loop below needs. When the tool lists `provider` and `model`, prefer a model cheaper than your own — a well-specified part needs less capability than the planning you already did. The reviewer runs on your model unless the deployment pins another, so a worker on a cheaper model is reviewed on yours. Never use `subagent_fork` for a crew member: it has no model selection and inherits your conversation, defeating both the cost saving and the context isolation.
 
-Keep your own context small while workers run: read their results and the reviewer's verdict, not their transcripts.
+Workers cannot message each other or start workers of their own; all coordination goes through you. Keep your own context small while they run: read their results and the reviewer's verdict, not their transcripts.
 
 ## Land, fix, or discard each part
 
-After a resume or a compaction, call `list_worktrees` to recover which open worktree belongs to which part instead of guessing. When a worker finishes, call `accept_worktree` for its worktree. The harness commits the worker's changes, runs any configured checks, and has an independent reviewer check that exact commit before merging:
+You are notified when each worker settles; accept its worktree then, because `accept_worktree` refuses a worker that is still running. After a resume or a compaction, call `list_worktrees` to recover which open worktree belongs to which part and which worker to message. Accepting has the harness commit the worker's changes, run any configured checks, and have an independent reviewer check that exact commit before merging:
 
 - **Merged** — done; move to the next part.
-- **Rejected**, or **checks failed** — send the returned findings to the worker with `send_message`, wait for it to finish, then call `accept_worktree` again. Forward the findings; do not re-derive or soften them yourself.
+- **Rejected**, or **checks failed** — send the returned findings to the worker with `send_message`, wait until you are notified it settled, then call `accept_worktree` again. Forward the findings; do not re-derive or soften them yourself.
 - **Conflict** — another part already merged something overlapping. Merge the branch yourself and resolve it, or call `discard_worktree` if the part is no longer needed.
 - **Blocked** — your own checkout has uncommitted changes in the way; commit or set them aside, then accept again.
+- **Empty** — the worker changed nothing. Call `discard_worktree`, or send the worker what is missing and accept again.
 
 Call `discard_worktree` for a part you abandon or replace, so it stops holding a branch open.
 
