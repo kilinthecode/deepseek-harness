@@ -1037,6 +1037,32 @@ export interface InspectorOptions {
 ```
 <!-- END GENERATED config-catalog:@deepseek-ai/dsh-experimental-inspector -->
 
+<!-- BEGIN GENERATED config-catalog:@deepseek-ai/dsh-experimental-peer-sessions -->
+<a id="deepseek-aidsh-experimental-peer-sessions"></a>
+
+## `@deepseek-ai/dsh-experimental-peer-sessions`
+
+- `source`: [`packages/experimental/peer-sessions/src/index.ts:199`](../packages/experimental/peer-sessions/src/index.ts)
+
+```ts config-catalog
+/** Peer-service deployment limits. Invalid values fail plugin load. */
+export interface Config {
+  /** Milliseconds between mailbox drain passes for every agent this process holds. */
+  readonly pollMs?: number
+  /** Maximum queued messages retained for one target session. */
+  readonly maxPendingPerTarget?: number
+  /** Maximum queued messages one sender may retain for one target; at most `maxPendingPerTarget`. */
+  readonly maxPendingPerSenderPerTarget?: number
+  /** Maximum UTF-8 bytes in one complete framed delivery. */
+  readonly maxMessageBytes?: number
+  /** Maximum idle subscriptions retained for one target session. */
+  readonly maxIdleWatches?: number
+  /** Whether an idle target receives a message in a new turn (`steer`) or holds it until it runs again (`deferred`). */
+  readonly peerInbound?: 'steer' | 'deferred'
+}
+```
+<!-- END GENERATED config-catalog:@deepseek-ai/dsh-experimental-peer-sessions -->
+
 <!-- BEGIN GENERATED config-catalog:@deepseek-ai/dsh-experimental-ptc-runtime-python -->
 <a id="deepseek-aidsh-experimental-ptc-runtime-python"></a>
 
@@ -4470,6 +4496,8 @@ export interface Config {
 | `@deepseek-ai/dsh-experimental-agent-room-profile` | — | [`packages/experimental/agent-room-profile/src/index.ts`](../packages/experimental/agent-room-profile/src/index.ts) |
 | `@deepseek-ai/dsh-experimental-agent-team-profile` | — | [`packages/experimental/agent-team-profile/src/index.ts`](../packages/experimental/agent-team-profile/src/index.ts) |
 | `@deepseek-ai/dsh-experimental-browser-use-runtime` | — | [`packages/experimental/browser-use-runtime/src/index.ts`](../packages/experimental/browser-use-runtime/src/index.ts) |
+| `@deepseek-ai/dsh-experimental-peer-sessions-profile` | — | [`packages/experimental/peer-sessions-profile/src/index.ts`](../packages/experimental/peer-sessions-profile/src/index.ts) |
+| `@deepseek-ai/dsh-experimental-tool-peer-sessions` | — | [`packages/experimental/tool-peer-sessions/src/index.ts`](../packages/experimental/tool-peer-sessions/src/index.ts) |
 | `@deepseek-ai/dsh-experimental-voice-input-bundle` | — | [`packages/experimental/voice-input-bundle/src/index.ts`](../packages/experimental/voice-input-bundle/src/index.ts) |
 | `@deepseek-ai/dsh-experimental-webworker-packer` | — | [`packages/experimental/webworker-packer/src/index.ts`](../packages/experimental/webworker-packer/src/index.ts) |
 | `@deepseek-ai/dsh-experimental-webworker-runtime` | — | [`packages/experimental/webworker-runtime/src/index.ts`](../packages/experimental/webworker-runtime/src/index.ts) |
