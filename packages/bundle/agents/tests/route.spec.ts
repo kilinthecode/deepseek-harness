@@ -28,9 +28,12 @@ describe('parseRouteFlag', () => {
 describe('resolveWorkerRoute', () => {
   const fallback = { provider: 'fallback-provider', model: 'fallback-model' }
 
-  it('uses the fallback when --model is omitted', () => {
+  it('uses the fallback unchanged when --model and --effort are both omitted', () => {
     expect(resolveWorkerRoute(undefined, undefined, fallback)).toBe(fallback)
-    expect(resolveWorkerRoute(undefined, 'high', fallback)).toBe(fallback)
+  })
+
+  it('applies a bare --effort to the fallback route instead of dropping it', () => {
+    expect(resolveWorkerRoute(undefined, 'high', fallback)).toEqual({ ...fallback, reasoningEffort: 'high' })
   })
 
   it('parses --model and carries --effort when given', () => {
