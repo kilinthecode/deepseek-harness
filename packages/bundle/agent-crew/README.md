@@ -25,7 +25,7 @@ This optional bundle switches `tool-subagent`'s `worktreeIsolation` on, and inse
 <a id="use-this-package"></a>
 ## Use this package
 
-Open Plugins in the Web sidebar (or a CLI profile's plugin manager) and enable Agent Crew. Once enabled, the `subagent` tool gains an `isolation: "worktree"` option: a caller that sets it gets a child working in its own git worktree, isolated from the caller's checkout and every other child. The session also gains `accept_worktree`, `discard_worktree`, and `list_worktrees` to land, discard, and list those worktrees, and the `agent-crew` skill becomes available in the session skill catalog, giving the model a named, practiced workflow for decomposing a goal across several worktree-isolated workers. Disabling the bundle restores the shipped `tool-subagent` configuration (no `worktreeIsolation`) and removes the two inserted rows; a worktree already created keeps existing until an operator accepts or discards it with `dsh agents accept`/`discard`.
+Open Plugins in the Web sidebar (or a CLI profile's plugin manager) and enable Agent Crew. Once enabled, a Host-level `subagent` tool gains an `isolation: "worktree"` option (a `subagent` tool that an agent preset mounts does not; see [Known Limitations](#known-limitations-and-deferred-work)): a caller that sets it gets a child working in its own git worktree, isolated from the caller's checkout and every other child. The session also gains `accept_worktree`, `discard_worktree`, and `list_worktrees` to land, discard, and list those worktrees, and the `agent-crew` skill becomes available in the session skill catalog, giving the model a named, practiced workflow for decomposing a goal across several worktree-isolated workers. Disabling the bundle restores the shipped `tool-subagent` configuration (no `worktreeIsolation`) and removes the two inserted rows; a worktree already created keeps existing until an operator accepts or discards it with `dsh agents accept`/`discard`.
 
 ### Reviewer route
 
@@ -88,6 +88,7 @@ These schema and catalog changes apply once, at the request prefix, when the bun
 
 <a id="known-limitations-and-deferred-work"></a>
 
+- **Agent presets do not receive the patch** — where agent presets mount the `subagent` tool (the shipped Web, headless, and Desktop profiles), the Host-level `tool-subagent` row this bundle patches is disabled, and an id-targeted patch cannot reach a preset's child rows. Those presets' `subagent` tools do not gain `isolation`, although the worktree tools and the skill still mount.
 - **The three rows are not independently useful** — switching `tool-subagent-worktree` off while keeping `isolation: "worktree"` enabled on `subagent` leaves a caller able to create worktrees it can never land or discard through a model-facing tool (only through `dsh agents accept`/`discard`).
 - **Disabling the bundle does not touch existing worktrees** — a worktree created while the bundle was enabled remains on disk with its branch until an operator runs `dsh agents accept` or `discard`.
 - A profile patch or `--patch` overlay that targets `tool-subagent-worktree` or `skill-agent-crew` by id matches no row while this bundle is not selected: the loader warns `patch: entry <id> not found` for each such patch. Select this bundle instead of switching the rows on by id.
