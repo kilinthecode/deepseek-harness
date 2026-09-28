@@ -1512,6 +1512,7 @@ describe('subagent tool worktree isolation', () => {
       state: 'open',
       createdAt: 1_700_000_000_000,
       workerSessionIds: [],
+      workerRoute,
       ...overrides,
     }
   }
@@ -1547,6 +1548,7 @@ describe('subagent tool worktree isolation', () => {
       branchPrefix: 'test/',
       maxWorktrees: 4,
       requireDistinctReviewer: false,
+      testCommand: [],
       reviewDiffMaxBytes: 4096,
       removeOnMerge: true,
     })
@@ -1694,7 +1696,11 @@ describe('subagent tool worktree isolation', () => {
 
     const result = await callSubagent(ctx, { description: 'd', prompt: 'the task', isolation: 'worktree' }, { agent: parent })
 
-    const configuredRoute: WorktreeRoute = { provider: 'configured-provider', model: 'configured-model', reasoningEffort: 'high' }
+    const configuredRoute: WorktreeRoute = {
+      provider: 'configured-provider',
+      model: 'configured-model',
+      reasoningEffort: ReasoningEffortId('high'),
+    }
     expect(result.isError).toBe(false)
     expect(resolveReviewerSpy).toHaveBeenCalledWith({ workerRoute: configuredRoute, callerRoute: workerRoute })
     expect(attachSpy).toHaveBeenCalledWith(expect.objectContaining({ workerRoute: configuredRoute }))
@@ -1896,7 +1902,7 @@ describe('subagent tool worktree isolation', () => {
       expect(attachCall?.workerSessionId).toBe(result.isError ? undefined : (result.value as { subagentId: unknown }).subagentId)
       expect(text(result)).toBe(
         `started subagent ${attachCall?.workerSessionId} in worktree ${provisioned.record.id} `
-        + `(branch ${provisioned.record.branch}, base ${provisioned.record.baseCommit.slice(0, 7)})`,
+        + `(branch ${provisioned.record.branch}, base ${provisioned.record.baseCommit})`,
       )
     })
 

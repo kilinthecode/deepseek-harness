@@ -601,7 +601,7 @@ export function apply(ctx: Context, config: Config, session?: Session): void {
                   + (value.worktree === undefined
                     ? ''
                     : ` in worktree ${value.worktree.id} (branch ${value.worktree.branch}, `
-                      + `base ${value.worktree.baseCommit.slice(0, 7)})`)
+                      + `base ${value.worktree.baseCommit})`)
                   + (value.baseDirty === undefined
                     ? ''
                     : ` Your checkout has ${value.baseDirty.total} uncommitted change(s) that the worktree does not contain.`)
