@@ -51,6 +51,7 @@ Load the subagent service, an in-process or remote backend, and this tool; then 
 | `persona` | — | Per-child persona; requires the provider's `persona` capability |
 | `toolFilter` | — | Per-child global-tool restriction; requires the `toolFilter` capability |
 | `maxDepth` | Host setting (`1`) | Absolute delegation-depth cap (`0` forbids delegation); `'provider-managed'` sends no cap to an out-of-process provider |
+| `worktreeIsolation` | `false` | Expose an `isolation` parameter that gives a call its own git worktree through `ctx.subagentWorktrees`, reviewed and merged only via `accept_worktree`; requires the subagent-worktree service and a provider with the `cwd` capability |
 
 The generated [configuration catalog](../../../docs/config-catalog.md#deepseek-aidsh-tool-subagent) is the exhaustive source for every accepted field and its JSDoc.
 
@@ -61,6 +62,10 @@ Under `one-shot` policy, an omitted `run_in_background` waits in the foreground 
 Under `continuable` policy, an omitted or `true` `run_in_background` starts a durable child and returns `started subagent <childId>` without waiting for a result; the runtime delivers one settlement notice when the child's Activation ends, and the optional `send_message` tool sends it more work. Set `run_in_background: false` to wait for the result in the foreground.
 
 `maxDepth` caps recursion (`0` forbids delegation); omission reads the current Host `subagent.maxDepth` setting, initially `1`, at each delegation. A numeric depth requires a provider with the `depthLimit` capability; `'provider-managed'` leaves the budget to an out-of-process provider. `persona` and `toolFilter` configure every child when the provider supports them, and the tool stays visible at the cap — each attempted start checks the calling agent's current depth and rejects with an errored result.
+
+### Worktree isolation
+
+Set `worktreeIsolation: true` to let a call pass `isolation: "worktree"`. The executor resolves an independent reviewer route before provisioning, creates a linked git worktree through `ctx.subagentWorktrees`, prefixes the child's prompt with a worker brief naming the worktree, and runs the child with `cwd` set to the worktree — requiring a provider with the `cwd` capability. A start failure discards the fresh worktree. Nothing the child changes reaches the caller's checkout until `accept_worktree` commits, reviews, and merges it; the model calls `accept_worktree`, `discard_worktree`, and `list_worktrees` from the sibling `@deepseek-ai/dsh-tool-subagent-worktree` tools. `isolation: "worktree"` is rejected together with a background job under `backgroundMode: 'one-shot'`; use the foreground or `backgroundMode: 'continuable'` instead. With `worktreeIsolation` at its `false` default, the schema omits `isolation` and passing it fails the call.
 
 ### Selecting a child LLM
 
@@ -129,11 +134,11 @@ Read these pages when the package-level contract is not enough; they move from t
 
 #### What the model sees
 
-The delegation description uses `running` and `inactive` for follow-up availability; `inactive` does not imply a task result. The generated default [`subagent` schema](../../../docs/tool-catalog.md#deepseek-aidsh-tool-subagent) under this instance's configured name while its provider exists. An enabled Session policy adds `provider`, `model`, and `reasoning_effort` plus inheritance and selection guidance; the provider must support `agentOptions`. Provider context inheritance changes the tool and prompt descriptions. Enabled background mode adds `run_in_background`: continuable mode documents its `true` default, runtime settlement notice, and explicit foreground override, while one-shot mode documents its `false` default and the job id collected with `job_output` or stopped with `job_kill`. While the tool is visible in an assembly's scope, a `tool:<toolName>` system-prompt section tells the model to start independent continuable delegations together, keep working while they run, and choose foreground only when its next action depends on the result; a tool restriction removes both its schema and this guidance.
+The delegation description uses `running` and `inactive` for follow-up availability; `inactive` does not imply a task result. The generated default [`subagent` schema](../../../docs/tool-catalog.md#deepseek-aidsh-tool-subagent) under this instance's configured name while its provider exists. An enabled Session policy adds `provider`, `model`, and `reasoning_effort` plus inheritance and selection guidance; the provider must support `agentOptions`. Provider context inheritance changes the tool and prompt descriptions. Enabled background mode adds `run_in_background`: continuable mode documents its `true` default, runtime settlement notice, and explicit foreground override, while one-shot mode documents its `false` default and the job id collected with `job_output` or stopped with `job_kill`. Enabled `worktreeIsolation` adds an `isolation` enum parameter offering `"worktree"`, described in "Worktree isolation" above. While the tool is visible in an assembly's scope, a `tool:<toolName>` system-prompt section tells the model to start independent continuable delegations together, keep working while they run, and choose foreground only when its next action depends on the result; a tool restriction removes both its schema and this guidance.
 
 #### Token effect
 
-Fixed schema cost per parent request; model selection adds three parameters. Each provider instance adds one schema, and each continuable instance adds one short system-prompt section.
+Fixed schema cost per parent request; model selection adds three parameters, and `worktreeIsolation` adds one parameter, both only when their config is enabled. Each provider instance adds one schema, and each continuable instance adds one short system-prompt section.
 
 #### KV Cache effect
 
@@ -177,7 +182,7 @@ Prefix-stable while the section text and tool presence are unchanged; removing t
 
 #### What the model sees
 
-The call retains the description and prompt. Success contains only the child's final text; other outcomes become `Error: <stop reason>`, followed by a safe provider diagnostic when present and then any partial assistant text. Intermediate child steps stay out of the parent.
+The call retains the description and prompt. Success contains only the child's final text; other outcomes become `Error: <stop reason>`, followed by a safe provider diagnostic when present and then any partial assistant text. Intermediate child steps stay out of the parent. An isolated call's success text gains a line naming the worktree id and branch and directing the model to `accept_worktree`; unisolated results are unaffected.
 
 #### Token effect
 
@@ -191,7 +196,7 @@ Append-only; newly visible content follows the reusable request prefix and does 
 
 #### What the model sees
 
-Start returns exactly `started subagent <childId>` in configured continuable mode, or `started background subagent job <id>` in configured one-shot mode. In one-shot mode the generic task surface provides later status, final output, cancellation responses, and notices; failed status detail includes the provider diagnostic when the result supplied one. In continuable mode this tool returns no result of its own: the child's settlement reaches the parent as a service-owned notice, an independently loaded `send_message` tool delivers follow-ups, and the child's transcript by its id is the source of its detailed output.
+Start returns exactly `started subagent <childId>` in configured continuable mode, or `started background subagent job <id>` in configured one-shot mode. In one-shot mode the generic task surface provides later status, final output, cancellation responses, and notices; failed status detail includes the provider diagnostic when the result supplied one. In continuable mode this tool returns no result of its own: the child's settlement reaches the parent as a service-owned notice, an independently loaded `send_message` tool delivers follow-ups, and the child's transcript by its id is the source of its detailed output. An isolated continuable start instead returns `started subagent <childId> in worktree <wid> (branch <branch>, base <commit>)`, appending a note when the caller's checkout had uncommitted changes the worktree does not contain.
 
 #### Token effect
 
@@ -212,6 +217,7 @@ These limits define what this tool does not return or enforce; they are current 
 - **Duplicate names across waiting one-shot instances are detected late** (`TODO(subagent-dup-toolname)`) — continuable instances reserve their prompt-section name during plugin application, but preventing provider-registration rollback for waiting one-shot instances requires a registry of intended names.
 - **Shipped fork tools cannot select a child LLM route** — they inherit the parent's provider and model to keep the copied conversation prefix eligible for KV Cache reuse. Re-enable selection only when route changes preserve reuse or expose a bounded recomputation cost.
 - **Non-routing child policy is fixed per instance** — another persona, tool filter, or depth cap requires another distinctly named tool. LLM selection requires an enabled per-Session preference and a provider that advertises `agentOptions`; both in-process providers and DSH SDK advertise it, while ACP, Codex, and Claude Code reject it rather than ignore it.
+- **Worktree isolation cannot pair with a one-shot background job** — `isolation: "worktree"` combined with `run_in_background: true` under `backgroundMode: 'one-shot'` is rejected outright; call it in the foreground or configure `backgroundMode: 'continuable'`.
 
 <a id="dev-note"></a>
 ### Dev Note
