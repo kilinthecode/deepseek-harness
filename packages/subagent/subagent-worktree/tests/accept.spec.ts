@@ -1240,6 +1240,19 @@ describe('accept: a merge that landed', () => {
     expect(git(h.dir, 'rev-list', '--count', '--merges', 'HEAD').trim()).toBe('1')
   }, GIT_TEST_TIMEOUT_MS)
 
+  it('says the merge landed, without a commit id, when the id cannot be read and recording the merge also fails', async () => {
+    const h = await harness({ onReviewerStart: () => { writeFaults.skip = 1; writeFaults.fail = 1 } })
+    const provisioned = await createWorktree(h.ctx, OWNER, h.dir, 'do the thing')
+    await writeFile(join(provisioned.workDir, 'change.txt'), 'x')
+
+    await expect(acceptWorktree(directDeps(h, new HeadReadFailsAfterMergeGit(h.ctx.subprocess, 2)), acceptRequest(provisioned.record.id)))
+      .rejects.toThrow(`the merge of worktree ${provisioned.record.id} landed in the base checkout, but recording it failed`)
+
+    const { record } = await requireRecordLocation(h.root, provisioned.record.id)
+    expect(record.state).toBe('reviewing')
+    expect(record).not.toHaveProperty('reviewingPid')
+  }, GIT_TEST_TIMEOUT_MS)
+
   /** An accept whose merge landed but whose `merged` write failed, leaving the record stale `reviewing`. */
   async function crashedAfterMerge(options: HarnessOptions = {}): Promise<{
     h: Harness
@@ -1310,6 +1323,35 @@ describe('accept: a merge that landed', () => {
     expect(outcome).toMatchObject({ kind: 'merged', mergeCommit, removed: false })
     expect(outcome.record.state).toBe('merged')
     expect(warn).toHaveBeenCalledWith(expect.stringContaining(`was already merged as ${mergeCommit}, but removing its worktree and branch failed`))
+  }, GIT_TEST_TIMEOUT_MS)
+
+  it('reports the reviewed commit as the merge commit when it landed by fast-forward, so no merge commit exists', async () => {
+    const h = await harness()
+    const provisioned = await createWorktree(h.ctx, OWNER, h.dir, 'do the thing')
+    await writeFile(join(provisioned.workDir, 'a.txt'), 'a')
+    git(provisioned.record.path, 'add', '-A')
+    git(provisioned.record.path, 'commit', '-q', '-m', 'work')
+    const commit = git(provisioned.record.path, 'rev-parse', 'HEAD').trim()
+    // A user fast-forwards the base branch onto the worker's commit by hand.
+    git(h.dir, 'merge', '--ff-only', provisioned.record.branch)
+    // An accept that died before it recorded anything: reviewing on a dead process id, with a passing verdict for that commit.
+    const dead = spawnSync(process.execPath, ['-e', '0']).pid
+    if (dead === undefined) throw new Error('expected a spawned pid')
+    const { layout } = await requireRecordLocation(h.root, provisioned.record.id)
+    await updateExistingRecordAt(layout, provisioned.record.id, current => ({
+      ...current,
+      state: 'reviewing',
+      reviewingPid: dead,
+      lastVerdict: {
+        verdict: 'pass', summary: 's', checks: [], findings: [], commit, reviewerSessionId: SessionId('reviewer'), reviewerRoute: REVIEWER_ROUTE, at: 1,
+      },
+    }))
+
+    const outcome = await h.ctx.subagentWorktrees.accept(acceptRequest(provisioned.record.id))
+
+    expect(outcome).toMatchObject({ kind: 'merged', commit, mergeCommit: commit })
+    expect(outcome.record.state).toBe('merged')
+    expect(outcome.record).not.toHaveProperty('mergedCommit')
   }, GIT_TEST_TIMEOUT_MS)
 
   it('does not treat a stale record as landed when its reviewed commit is not in the base history', async () => {
