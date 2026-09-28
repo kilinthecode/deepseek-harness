@@ -3,7 +3,7 @@ import { readFileSync, writeFileSync } from 'node:fs'
 import { mkdtemp, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { afterEach, describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import type { Context } from '@deepseek-ai/cordis'
 import { SessionId } from '@deepseek-ai/dsh-session'
 import { pathExists } from '../src/fs-util.ts'
@@ -20,6 +20,7 @@ const cleanups: Array<() => Promise<unknown>> = []
 afterEach(async () => {
   for (const cleanup of cleanups.reverse()) await cleanup()
   cleanups.length = 0
+  vi.unstubAllEnvs()
 })
 
 const signal = new AbortController().signal
@@ -162,6 +163,28 @@ describe('recoverLandedMerge', () => {
     const recovery = await recoverLandedMerge(f.runner, layout, stale, signal)
 
     expect(recovery?.record).toMatchObject({ state: 'merged', mergedCommit: mergeCommit })
+  }, GIT_TEST_TIMEOUT_MS)
+
+  it('names the earliest of several merge commits that list the reviewed commit as a parent', async () => {
+    const f = await fixture()
+    const stale = await f.makeStale(f.commit)
+    const { layout } = await requireRecordLocation(f.root, f.record.id)
+    const base = git(f.dir, 'rev-parse', 'HEAD').trim()
+    // The merge commits are dated apart, so "earliest" does not depend on how git orders commits with equal dates.
+    vi.stubEnv('GIT_COMMITTER_DATE', '2020-01-01T00:00:00Z')
+    git(f.dir, 'merge', '--no-ff', '--no-edit', f.record.branch)
+    const earliest = git(f.dir, 'rev-parse', 'HEAD').trim()
+    // The reviewed commit is merged a second time, into a branch that main then merges: a later merge that lists it too.
+    git(f.dir, 'checkout', '-q', '-b', 'other', base)
+    vi.stubEnv('GIT_COMMITTER_DATE', '2021-01-01T00:00:00Z')
+    git(f.dir, 'merge', '--no-ff', '--no-edit', f.commit)
+    git(f.dir, 'checkout', '-q', 'main')
+    vi.stubEnv('GIT_COMMITTER_DATE', '2022-01-01T00:00:00Z')
+    git(f.dir, 'merge', '--no-ff', '--no-edit', 'other')
+
+    const recovery = await recoverLandedMerge(f.runner, layout, stale, signal)
+
+    expect(recovery?.record).toMatchObject({ state: 'merged', mergedCommit: earliest })
   }, GIT_TEST_TIMEOUT_MS)
 
   it('skips a merge that lists another commit built on the reviewed one, and records the reviewed commit', async () => {
