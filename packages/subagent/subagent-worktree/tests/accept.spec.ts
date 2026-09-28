@@ -18,7 +18,7 @@ import type * as Git from '../src/git.ts'
 import type { GitCommandResult, GitRunOptions } from '../src/git.ts'
 import type { Config } from '../src/index.ts'
 import { reviewCheckoutPathFor } from '../src/paths.ts'
-import { requireRecordLocation, updateExistingRecordAt } from '../src/records.ts'
+import { isStaleReviewing, requireRecordLocation, updateExistingRecordAt } from '../src/records.ts'
 import type { AcceptWorktreeRequest, WorktreeId, WorktreeOwner } from '../src/types.ts'
 import { expireSignal, KILLED_RESULT } from './cleanup-signals.ts'
 import { createWorktree, fakeAgent, git, initFixtureRepo, removeFixture, resolveTestConfig, setup } from './harness.ts'
@@ -1118,6 +1118,27 @@ describe('accept: state machine', () => {
     // that follows it (reopening a now-deleted record) also fails.
     await expect(ctx.subagentWorktrees.accept(acceptRequest(provisioned.record.id)))
       .rejects.toThrow('reviewer infrastructure boom')
+  }, GIT_TEST_TIMEOUT_MS)
+
+  it('releases the accept claim when the reopen write fails, so a live process id does not pin the record', async () => {
+    const { ctx, dir, root } = await harness({
+      verdicts: [{ throws: 'reviewer infrastructure boom' }],
+      // The first record write after the reviewer starts is the reopen.
+      onReviewerStart: () => { writeFaults.skip = 0; writeFaults.fail = 1 },
+    })
+    const warn = vi.spyOn(ctx.logger, 'warn').mockImplementation(() => {})
+    const provisioned = await createWorktree(ctx, OWNER, dir, 'do the thing')
+    await writeFile(join(provisioned.workDir, 'change.txt'), 'x')
+
+    await expect(ctx.subagentWorktrees.accept(acceptRequest(provisioned.record.id)))
+      .rejects.toThrow('reviewer infrastructure boom')
+
+    const { record } = await requireRecordLocation(root, provisioned.record.id)
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining(`could not reopen worktree ${provisioned.record.id}`))
+    // The record is still `reviewing`, but with no claim it reads as stale: the next accept or discard recovers it.
+    expect(record.state).toBe('reviewing')
+    expect(record).not.toHaveProperty('reviewingPid')
+    expect(isStaleReviewing(record)).toBe(true)
   }, GIT_TEST_TIMEOUT_MS)
 
   it('does not reopen a record that changed state while the failing accept was running', async () => {

@@ -226,6 +226,18 @@ async function removeMergedWorktree(
   }
 }
 
+/**
+ * Best-effort release of this process's accept claim (`reviewingPid`), for a record write that failed while the
+ * claim was held. A claim held by a live process pins the record as "being accepted" until that process exits; a
+ * record `reviewing` with no claim reads as stale, which the next `accept` or `discard` can recover. The release
+ * write can fail for the same reason the write before it did, so its failure is logged, not thrown.
+ */
+async function releaseClaim(deps: AcceptDeps, layout: WorktreeLayout, id: WorktreeId): Promise<void> {
+  await updateExistingRecordAt(layout, id, withoutReviewingPid).catch((clearError: unknown) => {
+    deps.ctx.logger.warn(`subagent-worktree: could not release the accept claim on worktree ${id}: ${String(clearError)}`)
+  })
+}
+
 /** An error raised after the merge landed: the base checkout changed even though the accept failed. */
 class MergeLandedError extends Error {
   constructor(message: string, cause: unknown) {
@@ -252,9 +264,7 @@ async function recordLandedMerge(
       ...withoutReviewingPid(current), state: 'merged', ...mergeCommit === undefined ? {} : { mergedCommit: mergeCommit },
     }))
   } catch (writeError) {
-    await updateExistingRecordAt(layout, id, withoutReviewingPid).catch((clearError: unknown) => {
-      deps.ctx.logger.warn(`subagent-worktree: could not release the accept claim on worktree ${id}: ${String(clearError)}`)
-    })
+    await releaseClaim(deps, layout, id)
     throw new MergeLandedError(
       `subagent-worktree: the merge of worktree ${id} landed in the base checkout${mergeCommit === undefined ? '' : ` as ${mergeCommit}`}, `
       + `but recording it failed; the worktree record still says reviewing: ${String(writeError)}`,
@@ -389,7 +399,8 @@ export async function acceptWorktree(deps: AcceptDeps, request: AcceptWorktreeRe
     return { kind: 'merged', record: toPublicRecord(merged), commit, mergeCommit: step.mergeCommit, verdict, removed }
   } catch (error) {
     if (!landing.landed) {
-      await updateExistingRecordAt(located.layout, request.id, reopenedRecord).catch((revertError: unknown) => {
+      await updateExistingRecordAt(located.layout, request.id, reopenedRecord).catch(async (revertError: unknown) => {
+        await releaseClaim(deps, located.layout, request.id)
         deps.ctx.logger.warn(`subagent-worktree: could not reopen worktree ${request.id} after a failed accept: ${String(revertError)}`)
       })
     }
