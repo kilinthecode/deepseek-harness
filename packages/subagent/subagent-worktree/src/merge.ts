@@ -28,6 +28,11 @@ export type MergeAttemptResult =
 /** Callbacks from one merge attempt to its caller. */
 export interface MergeAttemptHooks {
   /**
+   * Called after the pre-merge probes pass and immediately before `git merge` starts, for a last check the caller
+   * cannot make earlier. A throw stops the attempt before any merge state exists.
+   */
+  readonly beforeMerge: () => void
+  /**
    * Called the instant `git merge` exits 0, before any follow-up git command, so the caller knows the merge
    * landed even if reading its commit id then fails.
    */
@@ -155,10 +160,11 @@ async function classifyFailedMerge(
  * @param label - the worktree's display label, named in the merge commit message.
  * @param commit - the reviewed commit to merge, as a full commit id.
  * @param signal - cancellation for the whole accept operation.
- * @param hooks - landed notification and operator reports.
+ * @param hooks - last-moment check, landed notification, and operator reports.
  * @returns the merge outcome.
- * @throws when a pre-merge probe failed, this call's merge was killed or failed after starting, or the merge
- *   commit id could not be read after a successful merge (`hooks.onLanded` has then already been called).
+ * @throws when a pre-merge probe or `hooks.beforeMerge` failed, this call's merge was killed or failed after
+ *   starting, or the merge commit id could not be read after a successful merge (`hooks.onLanded` has then
+ *   already been called).
  */
 export async function attemptMerge(
   git: GitRunner,
@@ -176,6 +182,7 @@ export async function attemptMerge(
     return { kind: 'blocked', reason: 'the base checkout HEAD is detached; a merge there would update no branch' }
   }
 
+  hooks.beforeMerge()
   const message = `Merge worktree ${id}: ${label}`
   const result = await git.run(['merge', '--no-ff', '--no-edit', '-m', message, commit], { cwd: repoRoot, signal })
   if (result.exitCode === 0) {

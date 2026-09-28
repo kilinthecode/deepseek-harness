@@ -32,11 +32,14 @@ const signal = new AbortController().signal
 const GIT_TEST_TIMEOUT_MS = 20_000
 
 /** Hooks that record what the caller was told, in order. */
-function recordingHooks(events: string[] = []): MergeAttemptHooks & { readonly events: string[]; readonly reports: string[] } {
+function recordingHooks(
+  events: string[] = [], beforeMerge: () => void = () => {},
+): MergeAttemptHooks & { readonly events: string[]; readonly reports: string[] } {
   const reports: string[] = []
   return {
     events,
     reports,
+    beforeMerge,
     onLanded: () => { events.push('landed') },
     report: (message) => { reports.push(message) },
   }
@@ -190,6 +193,34 @@ async function scripted(script: Script): Promise<ScriptedGit> {
 
 const KILLED: GitCommandResult = { exitCode: null, stdout: '', stderr: '', stdoutLossy: false }
 const FAILED_128: GitCommandResult = { exitCode: 128, stdout: '', stderr: 'fatal: scripted failure\n', stdoutLossy: false }
+
+describe('attemptMerge: the last check before merging', () => {
+  it('runs beforeMerge after the pre-merge probes and immediately before git merge starts', async () => {
+    const { dir, sideCommit } = await repoWithSideBranch('dsh-merge-before-')
+    const command = await scripted({})
+    let commandsWhenChecked = -1
+    const hooks = recordingHooks([], () => { commandsWhenChecked = command.commands.length })
+
+    await attemptMerge(command, dir, 'wt-00000022', 'do the thing', sideCommit, signal, hooks)
+
+    // Two probes (MERGE_HEAD, then HEAD attachment) ran first; the very next command is the merge itself.
+    expect(commandsWhenChecked).toBe(2)
+    expect(command.commands[commandsWhenChecked]?.[0]).toBe('merge')
+  }, GIT_TEST_TIMEOUT_MS)
+
+  it('stops before any merge state exists when beforeMerge throws', async () => {
+    const { dir, sideCommit, baseHead } = await repoWithSideBranch('dsh-merge-before-throws-')
+    const command = await scripted({})
+    const hooks = recordingHooks([], () => { throw new Error('a worker is running again') })
+
+    await expect(attemptMerge(command, dir, 'wt-00000023', 'do the thing', sideCommit, signal, hooks))
+      .rejects.toThrow('a worker is running again')
+
+    expect(command.commands.some(args => args[0] === 'merge')).toBe(false)
+    expect(hooks.events).toEqual([])
+    expect(git(dir, 'rev-parse', 'HEAD').trim()).toBe(baseHead)
+  }, GIT_TEST_TIMEOUT_MS)
+})
 
 describe('attemptMerge: refusing to start', () => {
   it('reports blocked, and leaves a merge the user already has in progress exactly as it was', async () => {

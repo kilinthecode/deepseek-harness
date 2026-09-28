@@ -108,8 +108,13 @@ async function cleanupStaleReviewDirs(
   }
 }
 
-/** Commit the worktree's staged changes, or reuse `HEAD` when nothing changed since the last accept. */
+/**
+ * Commit the worktree's staged changes, or reuse `HEAD` when nothing changed since the last accept. A worker
+ * restarted after the claim would race the commit, so running workers are checked again right before `git add`.
+ * @throws when an attached worker's Agent is running.
+ */
 async function commitWorktreeChanges(deps: AcceptDeps, record: StoredWorktreeRecord, id: WorktreeId, signal: AbortSignal): Promise<string> {
+  assertNoRunningWorkers(deps.ctx.agents, record, id)
   await deps.git.expect(['add', '-A'], 'git add', { cwd: record.path, signal })
   const staged = await deps.git.run(['diff', '--cached', '--quiet'], { cwd: record.path, signal })
   /* v8 ignore next -- `git diff --cached --quiet` in a worktree the immediately preceding `git add -A` just
@@ -339,6 +344,8 @@ export async function acceptWorktree(deps: AcceptDeps, request: AcceptWorktreeRe
     const step: MergeStep = await withFileLock(
       located.layout.mergeLockPath,
       () => attemptMerge(deps.git, reviewing.repoRoot, request.id, reviewing.label, commit, request.signal, {
+        // The review may have run for minutes: a worker restarted since would race the merge, so check once more.
+        beforeMerge: () => { assertNoRunningWorkers(deps.ctx.agents, reviewing, request.id) },
         onLanded: () => { landing.landed = true },
         report: (message) => { deps.ctx.logger.error(message) },
       }),

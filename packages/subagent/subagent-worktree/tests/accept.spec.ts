@@ -859,6 +859,54 @@ describe('accept: running workers', () => {
     expect((await ctx.subagentWorktrees.accept(acceptRequest(provisioned.record.id))).kind).toBe('merged')
   }, GIT_TEST_TIMEOUT_MS)
 
+  /** An attached worker that reads `idle` for its first `idleChecks` status checks and `running` afterwards. */
+  async function workerRunningAfter(ctx: Context, id: WorktreeId, idleChecks: number): Promise<SessionId> {
+    const workerId = SessionId('restarted-worker')
+    await ctx.subagentWorktrees.attach({ id, owner: OWNER, workerSessionId: workerId, workerRoute: { provider: 'p', model: 'm' } })
+    let checks = 0
+    vi.spyOn(ctx.agents, 'get').mockImplementation((asked) => {
+      if (asked !== workerId) return undefined
+      checks += 1
+      return { status: checks > idleChecks ? 'running' : 'idle' } as Agent
+    })
+    return workerId
+  }
+
+  it('checks again right before git add: a worker that starts after the claim stops the accept before it commits', async () => {
+    let reviewerStarts = 0
+    const { ctx, dir } = await harness({ onReviewerStart: () => { reviewerStarts += 1 } })
+    const provisioned = await createWorktree(ctx, OWNER, dir, 'do the thing')
+    await writeFile(join(provisioned.workDir, 'change.txt'), 'x')
+    // The first check (under the claim) reads idle; the check right before `git add` reads running.
+    const workerId = await workerRunningAfter(ctx, provisioned.record.id, 1)
+
+    await expect(ctx.subagentWorktrees.accept(acceptRequest(provisioned.record.id)))
+      .rejects.toThrow(`worker ${workerId} of worktree ${provisioned.record.id} is still running`)
+
+    expect(reviewerStarts).toBe(0)
+    expect(git(provisioned.record.path, 'status', '--porcelain')).toContain('change.txt')
+    expect((await ctx.subagentWorktrees.list({ baseDir: dir }))[0]?.state).toBe('open')
+  }, GIT_TEST_TIMEOUT_MS)
+
+  it('checks again right before git merge: a worker that starts during the review stops the accept before it merges', async () => {
+    let reviewerStarts = 0
+    const { ctx, dir } = await harness({ onReviewerStart: () => { reviewerStarts += 1 } })
+    const provisioned = await createWorktree(ctx, OWNER, dir, 'do the thing')
+    await writeFile(join(provisioned.workDir, 'change.txt'), 'x')
+    // The checks under the claim and before `git add` read idle; the check right before `git merge` reads running.
+    const workerId = await workerRunningAfter(ctx, provisioned.record.id, 2)
+
+    await expect(ctx.subagentWorktrees.accept(acceptRequest(provisioned.record.id)))
+      .rejects.toThrow(`worker ${workerId} of worktree ${provisioned.record.id} is still running`)
+
+    expect(reviewerStarts).toBe(1)
+    expect(git(dir, 'rev-list', '--count', '--merges', 'HEAD').trim()).toBe('0')
+    expect(await pathExists(join(dir, 'change.txt'))).toBe(false)
+    const [record] = await ctx.subagentWorktrees.list({ baseDir: dir })
+    expect(record?.state).toBe('open')
+    expect(record?.lastVerdict?.verdict).toBe('pass')
+  }, GIT_TEST_TIMEOUT_MS)
+
   it('refuses to discard while an attached worker is running, changing nothing', async () => {
     const { ctx, dir } = await harness()
     const provisioned = await createWorktree(ctx, OWNER, dir, 'do the thing')
