@@ -354,6 +354,17 @@ describe('scans skip what is not a record', () => {
     expect(warnings).toEqual([expect.stringContaining(`"${stray}"`)])
   })
 
+  it('skips stray entries without failing when the caller passes no warning callback', async () => {
+    const root = await scratchRoot('dsh-wt-scan-silent-')
+    await writeFile(join(root, '.DS_Store'), '')
+    const layout = layoutFor(root, 'repo-key')
+    await createRecord(layout, recordIn(layout, 'wt-aaaaaaaa'))
+    await writeFile(join(layout.recordsDir, 'notes.json'), '{}')
+
+    expect((await locateRecord(root, 'wt-aaaaaaaa' as WorktreeId))?.record.id).toBe('wt-aaaaaaaa')
+    expect((await listRecords(layout)).map(r => r.id)).toEqual(['wt-aaaaaaaa'])
+  })
+
   it('still fails loud on a corrupt record file named for a worktree id', async () => {
     const root = await scratchRoot('dsh-wt-list-corrupt-')
     const layout = layoutFor(root, 'repo-key')

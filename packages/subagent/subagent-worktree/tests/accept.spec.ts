@@ -1165,6 +1165,36 @@ function directDeps(h: Harness, command: GitRunner): AcceptDeps {
   }
 }
 
+/** Real git, except that `git merge --abort` fails without aborting, so the merge it was asked to abort stays in progress. */
+class AbortFailsGit extends GitRunner {
+  override async run(args: readonly string[], options: GitRunOptions): Promise<GitCommandResult> {
+    if (args[0] === 'merge' && args[1] === '--abort') {
+      return { exitCode: 128, stdout: '', stderr: 'fatal: scripted abort failure\n', stdoutLossy: false }
+    }
+    return super.run(args, options)
+  }
+}
+
+describe('accept: a merge that cannot be aborted', () => {
+  it('reports the conflict and logs an error naming the merge that is still in progress', async () => {
+    const h = await harness()
+    const logged = vi.spyOn(h.ctx.logger, 'error').mockImplementation(() => {})
+    await writeFile(join(h.dir, 'shared.txt'), 'base\n')
+    git(h.dir, 'add', '-A'); git(h.dir, 'commit', '-q', '-m', 'add shared.txt')
+    const first = await createWorktree(h.ctx, OWNER, h.dir, 'first change')
+    const second = await createWorktree(h.ctx, OWNER, h.dir, 'second change')
+    await writeFile(join(first.workDir, 'shared.txt'), 'from first\n')
+    await writeFile(join(second.workDir, 'shared.txt'), 'from second\n')
+    expect((await h.ctx.subagentWorktrees.accept(acceptRequest(first.record.id))).kind).toBe('merged')
+
+    const outcome = await acceptWorktree(directDeps(h, new AbortFailsGit(h.ctx.subprocess)), acceptRequest(second.record.id))
+
+    expect(outcome.kind).toBe('conflict')
+    expect(git(h.dir, 'rev-parse', '-q', '--verify', 'MERGE_HEAD').trim()).not.toBe('')
+    expect(logged).toHaveBeenCalledWith(expect.stringContaining('could not be aborted and is still in progress'))
+  }, GIT_TEST_TIMEOUT_MS)
+})
+
 describe('accept: a merge that landed', () => {
   it('reads the merge commit again when the first read fails, and still records merged with it', async () => {
     const h = await harness()
