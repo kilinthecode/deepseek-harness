@@ -407,6 +407,7 @@
     { "path": "./packages/acp/acp" },
     { "path": "./packages/bundle/acp-app" },
     { "path": "./packages/bundle/agent-crew" },
+    { "path": "./packages/bundle/agents" },
     { "path": "./packages/bundle/base" },
     { "path": "./packages/bundle/headless" },
     { "path": "./packages/bundle/sdk-app" },

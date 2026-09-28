@@ -26,6 +26,9 @@ Examples:
   dsh rescue --from-default-profile web
                                             create rescue from the shipped web template, then boot it
   dsh headless "run the tests"              answer one task, print the result, and exit
+  dsh agents run "add the parser and its tests"
+                                            split a goal across worker agents with independent review
+  dsh agents list                           list the repository's open agent worktrees
   dsh tui --patch ./extra.yml               boot a custom profile with one extra overlay
   dsh tui --resume <session>                arguments after the launcher flags reach the app
   dsh web --help                            the web app's own flags and help
