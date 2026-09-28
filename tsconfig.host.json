@@ -405,6 +405,7 @@
     { "path": "./packages/test-support/agent-loop-testkit" },
     { "path": "./packages/acp/acp" },
     { "path": "./packages/bundle/acp-app" },
+    { "path": "./packages/bundle/agents" },
     { "path": "./packages/bundle/base" },
     { "path": "./packages/bundle/headless" },
     { "path": "./packages/bundle/sdk-app" },
