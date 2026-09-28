@@ -2,10 +2,14 @@
 
 const UUID_FRAGMENT_RE = /[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/i
 const LEGACY_TOKEN_RE = /^\{\{(?:sessionId|messageId)\}\}$/
-const CANONICAL_TOKEN_RE = /^\{\{(session|message|approval|workflow|command|rpc|retry|id):([1-9]\d*)\}\}$/
+const CANONICAL_TOKEN_RE = /^\{\{(session|message|approval|workflow|command|rpc|retry|id|worktree|commit):([1-9]\d*)\}\}$/
 const ID_KEY_RE = /(?:^id$|Id$|Ids$)/
+// A value that IS one of these ids owns that kind even when a generic id-shaped
+// key discovers it first, so one relationship never splits across two kinds.
+const WORKTREE_ID_RE = /^wt-[0-9a-f]{8}$/
+const COMMIT_ID_RE = /^[0-9a-f]{40}$/
 
-type IdentityKind = 'session' | 'message' | 'approval' | 'workflow' | 'command' | 'rpc' | 'retry' | 'id'
+type IdentityKind = 'session' | 'message' | 'approval' | 'workflow' | 'command' | 'rpc' | 'retry' | 'id' | 'worktree' | 'commit'
 
 interface ParsedLog {
   readonly records: Record<string, unknown>[]
@@ -34,8 +38,18 @@ function messageId(value: unknown): string | undefined {
   return value.id
 }
 
+/** The kind a value's own shape claims; `undefined` means its key or a generic scan decides. */
+function intrinsicIdentityKind(value: string): IdentityKind | undefined {
+  if (WORKTREE_ID_RE.test(value)) return 'worktree'
+  if (COMMIT_ID_RE.test(value)) return 'commit'
+  return undefined
+}
+
 function redactedCandidate(value: string): boolean {
-  return UUID_FRAGMENT_RE.test(value) || LEGACY_TOKEN_RE.test(value) || CANONICAL_TOKEN_RE.test(value)
+  return UUID_FRAGMENT_RE.test(value)
+    || LEGACY_TOKEN_RE.test(value)
+    || CANONICAL_TOKEN_RE.test(value)
+    || intrinsicIdentityKind(value) !== undefined
 }
 
 /**
@@ -59,9 +73,10 @@ export function redactSessionSnapshotIds(logs: readonly string[]): string[] {
       tokenByValue.set(value, value)
       return
     }
-    const next = (nextByKind.get(kind) ?? 0) + 1
-    nextByKind.set(kind, next)
-    tokenByValue.set(value, `{{${kind}:${next}}}`)
+    const owned = intrinsicIdentityKind(value) ?? kind
+    const next = (nextByKind.get(owned) ?? 0) + 1
+    nextByKind.set(owned, next)
+    tokenByValue.set(value, `{{${owned}:${next}}}`)
   }
 
   for (const log of parsed) {
@@ -73,6 +88,10 @@ export function redactSessionSnapshotIds(logs: readonly string[]): string[] {
     if (typeof value === 'string') {
       for (const match of value.matchAll(/\bas message ([0-9a-f-]{36})\b/gi)) claim(match[1], 'message')
       for (const match of value.matchAll(/\bAnonymous user: ([0-9a-f-]{36})\b/gi)) claim(match[1], 'id')
+      // Word-bounded so a longer id never yields a fragment, and hex-neighbour-bounded
+      // so a 40-character window inside a longer digest is not a commit.
+      for (const match of value.matchAll(/\bwt-[0-9a-f]{8}\b/g)) claim(match[0], 'worktree')
+      for (const match of value.matchAll(/(?<![0-9a-fA-F])[0-9a-f]{40}(?![0-9a-fA-F])/g)) claim(match[0], 'commit')
       return
     }
     if (Array.isArray(value)) {

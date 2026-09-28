@@ -8,6 +8,10 @@ const approvalId = '44444444-4444-4444-8444-444444444444'
 const runId = '55555555-5555-4555-8555-555555555555'
 const otherId = '66666666-6666-4666-8666-666666666666'
 const proseUuid = '77777777-7777-4777-8777-777777777777'
+const worktreeId = 'wt-1a2b3c4d'
+const otherWorktreeId = 'wt-fedcba98'
+const commitId = '0123456789abcdef0123456789abcdef01234567'
+const otherCommitId = 'fedcba9876543210fedcba9876543210fedcba98'
 
 describe('session snapshot identity redaction', () => {
   it('preserves feedback versions and target relationships without redacting unrelated prose', () => {
@@ -97,6 +101,70 @@ describe('session snapshot identity redaction', () => {
     expect(redacted).toContain('Anonymous user: {{id:1}}')
     expect(redacted).toContain('"requestId":"stable-readable-id"')
     expect(redacted?.endsWith('\n')).toBe(false)
+  })
+
+  it('mints worktree and commit tokens in first-seen order and replaces every occurrence', () => {
+    const source = [
+      JSON.stringify({ type: 'worktree/created', data: { worktreeId, headCommitId: commitId } }),
+      JSON.stringify({ type: 'worktree/created', data: { worktreeId: otherWorktreeId, headCommitId: otherCommitId } }),
+      JSON.stringify({
+        type: 'tool/result',
+        data: {
+          branch: `dsh/worktree/${worktreeId}`,
+          path: `/tmp/worktrees/${otherWorktreeId}/src/index.ts`,
+          output: `HEAD ${commitId} on ${otherCommitId}, worktree ${worktreeId}`,
+        },
+      }),
+      '',
+    ].join('\n')
+
+    const [redacted] = redactSessionSnapshotIds([source])
+    expect(redacted).toContain('"worktreeId":"{{worktree:1}}"')
+    expect(redacted).toContain('"worktreeId":"{{worktree:2}}"')
+    expect(redacted).toContain('"headCommitId":"{{commit:1}}"')
+    expect(redacted).toContain('"headCommitId":"{{commit:2}}"')
+    expect(redacted).toContain('"branch":"dsh/worktree/{{worktree:1}}"')
+    expect(redacted).toContain('"path":"/tmp/worktrees/{{worktree:2}}/src/index.ts"')
+    expect(redacted).toContain('HEAD {{commit:1}} on {{commit:2}}, worktree {{worktree:1}}')
+    expect(redacted?.match(/\{\{worktree:1\}\}/g)).toHaveLength(3)
+    for (const value of [worktreeId, otherWorktreeId, commitId, otherCommitId]) {
+      expect(redacted).not.toContain(value)
+    }
+    expect(redactSessionSnapshotIds([redacted!])).toEqual([redacted])
+  })
+
+  it('continues worktree and commit numbering from canonical tokens already in the fixture', () => {
+    const source = [
+      JSON.stringify({ type: 'example', data: { worktreeId: '{{worktree:7}}', commitId: '{{commit:4}}' } }),
+      JSON.stringify({ type: 'worktree/created', data: { worktreeId, commitId } }),
+      '',
+    ].join('\n')
+
+    const [redacted] = redactSessionSnapshotIds([source])
+    expect(redacted).toContain('"worktreeId":"{{worktree:7}}"')
+    expect(redacted).toContain('"commitId":"{{commit:4}}"')
+    expect(redacted).toContain('"worktreeId":"{{worktree:8}}"')
+    expect(redacted).toContain('"commitId":"{{commit:5}}"')
+    expect(redactSessionSnapshotIds([redacted!])).toEqual([redacted])
+  })
+
+  it('leaves longer words and hex runs around a worktree or commit shape untouched', () => {
+    const source = [
+      JSON.stringify({
+        type: 'example',
+        data: {
+          shortWorktree: 'wt-1a2b3c4',
+          longWorktree: 'wt-1a2b3c4d5',
+          wordWorktree: `x${worktreeId}`,
+          shortHex: 'a'.repeat(39),
+          longHex: 'b'.repeat(41),
+        },
+      }),
+      '',
+    ].join('\n')
+
+    const [redacted] = redactSessionSnapshotIds([source])
+    expect(redacted).toBe(source)
   })
 
   it('keeps a canonical token first seen through a generic id key', () => {

@@ -77,7 +77,7 @@ function snapshotMode(value: string | undefined): SnapshotMode {
 }
 
 const mode = snapshotMode(process.env.DSH_SNAPSHOT)
-const RUNTIME_WORKSPACE_ENTRIES = ['.agents', '.dsh', '.snapshot-patches'] as const
+const RUNTIME_WORKSPACE_ENTRIES = ['.agents', '.dsh', '.git', '.snapshot-patches'] as const
 
 interface JsonObject {
   [key: string]: unknown
@@ -474,6 +474,9 @@ async function seedWorkspace(scenario: HeadlessScenario, cwd: string): Promise<v
   await prepare(cwd)
 }
 
+/** Pinned seed identity and dates that make the `git-repo` setup's commit id reproducible. */
+const SEED_COMMIT_DATE = '2026-01-01T00:00:00Z'
+
 const workspaceSetups: Record<string, (cwd: string) => Promise<void>> = {
   async 'office-skills'(cwd) {
     await cp(join(repoRoot, 'packages/skill/skill-office/assets'), join(cwd, 'office-skills'), { recursive: true })
@@ -512,6 +515,27 @@ const workspaceSetups: Record<string, (cwd: string) => Promise<void>> = {
       const mtime = new Date(2000, 0, 1, 0, 0, 0, index + 1)
       await utimes(target, mtime, mtime)
     }
+  },
+  async 'git-repo'(cwd) {
+    // Seeds the copied files as one commit whose id never depends on the host clock,
+    // Git identity, or signing configuration, so replay can name that commit.
+    const git = (...args: string[]): void => {
+      const result = spawnSync(
+        'git',
+        ['-c', 'user.email=seed@example.com', '-c', 'user.name=seed', '-c', 'commit.gpgsign=false', ...args],
+        {
+          cwd,
+          encoding: 'utf8',
+          env: { ...process.env, GIT_AUTHOR_DATE: SEED_COMMIT_DATE, GIT_COMMITTER_DATE: SEED_COMMIT_DATE },
+        },
+      )
+      if (result.error !== undefined || result.status !== 0) {
+        throw new Error(`git-repo setup: git ${args.join(' ')} failed: ${result.error?.message ?? result.stderr.trim()}`)
+      }
+    }
+    git('init', '-q', '-b', 'main')
+    git('add', '-A')
+    git('commit', '-q', '-m', 'seed')
   },
 }
 
