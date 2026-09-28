@@ -263,14 +263,6 @@ describe('load, update, and list records', () => {
     await expect(requireRecordLocation(root, 'wt-00000000' as WorktreeId)).rejects.toThrow(`worktree record "${path}" is corrupt`)
   })
 
-  it('propagates a non-ENOENT read failure while searching for a record', async () => {
-    const root = await scratchRoot('dsh-wt-locate-bad-entry-')
-    // "repoKey" that is actually a file: readdir(root) lists it, but reading through it as a
-    // directory to reach records/<id>.json fails with ENOTDIR, not the absence ENOENT expects.
-    await writeFile(join(root, 'not-a-directory'), '')
-    await expect(locateRecord(root, 'wt-00000000' as WorktreeId)).rejects.toThrow()
-  })
-
   it('propagates a non-ENOENT readdir failure when the root itself is not a directory', async () => {
     const parent = await scratchRoot('dsh-wt-locate-root-bad-')
     const notADir = join(parent, 'not-a-directory')
@@ -286,11 +278,88 @@ describe('id validation at the record boundary', () => {
     await expect(locateRecord(root, 'wt-ABCDEF12' as WorktreeId)).rejects.toThrow('is not a worktree id')
   })
 
-  it('refuses to list a records directory holding a file whose name is not a worktree id', async () => {
+})
+
+describe('scans skip what is not a record', () => {
+  /** Collects scan warnings for one test. */
+  function collectWarnings(): { warnings: string[]; warn: (message: string) => void } {
+    const warnings: string[] = []
+    return { warnings, warn: (message) => { warnings.push(message) } }
+  }
+
+  it('finds a record in a later repository directory past a stray file, warning once', async () => {
+    const root = await scratchRoot('dsh-wt-locate-past-stray-')
+    // Candidates are searched in name order, and ".DS_Store" sorts before "repo-b".
+    await writeFile(join(root, '.DS_Store'), '')
+    const layout = layoutFor(root, 'repo-b')
+    const record = recordIn(layout, 'wt-11111111')
+    await createRecord(layout, record)
+    const { warnings, warn } = collectWarnings()
+
+    const found = await requireRecordLocation(root, record.id, warn)
+
+    expect(found.record).toEqual(record)
+    expect(warnings).toEqual([expect.stringContaining(`"${join(root, '.DS_Store')}" while looking for worktree wt-11111111`)])
+  })
+
+  it('finds nothing, without failing, when the only candidate is a stray file', async () => {
+    const root = await scratchRoot('dsh-wt-locate-only-stray-')
+    // A "repoKey" that is a file: readdir(root) lists it, but reading through it as a directory to
+    // reach records/<id>.json fails with ENOTDIR, not the absence ENOENT expects.
+    await writeFile(join(root, 'not-a-directory'), '')
+    const { warnings, warn } = collectWarnings()
+
+    expect(await locateRecord(root, 'wt-00000000' as WorktreeId, warn)).toBeUndefined()
+
+    expect(warnings).toEqual([expect.stringContaining(`"${join(root, 'not-a-directory')}"`)])
+  })
+
+  it('fails loud when the requested id has a record file that cannot be read, instead of skipping its repository', async () => {
+    const root = await scratchRoot('dsh-wt-locate-own-file-')
+    const layout = layoutFor(root, 'repo-key')
+    // A directory where the record file belongs: the id's own file exists, so reading it fails with EISDIR, not ENOENT.
+    await mkdir(recordPathFor(layout, 'wt-00000000'), { recursive: true })
+    const { warnings, warn } = collectWarnings()
+
+    await expect(locateRecord(root, 'wt-00000000' as WorktreeId, warn)).rejects.toThrow(/EISDIR/)
+
+    expect(warnings).toEqual([])
+  })
+
+  it('lists the records past a .json file whose name is not a worktree id, warning for each such file', async () => {
     const root = await scratchRoot('dsh-wt-list-bad-name-')
     const layout = layoutFor(root, 'repo-key')
-    await writeRecordFile(layout, 'not-an-id', recordIn(layout, 'wt-aaaaaaaa'))
-    await expect(listRecords(layout)).rejects.toThrow('"not-an-id" is not a worktree id')
+    await createRecord(layout, recordIn(layout, 'wt-aaaaaaaa'))
+    const stray = await writeRecordFile(layout, 'not-an-id', recordIn(layout, 'wt-bbbbbbbb'))
+    const uppercase = await writeRecordFile(layout, 'wt-ABCDEF12', recordIn(layout, 'wt-cccccccc'))
+    const { warnings, warn } = collectWarnings()
+
+    const records = await listRecords(layout, warn)
+
+    expect(records.map(r => r.id)).toEqual(['wt-aaaaaaaa'])
+    expect(warnings).toHaveLength(2)
+    expect(warnings).toContainEqual(expect.stringContaining(`"${stray}"`))
+    expect(warnings).toContainEqual(expect.stringContaining(`"${uppercase}"`))
+  })
+
+  it('counts slots past a stray file, passing the warning through', async () => {
+    const root = await scratchRoot('dsh-wt-count-stray-')
+    const layout = layoutFor(root, 'repo-key')
+    await createRecord(layout, recordIn(layout, 'wt-aaaaaaaa', { state: 'open' }))
+    const stray = await writeRecordFile(layout, 'notes', {})
+    const { warnings, warn } = collectWarnings()
+
+    expect(await countOpenSlots(layout, warn)).toBe(1)
+
+    expect(warnings).toEqual([expect.stringContaining(`"${stray}"`)])
+  })
+
+  it('still fails loud on a corrupt record file named for a worktree id', async () => {
+    const root = await scratchRoot('dsh-wt-list-corrupt-')
+    const layout = layoutFor(root, 'repo-key')
+    const path = await writeRecordFile(layout, 'wt-aaaaaaaa', 'not a record')
+
+    await expect(listRecords(layout)).rejects.toThrow(`worktree record "${path}" is corrupt`)
   })
 })
 

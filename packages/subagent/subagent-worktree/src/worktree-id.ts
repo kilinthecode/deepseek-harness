@@ -16,13 +16,22 @@ import type { WorktreeId } from './types.ts'
 const WORKTREE_ID_PATTERN = /^wt-[0-9a-f]{8}$/
 
 /**
+ * Whether a string has the worktree id shape.
+ * @param value - the candidate id, such as a record file's name without its extension.
+ * @returns whether `value` is `wt-` followed by eight lowercase hexadecimal digits.
+ */
+export function isWorktreeId(value: string): value is WorktreeId {
+  return WORKTREE_ID_PATTERN.test(value)
+}
+
+/**
  * Validate a worktree id's shape.
  * @param value - the candidate id, from a request, a record field, or a record file name.
  * @returns an assertion that `value` is a {@link WorktreeId}.
  * @throws when `value` does not match `wt-` followed by eight lowercase hexadecimal digits.
  */
 export function assertWorktreeId(value: string): asserts value is WorktreeId {
-  if (!WORKTREE_ID_PATTERN.test(value)) {
+  if (!isWorktreeId(value)) {
     throw new Error(`subagent-worktree: "${value}" is not a worktree id (expected "wt-" followed by eight lowercase hexadecimal digits)`)
   }
 }

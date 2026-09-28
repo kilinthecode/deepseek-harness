@@ -8,7 +8,7 @@
  */
 
 import { randomBytes } from 'node:crypto'
-import { mkdir, readdir, readFile } from 'node:fs/promises'
+import { mkdir, readdir, readFile, stat } from 'node:fs/promises'
 import { dirname, join } from 'node:path'
 import { withFileLock, writeFileAtomic } from '@deepseek-ai/dsh-atomic-write'
 import { brandString } from '@deepseek-ai/dsh-brand'
@@ -16,7 +16,7 @@ import { pathExists } from './fs-util.ts'
 import { layoutFor, recordPathFor, repoKeyFor, worktreeDirFor } from './paths.ts'
 import type { WorktreeLayout } from './paths.ts'
 import type { WorktreeId, WorktreeOwner, WorktreeRecord, WorktreeRoute, WorktreeVerdict } from './types.ts'
-import { assertWorktreeId } from './worktree-id.ts'
+import { assertWorktreeId, isWorktreeId } from './worktree-id.ts'
 
 /**
  * On-disk representation of one worktree: the public record plus the
@@ -254,6 +254,27 @@ export async function createRecord(layout: WorktreeLayout, record: StoredWorktre
   })
 }
 
+/** Receives a warning about something a scan skipped instead of failing on. */
+export type ScanWarning = (message: string) => void
+
+/** The default scan warning: none. */
+const NO_WARNING: ScanWarning = () => {}
+
+/**
+ * Whether a record file exists at `path`. Any failure to look (absent, a path
+ * component that is not a directory, no permission) means the candidate does
+ * not hold the file being searched for.
+ */
+async function recordFileExists(path: string): Promise<boolean> {
+  try {
+    await stat(path)
+    return true
+  } catch {
+    // The caller reads "cannot look" as "this candidate has no such record file".
+    return false
+  }
+}
+
 /** One worktree record located by id, with the file path and repository layout it was found under. */
 export interface RecordLocation {
   /** The record file's absolute path. */
@@ -270,23 +291,36 @@ export interface RecordLocation {
  * not the repository — so this is the only way to locate the record they
  * name; the record's own `repoRoot` then supplies the repository for every
  * later git command.
+ * Candidates are searched in name order, so the search and its warnings do not
+ * depend on the file system's listing order. A candidate that cannot be read
+ * as a repository (a stray file under `root`, a directory this process may not
+ * enter) is skipped with a warning, because nothing about it says it holds the
+ * record; only a record file that exists at the id's own path and cannot be
+ * read or fails validation fails loud.
  * @param root - the service's configured or resolved worktree root.
  * @param id - the worktree id to find.
+ * @param warn - receives a warning for each candidate that was skipped.
  * @returns the location, or undefined when no repository under `root` holds that id.
+ * @throws when the id's own record file exists and is unreadable, corrupt, or inconsistent.
  */
-export async function locateRecord(root: string, id: WorktreeId): Promise<RecordLocation | undefined> {
+export async function locateRecord(root: string, id: WorktreeId, warn: ScanWarning = NO_WARNING): Promise<RecordLocation | undefined> {
   assertWorktreeId(id)
   let repoKeys: string[]
   try {
-    repoKeys = await readdir(root)
+    repoKeys = (await readdir(root)).sort()
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code === 'ENOENT') return undefined
     throw error
   }
   for (const repoKey of repoKeys) {
     const layout = layoutFor(root, repoKey)
-    const record = await loadRecordOrUndefined(layout, id)
-    if (record !== undefined) return { path: recordPathFor(layout, id), layout, record }
+    try {
+      const record = await loadRecordOrUndefined(layout, id)
+      if (record !== undefined) return { path: recordPathFor(layout, id), layout, record }
+    } catch (error) {
+      if (await recordFileExists(recordPathFor(layout, id))) throw error
+      warn(`subagent-worktree: skipped "${layout.repoDir}" while looking for worktree ${id}: ${String(error)}`)
+    }
   }
   return undefined
 }
@@ -295,11 +329,12 @@ export async function locateRecord(root: string, id: WorktreeId): Promise<Record
  * {@link locateRecord}, failing loud when no repository under `root` holds the id.
  * @param root - the service's configured or resolved worktree root.
  * @param id - the worktree id to find.
+ * @param warn - receives a warning for each candidate that was skipped.
  * @returns the location.
  * @throws when no record exists for `id`.
  */
-export async function requireRecordLocation(root: string, id: WorktreeId): Promise<RecordLocation> {
-  const found = await locateRecord(root, id)
+export async function requireRecordLocation(root: string, id: WorktreeId, warn: ScanWarning = NO_WARNING): Promise<RecordLocation> {
+  const found = await locateRecord(root, id, warn)
   if (found === undefined) throw new Error(`subagent-worktree: no worktree "${id}"`)
   return found
 }
@@ -327,12 +362,15 @@ export async function updateExistingRecordAt(
 }
 
 /**
- * List every worktree record for one repository.
+ * List every worktree record for one repository. A `.json` file whose name is
+ * not a worktree id is not a record: it is skipped with a warning rather than
+ * failing every listing, count, and `create` for the repository.
  * @param layout - the repository's directory layout.
+ * @param warn - receives a warning for each stray file that was skipped.
  * @returns every record under `layout.recordsDir`, or `[]` when no worktree was ever created for this repository.
- * @throws when a record file's name is not a worktree id, or a record is corrupt or fails {@link assertRecordIntegrity}.
+ * @throws when a record file named for a worktree id is corrupt or fails {@link assertRecordIntegrity}.
  */
-export async function listRecords(layout: WorktreeLayout): Promise<StoredWorktreeRecord[]> {
+export async function listRecords(layout: WorktreeLayout, warn: ScanWarning = NO_WARNING): Promise<StoredWorktreeRecord[]> {
   let entries: string[]
   try {
     entries = await readdir(layout.recordsDir)
@@ -344,8 +382,11 @@ export async function listRecords(layout: WorktreeLayout): Promise<StoredWorktre
   for (const entry of entries) {
     if (!entry.endsWith('.json')) continue
     const id = entry.slice(0, -'.json'.length)
-    assertWorktreeId(id)
     const path = join(layout.recordsDir, entry)
+    if (!isWorktreeId(id)) {
+      warn(`subagent-worktree: ignoring "${path}": its name is not a worktree id, so it is not a worktree record`)
+      continue
+    }
     const record = parseStoredWorktreeRecord(await readFile(path, 'utf8'), path)
     assertRecordIntegrity(record, layout, id, path)
     records.push(record)
@@ -359,10 +400,11 @@ export async function listRecords(layout: WorktreeLayout): Promise<StoredWorktre
  * live one: the worktree directory and branch still exist either way, so the
  * slot is still occupied until an `accept` or `discard` resolves it.
  * @param layout - the repository's directory layout.
+ * @param warn - receives a warning for each stray file the listing skipped.
  * @returns the number of `open` or `reviewing` records.
  */
-export async function countOpenSlots(layout: WorktreeLayout): Promise<number> {
-  const records = await listRecords(layout)
+export async function countOpenSlots(layout: WorktreeLayout, warn: ScanWarning = NO_WARNING): Promise<number> {
+  const records = await listRecords(layout, warn)
   return records.filter(record => record.state === 'open' || record.state === 'reviewing').length
 }
 

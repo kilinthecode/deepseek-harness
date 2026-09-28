@@ -294,7 +294,7 @@ export async function acceptWorktree(deps: AcceptDeps, request: AcceptWorktreeRe
     throw new Error('subagent-worktree: the testCommand and reviewer overrides of accept are operator-only')
   }
 
-  const located = await requireRecordLocation(deps.root, request.id)
+  const located = await requireRecordLocation(deps.root, request.id, (message) => { deps.ctx.logger.warn(message) })
   assertOwnerAuthority(located.record, request.owner, request.id)
 
   // An earlier accept that died after its merge landed but before recording it left a stale `reviewing`

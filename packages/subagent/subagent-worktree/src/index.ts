@@ -25,6 +25,7 @@ import {
   assertOpen, assertOpenOrRecoverable, assertOwnerAuthority, layoutForRepo, listRecords, requireRecordLocation,
   toPublicRecord, updateExistingRecordAt,
 } from './records.ts'
+import type { ScanWarning } from './records.ts'
 import { repoIdentityOf } from './repo.ts'
 import { assertNoRunningWorkers } from './workers.ts'
 import { assertWorktreeId } from './worktree-id.ts'
@@ -148,6 +149,9 @@ export class SubagentWorktrees extends Service {
   /** Resolved once at load from the flat `commitAuthorName`/`commitAuthorEmail` fields. */
   private readonly commitAuthor: CommitAuthor | undefined
 
+  /** Logs a candidate directory or stray file that a record scan skipped instead of failing on. */
+  private readonly warnScan: ScanWarning = (message) => { this.ctx.logger.warn(message) }
+
   constructor(ctx: Context, protected readonly config: Config) {
     super(ctx, 'subagentWorktrees')
     this.root = config.root ?? dshHomePath('worktrees')
@@ -181,7 +185,7 @@ export class SubagentWorktrees extends Service {
    * @returns the committed `open` record, the worker directory, and any uncommitted base changes left out.
    */
   create(request: CreateWorktreeRequest): Promise<ProvisionedWorktree> {
-    return createWorktree(this.git, this.root, this.config.branchPrefix, this.config.maxWorktrees, request)
+    return createWorktree(this.git, this.root, this.config.branchPrefix, this.config.maxWorktrees, request, this.warnScan)
   }
 
   /**
@@ -192,7 +196,7 @@ export class SubagentWorktrees extends Service {
    */
   async attach(request: AttachWorkerRequest): Promise<WorktreeRecord> {
     assertWorktreeId(request.id)
-    const located = await requireRecordLocation(this.root, request.id)
+    const located = await requireRecordLocation(this.root, request.id, this.warnScan)
     assertOwnerAuthority(located.record, request.owner, request.id)
     // The state check runs under the record lock so an attach cannot slip
     // between an accept's `open` -> `reviewing` transition and its commit.
@@ -262,7 +266,7 @@ export class SubagentWorktrees extends Service {
    */
   async discard(request: DiscardWorktreeRequest): Promise<WorktreeRecord> {
     assertWorktreeId(request.id)
-    const located = await requireRecordLocation(this.root, request.id)
+    const located = await requireRecordLocation(this.root, request.id, this.warnScan)
     assertOwnerAuthority(located.record, request.owner, request.id)
 
     // A stale `reviewing` record whose reviewed commit already landed (an earlier accept crashed before
@@ -292,7 +296,7 @@ export class SubagentWorktrees extends Service {
       throw new Error(`subagent-worktree: "${request.baseDir}" is not inside a git work tree`)
     }
     const layout = layoutForRepo(this.root, identity.commonDir)
-    const records = (await listRecords(layout)).filter((record) => {
+    const records = (await listRecords(layout, this.warnScan)).filter((record) => {
       if (!request.includeClosed && (record.state === 'merged' || record.state === 'discarded')) return false
       if (request.owner !== undefined && !ownerMatches(record.owner, request.owner)) return false
       return true

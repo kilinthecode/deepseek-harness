@@ -14,7 +14,7 @@ import { cleanupSignal } from './git.ts'
 import type { GitRunner } from './git.ts'
 import { worktreeDirFor } from './paths.ts'
 import { countOpenSlots, createRecord, generateWorktreeId, layoutForRepo, toPublicRecord } from './records.ts'
-import type { StoredWorktreeRecord } from './records.ts'
+import type { ScanWarning, StoredWorktreeRecord } from './records.ts'
 import { repoIdentityOf } from './repo.ts'
 import type { CreateWorktreeRequest, ProvisionedWorktree } from './types.ts'
 
@@ -45,6 +45,7 @@ async function cleanupFailedWorktree(git: GitRunner, repoRoot: string, worktreeP
  * @param branchPrefix - `Config.branchPrefix`.
  * @param maxWorktrees - `Config.maxWorktrees`.
  * @param request - owner, base directory, label, task, optional worker route, and cancellation.
+ * @param warn - receives a warning for each stray file the slot count skipped in the records directory.
  * @returns the committed `open` record, the worker directory, and any uncommitted base changes left out.
  * @throws when `request.baseDir` is not inside a git work tree, or the repository already has `maxWorktrees`
  *   open worktrees. `maxWorktrees` is advisory under concurrency: two `create` calls for the same repository
@@ -56,6 +57,7 @@ export async function createWorktree(
   branchPrefix: string,
   maxWorktrees: number,
   request: CreateWorktreeRequest,
+  warn?: ScanWarning,
 ): Promise<ProvisionedWorktree> {
   const identity = await repoIdentityOf(git, request.baseDir, request.signal)
   if (identity === undefined) {
@@ -69,7 +71,7 @@ export async function createWorktree(
   // checkout's own top-level directory — stays the record's merge target.
   const layout = layoutForRepo(root, identity.commonDir)
 
-  const openSlots = await countOpenSlots(layout)
+  const openSlots = await countOpenSlots(layout, warn)
   if (openSlots >= maxWorktrees) {
     throw new Error(`subagent-worktree: ${openSlots} worktrees are already open for ${repoRoot}; accept or discard one first`)
   }

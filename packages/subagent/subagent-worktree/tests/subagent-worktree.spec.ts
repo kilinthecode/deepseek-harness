@@ -1,4 +1,4 @@
-import { mkdtemp, readdir, realpath, rm } from 'node:fs/promises'
+import { mkdtemp, readdir, realpath, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { afterEach, describe, expect, it, vi } from 'vitest'
@@ -10,6 +10,7 @@ import SubagentRuntime from '@deepseek-ai/dsh-subagent'
 import SubagentWorktrees from '../src/index.ts'
 import type { Config } from '../src/index.ts'
 import { pathExists } from '../src/fs-util.ts'
+import { requireRecordLocation } from '../src/records.ts'
 import type { WorktreeId, WorktreeOwner } from '../src/types.ts'
 import { createWorktree, fakeAgent, git, initFixtureRepo, removeFixture, setup } from './harness.ts'
 
@@ -380,6 +381,78 @@ describe('list', () => {
     await expect(ctx.subagentWorktrees.list({ baseDir: outside }))
       .rejects.toThrow(`subagent-worktree: "${outside}" is not inside a git work tree`)
   })
+})
+
+describe('stray files beside worktree records', () => {
+  /**
+   * One repository with an open worktree, a stray file in the worktree root that
+   * lists before every repository directory, and a stray `.json` file in the
+   * repository's records directory.
+   */
+  async function strayFixture() {
+    const dir = await initFixtureRepo('dsh-stray-')
+    cleanups.push(() => removeFixture(dir))
+    git(dir, 'commit', '--allow-empty', '-q', '-m', 'base')
+    const root = await scratchRoot()
+    const { ctx, dispose } = await setup({ root })
+    cleanups.push(dispose)
+    const provisioned = await createWorktree(ctx, OWNER, dir, 'x')
+    const { layout } = await requireRecordLocation(root, provisioned.record.id)
+    const strayInRoot = join(root, '.DS_Store')
+    await writeFile(strayInRoot, '')
+    const strayRecord = join(layout.recordsDir, 'notes.json')
+    await writeFile(strayRecord, '{}')
+    const warn = vi.spyOn(ctx.logger, 'warn').mockImplementation(() => {})
+    return { ctx, dir, provisioned, strayInRoot, strayRecord, warn }
+  }
+
+  it('lists a repository past a stray file in its records directory, logging the skip', async () => {
+    const f = await strayFixture()
+
+    const listed = await f.ctx.subagentWorktrees.list({ baseDir: f.dir })
+
+    expect(listed.map(r => r.id)).toEqual([f.provisioned.record.id])
+    expect(f.warn).toHaveBeenCalledWith(expect.stringContaining(f.strayRecord))
+  }, GIT_TEST_TIMEOUT_MS)
+
+  it('creates a worktree past a stray file in the records directory, logging the skip', async () => {
+    const f = await strayFixture()
+
+    const second = await createWorktree(f.ctx, OWNER, f.dir, 'second')
+
+    expect(second.record.state).toBe('open')
+    expect(f.warn).toHaveBeenCalledWith(expect.stringContaining(f.strayRecord))
+  }, GIT_TEST_TIMEOUT_MS)
+
+  it('attaches a worker past a stray file in the worktree root, logging the skip', async () => {
+    const f = await strayFixture()
+
+    const updated = await f.ctx.subagentWorktrees.attach({
+      id: f.provisioned.record.id, owner: OWNER, workerSessionId: SessionId('w1'), workerRoute: WORKER_ROUTE,
+    })
+
+    expect(updated.workerSessionIds).toEqual(['w1'])
+    expect(f.warn).toHaveBeenCalledWith(expect.stringContaining(f.strayInRoot))
+  }, GIT_TEST_TIMEOUT_MS)
+
+  it('discards a worktree past a stray file in the worktree root, logging the skip', async () => {
+    const f = await strayFixture()
+
+    const discarded = await f.ctx.subagentWorktrees.discard({ id: f.provisioned.record.id, owner: OWNER, signal })
+
+    expect(discarded.state).toBe('discarded')
+    expect(f.warn).toHaveBeenCalledWith(expect.stringContaining(f.strayInRoot))
+  }, GIT_TEST_TIMEOUT_MS)
+
+  it('reaches the ownership check of accept past a stray file in the worktree root, logging the skip', async () => {
+    const f = await strayFixture()
+
+    await expect(f.ctx.subagentWorktrees.accept({
+      id: f.provisioned.record.id, owner: { kind: 'session', sessionId: SessionId('other') }, parent: fakeAgent('parent', WORKER_ROUTE), signal,
+    })).rejects.toThrow('belongs to another session')
+
+    expect(f.warn).toHaveBeenCalledWith(expect.stringContaining(f.strayInRoot))
+  }, GIT_TEST_TIMEOUT_MS)
 })
 
 describe('resolveReviewer', () => {
