@@ -1,0 +1,25 @@
+# Bilingual-pair consistency record for 2026-09-27-worktree-isolated-delegation.md (docs/i18n/README.md): per heading
+# section, a hash of its English and Chinese blocks outside code blocks and generated regions.
+# After editing either side, bring the other along and re-record with:
+#   pnpm run verify-translation-pairing --write .agents/notes/implemented/feature/2026-09-27-worktree-isolated-delegation.md
+/agent-note-worktree-isolated-delegation-with-independent-review:
+  en: 91bdc2fcf38f1459
+  zh: 53344fb0a1cee2cb
+/agent-note-worktree-isolated-delegation-with-independent-review/problem:
+  en: c2eca220bb3ef2fd
+  zh: be6d3634b0ee39d5
+/agent-note-worktree-isolated-delegation-with-independent-review/decision:
+  en: 4d624b9c561061bd
+  zh: 4b1da65c52420ca0
+/agent-note-worktree-isolated-delegation-with-independent-review/placement-outside-the-checkout:
+  en: 41e66606698cab0b
+  zh: 606d5e0db8344d2a
+/agent-note-worktree-isolated-delegation-with-independent-review/alternatives-considered:
+  en: e4789727defd49a3
+  zh: 0363522bfabacaa7
+/agent-note-worktree-isolated-delegation-with-independent-review/consequences:
+  en: 4cdc5ba24314f626
+  zh: 6552a781ddb7f16a
+/agent-note-worktree-isolated-delegation-with-independent-review/testing:
+  en: a9eb3e239d4c0a08
+  zh: c5f2b17488f3e7b3
