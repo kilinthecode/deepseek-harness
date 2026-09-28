@@ -674,6 +674,140 @@ describe('accept: overlapping operations', () => {
   }, GIT_TEST_TIMEOUT_MS)
 })
 
+const sleep = (ms: number): Promise<void> => new Promise<void>((resolve) => { setTimeout(resolve, ms) })
+
+/**
+ * Hold one record's writer lock while `during` runs, then release it. `during` starts an operation that has
+ * already read the record (so it passes every check made outside the lock), waits for it to queue on the
+ * lock, and changes the record underneath it: only a check made under the lock can see the change.
+ */
+async function holdingRecordLock(recordPath: string, during: () => Promise<void>): Promise<void> {
+  const acquired = deferred()
+  const release = deferred()
+  const holder = withFileLock(recordPath, async () => {
+    acquired.resolve()
+    await release.promise
+  })
+  await acquired.promise
+  await during()
+  release.resolve()
+  await holder
+}
+
+/** Settle an operation into its error message, or `resolved`, so a rejection cannot go unhandled while a lock is held. */
+function outcomeOf(operation: Promise<unknown>): Promise<string> {
+  return operation.then(
+    () => 'resolved',
+    (caught: unknown) => (caught instanceof Error ? caught.message : String(caught)),
+  )
+}
+
+describe('record lock: state and worker checks run under the lock', () => {
+  const WORKER_ROUTE = { provider: 'p', model: 'm' }
+
+  async function stored(recordPath: string): Promise<Record<string, unknown>> {
+    return JSON.parse(await readFile(recordPath, 'utf8')) as Record<string, unknown>
+  }
+
+  it('refuses an accept that lost the claim to another accept while it waited for the record lock', async () => {
+    const { ctx, dir, root } = await harness()
+    const provisioned = await createWorktree(ctx, OWNER, dir, 'do the thing')
+    await writeFile(join(provisioned.workDir, 'change.txt'), 'x')
+    const { path } = await requireRecordLocation(root, provisioned.record.id)
+    const before = await stored(path)
+
+    let pending: Promise<string> = Promise.resolve('never started')
+    await holdingRecordLock(path, async () => {
+      pending = outcomeOf(ctx.subagentWorktrees.accept(acceptRequest(provisioned.record.id)))
+      await sleep(300)
+      writeFileSync(path, JSON.stringify({ ...before, state: 'reviewing', reviewingPid: process.pid }))
+    })
+
+    expect(await pending).toContain(`worktree ${provisioned.record.id} is already being accepted`)
+    expect(git(provisioned.record.path, 'status', '--porcelain')).toContain('change.txt')
+  }, GIT_TEST_TIMEOUT_MS)
+
+  it('refuses an accept when a worker starts running while it waits for the record lock', async () => {
+    const { ctx, dir, root } = await harness()
+    const provisioned = await createWorktree(ctx, OWNER, dir, 'do the thing')
+    await writeFile(join(provisioned.workDir, 'change.txt'), 'x')
+    const workerId = SessionId('late-runner')
+    await ctx.subagentWorktrees.attach({ id: provisioned.record.id, owner: OWNER, workerSessionId: workerId, workerRoute: WORKER_ROUTE })
+    let status: 'running' | 'idle' = 'idle'
+    vi.spyOn(ctx.agents, 'get').mockImplementation(id => (id === workerId ? { status } as Agent : undefined))
+    const { path } = await requireRecordLocation(root, provisioned.record.id)
+
+    let pending: Promise<string> = Promise.resolve('never started')
+    await holdingRecordLock(path, async () => {
+      pending = outcomeOf(ctx.subagentWorktrees.accept(acceptRequest(provisioned.record.id)))
+      await sleep(300)
+      status = 'running'
+    })
+
+    expect(await pending).toContain(`worker ${workerId} of worktree ${provisioned.record.id} is still running`)
+    expect((await stored(path)).state).toBe('open')
+    expect(git(provisioned.record.path, 'status', '--porcelain')).toContain('change.txt')
+  }, GIT_TEST_TIMEOUT_MS)
+
+  it('refuses a discard that lost the claim to an accept while it waited for the record lock, removing nothing', async () => {
+    const { ctx, dir, root } = await harness()
+    const provisioned = await createWorktree(ctx, OWNER, dir, 'do the thing')
+    const { path } = await requireRecordLocation(root, provisioned.record.id)
+    const before = await stored(path)
+
+    let pending: Promise<string> = Promise.resolve('never started')
+    await holdingRecordLock(path, async () => {
+      pending = outcomeOf(ctx.subagentWorktrees.discard({ id: provisioned.record.id, owner: OWNER, signal }))
+      await sleep(300)
+      writeFileSync(path, JSON.stringify({ ...before, state: 'reviewing', reviewingPid: process.pid }))
+    })
+
+    expect(await pending).toContain(`worktree ${provisioned.record.id} is already being accepted`)
+    expect(await pathExists(provisioned.record.path)).toBe(true)
+    expect(git(dir, 'branch', '--list', provisioned.record.branch).trim()).not.toBe('')
+  }, GIT_TEST_TIMEOUT_MS)
+
+  it('refuses a discard when a worker starts running while it waits for the record lock, removing nothing', async () => {
+    const { ctx, dir, root } = await harness()
+    const provisioned = await createWorktree(ctx, OWNER, dir, 'do the thing')
+    const workerId = SessionId('late-runner')
+    await ctx.subagentWorktrees.attach({ id: provisioned.record.id, owner: OWNER, workerSessionId: workerId, workerRoute: WORKER_ROUTE })
+    let status: 'running' | 'idle' = 'idle'
+    vi.spyOn(ctx.agents, 'get').mockImplementation(id => (id === workerId ? { status } as Agent : undefined))
+    const { path } = await requireRecordLocation(root, provisioned.record.id)
+
+    let pending: Promise<string> = Promise.resolve('never started')
+    await holdingRecordLock(path, async () => {
+      pending = outcomeOf(ctx.subagentWorktrees.discard({ id: provisioned.record.id, owner: OWNER, signal }))
+      await sleep(300)
+      status = 'running'
+    })
+
+    expect(await pending).toContain(`worker ${workerId} of worktree ${provisioned.record.id} is still running`)
+    expect((await stored(path)).state).toBe('open')
+    expect(await pathExists(provisioned.record.path)).toBe(true)
+  }, GIT_TEST_TIMEOUT_MS)
+
+  it('refuses an attach that lost the worktree to an accept while it waited for the record lock', async () => {
+    const { ctx, dir, root } = await harness()
+    const provisioned = await createWorktree(ctx, OWNER, dir, 'do the thing')
+    const { path } = await requireRecordLocation(root, provisioned.record.id)
+    const before = await stored(path)
+
+    let pending: Promise<string> = Promise.resolve('never started')
+    await holdingRecordLock(path, async () => {
+      pending = outcomeOf(ctx.subagentWorktrees.attach({
+        id: provisioned.record.id, owner: OWNER, workerSessionId: SessionId('late-worker'), workerRoute: WORKER_ROUTE,
+      }))
+      await sleep(300)
+      writeFileSync(path, JSON.stringify({ ...before, state: 'reviewing', reviewingPid: process.pid }))
+    })
+
+    expect(await pending).toContain(`worktree ${provisioned.record.id} is reviewing`)
+    expect((await stored(path)).workerSessionIds).toEqual([])
+  }, GIT_TEST_TIMEOUT_MS)
+})
+
 describe('accept: running workers', () => {
   it('refuses while an attached worker is running and proceeds once it is idle, never claiming the record in between', async () => {
     const { ctx, dir } = await harness()
