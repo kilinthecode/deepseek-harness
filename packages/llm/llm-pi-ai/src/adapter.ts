@@ -56,6 +56,7 @@ import type {
   StreamChunk,
 } from '@deepseek-ai/dsh-llm'
 import type { AttachmentStore, ImageAttachmentRef } from '@deepseek-ai/dsh-attachment'
+import type { Branded } from '@deepseek-ai/dsh-brand'
 import { idleWatchdog, timeoutOf } from '@deepseek-ai/dsh-timeout'
 import { clampOpenAIPromptCacheKey } from '@earendil-works/pi-ai/api/openai-prompt-cache'
 import type { ResolvedPiAiProviderProfile } from './config.ts'
@@ -241,7 +242,7 @@ export function sharesPromptCacheKey(model: Model<Api>): boolean {
  * @param cacheKey - the delegation tree's shared routing key (already confirmed distinct from this request's own session id).
  * @returns the `onPayload` hook to pass through `SimpleStreamOptions`.
  */
-export function overridePromptCacheKey(cacheKey: string): NonNullable<SimpleStreamOptions['onPayload']> {
+export function overridePromptCacheKey(cacheKey: Branded<'SessionId'>): NonNullable<SimpleStreamOptions['onPayload']> {
   return (payload, model) => {
     if (!sharesPromptCacheKey(model) || typeof payload !== 'object' || payload === null) return undefined
     const body = payload as { prompt_cache_key?: unknown }
@@ -258,7 +259,7 @@ export function overridePromptCacheKey(cacheKey: string): NonNullable<SimpleStre
  * @param options - the assembled request.
  * @returns the key {@link overridePromptCacheKey} should install, or `undefined` to leave pi-ai's own default untouched.
  */
-export function resolveCacheKeyOverride(options: GenerateOptions): string | undefined {
+export function resolveCacheKeyOverride(options: GenerateOptions): Branded<'SessionId'> | undefined {
   return options.cacheKey !== undefined && options.cacheKey !== options.sessionId ? options.cacheKey : undefined
 }
 

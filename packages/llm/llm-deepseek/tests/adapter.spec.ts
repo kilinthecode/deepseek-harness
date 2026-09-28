@@ -151,7 +151,7 @@ describe('direct Messages HTTP', () => {
     const http = await endpoint()
     const llm = adapter({ baseURL: http.url })
     await assemble(llm.stream(options({ sessionId: SessionId('cache-key-noop') })))
-    await assemble(llm.stream(options({ sessionId: SessionId('cache-key-noop'), cacheKey: 'delegation-tree-root' })))
+    await assemble(llm.stream(options({ sessionId: SessionId('cache-key-noop'), cacheKey: SessionId('delegation-tree-root') })))
     expect(http.requests).toHaveLength(2)
     expect(http.requests[1]?.headers).toEqual(http.requests[0]?.headers)
     expect(http.requests[1]?.body).toEqual(http.requests[0]?.body)

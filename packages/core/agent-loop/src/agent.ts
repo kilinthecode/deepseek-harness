@@ -664,7 +664,7 @@ export class ReactLoopAgent implements Agent {
       toolHistory: session.toolHistory(),
       ...header.tools !== undefined ? { tools: header.tools } : {},
       sessionId: this.session.id,
-      cacheKey: String(delegationTreeRoot(this.session.header, id => this.ctx.sessions.get(id)?.header)),
+      cacheKey: delegationTreeRoot(this.session.header, id => this.ctx.sessions.get(id)?.header),
       signal,
     }))
     return request

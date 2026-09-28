@@ -162,7 +162,7 @@ export async function summarizeWithLlm(
     ...input.tools === undefined ? {} : { tools: [...input.tools] },
     maxTokens: config.maxTokens,
     sessionId: agent.session.id,
-    cacheKey: String(delegationTreeRoot(agent.session.header, id => agent.ctx.sessions.get(id)?.header)),
+    cacheKey: delegationTreeRoot(agent.session.header, id => agent.ctx.sessions.get(id)?.header),
     purpose: 'compaction',
     ...signal === undefined ? {} : { signal },
   }

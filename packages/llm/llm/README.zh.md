@@ -145,7 +145,7 @@ for await (const chunk of ctx.llm.stream({
 
 #### KV Cache 影响
 
-推理强度的具体化会保留已组装请求前缀。图片身份与请求预览文本是确定性的，可选执行世界路径则按请求解析；路径变化或一次省略决策可能从该图片起阻止复用。`GenerateOptions.cacheKey`（若已设置）另外指明本请求应共享的提供方缓存路由键；支持提示前缀缓存路由的提供方，其适配器会将其映射到该提供方自身字段，使携带相同键的多个请求可在该键下复用缓存前缀，无论各自的 `sessionId` 是什么。
+推理强度的具体化会保留已组装请求前缀。图片身份与请求预览文本是确定性的，可选执行世界路径则按请求解析；路径变化或一次省略决策可能从该图片起阻止复用。`GenerateOptions.cacheKey`（若已设置）另外指明本请求应共享的提供方缓存路由键；支持提示前缀缓存路由的提供方，其适配器会将其映射到该提供方自身字段，使携带相同键的多个请求可在该键下复用缓存前缀，无论各自的 `sessionId` 是什么。它是传输层元数据，永不对模型可见，因此会话日志不会记录它——`request/header` 事件只携带 `config`、`adapterDefaults`、`tools`——循环会为每个请求从活跃会话注册表重新计算它。
 
 ## 已知限制与延期工作
 
@@ -159,7 +159,6 @@ for await (const chunk of ctx.llm.stream({
 - **变体通常要求实际产生方**——`prefill`、逐工具 `strict`、内容块 `cache` 提示和 `agent` 消息来源变体都没有产生方（见 [Agent Note](../../../.agents/notes/archived/simplification/2026-07-04-prune-producerless-vocabulary-variants.md)）。
 - **`BlockAssembler` 只处理核心块类型**——插件添加块类型的流若从未由 `block-end` 关闭，`blocks()` 会抛出异常。
 - **`GenerateOptions.sessionId` 是本地声明的品牌类型**——导入 dsh-session 的 `SessionId` 会产生依赖循环。
-- **`GenerateOptions.cacheKey` 是普通字符串，不是带品牌的会话 id**——它是循环从会话谱系推导出的提供方缓存路由提示，如今尚不是其他代码经会话注册表解析的身份标识。
 - **工具更新需要会话历史** — `GenerateOptions.tools` 包含当前有效定义。`toolHistory` 提供 `Session.toolHistory()` 派生的初始声明及已解析历史定义的添加记录。适配器分发时，`projectToolUpdates` 构造延迟声明，并在 `in-history` 模式保留已移除定义；`addition-only` 省略已移除定义和移除消息。不支持更新的路由接收有效工具，不携带 developer 消息或 `deferLoading`。缺少历史或请求前缀遗漏已记录更新时，回退为当前声明且不发送 developer 消息。 显式延迟加载的初始工具在首个保留的添加块出现前保持延迟状态；声明延迟加载工具不会使其激活。
 
 <a id="dev-note"></a>

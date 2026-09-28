@@ -8,17 +8,20 @@ import type { SessionHeader, SessionId } from './types.ts'
 
 /**
  * The delegation tree's root session id, shared by every request in the tree
- * for provider cache-routing: a top-level session (no `parentSession`) is its
- * own root. A delegated child walks `parentSession` upward through
- * `lookupHeader`, which resolves one ancestor's header from the current
- * session registry rather than from a live parent `Agent` — so a
- * cold-resumed child derives the same root purely from its own header
- * lineage. The walk stops at the furthest ancestor `lookupHeader` still
- * resolves: an ancestor it cannot resolve (already ended, or not currently
- * loaded in this process) makes that ancestor's own id the returned root, the
- * nearest ancestor this process can still name. A cyclic lineage (data
- * corruption; the store never produces one through ordinary creation) stops
- * the walk the same way instead of looping forever.
+ * for provider cache-routing. The walk follows `parentSession` upward through
+ * headers `lookupHeader` can resolve, and returns the id of the first
+ * ancestor whose header does not resolve — known from the last resolvable
+ * header's own `parentSession` field, even though that ancestor's own header
+ * could not be loaded (already ended, or not currently loaded in this
+ * process) — or the top-level ancestor's own id when every header up to it
+ * resolves. A disposed root therefore still keys the whole tree, because its
+ * child already knows its id even though its own header is gone; an unloaded
+ * intermediate ancestor instead keys only its own subtree, because the walk
+ * cannot see past it to whatever lies beyond. `lookupHeader` resolves one
+ * ancestor's header from the current session registry, never from a live
+ * parent `Agent`. A cyclic lineage (data corruption; the store never produces
+ * one through ordinary creation) stops the walk the same way instead of
+ * looping forever.
  * @param header - the current session's own durable header.
  * @param lookupHeader - resolve one ancestor session's header; `undefined` when it is not currently loadable.
  * @returns the resolved root session id.

@@ -80,11 +80,11 @@ describe('resolveCacheKeyOverride', () => {
   })
 
   it('is the cacheKey when it differs from sessionId', () => {
-    expect(resolveCacheKeyOverride({ ...base, sessionId: fakeSessionId('child'), cacheKey: 'root' })).toBe('root')
+    expect(resolveCacheKeyOverride({ ...base, sessionId: fakeSessionId('child'), cacheKey: fakeSessionId('root') })).toBe('root')
   })
 
   it('is the cacheKey even without a sessionId', () => {
-    expect(resolveCacheKeyOverride({ ...base, cacheKey: 'root' })).toBe('root')
+    expect(resolveCacheKeyOverride({ ...base, cacheKey: fakeSessionId('root') })).toBe('root')
   })
 })
 
@@ -93,31 +93,31 @@ describe('overridePromptCacheKey', () => {
   const azureModel = model('openai-completions', 'azure-openai-responses', 'https://api.openai.com/v1')
 
   it('replaces an existing prompt_cache_key on a shared route', () => {
-    const hook = overridePromptCacheKey('root-session')
+    const hook = overridePromptCacheKey(fakeSessionId('root-session'))
     expect(hook({ prompt_cache_key: 'child-session', other: 'field' }, openaiModel))
       .toEqual({ prompt_cache_key: 'root-session', other: 'field' })
   })
 
   it('clamps an oversized cache key to OpenAI\'s 64-character limit', () => {
     const long = 'x'.repeat(80)
-    const hook = overridePromptCacheKey(long)
+    const hook = overridePromptCacheKey(fakeSessionId(long))
     const result = hook({ prompt_cache_key: 'child-session' }, openaiModel) as { prompt_cache_key: string }
     expect(result.prompt_cache_key).toHaveLength(64)
     expect(result.prompt_cache_key).toBe('x'.repeat(64))
   })
 
   it('does not add a key when pi-ai itself set none (cacheRetention: none)', () => {
-    const hook = overridePromptCacheKey('root-session')
+    const hook = overridePromptCacheKey(fakeSessionId('root-session'))
     expect(hook({ prompt_cache_key: undefined }, openaiModel)).toBeUndefined()
   })
 
   it('leaves a non-shared route untouched even with a defined key', () => {
-    const hook = overridePromptCacheKey('root-session')
+    const hook = overridePromptCacheKey(fakeSessionId('root-session'))
     expect(hook({ prompt_cache_key: 'child-session' }, azureModel)).toBeUndefined()
   })
 
   it('leaves a non-object payload untouched', () => {
-    const hook = overridePromptCacheKey('root-session')
+    const hook = overridePromptCacheKey(fakeSessionId('root-session'))
     expect(hook(null, openaiModel)).toBeUndefined()
     expect(hook('raw-string', openaiModel)).toBeUndefined()
   })
@@ -134,9 +134,10 @@ describe('adapter wiring: routes outside the OpenAI family are untouched', () =>
     })
     const request = { model: 'deepseek-v4-flash', messages: [{ role: 'user' as const, content: [{ type: 'text' as const, text: 'hi' }] }] }
     await assembleThroughLlm(ctx, { ...request, sessionId: fakeSessionId('child') })
-    await assembleThroughLlm(ctx, { ...request, sessionId: fakeSessionId('child'), cacheKey: 'root' })
+    await assembleThroughLlm(ctx, { ...request, sessionId: fakeSessionId('child'), cacheKey: fakeSessionId('root') })
     expect(server.requests).toHaveLength(2)
     expect(server.requests[1]).toEqual(server.requests[0])
+    expect(server.headers[1]).toEqual(server.headers[0])
     await ctx.fiber.dispose()
   })
 })
@@ -184,7 +185,7 @@ describe('adapter wiring: the shared cache key reaches the wire through the real
       model: fakeModel.id,
       messages: [{ role: 'user', content: [{ type: 'text', text: 'hi' }] }],
       sessionId: fakeSessionId('child-session'),
-      cacheKey: 'root-session',
+      cacheKey: fakeSessionId('root-session'),
     })
     for await (const _chunk of events) { /* drain to completion; the mock server's captured request is the assertion. */ }
     expect(server.requests).toHaveLength(1)
@@ -243,13 +244,64 @@ describe('adapter wiring: the shared cache key reaches the wire through the real
       model: codexModel.id,
       messages: [{ role: 'user', content: [{ type: 'text', text: 'hi' }] }],
       sessionId: fakeSessionId('child-session'),
-      cacheKey: 'root-session',
+      cacheKey: fakeSessionId('root-session'),
     })
     for await (const _chunk of events) { /* drain to completion; the mock server's captured request is the assertion. */ }
     expect(server.requests).toHaveLength(1)
     const body = server.requests[0] as { prompt_cache_key?: string }
     expect(body.prompt_cache_key).toBe('root-session')
     expect(server.headers[0]?.['session-id']).toBe('child-session')
+  })
+
+  it('adds no prompt_cache_key when the route profile sets cacheRetention: none', async () => {
+    const server = await mockServer([{ events: textEvents }])
+    const redirectFetch: typeof fetch = (input, init) => {
+      const target = input instanceof URL ? input : new URL(typeof input === 'string' ? input : input.url)
+      return fetch(`${server.url}${target.pathname}${target.search}`, init)
+    }
+    const fakeModel = model('openai-completions', 'openai', 'https://api.openai.com/v1')
+    const profile: ResolvedPiAiProviderProfile = {
+      provider: 'openai',
+      displayName: 'Cache Test No Retention',
+      streamIdleTimeoutMs: 30_000,
+      maxRequestImageBytes: 1,
+      requestImagePixelBudget: 1,
+      requestImageMaxBytes: 1,
+      // The config schema validates this as one of 'none' | 'short' | 'long'
+      // (config.ts); profileOptions() forwards it into SimpleStreamOptions,
+      // where pi-ai itself omits prompt_cache_key entirely under 'none'.
+      cacheRetention: 'none',
+      retryPolicy: NO_RETRY,
+      modelErrors: new Map(),
+      configuredMaxTokens: new Map(),
+      piProvider: createProvider({
+        id: 'openai',
+        name: 'Cache Test No Retention',
+        auth: { apiKey: { name: 'test', resolve: () => Promise.resolve({ auth: { apiKey: 'test-key' } }) } },
+        models: [fakeModel],
+        api: {
+          stream: () => { throw new Error('unused in this test') },
+          streamSimple: (m, context, options) =>
+            streamCompletions(m as Model<'openai-completions'>, context, { ...options, fetch: redirectFetch }),
+        },
+      }),
+    }
+    const adapter = new PiAiAdapter({
+      profiles: () => new Map([['openai', profile]]),
+      resolveApiKey: () => Promise.resolve('test-key'),
+      auth: memoryAuth(),
+    })
+    const events = adapter.stream({
+      provider: 'openai',
+      model: fakeModel.id,
+      messages: [{ role: 'user', content: [{ type: 'text', text: 'hi' }] }],
+      sessionId: fakeSessionId('child-session'),
+      cacheKey: fakeSessionId('root-session'),
+    })
+    for await (const _chunk of events) { /* drain to completion; the mock server's captured request is the assertion. */ }
+    expect(server.requests).toHaveLength(1)
+    const body = server.requests[0] as { prompt_cache_key?: string }
+    expect(body.prompt_cache_key).toBeUndefined()
   })
 })
 
@@ -265,7 +317,7 @@ describe('real pi-ai openai-completions module: wire-level prompt_cache_key over
       apiKey: 'test-key',
       sessionId: 'child-session',
       fetch: redirectFetch,
-      onPayload: overridePromptCacheKey('root-session'),
+      onPayload: overridePromptCacheKey(fakeSessionId('root-session')),
     })
     for await (const _event of events) { /* drain to completion; the mock server's captured request is the assertion. */ }
     expect(server.requests).toHaveLength(1)
@@ -283,7 +335,7 @@ describe('real pi-ai openai-completions module: wire-level prompt_cache_key over
     const events = streamCompletions(model('openai-completions', 'openai', server.url), context, {
       apiKey: 'test-key',
       sessionId: 'child-session',
-      onPayload: overridePromptCacheKey('root-session'),
+      onPayload: overridePromptCacheKey(fakeSessionId('root-session')),
     })
     for await (const _event of events) { /* drain to completion; the mock server's captured request is the assertion. */ }
     expect(server.requests).toHaveLength(1)
@@ -313,7 +365,7 @@ describe('real pi-ai openai-codex-responses module: wire-level prompt_cache_key 
       sessionId: 'child-session',
       transport: 'sse',
       fetch: redirectFetch,
-      onPayload: overridePromptCacheKey('root-session'),
+      onPayload: overridePromptCacheKey(fakeSessionId('root-session')),
     })
     for await (const _event of events) { /* drain to completion; the mock server's captured request is the assertion. */ }
     expect(server.requests).toHaveLength(1)
