@@ -1,5 +1,5 @@
 ---
-description: "面向侧栏与首屏的 Portal 品牌填充，仅在官方构建中生效；供选择或替换品牌呈现的用户与维护者阅读。"
+description: "面向侧栏与首屏的 Portal 品牌填充，仅在本 fork 的 portal 构建中生效；供选择或替换品牌呈现的用户与维护者阅读。"
 kind: "package-reference"
 ---
 
@@ -9,7 +9,7 @@ kind: "package-reference"
 
 ## 概述
 
-本包让以 `official` profile 构建的客户端在侧栏显示 Portal 四维超立方体标志与 Portal 字标及其 Harness 铭牌，并在空白会话首屏显示同一个标志。其他构建 profile 保留外壳的鱼形标志、鱼形首屏与本地构建标签。品牌为 Portal Harness 的部署应选择本包；使用其他品牌的部署应提供替代品牌包。本包不保留运行时状态，也不影响模型请求。
+本包让以 `portal` profile 构建的客户端在侧栏显示 Portal 四维超立方体标志与 Portal 字标及其 Harness 铭牌，并在空白会话首屏显示同一个标志。`official` 构建保留上游的品牌占用件——随包发布的鱼形标志与 `DeepSeek Harness` 字标——因此上游品牌以及固定它的预期输出都不受影响；未指定 profile 的构建则保留外壳回退。品牌为 Portal Harness 的部署应选择本包；使用其他品牌的部署应提供替代品牌包。本包不保留运行时状态，也不影响模型请求。
 
 ## 目录
 
@@ -25,11 +25,17 @@ kind: "package-reference"
 <a id="use-this-package"></a>
 ## 使用本包
 
-在采用 Portal 自有品牌的部署中，将本插件挂载到浏览器插件名单，然后以 `official` profile 构建客户端，让填充得以注册。
+在采用 Portal 自有品牌的部署中，将本插件挂载到浏览器插件名单，然后以 `portal` profile 构建客户端，让填充得以注册：
+
+```sh
+pnpm run build -- --profile portal
+```
+
+任何解析客户端构建环境的命令都可以改用 `DSH_BUILD_CLIENT_PROFILE=portal` 选择同一个 profile。
 
 ### 选择 profile
 
-`DSH_CLIENT_BUILD_PROFILE` 决定渲染哪个品牌。`official` 构建在侧栏显示 Portal 标志与 Portal 字标及其 Harness 铭牌，并在首屏显示 Portal 标志；任何其他取值都让外壳回退——鱼形标志、来自 `dsh-client-ui-conversation` 的鱼形首屏，以及本地构建标签——保持原样。两种情况下插件都会照常加载并通过校验；只有注册受 profile 门控。
+`DSH_CLIENT_BUILD_PROFILE` 决定渲染哪个品牌。`portal` 构建在侧栏显示 Portal 标志与 Portal 字标及其 Harness 铭牌，并在首屏显示 Portal 标志；`official` 构建显示上游的鱼形标志与 `DeepSeek Harness` 字标，并让首屏保留其声明包自有的回退；未指定 profile 的构建不注册任何占用件，保留全部外壳回退，包括本地构建标签。任何取值下插件都会照常加载并通过校验；只有注册受 profile 门控。
 
 ### 替换品牌
 
@@ -44,6 +50,8 @@ kind: "package-reference"
 <summary>实现细节——点击展开</summary>
 
 侧栏两个填充作为一组声明感知的注册安装：嵌套的 `ctx.slots.inject()` 调用等待侧栏声明，因此无论本行在声明者之前还是之后激活，这组注册都能工作；声明消失时两个填充一并撤回，HMR 期间也不会留下残缺的品牌混合。首屏标志等待自己的声明，因此没有 Conversation 的组合仍保留侧栏品牌。浏览器半部是 [`src/client/index.ts`](src/client/index.ts)；node 半部是一个空 Loader 座位。浏览器标题是构建环境的事（`DSH_CLIENT_TITLE`），不在 slot 系统之内。
+
+名称注册声明共享的 `common` locale 命名空间，渲染机制据此从该字典的 `brand.wordmark` 键合成它的 `t` 座位；字标原语只渲染收到的文本，自身不持有任何文案。
 
 </details>
 
@@ -77,7 +85,8 @@ kind: "package-reference"
 这些限制界定了品牌呈现的供给方式。它们是当前包约束，不是品牌设计对比或任务积压。
 
 - **只有一组填充**——替代呈现属于占据相同 slot 的另一个 Cordis 包。
-- **浏览器标题独立**——`DSH_CLIENT_TITLE` 在构建时选择标题文本，而非通过 UI slot。
+- **浏览器标题独立**——`DSH_CLIENT_TITLE` 在构建时选择标题文本，而非通过 UI slot；`portal` profile 提供 `Portal Harness`。
+- **`official` 归上游所有**——本 fork 的身份是独立 profile，因此上游同步若覆盖 `scripts/client-build-environment.ts` 中的 Portal profile 块，本 fork 就会退回上游标题；`scripts/client-build-environment.portal.spec.ts` 会在此时明确失败。
 
 <a id="dev-note"></a>
 ### 开发备注

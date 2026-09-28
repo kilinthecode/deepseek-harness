@@ -118,15 +118,20 @@ describe('PortalMark', () => {
 })
 
 describe('PortalWordmark', () => {
-  it('renders the tracked brand lettering as decorative text', () => {
-    const { container } = render(<primitives.PortalWordmark />)
+  it('renders the caller-supplied lettering as decorative text', () => {
+    const { container } = render(<primitives.PortalWordmark text="PORTAL" />)
     const span = container.querySelector('span')!
     expect(span.textContent).toBe('PORTAL')
     expect(span.getAttribute('aria-hidden')).toBe('true')
+
+    // The primitive carries no fallback copy: a different localized word
+    // replaces the rendered text rather than being merged with a default.
+    const localized = render(<primitives.PortalWordmark text="PORTAL 品牌" />)
+    expect(localized.container.querySelector('span')!.textContent).toBe('PORTAL 品牌')
   })
 
   it('scales by font size and takes a layout class', () => {
-    const { container } = render(<primitives.PortalWordmark size={20} className="wide" />)
+    const { container } = render(<primitives.PortalWordmark text="PORTAL" size={20} className="wide" />)
     const span = container.querySelector('span')!
     expect(span.style.fontSize).toBe('20px')
     expect(span.className).toContain('wide')

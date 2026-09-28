@@ -4,7 +4,7 @@
 
 桌面应用是完整 dsh Web 应用外的一层 Electron 壳。Electron RunAsNode 子进程启动共享 profile runner，Electron 立即从 `dsh-app://app/` 加载打包内的 Web 入口。共享加载页等待 Host 启动注入，然后在同一文档中启动客户端。Electron 将应用 HTTP 请求转发给已认证的 Web Host；WebSocket 流连接到该 Host，仅为归属的应用窗口附加凭据。Node IPC 承载启动注入、就绪与关闭。Desktop 默认使用端口 `19387`，与 Web 的 `3080` 分开；可通过 `webserver.config.port` patch 覆盖。
 
-应用菜单第一项“**关于 Portal**”打开 Electron 原生关于面板，展示应用图标、产品名称和当前安装的发布版本。菜单文案跟随桌面壳的语言。macOS 仅在打包后从应用包读取图标，未打包的开发启动会在启动时把 resources/icon-macos.png 设为程序坞图标，进程名仍为 Electron；Windows 使用随包分发的 PNG。
+应用菜单第一项“**关于 Portal Harness**”打开 Electron 原生关于面板，展示应用图标、产品名称和当前安装的发布版本。面向用户的产品文案使用 **Portal Harness**，而打包产物、可执行文件和应用 ID 保留短名 `Portal`。菜单文案跟随桌面壳的语言。macOS 仅在打包后从应用包读取图标，未打包的开发启动会在启动时把 resources/icon-macos.png 设为程序坞图标，进程名仍为 Electron；Windows 使用随包分发的 PNG。
 
 Desktop 的本地原生目录流程打开绑定应用窗口的 Electron 文件夹对话框，并先恢复、显示和聚焦该窗口。并发请求共用一个对话框；取消不返回路径，失败后可以重试。普通 Web 使用 Host 选择器。浏览模式列出 Host 目录。Linux 缺少 zenity 或 kdialog 时，自动选择使用浏览模式，不使用 Electron 对话框。
 
@@ -12,7 +12,7 @@ Creator 和 Web Plugin Manager 在 Electron Node 模式下使用 Desktop 内置 
 
 ## 关键技术决策
 
-设计师原稿位于 `resources/icon.png` 和 `resources/icon.svg`；平台适配保留鲸鱼与渐变，分别位于 `resources/icon-windows.*` 和 `resources/icon-macos.*`。将各平台 SVG 导出为透明的 1024×1024 PNG。electron-builder 为 Windows 应用、安装程序和卸载程序生成多尺寸 ICO（[Windows 图标要求](https://learn.microsoft.com/en-us/windows/apps/design/iconography/app-icon-construction)）。安装页面在两种主题下使用匹配的图案；卸载程序的欢迎和完成页共用 `installer/assets/uninstaller-sidebar.png`，准备阶段将其转换为 164×314 BMP。
+设计师原稿位于 `resources/icon.png` 和 `resources/icon.svg`；`resources/icon-windows.*` 和 `resources/icon-macos.*` 中的平台适配沿用同一个 Portal 四维超立方体图案——深色圆角底板配浅色线条——只改变圆角半径，`icon-macos.*` 为传统 ICNS 打包加大该半径。将各平台 SVG 导出为透明的 1024×1024 PNG。electron-builder 为 Windows 应用、安装程序和卸载程序生成多尺寸 ICO（[Windows 图标要求](https://learn.microsoft.com/en-us/windows/apps/design/iconography/app-icon-construction)）。安装页面在两种主题下使用匹配的图案；卸载程序的欢迎和完成页共用 `installer/assets/uninstaller-sidebar.png`，准备阶段将其转换为 164×314 BMP。
 
 macOS PNG 使用带留白的圆角底板，供传统 ICNS 打包使用，包含最高 1024 像素的表示。它是扁平图标，并非 Icon Composer 文档。Apple 的[应用图标指南](https://developer.apple.com/design/human-interface-guidelines/app-icons)要求向 Icon Composer 提供未遮罩的图层；这些输入需要在 macOS 上单独导出，不能复用已做圆角的 ICNS 图案。发布前须在支持的 macOS 版本中验收 Finder 和 Dock 的显示效果。
 
@@ -198,6 +198,16 @@ pnpm run package:desktop:win:x64:unsigned
 ```
 
 该命令要求设置 `DSH_DESKTOP_APP_ID` 并具备常规构建依赖，包括编译原生模块所需的 Python 和 Visual C++ 构建工具。Python 不在 `PATH` 中时，将 `PYTHON` 设置为其可执行文件路径。命令将安装包写入 `.desktop-build/targets/win-x64/unsigned-artifacts/`，省略自动更新配置，清除签名凭据，且不生成发布完成记录。它不需要 EV 凭据或更新源地址。签名打包和上传命令仍遵循正式发布要求。
+
+### 本地临时 macOS 构建
+
+发布打包始终传入 `electron-builder.config.mjs`，其配置来自 [`scripts/electron-builder-config.mjs`](scripts/electron-builder-config.mjs) 中的 `createElectronBuilderConfig()`，固定目标命令还会围绕它执行发布检查。跳过签名、公证和发布应用 ID 的构建需要把自己的配置放在版本控制之外：Git 忽略 `apps/desktop/electron-builder.config.local.mjs`，electron-builder 可直接使用该文件。
+
+```sh
+pnpm --dir apps/desktop exec electron-builder --config electron-builder.config.local.mjs mac --arm64 --dir --publish never
+```
+
+该本地文件是替换而非扩展发布配置，因此必须带上打包应用所需的全部字段：应用 ID 及其 `dshDesktopAppId` 额外元数据、`files`、已准备好的 `dsh` 目录树、运行时 `extraResources`，以及未签名构建所需的 `mac.identity: null`。它属于临时开发工具，不产出发布产物，也不生成发布完成记录。
 
 ### Windows 安装界面
 

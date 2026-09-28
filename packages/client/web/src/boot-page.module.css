@@ -56,6 +56,9 @@
 .stage {
   position: absolute;
   inset: 0;
+  /* Tier depth of the shipped mark: the lifts sit behind both cells and the
+     outer cell in front of them. */
+  opacity: var(--dsh-stage-opacity, 1);
 }
 
 .edge {
@@ -136,6 +139,9 @@
   position: absolute;
   top: calc(100% + 16px);
   left: 50%;
+  /* Centred here as well as in the reveal keyframe: `left: 50%` alone anchors
+     the left edge, so a suppressed animation has no fill to carry it. */
+  transform: translateX(-50%);
   display: flex;
   flex-direction: column;
   align-items: center;

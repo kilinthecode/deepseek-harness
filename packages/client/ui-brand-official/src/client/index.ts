@@ -1,27 +1,54 @@
-/** Portal brand occupants for the generic browser-brand slots. */
+/** Brand occupants for the generic browser-brand slots, one set per build profile. */
 import type { Context as ClientContext } from '@deepseek-ai/cordis'
+import type {} from '@deepseek-ai/dsh-client-locale/client'
 import type {} from '@deepseek-ai/dsh-client-ui-conversation/client'
 import type {} from '@deepseek-ai/dsh-client-ui-renderer/client'
 import type {} from '@deepseek-ai/dsh-client-ui-sidebar/client'
-import { OfficialBrandMark, OfficialBrandName, OfficialHeroBrandMark } from './Brand.tsx'
+import {
+  OfficialBrandMark,
+  OfficialBrandName,
+  PortalBrandMark,
+  PortalBrandName,
+  PortalHeroBrandMark,
+} from './Brand.tsx'
 
 /** Required service: the UI slot registry. */
 export const inject = ['slots']
 
+/** Build profile that selects the Portal product identity. */
+const PORTAL_BUILD_PROFILE = 'portal'
+/** Build profile that keeps the upstream product identity. */
+const OFFICIAL_BUILD_PROFILE = 'official'
+
 /**
- * Fill every brand slot as declaration-aware registrations. The sidebar pair
- * installs as one set so its mark and name never mix across HMR; the hero mark
- * waits on its own declaration, because a composition without a Conversation
- * still shows the sidebar brand.
+ * Fill the brand slots for the active build profile as declaration-aware
+ * registrations. The sidebar pair installs as one set so its mark and name
+ * never mix across HMR; the Portal hero mark waits on its own declaration,
+ * because a composition without a Conversation still shows the sidebar brand.
+ *
+ * The `official` pair is upstream's own occupant set, kept in its place so an
+ * upstream sync and the expectation files that pin the shipped brand both keep
+ * holding; every other dressed profile shows this fork's brand. A profile this
+ * package does not dress leaves every slot on its declaring package's fallback.
+ * The Portal name entry declares the shared `common` namespace so the render
+ * machinery synthesizes the `t` seat that carries its wordmark copy.
  * @param ctx - Client root context.
  */
 export function apply(ctx: ClientContext): void {
-  if (process.env.DSH_CLIENT_BUILD_PROFILE !== 'official') return
+  const profile = process.env.DSH_CLIENT_BUILD_PROFILE
+  const upstream = profile === OFFICIAL_BUILD_PROFILE
+  if (!upstream && profile !== PORTAL_BUILD_PROFILE) return
   ctx.slots.inject('sidebar.brand.mark', () =>
     ctx.slots.inject('sidebar.brand.name', function* () {
-      yield ctx.slots.register({ name: 'sidebar.brand.mark' }, OfficialBrandMark)
-      yield ctx.slots.register({ name: 'sidebar.brand.name' }, OfficialBrandName)
+      if (upstream) {
+        yield ctx.slots.register({ name: 'sidebar.brand.mark' }, OfficialBrandMark)
+        yield ctx.slots.register({ name: 'sidebar.brand.name' }, OfficialBrandName)
+        return
+      }
+      yield ctx.slots.register({ name: 'sidebar.brand.mark' }, PortalBrandMark)
+      yield ctx.slots.register({ name: 'sidebar.brand.name', locale: 'common' }, PortalBrandName)
     }))
+  if (upstream) return
   ctx.slots.inject('conversation.hero.brand.mark', () =>
-    ctx.slots.register({ name: 'conversation.hero.brand.mark' }, OfficialHeroBrandMark))
+    ctx.slots.register({ name: 'conversation.hero.brand.mark' }, PortalHeroBrandMark))
 }

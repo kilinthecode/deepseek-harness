@@ -14,6 +14,9 @@ function klass(name: string): string {
 /**
  * Tesseract geometry in the PortalMark 160–864 frame, mirrored here because
  * the boot page mounts before the UI package tree and stays dependency-free.
+ * Vertices and per-stage tier opacities match that mark; stroke thickness is
+ * this page's own HTML scale rather than the icon's non-scaling screen-space
+ * widths.
  */
 const CENTER = 512
 type Vertex = readonly [number, number]
@@ -42,13 +45,14 @@ const PLATE = 'HARNESS'
 /**
  * Each stroke grows along its fixed axis without moving either cell. HTML
  * stroke layers keep the drawing on the compositor during plugin activation.
- * Delays and durations are milliseconds from the first rendered frame.
+ * Delays and durations are milliseconds from the first rendered frame; the
+ * opacity is the tier its group draws at in the shipped mark.
  */
 const STAGES = {
-  spokes: { delay: 120, duration: 480 },
-  inner: { delay: 600, duration: 400 },
-  lifts: { delay: 1000, duration: 560 },
-  outer: { delay: 1560, duration: 540 },
+  spokes: { delay: 120, duration: 480, opacity: 0.9 },
+  inner: { delay: 600, duration: 400, opacity: 0.9 },
+  lifts: { delay: 1000, duration: 560, opacity: 0.7 },
+  outer: { delay: 1560, duration: 540, opacity: 1 },
 } as const
 
 /** Lettering schedule in ms from mount: the mark settles first, then one word at a time. */
@@ -69,6 +73,16 @@ const MIN_HOLD_MS = 4100
 const BRAND_SETTLE_MS = 220
 /** Leave fade, matching the dispose transition in the stylesheet. */
 const LEAVE_MS = 400
+
+/** End of the last nameplate glyph's scheduled reveal. */
+const LETTERING_END_MS = PLATE_LETTER_START_MS + PLATE.length * PLATE_LETTER_STEP_MS
+/**
+ * Deadline for a brand that never reports itself rendered: the lettering's
+ * scheduled end plus the settle window. Without it, animation events that a
+ * user stylesheet suppresses or an engine drops would hold the overlay over the
+ * mounted application for the rest of the session.
+ */
+const BRAND_DEADLINE_MS = LETTERING_END_MS + BRAND_SETTLE_MS
 
 /** Whether the host exposes a reduced-motion preference (jsdom does not). */
 function prefersReducedMotion(): boolean {
@@ -167,6 +181,9 @@ export class BootPage {
       this.plate.addEventListener('animationcancel', (event) => {
         if (event.target === this.plate.lastElementChild && prefersReducedMotion()) this.finishBrand()
       })
+      // Nothing else reports the brand as rendered when the lettering's
+      // animations never run, so the deadline stands in for the missing event.
+      this.timers.push(setTimeout(() => { this.finishBrand() }, BRAND_DEADLINE_MS))
     }
     this.status = div(css.status)
     this.spinner = div(css.spinner)
@@ -263,6 +280,7 @@ export class BootPage {
       const group = div(css.stage)
       group.style.setProperty('--dsh-stroke-delay', `${String(timing.delay)}ms`)
       group.style.setProperty('--dsh-stroke-duration', `${String(timing.duration)}ms`)
+      group.style.setProperty('--dsh-stage-opacity', String(timing.opacity))
       if (name === 'spokes' || name === 'lifts') {
         for (const [index, vertex] of INNER_VERTICES.entries()) {
           group.append(name === 'spokes'
@@ -283,7 +301,12 @@ export class BootPage {
     return mark
   }
 
-  /** Keep the handoff behind the last CSS frame when boot blocks early paints. */
+  /**
+   * Report the brand as rendered and start the settle window, from the plate's
+   * animation events or from the deadline that stands in for them. The first
+   * report wins, and the settle delay keeps the handoff behind the last CSS
+   * frame when boot blocks early paints.
+   */
   private finishBrand(): void {
     if (this.brandFinished) return
     this.brandFinished = true

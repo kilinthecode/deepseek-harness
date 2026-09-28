@@ -25,6 +25,10 @@ function finishBrand(el: HTMLElement): void {
 
 /** The status block only joins the card once boot outlasts the brand moment. */
 const STATUS_MS = 4000
+/** The lettering schedule's own end: the last HARNESS glyph finishes here. */
+const LETTERING_END_MS = 3875
+/** Page deadline for a brand that reports no animation event: the lettering end plus the settle window. */
+const BRAND_DEADLINE_MS = LETTERING_END_MS + 220
 
 describe('BootPage', () => {
   it('draws the brand before any plugin state arrives', () => {
@@ -42,6 +46,10 @@ describe('BootPage', () => {
     expect(stages).toHaveLength(4)
     expect(stages.map(part => part.style.getPropertyValue('--dsh-stroke-delay')))
       .toEqual(['120ms', '600ms', '1000ms', '1560ms'])
+    // Tier opacities of the shipped mark: the spokes and the inner cell at 0.9,
+    // the lifts behind them at 0.7, the outer cell in front at 1.
+    expect(stages.map(part => part.style.getPropertyValue('--dsh-stage-opacity')))
+      .toEqual(['0.9', '0.9', '0.7', '1'])
     expect(stages.map(part => part.childElementCount)).toEqual([6, 12, 6, 12])
     for (const edge of stages[0]!.querySelectorAll<HTMLElement>(`.${css.edge!}`)) {
       expect(edge.style.left).toBe('50%')
@@ -74,7 +82,7 @@ describe('BootPage', () => {
     const { el } = mount()
     expect(el.querySelector('[data-dsh-boot-spinner]')).toBeNull()
     expect(el.textContent).not.toContain('Loading plugins…')
-    vi.advanceTimersByTime(3875)
+    vi.advanceTimersByTime(LETTERING_END_MS)
     finishBrand(el)
     vi.advanceTimersByTime(124)
     expect(el.querySelector('[data-dsh-boot-spinner]')).toBeNull()
@@ -147,7 +155,7 @@ describe('BootPage', () => {
     const { el, page } = mount()
     page.dispose()
     expect(el.firstElementChild).not.toBeNull()
-    vi.advanceTimersByTime(3875)
+    vi.advanceTimersByTime(LETTERING_END_MS)
     finishBrand(el)
     vi.advanceTimersByTime(224)
     expect(el.firstElementChild?.classList.contains(css.leaving!)).toBe(false)
@@ -162,9 +170,37 @@ describe('BootPage', () => {
   it('releases every pending timer once it detaches', () => {
     const { el, page } = mount()
     page.dispose()
-    vi.advanceTimersByTime(3875)
+    vi.advanceTimersByTime(LETTERING_END_MS)
     finishBrand(el)
     vi.advanceTimersByTime(700)
     expect(vi.getTimerCount()).toBe(0)
+  })
+
+  it('hands off on the brand deadline when no animation event arrives', () => {
+    const { el, page } = mount()
+    page.dispose()
+    // Lettering animations that never run report neither animationend nor
+    // animationcancel, so the deadline is the only thing left to finish the
+    // brand; the designed schedule must still play out before it does.
+    vi.advanceTimersByTime(BRAND_DEADLINE_MS - 1)
+    expect(el.firstElementChild?.classList.contains(css.leaving!)).toBe(false)
+    vi.advanceTimersByTime(1)
+    expect(el.firstElementChild?.classList.contains(css.leaving!)).toBe(false)
+    vi.advanceTimersByTime(220)
+    expect(el.firstElementChild?.classList.contains(css.leaving!)).toBe(true)
+    vi.advanceTimersByTime(400)
+    expect(el.childNodes).toHaveLength(0)
+  })
+
+  it('leaves no brand deadline behind once it detaches', () => {
+    const { el, page } = mount()
+    page.dispose()
+    vi.advanceTimersByTime(BRAND_DEADLINE_MS + 220 + 400)
+    expect(el.childNodes).toHaveLength(0)
+    expect(vi.getTimerCount()).toBe(0)
+    // The mount point stays empty afterwards: any timer surviving the detach
+    // would re-cover the application the page just revealed.
+    vi.advanceTimersByTime(60_000)
+    expect(el.childNodes).toHaveLength(0)
   })
 })

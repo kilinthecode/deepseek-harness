@@ -579,7 +579,7 @@ async function main(): Promise<void> {
   // development launch lacks; carry the product icon on the Dock instead.
   if (development && process.platform === 'darwin') app.dock?.setIcon(join(app.getAppPath(), 'resources', 'icon-macos.png'))
   app.setAboutPanelOptions({
-    applicationName: 'Portal',
+    applicationName: 'Portal Harness',
     applicationVersion: app.getVersion(),
     // The release has no separate build number; omit Electron's bundle version.
     version: '',

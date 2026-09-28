@@ -12,8 +12,8 @@ it('ships install metadata with the built web application', async () => {
   const manifest: unknown = JSON.parse(await readFile(join(DIST_ROOT, 'manifest.webmanifest'), 'utf8'))
   expect(manifest).toEqual({
     id: '/',
-    name: 'DeepSeek Harness',
-    short_name: 'DSH',
+    name: 'Portal Harness',
+    short_name: 'Portal',
     start_url: '/',
     scope: '/',
     display: 'fullscreen',
@@ -26,10 +26,18 @@ it('ships install metadata with the built web application', async () => {
   })
 })
 
-it('ships a favicon that switches to a light mark under dark color scheme', async () => {
+it('ships a favicon that inverts its palette under a dark color scheme', async () => {
   const favicon = await readFile(join(DIST_ROOT, 'favicon.svg'), 'utf8')
-  // The light fill must live inside the dark-scheme media query, so the icon
-  // stays black in light mode and only turns white under a dark scheme.
-  expect(favicon).toMatch(/@media \(prefers-color-scheme: dark\)\s*{\s*path\s*{[^}]*fill:\s*#fff/i)
-  expect(favicon).toContain('fill="#000"')
+  // The base palette is a dark rounded tile carrying light tesseract strokes,
+  // and the dark-scheme query must flip both the tile stops and the stroke or
+  // the mark loses contrast against dark browser chrome. Each override is
+  // asserted inside the media query, so dropping the query, the palette
+  // variables, or the gradient binding fails this test.
+  expect(favicon).toContain('<rect x="0" y="0" width="64" height="64" rx="14.4" fill="url(#lift)"/>')
+  expect(favicon).toMatch(/<radialGradient id="lift"[^>]*>\s*<stop[^>]*stop-color="var\(--dsh-favicon-tile-inner\)"\/>/u)
+  expect(favicon).toMatch(/--dsh-favicon-stroke: #e9ebf1;/u)
+  expect(favicon).toMatch(
+    /@media \(prefers-color-scheme: dark\)\s*\{\s*:root\s*\{[^}]*--dsh-favicon-tile-inner: #f7f8fa;[^}]*--dsh-favicon-stroke: #191c23;/u,
+  )
+  expect(favicon).toMatch(/<g stroke="var\(--dsh-favicon-stroke\)"/u)
 })

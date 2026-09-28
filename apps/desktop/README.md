@@ -4,7 +4,7 @@ English | [中文](README.zh.md)
 
 The desktop application is an Electron shell around the complete dsh Web application. An Electron RunAsNode child starts the shared profile runner, and Electron immediately loads the packaged Web entry at `dsh-app://app/`. Its shared loading page waits for Host boot injections, then starts the client without navigating to another document. Electron forwards application HTTP requests to the authenticated Web Host; WebSocket streams connect to that Host with credentials attached only for the owned application window. Node IPC carries boot injections, readiness, and shutdown. Desktop defaults to port `19387`, separate from Web’s `3080`; a `webserver.config.port` patch can override it.
 
-The first application-menu command, **About Portal**, opens Electron's native About panel with the application icon, product name, and installed release version. The menu follows the Desktop shell locale. macOS reads the bundle icon only when packaged, so an unpackaged development launch sets the Dock icon from `resources/icon-macos.png` at startup while keeping Electron's process name; Windows receives the packaged PNG.
+The first application-menu command, **About Portal Harness**, opens Electron's native About panel with the application icon, product name, and installed release version. Product-visible copy names the application **Portal Harness**, while the packaged artifact, executable, and application id keep the short name `Portal`. The menu follows the Desktop shell locale. macOS reads the bundle icon only when packaged, so an unpackaged development launch sets the Dock icon from `resources/icon-macos.png` at startup while keeping Electron's process name; Windows receives the packaged PNG.
 
 Desktop’s local native directory flow opens an Electron folder dialog attached to the application window, restoring, showing, and focusing that window first. Concurrent requests share one dialog; cancellation returns no path and failures remain retryable. Ordinary Web uses the Host chooser. Browse mode lists Host directories. On Linux without zenity or kdialog, automatic selection uses browse instead of the Electron dialog.
 
@@ -12,7 +12,7 @@ Creator and the Web Plugin Manager use Desktop’s bundled pnpm under Electron N
 
 ## Key technical decisions
 
-The original artwork lives in `resources/icon.png` and `resources/icon.svg`; platform adaptations retain the whale and gradients in `resources/icon-windows.*` and `resources/icon-macos.*`. Export each platform SVG as a transparent 1024×1024 PNG. Electron-builder generates the multi-size ICO for the Windows application, installer, and uninstaller ([Windows icon requirements](https://learn.microsoft.com/en-us/windows/apps/design/iconography/app-icon-construction)). The installation pages use matching artwork in both themes; the uninstaller's welcome and finish pages share `installer/assets/uninstaller-sidebar.png`, converted to a 164×314 BMP during preparation.
+The original artwork lives in `resources/icon.png` and `resources/icon.svg`; the platform adaptations in `resources/icon-windows.*` and `resources/icon-macos.*` repeat that Portal tesseract — a dark rounded tile carrying light strokes — and change only the corner radius, which `icon-macos.*` widens for legacy ICNS packaging. Export each platform SVG as a transparent 1024×1024 PNG. Electron-builder generates the multi-size ICO for the Windows application, installer, and uninstaller ([Windows icon requirements](https://learn.microsoft.com/en-us/windows/apps/design/iconography/app-icon-construction)). The installation pages use matching artwork in both themes; the uninstaller's welcome and finish pages share `installer/assets/uninstaller-sidebar.png`, converted to a 164×314 BMP during preparation.
 
 The macOS PNG uses an inset rounded background for legacy ICNS packaging, with representations up to 1024 pixels. It is a flattened icon, not an Icon Composer document. Apple's [app icon guidance](https://developer.apple.com/design/human-interface-guidelines/app-icons) describes unmasked layers for Icon Composer; those inputs require a separate macOS export and must not reuse the rounded ICNS artwork. Verify Finder and Dock appearance on supported macOS versions before release.
 
@@ -197,6 +197,16 @@ pnpm run package:desktop:win:x64:unsigned
 ```
 
 The command requires `DSH_DESKTOP_APP_ID` and the normal build dependencies, including Python and Visual C++ build tools for native modules. Set `PYTHON` to the Python executable when it is absent from `PATH`. It writes the installer to `.desktop-build/targets/win-x64/unsigned-artifacts/`, omits automatic-update configuration, strips signing credentials, and creates no release completion record. It does not require EV credentials or an update origin. The signed packaging and upload commands retain their release requirements.
+
+### Local ad-hoc macOS build
+
+Release packaging always passes `electron-builder.config.mjs`, whose configuration comes from `createElectronBuilderConfig()` in [`scripts/electron-builder-config.mjs`](scripts/electron-builder-config.mjs), and the fixed target commands add the release checks around it. A bundle that skips signing, notarization, and the release application id keeps its own configuration outside version control: Git ignores `apps/desktop/electron-builder.config.local.mjs`, and electron-builder takes that file directly.
+
+```sh
+pnpm --dir apps/desktop exec electron-builder --config electron-builder.config.local.mjs mac --arm64 --dir --publish never
+```
+
+The local file replaces the release configuration rather than extending it, so it must carry every field the packaged application needs: the application id together with its `dshDesktopAppId` extra metadata, `files`, the prepared `dsh` tree, the runtime `extraResources`, and `mac.identity: null` for an unsigned bundle. It is ad-hoc developer tooling, so it produces no release artifact and no completion record.
 
 ### Windows installer interface
 
