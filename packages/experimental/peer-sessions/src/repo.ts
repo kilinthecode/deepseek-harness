@@ -18,24 +18,31 @@ import { dirname, join, resolve } from 'node:path'
 /** Prefix of the single line a gitfile writes: the administrative directory of the checkout. */
 const GITDIR_PREFIX = 'gitdir:'
 
-/** One path's `lstat` entry, or `undefined` when nothing is there. */
+/** One walked path's `lstat` entry, or `undefined` when it cannot be probed. */
 async function lstatOrUndefined(filename: string): Promise<Stats | undefined> {
   try {
     return await lstat(filename)
   } catch {
     // ENOENT is the ordinary answer at every level of the walk; ENOTDIR
-    // appears when the walked path is itself not a directory.
+    // appears when the walked path is itself not a directory, and EACCES when
+    // a level cannot be searched. None of them is a marker, so the walk goes on.
     return undefined
   }
 }
 
-/** Read one small UTF-8 file; a missing or unreadable path yields `undefined`. */
+/** Whether `error` is a filesystem `ENOENT`: the path names nothing, as opposed to a path that cannot be accessed. */
+function isNotFound(error: unknown): boolean {
+  return error instanceof Error && 'code' in error && error.code === 'ENOENT'
+}
+
+/** Read one small file as text; a missing or unreadable path yields `undefined`. */
 async function readText(filename: string): Promise<string | undefined> {
   try {
     return await readFile(filename, 'utf8')
   } catch {
-    // ENOENT, EACCES, and a body that is not UTF-8 are unusable alike: no key
-    // is ever derived from a partial read.
+    // ENOENT and EACCES are unusable alike: no key is derived from a file that
+    // was not read. Bytes that are not UTF-8 decode to U+FFFD rather than
+    // fail, which is harmless because only the first line is parsed.
     return undefined
   }
 }
@@ -68,13 +75,15 @@ async function gitfileKey(directory: string, marker: string): Promise<string | u
   if (target === '') return undefined
   const gitdir = resolve(directory, target)
   const commondir = join(gitdir, 'commondir')
-  if (await lstatOrUndefined(commondir) === undefined) {
+  let common: string
+  try {
+    common = await readFile(commondir, 'utf8')
+  } catch (error) {
     // A gitfile without a commondir, such as a submodule checkout, is its own
-    // repository; only a commondir points at a shared one.
-    return gitKey(gitdir)
+    // repository; only a commondir points at a shared one. Any other failure,
+    // such as an unsearchable gitdir, leaves the checkout unidentified.
+    return isNotFound(error) ? gitKey(gitdir) : undefined
   }
-  const common = await readText(commondir)
-  if (common === undefined) return undefined
   return gitKey(resolve(gitdir, common.trim()))
 }
 

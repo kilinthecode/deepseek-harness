@@ -197,6 +197,26 @@ describe('peerRepoKey', () => {
     await writeFile(join(sealed, '.git'), `gitdir: ${gitdir}\n`)
     expect(await peerRepoKey(sealed)).toBe(`dir:${sealed}`)
   })
+
+  it.runIf(
+    process.getuid !== undefined && process.getuid() !== 0,
+  )('falls back to the directory key when the gitdir cannot be searched for a commondir', async () => {
+    const f = await fixture()
+    const gitdir = join(f.main, '.git', 'worktrees', 'locked')
+    const locked = join(f.main, 'locked-worktree')
+    await mkdir(gitdir, { recursive: true })
+    await mkdir(locked, { recursive: true })
+    await writeFile(join(gitdir, 'commondir'), '../..\n')
+    await writeFile(join(locked, '.git'), `gitdir: ${gitdir}\n`)
+    // Without search permission the commondir cannot be seen, so its absence
+    // must not be read as "a repository of its own".
+    await chmod(gitdir, 0o600)
+    try {
+      expect(await peerRepoKey(locked)).toBe(`dir:${locked}`)
+    } finally {
+      await chmod(gitdir, 0o700)
+    }
+  })
 })
 
 describe('peers grouped by repository', () => {
