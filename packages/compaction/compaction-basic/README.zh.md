@@ -153,7 +153,7 @@ kind: "package-reference"
 
 - [压缩 seam](../compaction/README.zh.md)——本后端实现的压缩约定。
 - [压缩子系统参考](../../../docs/subsystems/compaction.zh.md)——压缩词汇、结果与服务行为。
-- [工具结果修剪器](../compaction-tool-result-pruner/README.zh.md)——修剪超大工具输出的可选配套工具；在压力下，只有当预估单靠它就能达到阈值时才会单独运行，否则会在每次压缩之后运行，即便完全没有可压缩范围时也是如此。
+- [工具结果修剪器](../compaction-tool-result-pruner/README.zh.md)——修剪超大工具输出的可选配套工具；它在压力下和溢出恢复期间何时运行，见[修剪超大工具输出](#trimming-oversized-tool-outputs)。
 - [人类 /compact 命令](../command-compact/README.zh.md)——无需等待压力的按需压缩。
 - [Token meter](../../llm/token-meter/README.zh.md)——决定何时压缩的测量服务。
 - [生成配置目录](../../../docs/config-catalog.zh.md#deepseek-aidsh-compaction-basic)——每个受支持配置字段及其源声明。

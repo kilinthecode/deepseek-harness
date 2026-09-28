@@ -153,7 +153,7 @@ Read these pages when the package-level contract is not enough; they move from t
 
 - [Compaction seam](../compaction/README.md) — the condensation contract this backend implements.
 - [Compaction subsystem reference](../../../docs/subsystems/compaction.md) — the condensation vocabulary, results, and service behavior.
-- [Tool-result pruner](../compaction-tool-result-pruner/README.md) — the optional companion that trims oversized tool outputs; under pressure it runs alone only when its projection alone clears the threshold, and otherwise after each compaction, including when no compactable range exists at all.
+- [Tool-result pruner](../compaction-tool-result-pruner/README.md) — the optional companion that trims oversized tool outputs; [Trimming oversized tool outputs](#trimming-oversized-tool-outputs) states when it runs under pressure and during overflow recovery.
 - [Human /compact command](../command-compact/README.md) — on-demand condensation without waiting for pressure.
 - [Token meter](../../llm/token-meter/README.md) — the measurement service that decides when to condense.
 - [Generated configuration catalog](../../../docs/config-catalog.md#deepseek-aidsh-compaction-basic) — every accepted config field and its source declaration.

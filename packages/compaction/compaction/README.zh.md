@@ -126,7 +126,7 @@ kind: "package-reference"
 
 - [压缩子系统参考](../../../docs/subsystems/compaction.zh.md)——压缩词汇、结果与生成的 API。
 - [压缩基础后端](../compaction-basic/README.zh.md)——自动与按需压缩的随附后端。
-- [工具结果修剪器](../compaction-tool-result-pruner/README.zh.md)——修剪超大工具输出的可选配套工具；在压力下，只有当预估单靠它就能达到阈值时才会单独运行，否则会在每次压缩之后运行，即便完全没有可压缩范围时也是如此。
+- [工具结果修剪器](../compaction-tool-result-pruner/README.zh.md)——修剪超大工具输出的可选配套工具；它在压力下和溢出恢复期间何时运行，见 [compaction-basic](../compaction-basic/README.zh.md#trimming-oversized-tool-outputs)。
 - [面向用户的 /compact 命令](../command-compact/README.zh.md)——按需触发压缩的入口。
 - [Token meter](../../llm/token-meter/README.zh.md)——决定何时压缩的测量服务。
 - [压缩能力 seam Agent Note](../../../.agents/notes/implemented/feature/2026-06-18-compaction-capability-seam.zh.md)——拆分及 session/llm 依赖的依据。
