@@ -45,7 +45,8 @@ After enabling, `agent-crew` appears in the available skills of the session cata
 
 - **Decomposition guidance.** How to split a goal into parts with disjoint scopes and an acceptance criterion each.
 - **A worker-brief template.** Goal context, exact scope, constraints, acceptance checks, and what to report.
-- **The exact tool call shapes.** `subagent({ description, prompt, isolation: "worktree", provider, model })`, and the `accept_worktree` / `discard_worktree` / `list_worktrees` / `send_message` loop for landing, fixing, or discarding each part.
+- **The exact tool call shapes.** `subagent({ description, prompt, isolation: "worktree" })`, plus `provider` and `model` only where the tool lists them (that needs the `subagent` tool's model selection enabled; otherwise workers inherit the lead's route), with `run_in_background` left unset so each worker stays a background child the lead can message. Then the `accept_worktree` / `discard_worktree` / `list_worktrees` / `send_message` loop for landing, fixing, or discarding each part, including the empty outcome.
+- **Coordination rules.** The lead is notified when each worker settles and accepts then; workers cannot message each other or start workers of their own; a worker on a cheaper model is reviewed on the lead's model unless the deployment pins a reviewer route.
 - **A pointer to `dsh agents run`** for the same loop from a shell, for people and external agents.
 
 ### Observable success and failures

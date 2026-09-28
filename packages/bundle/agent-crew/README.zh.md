@@ -25,7 +25,15 @@ kind: "package-bundle"
 <a id="use-this-package"></a>
 ## 使用此包
 
-打开 Web 侧栏（或 CLI profile）的插件管理页并启用 Agent Crew。启用后，`subagent` 工具获得 `isolation: "worktree"` 选项：设置它的调用方会得到一个在自己 git 工作树中工作的子级，与调用方的检出以及其他子级相互隔离。此外会话还会获得 `accept_worktree`、`discard_worktree` 与 `list_worktrees`，用于落地、丢弃和列出这些工作树；`agent-crew` skill 也会出现在会话 skill 目录中，让模型拥有一套命名的、经过打磨的工作流，用于把一个目标拆分给多个工作树隔离的工作者。禁用此 Bundle 会恢复随包交付的 `tool-subagent` 配置（不含 `worktreeIsolation`），并移除这两个插入的条目；已经创建的工作树会继续存在，直到 operator 用 `dsh agents accept`/`discard` 接受或丢弃它。
+打开 Web 侧栏（或 CLI profile）的插件管理页并启用 Agent Crew。启用后，Host 级的 `subagent` 工具获得 `isolation: "worktree"` 选项（由 agent 预设挂载的 `subagent` 工具则不会，见[已知限制与后续工作](#known-limitations-and-deferred-work)）：设置它的调用方会得到一个在自己 git 工作树中工作的子级，与调用方的检出以及其他子级相互隔离。此外会话还会获得 `accept_worktree`、`discard_worktree` 与 `list_worktrees`，用于落地、丢弃和列出这些工作树；`agent-crew` skill 也会出现在会话 skill 目录中，让模型拥有一套命名的、经过打磨的工作流，用于把一个目标拆分给多个工作树隔离的工作者。禁用此 Bundle 会恢复随包交付的 `tool-subagent` 配置（不含 `worktreeIsolation`），并移除这两个插入的条目；已经创建的工作树会继续存在，直到 operator 用 `dsh agents accept`/`discard` 接受或丢弃它。
+
+### 评审者路由
+
+除非 `subagent-worktree` 条目设置了评审者路由，否则 `accept_worktree` 会让接受方 agent 自己的模型路由来评审每个 worker 的提交，因此运行在更便宜路由上的 worker 会由 lead 的模型评审。要固定评审者，请在 profile 补丁中的 `subagent-worktree` 条目上设置 `reviewerProvider` 与 `reviewerModel`（可选再加 `reviewerReasoningEffort`）。还可在该条目上设置 `requireDistinctReviewer: true`，让服务拒绝会运行在 worker 自身路由上的评审：此时若 worker 会与评审者共用路由，调用会在创建任何工作树之前失败，因此需要让 worker 改用另一个模型，或配置评审者路由。
+
+### worker 路由
+
+此 Bundle 不改变 `subagent` 调用可以选择哪些路由：除非调用指定了其他路由，否则 worker 运行在 lead 的路由上。只有在挂载该工具的条目设置了 `modelSelectionSettings`、且 Host 的模型选择设置（**插件**下**子智能体**页面的**模型选择**部分）已启用并至少允许一条路由时，工具上才会出现 `provider`、`model` 与 `reasoning_effort` 字段。会话在启动时采样该允许列表，指定了列表之外路由的调用会失败。字段与发现工具见 [`@deepseek-ai/dsh-tool-subagent`](../../subagent/tool-subagent/README.zh.md)。
 
 -----
 
@@ -35,7 +43,7 @@ kind: "package-bundle"
 <details>
 <summary>维护者信息 — 点击展开</summary>
 
-`cordis.patch.yml` 替换 `tool-subagent` 条目的整个 config——重新声明来自 `dsh-base` 的 `provider`、`toolName` 与 `backgroundMode`，并加上新的 `worktreeIsolation: true`，因为按 id 定位的补丁会替换整个 config 而不是与之合并——并插入 `tool-subagent-worktree` 与 `skill-agent-crew` 两个条目。`package.json` 依赖这两个插入条目的包，使它们都从此 Bundle 解析；`subagent-worktree` 服务条目本身位于共享的 `dsh-base` 组合中（以惰性方式挂载，直到本 Bundle 这样的消费者将其启用），因此它不是此 Bundle 的依赖。`packages/boot/app-boot/src/profile.ts` 的 `OPTIONAL_BUNDLES` 列出此包，`apps/cli` 依赖它，因此每次安装都随包携带且默认禁用，插件管理页在“官方”分组中提供它。此纯配置包不拥有可变的运行时状态，因此不发布不变量伴随模块。
+`cordis.patch.yml` 替换 `tool-subagent` 条目的整个 config——重新声明来自 `dsh-base` 的 `provider`、`toolName` 与 `backgroundMode`，并加上新的 `worktreeIsolation: true`，因为按 id 定位的补丁会替换整个 config 而不是与之合并——并插入 `tool-subagent-worktree` 与 `skill-agent-crew` 两个条目。`package.json` 依赖这两个插入条目的包，使它们都从此 Bundle 解析；`subagent-worktree` 服务条目本身位于共享的 `dsh-base` 组合中（以惰性方式挂载，直到本 Bundle 这样的消费者将其启用），因此它不是此 Bundle 的依赖。`packages/boot/app-boot/src/profile.ts` 的 `OPTIONAL_BUNDLES` 列出此包，`apps/cli` 依赖它，因此每次安装都随包携带且默认禁用，插件管理页在“官方”分组中提供它。重新声明的条目有意省略 `modelSelectionSettings`：除非该条目挂载在 agent 预设之内（否则报 `requires a scoped preset Context`）且存在 Host 的 `subagent-model-selection-settings` 服务（只有 Web bundle 会挂载它），否则 `tool-subagent` 会拒绝该选项；针对 Host 级条目的补丁无法提供这两者，[`tests/composition.spec.ts`](tests/composition.spec.ts) 固定了这一拒绝行为。此纯配置包不拥有可变的运行时状态，因此不发布不变量伴随模块。
 
 | 文件 | 作用 |
 |---|---|
@@ -80,6 +88,7 @@ kind: "package-bundle"
 
 <a id="known-limitations-and-deferred-work"></a>
 
+- **agent 预设不会收到该补丁**——在由 agent 预设挂载 `subagent` 工具的组合中（随发行版交付的 Web、headless 与 Desktop profile），此 Bundle 所修补的 Host 级 `tool-subagent` 条目处于禁用状态，而按 id 定位的补丁无法触及预设的子条目。这些预设的 `subagent` 工具不会获得 `isolation`，尽管工作树工具与 skill 仍会挂载。
 - **这三个条目并非各自独立可用**——如果关掉 `tool-subagent-worktree`，同时又让 `subagent` 上的 `isolation: "worktree"` 保持启用，调用方就能创建工作树，却无法通过任何模型可见工具落地或丢弃它（只能通过 `dsh agents accept`/`discard`）。
 - **禁用此 Bundle 不会影响已有的工作树**——在此 Bundle 启用期间创建的工作树，会连同其分支一起保留在磁盘上，直到 operator 运行 `dsh agents accept` 或 `discard`。
 - 未选中此 Bundle 时，按 id 定位 `tool-subagent-worktree` 或 `skill-agent-crew` 的 profile 补丁或 `--patch` overlay 匹配不到任何条目：加载器为每条这样的补丁报告一条 `patch: entry <id> not found` 警告。请选中此 Bundle，而不是按 id 打开这些条目。

@@ -45,7 +45,8 @@ agent（智能体）可以通过该内置提供方加载 `agent-crew` skill，�
 
 - **拆分指导。** 如何把一个目标拆分成若干范围互不重叠、各自带有验收标准的部分。
 - **工作简报模板。** 目标背景、精确范围、约束、验收检查，以及需要汇报的内容。
-- **确切的工具调用形状。** `subagent({ description, prompt, isolation: "worktree", provider, model })`，以及用于落地、修复或丢弃每个部分的 `accept_worktree` / `discard_worktree` / `list_worktrees` / `send_message` 循环。
+- **确切的工具调用形状。** `subagent({ description, prompt, isolation: "worktree" })`，仅当工具列出 `provider` 与 `model` 时才加上它们（这需要启用 `subagent` 工具的模型选择；否则 worker 沿用 lead 的路由），并保持 `run_in_background` 不设置，使每个 worker 都保持为 lead 可以向其发消息的后台子级。再加上用于落地、修复或丢弃每个部分的 `accept_worktree` / `discard_worktree` / `list_worktrees` / `send_message` 循环，包括 empty 结果。
+- **协作规则。** lead 会在每个 worker 结束时收到通知，并在那时 accept；worker 之间不能互发消息，也不能启动自己的 worker；除非部署固定了 reviewer 路由，否则使用更便宜模型的 worker 由 lead 的模型评审。
 - **指向 `dsh agents run` 的指引**，供人类和外部 agent 从命令行执行同样的流程。
 
 ### 可观察的成功与失败

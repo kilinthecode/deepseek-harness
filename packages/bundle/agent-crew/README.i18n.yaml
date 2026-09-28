@@ -15,11 +15,17 @@
   en: d152484eb41ac6b4
   zh: 364c80ee00a374ff
 /deepseek-ai-dsh-agent-crew/use-this-package:
-  en: 09bc4582d3d2a366
-  zh: 5af74d5e96a53974
+  en: 2d3ef799b4398553
+  zh: 52a07258134d7e85
+/deepseek-ai-dsh-agent-crew/use-this-package/reviewer-route:
+  en: 4e2c976bd364b9cd
+  zh: 1b094f75c6847c61
+/deepseek-ai-dsh-agent-crew/use-this-package/worker-routes:
+  en: 9390505334f30fb3
+  zh: 6e0403f88a37cbc4
 /deepseek-ai-dsh-agent-crew/understand-the-implementation:
-  en: 6f8c6375ed520e32
-  zh: 66f93cc8697eb808
+  en: 7fd30905fe8a8f34
+  zh: eece506ac389ab42
 /deepseek-ai-dsh-agent-crew/further-exploration:
   en: 78a53cf801faaa01
   zh: 1b2858b9fc873aa4
@@ -39,8 +45,8 @@
   en: 822e5480f256f36a
   zh: 6e332c9cb3b3a0ea
 /deepseek-ai-dsh-agent-crew/known-limitations-and-deferred-work:
-  en: 4032186e36d92f80
-  zh: 7968422faa30946a
+  en: 83923b29abd6c4c1
+  zh: 2bc8be43bf9b883b
 /deepseek-ai-dsh-agent-crew/known-limitations-and-deferred-work/dev-note:
   en: 0225ba087c5266f3
   zh: 4e706f1b2b984e63

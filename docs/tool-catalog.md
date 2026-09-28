@@ -2149,7 +2149,7 @@ The globally named control tools over continuable background subagents: provider
 
 ### `accept_worktree`
 
-Land an isolated child's work. The harness commits the worktree's changes, runs any configured checks, and has an independent reviewer check that exact commit; only a passing change is merged into your checkout. A failing review returns its findings: send them to the child with send_message, wait for it to finish, and accept again. Call it only after the child has finished.
+Land an isolated child's work. The harness commits the worktree's changes, runs any configured checks, and has an independent reviewer check that exact commit; only a passing change is merged into your checkout. A failing review returns its findings: send them to a background child with send_message, wait for it to finish, and accept again; a foreground child cannot receive messages, so discard the worktree and start a new background worker with the task and the findings. Call it only after the child has finished.
 
 ```json
 {
@@ -2191,7 +2191,7 @@ Source: [`packages/subagent/tool-subagent-worktree/src/index.ts`](../packages/su
 
 ### `list_worktrees`
 
-List the isolated worktrees you started that are still open, with each one's branch, state, and latest review verdict.
+List the isolated worktrees you started that are still open, with each one's branch, path, state, latest worker agent id, and latest review verdict.
 
 ```json
 {

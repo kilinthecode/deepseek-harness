@@ -2,7 +2,9 @@
 # isolation and adds the tools and skill that land, discard, and list those
 # worktrees. An id-targeted patch replaces the whole config, so the
 # tool-subagent row restates its dsh-base fields alongside the new
-# worktreeIsolation switch.
+# worktreeIsolation switch. It does not add modelSelectionSettings: a row
+# outside an agent preset rejects that flag at load, so worker route
+# selection stays with the preset rows that set it.
 
 - id: tool-subagent
   config:
