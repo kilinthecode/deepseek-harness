@@ -46,10 +46,13 @@ Mount this service so a delegation consumer can offer worktree isolation. Loadin
 | `reviewDiffMaxBytes` | `49152` | Byte bound on the diff embedded in the reviewer prompt |
 | `removeOnMerge` | `true` | Remove the worktree directory and branch after a successful merge |
 | `commitAuthorName` / `commitAuthorEmail` | — | Author identity for harness commits, set together; omitted uses git's configured identity |
+| `offerIsolation` | `false` | Offer the `isolation: "worktree"` parameter on every subagent delegation tool, including tools mounted inside agent presets |
 
 `reviewerProvider`/`reviewerModel` and `commitAuthorName`/`commitAuthorEmail` each fail loud at load if only one half of the pair is set, and `reviewerReasoningEffort` fails loud if set without both reviewer fields. The generated [configuration catalog](../../../docs/config-catalog.md#deepseek-aidsh-subagent-worktree) is the exhaustive source for every accepted field and its JSDoc.
 
 By default the reviewer runs on the route of the accepting agent, so a worker started on a cheaper route is reviewed on the accepting agent's route automatically. To enforce a reviewer on a different model than the worker, configure `reviewerProvider`/`reviewerModel` and set `requireDistinctReviewer: true`.
+
+`offerIsolation` is a deployment-wide switch on this service's own top-level row. The `subagent` tool is also mounted inside agent presets, whose nested rows a bundle patch cannot reach, so this is the one setting that turns the `isolation: "worktree"` parameter on for every such tool. A delegation tool reads `ctx.subagentWorktrees.offersIsolation`, a read-only getter, when it mounts, in addition to its own `worktreeIsolation` row setting.
 
 ### The service surface
 
@@ -143,11 +146,11 @@ Read these pages when the package-level contract is not enough; they move from t
 
 #### What the model sees
 
-This service adds no tool and no system-prompt section of its own; it never runs inside a model's own turn. It owns two pieces of verbatim, model-facing text that a consumer sends on its behalf: `renderWorkerBrief` states the worktree's path, branch, and base commit and asks the worker not to run git commands that write, prepended to the delegating consumer's own first message to the worker; `renderReviewerPrompt` states the review checkout, the commit range, the task, and a byte-bounded `git diff` of the change, and asks the reviewer child to call the `structured_output` tool with a `pass`-or-`fail` verdict, a summary, the checks it ran, and one finding per problem.
+This service adds no tool and no system-prompt section of its own; it never runs inside a model's own turn. It owns two pieces of verbatim, model-facing text that a consumer sends on its behalf: `renderWorkerBrief` states the worktree's path, branch, and base commit and asks the worker not to run git commands that write, prepended to the delegating consumer's own first message to the worker; `renderReviewerPrompt` states the review checkout, the commit range, the task, and a byte-bounded `git diff` of the change, and asks the reviewer child to call the `structured_output` tool with a `pass`-or-`fail` verdict, a summary, the checks it ran, and one finding per problem. When `offerIsolation` is enabled, the `isolation: "worktree"` parameter also appears in the `subagent` tool of every preset; the parameter's own wording belongs to that tool's documentation.
 
 #### Token effect
 
-The worker brief adds a fixed prose block plus the worktree's own path, branch, and commit id to the worker's very first message. The reviewer prompt is a new, independent agent run per `accept` that needs a review: its main variable cost is the diff, capped at `Config.reviewDiffMaxBytes` (default 48 KiB) with a trailing truncation notice when cut. A commit whose last verdict already passed skips the reviewer entirely, at zero additional token cost.
+The worker brief adds a fixed prose block plus the worktree's own path, branch, and commit id to the worker's very first message. The reviewer prompt is a new, independent agent run per `accept` that needs a review: its main variable cost is the diff, capped at `Config.reviewDiffMaxBytes` (default 48 KiB) with a trailing truncation notice when cut. A commit whose last verdict already passed skips the reviewer entirely, at zero additional token cost. With `offerIsolation` enabled, each preset's `subagent` tool definition carries the added `isolation` parameter on every request; with it off, nothing is added.
 
 #### KV Cache effect
 

@@ -46,10 +46,13 @@ kind: "package-reference"
 | `reviewDiffMaxBytes` | `49152` | 嵌入评审者提示词中的 diff 的字节上限 |
 | `removeOnMerge` | `true` | 合并成功后删除工作树目录及其分支 |
 | `commitAuthorName` / `commitAuthorEmail` | — | 用于 harness 提交的作者身份,需成对设置;省略时使用 git 自身已配置的身份 |
+| `offerIsolation` | `false` | 在每个 subagent 委派工具上提供 `isolation: "worktree"` 参数,包括挂载在智能体预设内部的工具 |
 
 若 `reviewerProvider`/`reviewerModel` 或 `commitAuthorName`/`commitAuthorEmail` 中只设置了一半,会在加载时立即报错;若设置了 `reviewerReasoningEffort` 但未同时设置两个评审者字段,同样会立即报错。生成的[配置目录](../../../docs/config-catalog.zh.md#deepseek-aidsh-subagent-worktree)是每个可接受字段及其 JSDoc 的完整来源。
 
 默认情况下,评审者运行在执行接受操作的智能体自身的路由上,因此以更便宜的路由启动的工作者会自动由接受者的路由评审。若要强制评审者使用与工作者不同的模型,请配置 `reviewerProvider`/`reviewerModel` 并设置 `requireDistinctReviewer: true`。
+
+`offerIsolation` 是本服务自身顶层配置行上的部署级开关。`subagent` 工具也会挂载在智能体预设内部,而 bundle 补丁无法触及预设中的嵌套行,因此这是让每个此类工具都启用 `isolation: "worktree"` 参数的唯一设置。委派工具在挂载时会读取只读的 getter `ctx.subagentWorktrees.offersIsolation`,同时仍会参考其自身 `worktreeIsolation` 行的设置。
 
 ### 服务接口
 
@@ -143,11 +146,11 @@ kind: "package-reference"
 
 #### 模型所见内容
 
-本服务本身不添加任何工具,也不添加任何系统提示词片段;它从不在模型自身的回合内部运行。它拥有两段逐字的、面向模型的文本,由某个消费方代表它发送:`renderWorkerBrief` 说明工作树的路径、分支和基础提交,并要求工作者不要运行会产生写入的 git 命令,该文本会被添加到委派消费方发给工作者的第一条消息之前;`renderReviewerPrompt` 说明评审检出目录、提交范围、任务内容,以及一段有字节边界的改动 `git diff`,并要求评审子智能体调用 `structured_output` 工具,给出 `pass` 或 `fail` 的评审结果、一段摘要、它运行过的检查,以及每个问题各一条结论。
+本服务本身不添加任何工具,也不添加任何系统提示词片段;它从不在模型自身的回合内部运行。它拥有两段逐字的、面向模型的文本,由某个消费方代表它发送:`renderWorkerBrief` 说明工作树的路径、分支和基础提交,并要求工作者不要运行会产生写入的 git 命令,该文本会被添加到委派消费方发给工作者的第一条消息之前;`renderReviewerPrompt` 说明评审检出目录、提交范围、任务内容,以及一段有字节边界的改动 `git diff`,并要求评审子智能体调用 `structured_output` 工具,给出 `pass` 或 `fail` 的评审结果、一段摘要、它运行过的检查,以及每个问题各一条结论。启用 `offerIsolation` 后,`isolation: "worktree"` 参数还会出现在每个预设的 `subagent` 工具中;该参数自身的措辞归属于该工具的文档。
 
 #### Token 影响
 
-工作者简报会在工作者收到的第一条消息中,添加一段固定的提示文字,以及该工作树自身的路径、分支和提交 id。评审者提示词对应每一次需要评审的 `accept` 都是一次新的、独立的智能体运行:其主要的可变开销是 diff,上限为 `Config.reviewDiffMaxBytes`(默认 48 KiB),被截断时会附带一条截断提示。若某个提交此前已记录过通过的评审结果,则会完全跳过评审者,不产生额外的 token 开销。
+工作者简报会在工作者收到的第一条消息中,添加一段固定的提示文字,以及该工作树自身的路径、分支和提交 id。评审者提示词对应每一次需要评审的 `accept` 都是一次新的、独立的智能体运行:其主要的可变开销是 diff,上限为 `Config.reviewDiffMaxBytes`(默认 48 KiB),被截断时会附带一条截断提示。若某个提交此前已记录过通过的评审结果,则会完全跳过评审者,不产生额外的 token 开销。启用 `offerIsolation` 后,每个预设的 `subagent` 工具定义在每次请求中都会带上新增的 `isolation` 参数;关闭时则不会增加任何内容。
 
 #### KV 缓存影响
 

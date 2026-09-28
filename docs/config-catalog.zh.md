@@ -3401,6 +3401,12 @@ export interface Config {
   commitAuthorName?: string
   /** Author email for harness commits; set together with {@link commitAuthorName}. */
   commitAuthorEmail?: string
+  /**
+   * Offer the `isolation: "worktree"` parameter on every subagent delegation tool, including tools mounted
+   * inside agent presets, whose nested rows a bundle patch cannot reach. Omitted or `false` leaves each tool to
+   * its own `worktreeIsolation` setting; read through {@link SubagentWorktrees.offersIsolation}.
+   */
+  offerIsolation?: boolean
 }
 ```
 <!-- END GENERATED config-catalog:@deepseek-ai/dsh-subagent-worktree -->
