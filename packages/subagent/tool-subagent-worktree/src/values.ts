@@ -11,11 +11,6 @@ import type { AcceptOutcome, WorktreeRecord } from '@deepseek-ai/dsh-subagent-wo
 import type { InferValue } from '@deepseek-ai/dsh-tools'
 import { assertNever } from '@deepseek-ai/dsh-util-values'
 
-/** First seven hexadecimal characters of a full commit id: the display form every render below uses. */
-function short(commit: string): string {
-  return commit.slice(0, 7)
-}
-
 const REVIEWER_SCHEMA = {
   type: 'object',
   additionalProperties: false,
@@ -174,24 +169,24 @@ export function toAcceptToolValue(outcome: AcceptOutcome): AcceptToolValue {
 export function renderAcceptToolValue(value: AcceptToolValue): string {
   switch (value.kind) {
     case 'merged': {
-      const base = `Merged worktree ${value.id} into ${value.repoRoot}: commit ${short(value.commit)} as merge `
-        + `${short(value.mergeCommit)}. Reviewer ${value.reviewer.provider}/${value.reviewer.model} passed it: ${value.summary}`
+      const base = `Merged worktree ${value.id} into ${value.repoRoot}: commit ${value.commit} as merge `
+        + `${value.mergeCommit}. Reviewer ${value.reviewer.provider}/${value.reviewer.model} passed it: ${value.summary}`
       return value.removed ? `${base} The worktree was removed; start a new child for further work.` : base
     }
     case 'rejected': {
       const findings = value.findings.map(finding => `- ${finding}`).join('\n')
-      return `Review failed for worktree ${value.id} at commit ${short(value.commit)} (reviewer ${value.reviewer.provider}/${value.reviewer.model}): ${value.summary}\n`
+      return `Review failed for worktree ${value.id} at commit ${value.commit} (reviewer ${value.reviewer.provider}/${value.reviewer.model}): ${value.summary}\n`
         + `Findings:\n${findings}\n`
         + 'Send these findings to the child with send_message, wait for it to finish, then accept again.'
     }
     case 'checks-failed':
-      return `Checks failed for worktree ${value.id} at commit ${short(value.commit)}: \`${value.argv.join(' ')}\` `
+      return `Checks failed for worktree ${value.id} at commit ${value.commit}: \`${value.argv.join(' ')}\` `
         + `exited ${String(value.exitCode ?? null)}.\n${value.output}`
     case 'conflict':
-      return `Worktree ${value.id} passed review at commit ${short(value.commit)} but conflicts with your checkout in: ${value.files.join(', ')}. `
+      return `Worktree ${value.id} passed review at commit ${value.commit} but conflicts with your checkout in: ${value.files.join(', ')}. `
         + `Nothing was merged. Merge branch ${value.branch} yourself and resolve the conflicts, or discard the worktree.`
     case 'blocked':
-      return `Worktree ${value.id} passed review at commit ${short(value.commit)}, but the merge could not start: ${value.reason}. `
+      return `Worktree ${value.id} passed review at commit ${value.commit}, but the merge could not start: ${value.reason}. `
         + 'Commit or set aside the conflicting changes in your checkout, then accept again.'
     case 'empty':
       return `Worktree ${value.id} has no changes to accept.`

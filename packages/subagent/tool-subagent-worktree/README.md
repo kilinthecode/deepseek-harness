@@ -114,13 +114,13 @@ One of six fixed templates below, chosen by the outcome the service settled on; 
 ##### Merged
 
 ```markdown
-Merged worktree <id> into <repoRoot>: commit <commit7> as merge <merge7>. Reviewer <provider>/<model> passed it: <summary>
+Merged worktree <id> into <repoRoot>: commit <commit> as merge <mergeCommit>. Reviewer <provider>/<model> passed it: <summary>
 ```
 
 ##### Rejected
 
 ```markdown
-Review failed for worktree <id> at commit <commit7> (reviewer <provider>/<model>): <summary>
+Review failed for worktree <id> at commit <commit> (reviewer <provider>/<model>): <summary>
 Findings:
 - <finding>
 Send these findings to the child with send_message, wait for it to finish, then accept again.
@@ -129,20 +129,20 @@ Send these findings to the child with send_message, wait for it to finish, then 
 ##### Checks failed
 
 ```markdown
-Checks failed for worktree <id> at commit <commit7>: `<argv>` exited <code>.
+Checks failed for worktree <id> at commit <commit>: `<argv>` exited <code>.
 <output>
 ```
 
 ##### Conflict
 
 ```markdown
-Worktree <id> passed review at commit <commit7> but conflicts with your checkout in: <files>. Nothing was merged. Merge branch <branch> yourself and resolve the conflicts, or discard the worktree.
+Worktree <id> passed review at commit <commit> but conflicts with your checkout in: <files>. Nothing was merged. Merge branch <branch> yourself and resolve the conflicts, or discard the worktree.
 ```
 
 ##### Blocked
 
 ```markdown
-Worktree <id> passed review at commit <commit7>, but the merge could not start: <reason>. Commit or set aside the conflicting changes in your checkout, then accept again.
+Worktree <id> passed review at commit <commit>, but the merge could not start: <reason>. Commit or set aside the conflicting changes in your checkout, then accept again.
 ```
 
 ##### Empty

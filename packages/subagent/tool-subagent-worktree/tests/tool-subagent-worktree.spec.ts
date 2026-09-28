@@ -26,20 +26,7 @@ async function setup(): Promise<{ ctx: Context; fake: FakeSubagentWorktrees; fib
   contexts.add(ctx)
   await mountAgentLoopTestDependencies(ctx)
   await mountAgentLoopTestHarness(ctx)
-  // The skeleton `SubagentWorktrees.Config`'s `reviewer` and `commitAuthor` fields are
-  // `z.object({...required...})` with no `.default(undefined)` escape (contrast
-  // `tool-subagent`'s `agentOptions`/`toolFilter`), so Schemastery materializes an
-  // omitted field as `{}` and then rejects its required children. Supply the complete
-  // config (defaults restated) so this fake mounts at all; it never reads `this.config`.
-  await ctx.plugin(FakeSubagentWorktrees, {
-    branchPrefix: 'dsh/worktree/',
-    maxWorktrees: 16,
-    reviewer: { provider: 'reviewer-provider', model: 'reviewer-model' },
-    requireDistinctReviewer: true,
-    reviewDiffMaxBytes: 49152,
-    removeOnMerge: true,
-    commitAuthor: { name: 'test', email: 'test@example.com' },
-  })
+  await ctx.plugin(FakeSubagentWorktrees)
   const service = ctx.get('subagentWorktrees')
   if (!(service instanceof FakeSubagentWorktrees)) throw new Error('expected the fake worktree service to be mounted')
   const fiber = await ctx.plugin(tool)

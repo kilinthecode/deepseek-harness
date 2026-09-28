@@ -22,6 +22,7 @@ export function testRecord(overrides: Partial<WorktreeRecord> = {}): WorktreeRec
     state: 'open',
     createdAt: 0,
     workerSessionIds: [],
+    workerRoute: { provider: 'worker-provider', model: 'worker-model' },
     ...overrides,
   }
 }

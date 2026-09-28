@@ -48,14 +48,14 @@ describe('accept_worktree values', () => {
       removed: true,
     })
     expect(renderAcceptToolValue(removedValue)).toBe(
-      'Merged worktree wt-1 into /repo: commit 1234567 as merge abcdef1. Reviewer test-provider/test-model passed it: '
+      `Merged worktree wt-1 into /repo: commit ${commit} as merge ${mergeCommit}. Reviewer test-provider/test-model passed it: `
       + 'looks good The worktree was removed; start a new child for further work.',
     )
 
     const keptValue = toAcceptToolValue(kept)
     expect(keptValue).toMatchObject({ removed: false })
     expect(renderAcceptToolValue(keptValue)).toBe(
-      'Merged worktree wt-1 into /repo: commit 1234567 as merge abcdef1. Reviewer test-provider/test-model passed it: looks good',
+      `Merged worktree wt-1 into /repo: commit ${commit} as merge ${mergeCommit}. Reviewer test-provider/test-model passed it: looks good`,
     )
   })
 
@@ -76,7 +76,7 @@ describe('accept_worktree values', () => {
       findings: ['fix the thing', 'fix another thing'],
     })
     expect(renderAcceptToolValue(value)).toBe(
-      'Review failed for worktree wt-1 at commit 1234567 (reviewer test-provider/test-model): needs work\n'
+      `Review failed for worktree wt-1 at commit ${commit} (reviewer test-provider/test-model): needs work\n`
       + 'Findings:\n- fix the thing\n- fix another thing\n'
       + 'Send these findings to the child with send_message, wait for it to finish, then accept again.',
     )
@@ -94,7 +94,7 @@ describe('accept_worktree values', () => {
     const value = toAcceptToolValue(outcome)
     expect(value).toEqual({ kind: 'checks-failed', id, commit, argv: ['pnpm', 'test'], exitCode: 1, output: 'FAIL some-test' })
     expect(renderAcceptToolValue(value)).toBe(
-      'Checks failed for worktree wt-1 at commit 1234567: `pnpm test` exited 1.\nFAIL some-test',
+      `Checks failed for worktree wt-1 at commit ${commit}: \`pnpm test\` exited 1.\nFAIL some-test`,
     )
   })
 
@@ -111,7 +111,7 @@ describe('accept_worktree values', () => {
     expect(value).toEqual({ kind: 'checks-failed', id, commit, argv: ['pnpm', 'test'], output: 'killed' })
     expect('exitCode' in value).toBe(false)
     expect(renderAcceptToolValue(value)).toBe(
-      'Checks failed for worktree wt-1 at commit 1234567: `pnpm test` exited null.\nkilled',
+      `Checks failed for worktree wt-1 at commit ${commit}: \`pnpm test\` exited null.\nkilled`,
     )
   })
 
@@ -126,7 +126,7 @@ describe('accept_worktree values', () => {
     const value = toAcceptToolValue(outcome)
     expect(value).toEqual({ kind: 'conflict', id, commit, branch: 'dsh/worktree/wt-1', files: ['a.ts', 'b.ts'] })
     expect(renderAcceptToolValue(value)).toBe(
-      'Worktree wt-1 passed review at commit 1234567 but conflicts with your checkout in: a.ts, b.ts. '
+      `Worktree wt-1 passed review at commit ${commit} but conflicts with your checkout in: a.ts, b.ts. `
       + 'Nothing was merged. Merge branch dsh/worktree/wt-1 yourself and resolve the conflicts, or discard the worktree.',
     )
   })
@@ -142,7 +142,7 @@ describe('accept_worktree values', () => {
     const value = toAcceptToolValue(outcome)
     expect(value).toEqual({ kind: 'blocked', id, commit, reason: 'local changes would be overwritten' })
     expect(renderAcceptToolValue(value)).toBe(
-      'Worktree wt-1 passed review at commit 1234567, but the merge could not start: local changes would be overwritten. '
+      `Worktree wt-1 passed review at commit ${commit}, but the merge could not start: local changes would be overwritten. `
       + 'Commit or set aside the conflicting changes in your checkout, then accept again.',
     )
   })
