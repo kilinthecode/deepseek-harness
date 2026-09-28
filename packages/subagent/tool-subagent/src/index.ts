@@ -233,6 +233,18 @@ function withDiagnosticAndPartialText(error: string, result: SubagentResult, wor
 /** The worktree fields a delegation result carries, verbatim from the durable record. */
 type WorktreeResultInfo = Pick<WorktreeRecord, 'id' | 'path' | 'branch' | 'baseCommit'>
 
+/** Declared result schema of {@link WorktreeResultInfo}, shared by the continuable and foreground result arms. */
+const WORKTREE_RESULT_SCHEMA = {
+  type: 'object',
+  additionalProperties: false,
+  properties: {
+    id: { type: 'string', required: true },
+    path: { type: 'string', required: true },
+    branch: { type: 'string', required: true },
+    baseCommit: { type: 'string', required: true },
+  },
+} as const
+
 /** Project the durable record onto the small subset a delegation result carries. */
 function worktreeResultInfo(record: WorktreeRecord): WorktreeResultInfo {
   return { id: record.id, path: record.path, branch: record.branch, baseCommit: record.baseCommit }
@@ -570,16 +582,7 @@ export function apply(ctx: Context, config: Config, session?: Session): void {
                 properties: {
                   kind: { type: 'string', required: true, const: 'continuable' },
                   subagentId: { type: 'string', required: true },
-                  worktree: {
-                    type: 'object',
-                    additionalProperties: false,
-                    properties: {
-                      id: { type: 'string', required: true },
-                      path: { type: 'string', required: true },
-                      branch: { type: 'string', required: true },
-                      baseCommit: { type: 'string', required: true },
-                    },
-                  },
+                  worktree: WORKTREE_RESULT_SCHEMA,
                   baseDirty: {
                     type: 'object',
                     additionalProperties: false,
@@ -596,16 +599,7 @@ export function apply(ctx: Context, config: Config, session?: Session): void {
                   kind: { type: 'string', required: true, const: 'foreground' },
                   runId: { type: 'string', required: true },
                   output: { type: 'array', required: true, items: { type: 'json' } },
-                  worktree: {
-                    type: 'object',
-                    additionalProperties: false,
-                    properties: {
-                      id: { type: 'string', required: true },
-                      path: { type: 'string', required: true },
-                      branch: { type: 'string', required: true },
-                      baseCommit: { type: 'string', required: true },
-                    },
-                  },
+                  worktree: WORKTREE_RESULT_SCHEMA,
                 },
               },
             ],
