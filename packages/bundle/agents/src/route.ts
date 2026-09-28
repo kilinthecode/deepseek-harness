@@ -45,9 +45,11 @@ export function required<T>(value: T | undefined, message: string): T {
 
 /**
  * Resolve the worker route from `--model`/`--effort`, defaulting to the
- * current default-model selection when `--model` is omitted.
+ * current default-model selection when `--model` is omitted. A bare
+ * `--effort` still applies: it overrides the fallback route's reasoning
+ * effort rather than being silently dropped.
  * @param model - raw `--model` value, or undefined to use the default selection.
- * @param effort - raw `--effort` value; ignored when `model` is omitted.
+ * @param effort - raw `--effort` value, applied to whichever route (parsed or fallback) is otherwise resolved.
  * @param fallback - the default-model selection used when `--model` is omitted.
  * @returns the resolved worker route.
  */
@@ -56,8 +58,10 @@ export function resolveWorkerRoute(
   effort: string | undefined,
   fallback: WorktreeRoute,
 ): WorktreeRoute {
-  if (model === undefined) return fallback
-  const { provider, model: modelId } = parseRouteFlag('--model', model)
+  if (model === undefined && effort === undefined) return fallback
+  const { provider, model: modelId } = model === undefined
+    ? { provider: fallback.provider, model: fallback.model }
+    : parseRouteFlag('--model', model)
   return { provider, model: modelId, ...effort === undefined ? {} : { reasoningEffort: ReasoningEffortId(effort) } }
 }
 

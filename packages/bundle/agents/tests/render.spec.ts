@@ -63,6 +63,18 @@ describe('workerEvent / workerLine', () => {
     expect(workerEvent('session-1', route, 'completed')).toEqual({ type: 'worker', sessionId: 'session-1', route, stopReason: 'completed' })
     expect(workerLine('session-1', route, 'completed')).toBe('Worker session-1 (p/m) finished: completed.')
   })
+
+  it('carries the diagnostic when the child stopped with an error', () => {
+    const route = { provider: 'p', model: 'm' }
+    expect(workerEvent('session-1', route, 'error', 'tool call failed')).toEqual({
+      type: 'worker', sessionId: 'session-1', route, stopReason: 'error', diagnostic: 'tool call failed',
+    })
+  })
+
+  it('omits the diagnostic field entirely when the child has none', () => {
+    const route = { provider: 'p', model: 'm' }
+    expect(workerEvent('session-1', route, 'completed')).not.toHaveProperty('diagnostic')
+  })
 })
 
 describe('reviewEvent / reviewLine', () => {
@@ -149,8 +161,8 @@ describe('outcomeEvent / outcomeLine', () => {
 
   it('rejects an outcome kind outside the closed union', () => {
     const bogus: AcceptOutcome = { kind: 'bogus' } as never
-    expect(() => outcomeEvent(bogus)).toThrow('unknown accept outcome kind')
-    expect(() => outcomeLine(bogus)).toThrow('unknown accept outcome kind')
+    expect(() => outcomeEvent(bogus)).toThrow('unreachable variant in dsh-agents accept outcome')
+    expect(() => outcomeLine(bogus)).toThrow('unreachable variant in dsh-agents accept outcome')
   })
 })
 

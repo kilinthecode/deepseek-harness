@@ -52,6 +52,16 @@ function completedRun(id: string, text = 'done'): SubagentRun {
   }
 }
 
+/** A `SubagentRun` that settles immediately with `error` and a diagnostic. */
+function erroredRun(id: string, diagnostic: string): SubagentRun {
+  return {
+    id: id as never,
+    localAgent: undefined,
+    result: Promise.resolve({ output: [], stopReason: 'error', diagnostic }),
+    dispose: () => Promise.resolve(),
+  }
+}
+
 describe('dsh agents run', () => {
   it('creates a worktree, runs the worker, accepts, and exits 0 on a merge, with an ordered NDJSON sequence', async () => {
     const test = await bench({
@@ -71,11 +81,18 @@ describe('dsh agents run', () => {
       },
       subagentStart: (request) => {
         expect(request.cwd).toBe('/worktrees/wt-aaaaaaaa')
+        const text = (request.prompt[0] as { text: string }).text
+        // The worker brief comes first, so a worker always knows its
+        // worktree, branch, and base commit before reading the task.
+        expect(text).toMatch(/^You work in your own git worktree at \/worktrees\/wt-aaaaaaaa/)
+        expect(text).toContain('add the parser')
         return completedRun('session-worker')
       },
     })
     const result = await test.run({ verb: 'run', task: 'add the parser', json: true })
     expect(result.code).toBe(0)
+    // Exactly one exit request: a double exit or a stray extra call is a bug.
+    expect(result.exits).toEqual([0])
     const events = result.out.trim().split('\n').map(line => JSON.parse(line) as Record<string, unknown>)
     expect(events.map(event => event.type)).toEqual(['worktree', 'worker', 'review', 'outcome'])
     expect(events[0]).toMatchObject({ type: 'worktree', id: 'wt-aaaaaaaa', reused: false })
@@ -83,6 +100,8 @@ describe('dsh agents run', () => {
     expect(events[2]).toMatchObject({ type: 'review', verdict: 'pass' })
     expect(events[3]).toMatchObject({ type: 'outcome', kind: 'merged' })
     expect(test.calls.worktrees.map(call => call.method)).toEqual(['resolveReviewer', 'create', 'attach', 'accept'])
+    // The operator Agent is flushed then released once every child has settled.
+    expect(test.calls.operator).toEqual(['flush', 'dispose'])
     await test.ctx.fiber.dispose()
   })
 
@@ -114,6 +133,59 @@ describe('dsh agents run', () => {
     const humanResult = await humanTest.run({ verb: 'run', task: 'add the parser' })
     expect(humanResult.out).toContain('Your checkout has 3 uncommitted change(s) that the worktree does not contain.')
     await humanTest.ctx.fiber.dispose()
+  })
+
+  it('disposes the run, aborts the child signal, and still attaches when run.result rejects', async () => {
+    let disposed = false
+    let aborted = false
+    const test = await bench({
+      worktrees: {
+        create: () => provisioned,
+        resolveReviewer: () => ({ provider: 'anthropic', model: 'opus' }),
+        attach: (request) => {
+          expect(request.workerSessionId).toBe('session-worker')
+          return record
+        },
+      },
+      subagentStart: (request) => {
+        request.signal.addEventListener('abort', () => { aborted = true })
+        return {
+          id: 'session-worker' as never,
+          localAgent: undefined,
+          result: Promise.reject(new Error('infrastructure fault')),
+          dispose: () => { disposed = true; return Promise.resolve() },
+        }
+      },
+    })
+    const result = await test.run({ verb: 'run', task: 'add the parser' })
+    expect(result.code).toBe(1)
+    expect(result.exits).toEqual([1])
+    expect(result.err).toContain('infrastructure fault')
+    // The run's own rejection propagates after cleanup, not instead of it:
+    // the local signal is aborted, the run is always disposed, and the
+    // worktree service still learns about the published child.
+    expect(disposed).toBe(true)
+    expect(aborted).toBe(true)
+    expect(test.calls.worktrees.map(call => call.method)).toEqual(['resolveReviewer', 'create', 'attach'])
+    // The operator Agent is released even though the child run failed.
+    expect(test.calls.operator).toEqual(['flush', 'dispose'])
+    await test.ctx.fiber.dispose()
+  })
+
+  it('carries the child diagnostic into the worker NDJSON event when it stopped with an error', async () => {
+    const test = await bench({
+      worktrees: {
+        create: () => provisioned,
+        resolveReviewer: () => ({ provider: 'anthropic', model: 'opus' }),
+        attach: () => record,
+        accept: () => mergedOutcome,
+      },
+      subagentStart: () => erroredRun('session-worker', 'the sandbox denied the write'),
+    })
+    const result = await test.run({ verb: 'run', task: 'add the parser', json: true })
+    const events = result.out.trim().split('\n').map(line => JSON.parse(line) as Record<string, unknown>)
+    expect(events[1]).toMatchObject({ type: 'worker', stopReason: 'error', diagnostic: 'the sandbox denied the write' })
+    await test.ctx.fiber.dispose()
   })
 
   it('prints human-readable text by default', async () => {
@@ -168,7 +240,7 @@ describe('dsh agents run', () => {
       },
       subagentStart: (request) => {
         const text = (request.prompt[0] as { text: string }).text
-        if (text.startsWith('Fix these problems')) fixerPrompts.push(text)
+        if (text.includes('Fix these problems')) fixerPrompts.push(text)
         return completedRun(`session-${String(request.prompt.length)}-${String(fixerPrompts.length)}`)
       },
     })
@@ -176,11 +248,48 @@ describe('dsh agents run', () => {
     expect(result.code).toBe(0)
     expect(acceptCalls).toBe(2)
     expect(fixerPrompts).toHaveLength(1)
+    // Same brief the first worker gets, prepended ahead of the fixer text:
+    // without it a fixer does not know its worktree, branch, base commit, or
+    // that git write commands fail there.
+    expect(fixerPrompts[0]).toMatch(/^You work in your own git worktree at \/worktrees\/wt-aaaaaaaa/)
     expect(fixerPrompts[0]).toContain('Fix these problems in this worktree:')
+    expect(fixerPrompts[0]).toContain(verdict.summary)
     expect(fixerPrompts[0]).toContain('- missing null check')
     expect(fixerPrompts[0]).toContain('Original task:\nadd the parser')
     const workerEvents = test.calls.worktrees.filter(call => call.method === 'attach')
     expect(workerEvents).toHaveLength(2)
+    await test.ctx.fiber.dispose()
+  })
+
+  it('spends a fix round on a failing check command, sending the command and its output to a fixer', async () => {
+    const checksFailed: AcceptOutcome = {
+      kind: 'checks-failed', record, commit: 'c1', argv: ['pnpm', 'test'], exitCode: 1, output: '1 failing',
+    }
+    let acceptCalls = 0
+    const fixerPrompts: string[] = []
+    const test = await bench({
+      worktrees: {
+        create: () => provisioned,
+        resolveReviewer: () => ({ provider: 'anthropic', model: 'opus' }),
+        attach: () => record,
+        accept: () => {
+          acceptCalls += 1
+          return acceptCalls === 1 ? checksFailed : mergedOutcome
+        },
+      },
+      subagentStart: (request) => {
+        const text = (request.prompt[0] as { text: string }).text
+        if (text.includes('Fix these problems')) fixerPrompts.push(text)
+        return completedRun(`session-${String(request.prompt.length)}-${String(fixerPrompts.length)}`)
+      },
+    })
+    const result = await test.run({ verb: 'run', task: 'add the parser', fixRounds: 1, test: 'pnpm test', json: true })
+    expect(result.code).toBe(0)
+    expect(acceptCalls).toBe(2)
+    expect(fixerPrompts).toHaveLength(1)
+    expect(fixerPrompts[0]).toMatch(/^You work in your own git worktree at \/worktrees\/wt-aaaaaaaa/)
+    expect(fixerPrompts[0]).toContain('`pnpm test` exited 1:\n1 failing')
+    expect(fixerPrompts[0]).toContain('Original task:\nadd the parser')
     await test.ctx.fiber.dispose()
   })
 
@@ -240,7 +349,9 @@ describe('dsh agents run', () => {
       worktrees: {
         resolveReviewer: () => ({ provider: 'anthropic', model: 'opus' }),
         list: (request) => {
-          expect(request.owner).toEqual({ kind: 'operator' })
+          // The reuse lookup omits `owner`: the operator may reuse any open
+          // worktree of the invoking repository, not just its own records.
+          expect(request.owner).toBeUndefined()
           return [record]
         },
         attach: () => record,
@@ -269,6 +380,9 @@ describe('dsh agents run', () => {
     const result = await test.run({ verb: 'run', task: 'add the parser', worktree: 'wt-missing' })
     expect(result.code).toBe(1)
     expect(result.err).toContain('worktree "wt-missing" was not found')
+    // The operator Agent created before worktree resolution is still released
+    // when resolution itself fails.
+    expect(test.calls.operator).toEqual(['flush', 'dispose'])
     await test.ctx.fiber.dispose()
   })
 
@@ -349,6 +463,21 @@ describe('dsh agents run', () => {
       subagentStart: (request) => { expect(request.agentOptions).toEqual({ provider: 'openai', model: 'gpt-5', reasoningEffort: 'high' }); return completedRun('session-worker') },
     })
     const result = await test.run({ verb: 'run', task: 'add the parser', model: 'openai/gpt-5', effort: 'high' })
+    expect(result.code).toBe(0)
+    await test.ctx.fiber.dispose()
+  })
+
+  it('applies a bare --effort to the default-model selection instead of dropping it', async () => {
+    const test = await bench({
+      worktrees: {
+        create: (request) => { expect(request.workerRoute).toEqual({ provider: 'test-provider', model: 'test-model', reasoningEffort: 'high' }); return provisioned },
+        resolveReviewer: () => ({ provider: 'anthropic', model: 'opus' }),
+        attach: () => record,
+        accept: () => mergedOutcome,
+      },
+      subagentStart: (request) => { expect(request.agentOptions).toEqual({ provider: 'test-provider', model: 'test-model', reasoningEffort: 'high' }); return completedRun('session-worker') },
+    })
+    const result = await test.run({ verb: 'run', task: 'add the parser', effort: 'high' })
     expect(result.code).toBe(0)
     await test.ctx.fiber.dispose()
   })

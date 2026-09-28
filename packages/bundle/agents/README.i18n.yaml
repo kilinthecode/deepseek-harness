@@ -18,20 +18,20 @@
   en: bbff250eba0f1b89
   zh: 0a618f05cc88ee2b
 /deepseek-ai-dsh-agents/use-this-package/splitting-a-task-across-a-worker-and-a-reviewer:
-  en: d3142b543bd38cc1
-  zh: 1d44a988d914eea5
+  en: 47a77a2b2d3b28e9
+  zh: db5a9800085982d0
 /deepseek-ai-dsh-agents/use-this-package/managing-worktrees:
-  en: 7b8c2b27ba18198b
-  zh: 3f41a4a2e8ef7ae2
+  en: 203e322f6f0a0381
+  zh: ba62ce9a2570f9f9
 /deepseek-ai-dsh-agents/use-this-package/machine-readable-output:
-  en: 112c316085c8819f
-  zh: c7704179ba50c3cb
+  en: 838cbca917a613a4
+  zh: 9ac25ed65c1442cb
 /deepseek-ai-dsh-agents/understand-the-implementation:
   en: 42b15ac6321706aa
   zh: 4ed0861911abaf5d
 /deepseek-ai-dsh-agents/understand-the-implementation/run-flow:
-  en: 41901902e029a89f
-  zh: f950706155ce044f
+  en: 42a89e226820e51d
+  zh: 23c69a5dff6b7c8d
 /deepseek-ai-dsh-agents/understand-the-implementation/patch-surface-over-base:
   en: 8791c9ff31194216
   zh: f21a65cd89d5d1eb
@@ -42,11 +42,20 @@
   en: e4154f728b8d1976
   zh: 6d2b83b8d6acc204
 /deepseek-ai-dsh-agents/model-experience:
-  en: ff5e580e4395bfb6
-  zh: 590f7332d0f19ee2
-/deepseek-ai-dsh-agents/model-experience/kv-cache-effect:
-  en: 3661f89c442ff999
-  zh: a21d9a1c37e591f0
+  en: 215e7ba838619b7b
+  zh: a311da3843709f90
+/deepseek-ai-dsh-agents/model-experience/fixer-prompt-template:
+  en: b1808b835d90f650
+  zh: b44a506a5b78c96a
+/deepseek-ai-dsh-agents/model-experience/fixer-prompt-template/what-the-model-sees:
+  en: a0ea7598d63af31d
+  zh: f6b8d79d48943799
+/deepseek-ai-dsh-agents/model-experience/fixer-prompt-template/token-effect:
+  en: c5074640fc3a7f43
+  zh: 120af6a16eb7427c
+/deepseek-ai-dsh-agents/model-experience/fixer-prompt-template/kv-cache-effect:
+  en: 7774698cc748249e
+  zh: 8aa9c3f2725cc846
 /deepseek-ai-dsh-agents/known-limitations-and-deferred-work:
   en: eba667cd3e665fe4
   zh: 9de913a8eb9c179a

@@ -31,19 +31,21 @@ English | [中文](README.zh.md)
 dsh agents run "add the parser and its tests"
 ```
 
-This creates a fresh git worktree branched from your checkout's `HEAD`, starts a worker agent in it with the task, commits the worker's changes, has an independent reviewer check the exact commit against the task, and merges the change into your checkout once it passes. The worktree and its branch are removed after a successful merge. A run that does not merge leaves the worktree `open`, printing the reviewer's findings, the failing check output, or the merge conflict so you can retry.
+This creates a fresh git worktree branched from your checkout's `HEAD`, starts a worker agent in it with the task, commits the worker's changes, has an independent reviewer check the exact commit against the task, and merges the change into your checkout once it passes. A merge reports whether the worktree and its branch were removed — removal usually accompanies a merge, but it is a separate step that can fail on its own, so the outcome always says which happened rather than assuming both did. A run that does not merge leaves the worktree `open`, printing the reviewer's findings, the failing check output, or the merge conflict so you can retry.
 
 | Flag | Meaning |
 |---|---|
 | `--name <label>` | Short display label for the worktree; defaults to the first line of the task |
 | `--model <provider>/<model>` | Route the worker runs on; defaults to the current default-model selection |
-| `--effort <e>` | Reasoning effort for `--model` |
+| `--effort <e>` | Reasoning effort; applies to `--model` when given, otherwise to the default-model selection |
 | `--reviewer <provider>/<model>` | Route the reviewer runs on; defaults to the configured reviewer or your own route |
-| `--reviewer-effort <e>` | Reasoning effort for `--reviewer` |
+| `--reviewer-effort <e>` | Reasoning effort for `--reviewer`; rejected at parse time when `--reviewer` is absent |
 | `--test "<cmd>"` | Check command run in the review checkout before the reviewer, split on whitespace |
 | `--worktree <id>` | Reuse an existing `open` worktree instead of creating one |
 | `--fix-rounds <n>` | Automatic fix attempts after a rejected review or a failing check; defaults to `0` |
 | `--json` | Write newline-delimited run events to stdout instead of human-readable text |
+
+`--test`'s command is split on runs of whitespace, not tokenized like a shell: it never sees quotes, globs, pipes, redirection, or environment expansion, and a value with none of these characters behaves as expected only by coincidence. A check that needs any of that belongs in a wrapper script, invoked as plain `--test ./check.sh`.
 
 The task is the positional argument; a lone `-` reads it from stdin instead. Exit code `0` means the change merged; `2` means the run settled without merging (rejected, a failing check, a conflict, a block, or no change); `1` means the run itself failed (for example an unreviewable route pairing, or a missing worktree). On a rejected review or a failing check with fix rounds left, a fresh worker starts in the same worktree with the findings and the original task, then the cycle accepts again.
 
@@ -55,11 +57,13 @@ dsh agents accept <id> [--reviewer <provider>/<model>] [--reviewer-effort <e>] [
 dsh agents discard <id>
 ```
 
-`list` shows every worktree in the current repository, open ones by default and every state with `--all`. `accept` repeats the commit/check/review/merge cycle for an existing worktree, for example after you fixed a rejected worker's change yourself. `discard` deletes a worktree and its branch without merging; it refuses while an attached worker is still running.
+`list` shows every worktree in the current repository, open ones by default and every state with `--all`. `accept` repeats the commit/check/review/merge cycle for an existing worktree, for example after you fixed a rejected worker's change yourself. `discard` deletes a worktree and its branch without merging; it refuses while an attached worker is still running. All three act as the operator: they reach every worktree of the invoking repository, not only ones a given `run` invocation itself created.
+
+`list --json` writes one `worktree`-typed row per worktree: `id`, `path`, `branch`, `baseCommit`, `state` (`open`/`reviewing`/`merged`/`discarded`), `label`, and `verdict` (`"pass"` or `"fail"`, present only once a review has run against it). This is a narrower, differently-shaped `worktree` row than the one `run --json` emits below for the worktree it just created or reused.
 
 ### Machine-readable output
 
-`--json` replaces the human-readable text with one JSON object per line: `worktree` (created or reused, with its id, path, branch, and base commit), `worker` (a settled worker or fixer child's session id, route, and stop reason), `review` (the reviewer's verdict, commit, route, summary, and findings), `outcome` (the settled accept result), and `error` (a run-level failure). Event fields carry the complete 40-character commit id; only the human-readable text abbreviates a commit to 7 characters.
+`--json` replaces the human-readable text with one JSON object per line: `worktree` (created or reused, with its id, path, branch, and base commit), `worker` (a settled worker or fixer child's session id, route, stop reason, and, when it stopped with an error, its diagnostic), `review` (the reviewer's verdict, commit, route, summary, and findings), `outcome` (the settled accept result), and `error` (a run-level failure). Event fields carry the complete 40-character commit id; only the human-readable text abbreviates a commit to 7 characters.
 
 -----
 
@@ -71,7 +75,7 @@ dsh agents discard <id>
 
 ### Run flow
 
-`run` resolves the worker route (`--model`/`--effort`, else the shared [`agentDefaultModel`](../../core/agent-default-model/README.md) selection) and the reviewer override (`--reviewer`/`--reviewer-effort`), then calls `ctx.subagentWorktrees.resolveReviewer` before creating anything — a route pairing the independence check would reject fails before a worktree or a worker is created. It then creates an operator root Agent: a Session in the invoking directory, created the same way [`dsh-headless`](../headless/README.md) creates its Agent, that never takes a model turn — its only uses are as the delegating `parent` for the worker, fixer, and reviewer children, and as the caller route `resolveReviewer` falls back to. It creates a worktree (or reuses the `open` one named by `--worktree`, scoped to the operator's own records), starts the worker as a one-shot foreground `spawn` child with its `cwd` set to the worktree and the worker brief prepended to the task, attaches it, and accepts. Each fix round starts a fresh child in the same worktree with `Fix these problems in this worktree:` plus the prior findings or check output and the original task, attaches it, and accepts again.
+`run` resolves the worker route (`--model`/`--effort`, else the shared [`agentDefaultModel`](../../core/agent-default-model/README.md) selection) and the reviewer override (`--reviewer`/`--reviewer-effort`), then calls `ctx.subagentWorktrees.resolveReviewer` before creating anything — a route pairing the independence check would reject fails before a worktree or a worker is created. It then creates an operator root Agent: a Session in the invoking directory, created the same way [`dsh-headless`](../headless/README.md) creates its Agent, that never takes a model turn — its only uses are as the delegating `parent` for the worker, fixer, and reviewer children, and as the caller route `resolveReviewer` falls back to. It creates a worktree (or reuses the `open` one named by `--worktree` — the operator view of every worktree of the invoking repository, not only ones a `run` itself created, the same reach `accept`/`discard` have), starts the worker as a one-shot foreground `spawn` child with its `cwd` set to the worktree and the worker brief prepended to the task, attaches it, and accepts. Each fix round starts a fresh child in the same worktree with the same worker brief, followed by this package's own fixer template — `Fix these problems in this worktree:` plus the reviewer's summary and findings, or the failing check command and its output, then `Original task:` and the original task text — attaches it, and accepts again. Every child's run is settled in a `finally`: the worktree service learns about it once it is published regardless of how its turn settles, its run is always disposed, and a `run.result` rejection (an infrastructure fault, not a model-level stop reason) aborts that child's own signal before propagating. The operator Agent itself is flushed and released the same way, once every child for the invocation has settled, on the success path and on every failure path.
 
 ### Patch surface over base
 
@@ -110,11 +114,19 @@ The patch rides over `dsh-base`: it sets the same coding persona and cwd suffix 
 <a id="model-experience"></a>
 ## Model Experience
 
-Indirectly, through the worker, fixer, and reviewer children `ctx.subagentWorktrees` and `ctx.subagents` start: this runner contributes no prompt or tool of its own, beyond prepending the worker brief text `dsh-subagent-worktree` owns to each child's task.
+### Fixer prompt template
+
+#### What the model sees
+
+The first worker's prompt is the worker brief `dsh-subagent-worktree` owns, prepended to the task verbatim; this package contributes no text of its own there. A fix round's child instead receives that same brief followed by this package's own fixed template: `Fix these problems in this worktree:`, then either the reviewer's summary together with its findings or the failing check command and its output, then `Original task:` and the original task text.
+
+#### Token effect
+
+Only a fix round pays for the template: its fixed wording is a few dozen tokens, plus whatever the reviewer's summary, findings, or check output add, once per fixer child's prompt. A `run` that merges on the first try, or that keeps `--fix-rounds` at its default of `0`, never starts a fixer and never pays this cost.
 
 #### KV Cache effect
 
-The runner drives no model request of its own; each child it starts opens an independent request under its own composition.
+Each fixer child is a fresh one-shot request; the template becomes part of that child's own prompt prefix once, at the start of its single turn, and is never revised mid-run. The runner itself drives no model request of its own — every child it starts, worker or fixer, opens an independent request under its own composition.
 
 ## Known Limitations and Deferred Work
 

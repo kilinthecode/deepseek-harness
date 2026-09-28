@@ -153,6 +153,25 @@ describe('dsh agents command-line provider', () => {
       const { observed } = await bootStartup(['run', '--fix-rounds', '-1', 'task'])
       expect(observed.exits).toEqual([1])
     })
+
+    it('rejects --reviewer-effort without --reviewer, since there is no route to apply it to at parse time', async () => {
+      const { values, observed } = await bootStartup(['run', '--reviewer-effort', 'high', 'add', 'the', 'parser'])
+      expect(observed.out).toContain('--reviewer-effort requires --reviewer')
+      expect(values).toBeUndefined()
+      expect(observed.exits).toEqual([1])
+    })
+
+    it('rejects a blank --name instead of silently falling back to a derived label', async () => {
+      const { values, observed } = await bootStartup(['run', '--name', '   ', 'add', 'the', 'parser'])
+      expect(observed.out).toContain('--name requires a non-empty label')
+      expect(values).toBeUndefined()
+      expect(observed.exits).toEqual([1])
+    })
+
+    it('publishes a bare --effort without --model for the runner to apply to the default selection', async () => {
+      const { values } = await bootStartup(['run', '--effort', 'high', 'add', 'the', 'parser'])
+      expect(values).toEqual({ verb: 'run', task: 'add the parser', effort: 'high', fixRounds: 0, json: false })
+    })
   })
 
   describe('list', () => {
@@ -191,6 +210,13 @@ describe('dsh agents command-line provider', () => {
 
     it('rejects a missing worktree id', async () => {
       const { observed } = await bootStartup(['accept'])
+      expect(observed.exits).toEqual([1])
+    })
+
+    it('rejects --reviewer-effort without --reviewer', async () => {
+      const { values, observed } = await bootStartup(['accept', 'wt-aaaaaaaa', '--reviewer-effort', 'high'])
+      expect(observed.out).toContain('--reviewer-effort requires --reviewer')
+      expect(values).toBeUndefined()
       expect(observed.exits).toEqual([1])
     })
   })

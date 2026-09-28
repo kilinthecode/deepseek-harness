@@ -9,6 +9,7 @@
 
 import type { SubagentStopReason } from '@deepseek-ai/dsh-subagent'
 import type { AcceptOutcome, DirtySummary, WorktreeRecord, WorktreeRoute, WorktreeVerdict } from '@deepseek-ai/dsh-subagent-worktree'
+import { assertNever } from '@deepseek-ai/dsh-util-values'
 
 /** `--json` event reporting a worktree ready for the worker, freshly created or reused. */
 export interface WorktreeEvent {
@@ -40,6 +41,8 @@ export interface WorkerEvent {
   readonly sessionId: string
   readonly route: WorktreeRoute
   readonly stopReason: SubagentStopReason
+  /** Provider-authored failure detail, present only when the child reported one (normally a non-`completed` stop reason). */
+  readonly diagnostic?: string
 }
 
 /** `--json` event reporting the reviewer's verdict on one commit. */
@@ -113,8 +116,8 @@ export function listEvent(record: WorktreeRecord): ListEvent {
 }
 
 /** Build the `worker` event for a settled worker or fixer child. */
-export function workerEvent(sessionId: string, route: WorktreeRoute, stopReason: SubagentStopReason): WorkerEvent {
-  return { type: 'worker', sessionId, route, stopReason }
+export function workerEvent(sessionId: string, route: WorktreeRoute, stopReason: SubagentStopReason, diagnostic?: string): WorkerEvent {
+  return { type: 'worker', sessionId, route, stopReason, ...diagnostic === undefined ? {} : { diagnostic } }
 }
 
 /** Human line for a settled worker or fixer child. */
@@ -163,9 +166,9 @@ export function outcomeEvent(outcome: AcceptOutcome): OutcomeEvent {
       return { type: 'outcome', kind: 'blocked', id: outcome.record.id, commit: outcome.commit, reason: outcome.reason }
     case 'empty':
       return { type: 'outcome', kind: 'empty', id: outcome.record.id }
-    /* v8 ignore next 2 -- AcceptOutcome is a closed union covering every SubagentWorktrees.accept result. */
+    /* v8 ignore next 2 -- closed-union exhaustiveness guard */
     default:
-      throw new Error(`dsh-agents: unknown accept outcome kind ${JSON.stringify((outcome as { kind: string }).kind)}`)
+      return assertNever(outcome, 'dsh-agents accept outcome')
   }
 }
 
@@ -188,9 +191,9 @@ export function outcomeLine(outcome: AcceptOutcome): string {
       return `Worktree ${outcome.record.id} passed review at ${short(outcome.commit)}, but the merge could not start: ${outcome.reason}`
     case 'empty':
       return `Worktree ${outcome.record.id} has no changes to accept.`
-    /* v8 ignore next 2 -- AcceptOutcome is a closed union covering every SubagentWorktrees.accept result. */
+    /* v8 ignore next 2 -- closed-union exhaustiveness guard */
     default:
-      throw new Error(`dsh-agents: unknown accept outcome kind ${JSON.stringify((outcome as { kind: string }).kind)}`)
+      return assertNever(outcome, 'dsh-agents accept outcome')
   }
 }
 

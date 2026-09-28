@@ -35,6 +35,8 @@ import { internals } from '../src/runner-internals.ts'
 export interface BenchCalls {
   worktrees: { method: string; request: unknown }[]
   subagentStart: SubagentStartRequest[]
+  /** `'flush'`/`'dispose'` against the operator Agent's Session/handle, in call order. */
+  operator: string[]
 }
 
 /** Per-method scripts for the faked `ctx.subagentWorktrees`; an unscripted method throws if called. */
@@ -63,8 +65,10 @@ export interface Bench {
   ctx: Context
   calls: BenchCalls
   output(): { out: string; err: string }
-  /** Invoke the runner with `config` and await the requested exit code. */
-  run(config: Partial<Config> & Pick<Config, 'verb'>): Promise<{ code: number; out: string; err: string }>
+  /** Every `ctx.appExit` call observed so far, in call order; a well-behaved run makes exactly one. */
+  exits: number[]
+  /** Invoke the runner with `config` and await the first requested exit code. */
+  run(config: Partial<Config> & Pick<Config, 'verb'>): Promise<{ code: number; out: string; err: string; exits: number[] }>
 }
 
 /** A scripted provider's capabilities: every start-time feature the runner might request. */
@@ -86,13 +90,25 @@ export async function bench(options: BenchOptions = {}): Promise<Bench> {
   }
   let out = ''
   let err = ''
-  const calls: BenchCalls = { worktrees: [], subagentStart: [] }
+  const calls: BenchCalls = { worktrees: [], subagentStart: [], operator: [] }
+  // Resolves once the operator Agent created for this run has been disposed;
+  // `run()` awaits it so a trailing `finally` (flush + dispose, after
+  // `io.exit()` already resolved `exited`) completes before returning.
+  let operatorDisposed: Promise<undefined> | undefined
 
   await ctx.plugin(SessionStore)
   await ctx.plugin(SessionProjectionRegistry)
   await ctx.plugin(AgentRegistry)
   await ctx.plugin(AgentDefaultModelConfig, { provider: 'test-provider', model: 'test-model' })
   await ctx.plugin(SubagentRuntime, {})
+
+  // The real SessionStore has no observable flush hook; wrap its one instance
+  // method so `calls.operator` records the flush the runner performs.
+  const originalFlush = ctx.sessions.flush.bind(ctx.sessions)
+  ctx.sessions.flush = async (session) => {
+    calls.operator.push('flush')
+    return originalFlush(session)
+  }
 
   ctx.agents.setFactory({
     async createAgent(ownerCtx: Context, createOptions: CreateAgentOptions): Promise<AgentHandle> {
@@ -117,7 +133,16 @@ export async function bench(options: BenchOptions = {}): Promise<Bench> {
       }
       await createOptions.setup?.(ownerCtx, agent)
       await ctx.agents.register(agent)
-      return { agent, dispose: () => Promise.resolve() }
+      const deferred = Promise.withResolvers<undefined>()
+      operatorDisposed = deferred.promise
+      return {
+        agent,
+        dispose: () => {
+          calls.operator.push('dispose')
+          deferred.resolve(undefined)
+          return Promise.resolve()
+        },
+      }
     },
     resume(): Promise<AgentHandle> {
       return Promise.reject(new Error('agents test harness: resume is not used by dsh agents'))
@@ -166,19 +191,31 @@ export async function bench(options: BenchOptions = {}): Promise<Bench> {
     },
   } as never)
 
+  const exits: number[] = []
   return {
     ctx,
     calls,
+    exits,
     output: () => ({ out, err }),
     run: async (config) => {
       internals.stdout = { write: (chunk: string) => { out += chunk; return true } }
       internals.stderr = { write: (chunk: string) => { err += chunk; return true } }
       const exited = new Promise<number>((resolve) => {
-        ctx.provide('appExit', (code: number) => { resolve(code) })
+        ctx.provide('appExit', (code: number) => {
+          exits.push(code)
+          // Only the first call settles the awaited result; later calls still
+          // record into `exits` so a double exit is observable and fails a
+          // test asserting `exits` has exactly one entry.
+          if (exits.length === 1) resolve(code)
+        })
       })
       apply(ctx, new Config({ json: false, ...config }))
       const code = await exited
-      return { code, out, err }
+      // `io.exit()` resolves `exited` before the runner's trailing `finally`
+      // (flush + dispose) completes; wait for it too so a caller observing
+      // `calls.operator` never races the runner's own cleanup.
+      if (operatorDisposed !== undefined) await operatorDisposed
+      return { code, out, err, exits }
     },
   }
 }
