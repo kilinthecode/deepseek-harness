@@ -274,18 +274,19 @@ export type ScanWarning = (message: string) => void
 const NO_WARNING: ScanWarning = () => {}
 
 /**
- * Whether a record file exists at `path`. Any failure to look (absent, a path
- * component that is not a directory, no permission) means the candidate does
- * not hold the file being searched for.
+ * Whether a record file can be seen at `path`. A `stat` failure of any kind
+ * (`ENOENT` for an absent file, `ENOTDIR` under a stray file, `EACCES` in a
+ * directory this process may not enter) means the candidate does not hold the
+ * record file being searched for, so it reads as `false`; `pathExists` would
+ * throw on the last two.
  */
 async function recordFileExists(path: string): Promise<boolean> {
   try {
     await stat(path)
-    return true
   } catch {
-    // The caller reads "cannot look" as "this candidate has no such record file".
     return false
   }
+  return true
 }
 
 /** One worktree record located by id, with the file path and repository layout it was found under. */
