@@ -3,8 +3,8 @@
 # After editing either side, bring the other along and re-record with:
 #   pnpm run verify-translation-pairing --write packages/bundle/agents/README.md
 /:
-  en: 9cf9e9b3fa67681a
-  zh: fb005c51d287c633
+  en: f7e1c1dde2ff521e
+  zh: 4ec28f4803fb5a67
 /deepseek-ai-dsh-agents:
   en: 67f083b8ab97b2c5
   zh: e790e855a9f98bfd
@@ -17,9 +17,9 @@
 /deepseek-ai-dsh-agents/use-this-package:
   en: bbff250eba0f1b89
   zh: 0a618f05cc88ee2b
-/deepseek-ai-dsh-agents/use-this-package/splitting-a-task-across-a-worker-and-a-reviewer:
-  en: 47a77a2b2d3b28e9
-  zh: db5a9800085982d0
+/deepseek-ai-dsh-agents/use-this-package/running-a-task-in-a-worker-s-worktree:
+  en: a4c24b2d9f95d267
+  zh: 6dbf6e60e5c65349
 /deepseek-ai-dsh-agents/use-this-package/managing-worktrees:
   en: 203e322f6f0a0381
   zh: ba62ce9a2570f9f9

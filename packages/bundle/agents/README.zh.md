@@ -1,5 +1,5 @@
 ---
-description: "dsh agents 组合包：一个把任务拆分给各自 git worktree 中的多个 worker agent（智能体）的 CLI（命令行界面），由独立 reviewer 在每个变更 merge 前检查，面向用户与脚本化调用 dsh 的外部 agent。"
+description: "dsh agents 组合包：一个在 worker agent（智能体）专属的 git worktree 中运行任务的 CLI（命令行界面），由独立 reviewer 在变更 merge 前检查，面向用户与脚本化调用 dsh 的外部 agent。"
 kind: "package-bundle"
 ---
 
@@ -25,7 +25,7 @@ kind: "package-bundle"
 <a id="use-this-package"></a>
 ## 使用本包
 
-### 把任务拆分给 worker 与 reviewer
+### 在 worker 的 worktree 中运行任务
 
 ```sh
 dsh agents run "add the parser and its tests"
