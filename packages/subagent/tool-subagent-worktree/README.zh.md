@@ -109,12 +109,12 @@ kind: "package-reference"
 
 #### 模型看到的内容
 
-以下六个固定模板之一，由服务给出的结果决定选用哪个；当工作树在合并后被移除时，merged 结果会追加 ` The worktree was removed; start a new child for further work.`。确切措辞见 [`src/values.ts`](src/values.ts)。
+以下六个固定模板之一，由服务给出的结果决定选用哪个。当工作树在合并后被移除时，merged 结果会追加 ` The worktree was removed; start a new child for further work.`。当检查进程没有留下退出码时（例如被信号杀死），checks-failed 结果会说该命令“was stopped before it exited”而不是给出退出码，并且会给包含空白字符的 argv 元素加上引号，使该命令可以复现。确切措辞见 [`src/values.ts`](src/values.ts)。
 
 ##### 合并（merged）
 
 ```markdown
-Merged worktree <id> into <repoRoot>: commit <commit> as merge <mergeCommit>. Reviewer <provider>/<model> passed it: <summary>
+Merged worktree <id> into <repoRoot>: commit <commit> as merge <mergeCommit>. Reviewer <provider>/<model> passed it: <summary>.
 ```
 
 ##### 拒绝（rejected）
@@ -177,7 +177,7 @@ Worktree <id> has no changes to accept.
 
 #### 模型看到的内容
 
-每个打开的工作树一行：`<id>  <state>  <branch>  <label>  <verdict-或-"not reviewed">`；没有打开的工作树时为 `No open worktrees.`。
+每个打开的工作树一行标注字段：`<id>  state=<state>  branch=<branch>  review=<verdict-或-"not reviewed">  label="<label>"`；没有打开的工作树时为 `No open worktrees.`。
 
 #### Token 影响
 

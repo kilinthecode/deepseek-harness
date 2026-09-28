@@ -1,13 +1,18 @@
 /**
  * Pure schema/render coverage: every {@link AcceptOutcome} kind, the discard
- * and list projections, and the exact verbatim text each renders. No Context
- * is booted here; `tool-subagent-worktree.spec.ts` covers the tool wiring.
+ * and list projections, the exact verbatim text each renders, and that each
+ * projected value actually satisfies its declared schema. No Context is
+ * booted here; `tool-subagent-worktree.spec.ts` covers the tool wiring.
  */
 
 import { describe, expect, it } from 'vitest'
 import { brandString } from '@deepseek-ai/dsh-brand'
 import type { AcceptOutcome, WorktreeId } from '@deepseek-ai/dsh-subagent-worktree'
+import { validateJsonSchemaValue, valueSchemaSpecToJsonSchema } from '@deepseek-ai/dsh-tools'
 import {
+  ACCEPT_VALUE_SCHEMA,
+  DISCARD_VALUE_SCHEMA,
+  LIST_VALUE_SCHEMA,
   renderAcceptToolValue,
   renderDiscardToolValue,
   renderListToolValue,
@@ -15,10 +20,17 @@ import {
   toDiscardToolValue,
   toListToolValue,
 } from '../src/values.ts'
-import { COMMIT as commit, MERGE_COMMIT as mergeCommit, testRecord as baseRecord, testVerdict as baseVerdict, WORKTREE_ID as id } from './fixtures.ts'
+import {
+  COMMIT as commit,
+  MERGE_COMMIT as mergeCommit,
+  OTHER_WORKTREE_ID as otherId,
+  testRecord as baseRecord,
+  testVerdict as baseVerdict,
+  WORKTREE_ID as id,
+} from './fixtures.ts'
 
 describe('accept_worktree values', () => {
-  it('declares the removed field and appends the removal notice only when true', () => {
+  it('declares the removed field, terminates the summary sentence, and appends the removal notice only when true', () => {
     const removed: AcceptOutcome = {
       kind: 'merged',
       record: baseRecord({ state: 'merged' }),
@@ -48,14 +60,29 @@ describe('accept_worktree values', () => {
       removed: true,
     })
     expect(renderAcceptToolValue(removedValue)).toBe(
-      `Merged worktree wt-1 into /repo: commit ${commit} as merge ${mergeCommit}. Reviewer test-provider/test-model passed it: `
-      + 'looks good The worktree was removed; start a new child for further work.',
+      `Merged worktree ${id} into /repo: commit ${commit} as merge ${mergeCommit}. Reviewer test-provider/test-model passed it: `
+      + 'looks good. The worktree was removed; start a new child for further work.',
     )
 
     const keptValue = toAcceptToolValue(kept)
     expect(keptValue).toMatchObject({ removed: false })
     expect(renderAcceptToolValue(keptValue)).toBe(
-      `Merged worktree wt-1 into /repo: commit ${commit} as merge ${mergeCommit}. Reviewer test-provider/test-model passed it: looks good`,
+      `Merged worktree ${id} into /repo: commit ${commit} as merge ${mergeCommit}. Reviewer test-provider/test-model passed it: looks good.`,
+    )
+  })
+
+  it('does not double a summary that already ends with terminal punctuation', () => {
+    const outcome: AcceptOutcome = {
+      kind: 'merged',
+      record: baseRecord({ state: 'merged' }),
+      commit,
+      mergeCommit,
+      verdict: baseVerdict({ summary: 'Verified the fix works!' }),
+      removed: false,
+    }
+    const value = toAcceptToolValue(outcome)
+    expect(renderAcceptToolValue(value)).toBe(
+      `Merged worktree ${id} into /repo: commit ${commit} as merge ${mergeCommit}. Reviewer test-provider/test-model passed it: Verified the fix works!`,
     )
   })
 
@@ -76,7 +103,7 @@ describe('accept_worktree values', () => {
       findings: ['fix the thing', 'fix another thing'],
     })
     expect(renderAcceptToolValue(value)).toBe(
-      `Review failed for worktree wt-1 at commit ${commit} (reviewer test-provider/test-model): needs work\n`
+      `Review failed for worktree ${id} at commit ${commit} (reviewer test-provider/test-model): needs work\n`
       + 'Findings:\n- fix the thing\n- fix another thing\n'
       + 'Send these findings to the child with send_message, wait for it to finish, then accept again.',
     )
@@ -94,11 +121,27 @@ describe('accept_worktree values', () => {
     const value = toAcceptToolValue(outcome)
     expect(value).toEqual({ kind: 'checks-failed', id, commit, argv: ['pnpm', 'test'], exitCode: 1, output: 'FAIL some-test' })
     expect(renderAcceptToolValue(value)).toBe(
-      `Checks failed for worktree wt-1 at commit ${commit}: \`pnpm test\` exited 1.\nFAIL some-test`,
+      `Checks failed for worktree ${id} at commit ${commit}: \`pnpm test\` exited 1.\nFAIL some-test`,
     )
   })
 
-  it('omits exitCode from the value for a signal-killed check and renders "exited null"', () => {
+  it('quotes an argv element containing whitespace so the command can be reproduced', () => {
+    const outcome: AcceptOutcome = {
+      kind: 'checks-failed',
+      record: baseRecord(),
+      commit,
+      argv: ['git', 'commit', '-m', 'fix the parser'],
+      exitCode: 1,
+      output: 'nothing to commit',
+    }
+    const value = toAcceptToolValue(outcome)
+    expect(value).toMatchObject({ argv: ['git', 'commit', '-m', 'fix the parser'] })
+    expect(renderAcceptToolValue(value)).toBe(
+      `Checks failed for worktree ${id} at commit ${commit}: \`git commit -m "fix the parser"\` exited 1.\nnothing to commit`,
+    )
+  })
+
+  it('omits exitCode from the value for a signal-killed check and renders that it was stopped', () => {
     const outcome: AcceptOutcome = {
       kind: 'checks-failed',
       record: baseRecord(),
@@ -111,23 +154,23 @@ describe('accept_worktree values', () => {
     expect(value).toEqual({ kind: 'checks-failed', id, commit, argv: ['pnpm', 'test'], output: 'killed' })
     expect('exitCode' in value).toBe(false)
     expect(renderAcceptToolValue(value)).toBe(
-      `Checks failed for worktree wt-1 at commit ${commit}: \`pnpm test\` exited null.\nkilled`,
+      `Checks failed for worktree ${id} at commit ${commit}: \`pnpm test\` was stopped before it exited.\nkilled`,
     )
   })
 
   it('renders a conflict outcome naming every conflicted file and the branch', () => {
     const outcome: AcceptOutcome = {
       kind: 'conflict',
-      record: baseRecord({ branch: 'dsh/worktree/wt-1' }),
+      record: baseRecord({ branch: 'dsh/worktree/wt-1a2b3c4d' }),
       commit,
       verdict: baseVerdict(),
       files: ['a.ts', 'b.ts'],
     }
     const value = toAcceptToolValue(outcome)
-    expect(value).toEqual({ kind: 'conflict', id, commit, branch: 'dsh/worktree/wt-1', files: ['a.ts', 'b.ts'] })
+    expect(value).toEqual({ kind: 'conflict', id, commit, branch: 'dsh/worktree/wt-1a2b3c4d', files: ['a.ts', 'b.ts'] })
     expect(renderAcceptToolValue(value)).toBe(
-      `Worktree wt-1 passed review at commit ${commit} but conflicts with your checkout in: a.ts, b.ts. `
-      + 'Nothing was merged. Merge branch dsh/worktree/wt-1 yourself and resolve the conflicts, or discard the worktree.',
+      `Worktree ${id} passed review at commit ${commit} but conflicts with your checkout in: a.ts, b.ts. `
+      + 'Nothing was merged. Merge branch dsh/worktree/wt-1a2b3c4d yourself and resolve the conflicts, or discard the worktree.',
     )
   })
 
@@ -142,7 +185,7 @@ describe('accept_worktree values', () => {
     const value = toAcceptToolValue(outcome)
     expect(value).toEqual({ kind: 'blocked', id, commit, reason: 'local changes would be overwritten' })
     expect(renderAcceptToolValue(value)).toBe(
-      `Worktree wt-1 passed review at commit ${commit}, but the merge could not start: local changes would be overwritten. `
+      `Worktree ${id} passed review at commit ${commit}, but the merge could not start: local changes would be overwritten. `
       + 'Commit or set aside the conflicting changes in your checkout, then accept again.',
     )
   })
@@ -151,16 +194,16 @@ describe('accept_worktree values', () => {
     const outcome: AcceptOutcome = { kind: 'empty', record: baseRecord() }
     const value = toAcceptToolValue(outcome)
     expect(value).toEqual({ kind: 'empty', id })
-    expect(renderAcceptToolValue(value)).toBe('Worktree wt-1 has no changes to accept.')
+    expect(renderAcceptToolValue(value)).toBe(`Worktree ${id} has no changes to accept.`)
   })
 })
 
 describe('discard_worktree values', () => {
   it('renders the discarded worktree id and branch', () => {
-    const record = baseRecord({ state: 'discarded', branch: 'dsh/worktree/wt-1' })
+    const record = baseRecord({ state: 'discarded', branch: 'dsh/worktree/wt-1a2b3c4d' })
     const value = toDiscardToolValue(record)
-    expect(value).toEqual({ id, branch: 'dsh/worktree/wt-1' })
-    expect(renderDiscardToolValue(value)).toBe('Discarded worktree wt-1 and branch dsh/worktree/wt-1.')
+    expect(value).toEqual({ id, branch: 'dsh/worktree/wt-1a2b3c4d' })
+    expect(renderDiscardToolValue(value)).toBe(`Discarded worktree ${id} and branch dsh/worktree/wt-1a2b3c4d.`)
   })
 })
 
@@ -170,28 +213,71 @@ describe('list_worktrees values', () => {
     expect(renderListToolValue([])).toBe('No open worktrees.')
   })
 
-  it('renders one line per record, falling back to "not reviewed" without a verdict', () => {
-    const reviewed = baseRecord({
-      id: brandString<WorktreeId>('wt-1'),
+  it('renders one labeled line per record, covering pass, fail, and not-reviewed', () => {
+    const thirdId = brandString<WorktreeId>('wt-9c8d7e6f')
+    const passed = baseRecord({
+      id,
       state: 'open',
-      branch: 'dsh/worktree/wt-1',
+      branch: 'dsh/worktree/wt-1a2b3c4d',
       label: 'fix bug',
       lastVerdict: baseVerdict({ verdict: 'pass' }),
     })
-    const unreviewed = baseRecord({
-      id: brandString<WorktreeId>('wt-2'),
+    const failed = baseRecord({
+      id: otherId,
       state: 'reviewing',
-      branch: 'dsh/worktree/wt-2',
+      branch: 'dsh/worktree/wt-5e6f7a8b',
       label: 'add feature',
+      lastVerdict: baseVerdict({ verdict: 'fail' }),
     })
-    const value = toListToolValue([reviewed, unreviewed])
+    const unreviewed = baseRecord({
+      id: thirdId,
+      state: 'open',
+      branch: 'dsh/worktree/wt-9c8d7e6f',
+      label: 'new part',
+    })
+    const value = toListToolValue([passed, failed, unreviewed])
     expect(value).toEqual([
-      { id: 'wt-1', state: 'open', branch: 'dsh/worktree/wt-1', label: 'fix bug', verdict: 'pass' },
-      { id: 'wt-2', state: 'reviewing', branch: 'dsh/worktree/wt-2', label: 'add feature' },
+      { id, state: 'open', branch: 'dsh/worktree/wt-1a2b3c4d', label: 'fix bug', verdict: 'pass' },
+      { id: otherId, state: 'reviewing', branch: 'dsh/worktree/wt-5e6f7a8b', label: 'add feature', verdict: 'fail' },
+      { id: thirdId, state: 'open', branch: 'dsh/worktree/wt-9c8d7e6f', label: 'new part' },
     ])
     expect(renderListToolValue(value)).toBe(
-      'wt-1  open  dsh/worktree/wt-1  fix bug  pass\n'
-      + 'wt-2  reviewing  dsh/worktree/wt-2  add feature  not reviewed',
+      `${id}  state=open  branch=dsh/worktree/wt-1a2b3c4d  review=pass  label="fix bug"\n`
+      + `${otherId}  state=reviewing  branch=dsh/worktree/wt-5e6f7a8b  review=fail  label="add feature"\n`
+      + `${thirdId}  state=open  branch=dsh/worktree/wt-9c8d7e6f  review=not reviewed  label="new part"`,
     )
+  })
+})
+
+describe('declared schema validation', () => {
+  const acceptSchema = valueSchemaSpecToJsonSchema(ACCEPT_VALUE_SCHEMA)
+  const discardSchema = valueSchemaSpecToJsonSchema(DISCARD_VALUE_SCHEMA)
+  const listSchema = valueSchemaSpecToJsonSchema(LIST_VALUE_SCHEMA)
+
+  const acceptOutcomes: ReadonlyArray<{ readonly name: string; readonly outcome: AcceptOutcome }> = [
+    { name: 'merged', outcome: { kind: 'merged', record: baseRecord({ state: 'merged' }), commit, mergeCommit, verdict: baseVerdict(), removed: true } },
+    { name: 'rejected', outcome: { kind: 'rejected', record: baseRecord(), commit, verdict: baseVerdict({ verdict: 'fail', findings: ['fix it'] }) } },
+    { name: 'checks-failed (numeric exit code)', outcome: { kind: 'checks-failed', record: baseRecord(), commit, argv: ['pnpm', 'test'], exitCode: 1, output: 'FAIL' } },
+    { name: 'checks-failed (signal-killed)', outcome: { kind: 'checks-failed', record: baseRecord(), commit, argv: ['pnpm', 'test'], exitCode: null, output: 'killed' } },
+    { name: 'conflict', outcome: { kind: 'conflict', record: baseRecord(), commit, verdict: baseVerdict(), files: ['a.ts'] } },
+    { name: 'blocked', outcome: { kind: 'blocked', record: baseRecord(), commit, verdict: baseVerdict(), reason: 'dirty checkout' } },
+    { name: 'empty', outcome: { kind: 'empty', record: baseRecord() } },
+  ]
+
+  it.each(acceptOutcomes)('accept_worktree "$name" value satisfies ACCEPT_VALUE_SCHEMA', ({ outcome }) => {
+    const value = toAcceptToolValue(outcome)
+    expect(validateJsonSchemaValue(acceptSchema, value)).toEqual([])
+  })
+
+  it('discard_worktree value satisfies DISCARD_VALUE_SCHEMA', () => {
+    const value = toDiscardToolValue(baseRecord({ state: 'discarded' }))
+    expect(validateJsonSchemaValue(discardSchema, value)).toEqual([])
+  })
+
+  it('list_worktrees value satisfies LIST_VALUE_SCHEMA, with and without a verdict', () => {
+    const reviewed = baseRecord({ lastVerdict: baseVerdict({ verdict: 'fail' }) })
+    const unreviewed = baseRecord({ id: otherId })
+    const value = toListToolValue([reviewed, unreviewed])
+    expect(validateJsonSchemaValue(listSchema, value)).toEqual([])
   })
 })

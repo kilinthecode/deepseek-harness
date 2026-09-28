@@ -35,6 +35,22 @@ function callingAgent(agent: Agent | undefined, toolName: string): Agent {
   return agent
 }
 
+/** The service's own worktree id shape: `wt-` followed by eight lowercase hexadecimal digits. */
+const WORKTREE_ID_PATTERN = /^wt-[0-9a-f]{8}$/
+
+/**
+ * Validate a model-supplied worktree id at this JSON boundary before it reaches the service.
+ * @param raw - the `worktree_id` argument as sent by the model.
+ * @param toolName - the calling tool, named in a rejection.
+ * @throws when `raw` does not match the service's id shape.
+ */
+function requireWorktreeId(raw: string, toolName: string): WorktreeId {
+  if (!WORKTREE_ID_PATTERN.test(raw)) {
+    throw new Error(`${toolName}: "${raw}" is not a worktree id (expected "wt-" followed by eight lowercase hexadecimal digits)`)
+  }
+  return brandString<WorktreeId>(raw)
+}
+
 /** The caller's working directory, required to scope `list_worktrees` to one repository. */
 function requireCwd(agent: Agent): string {
   const cwd = agent.session.header.cwd
@@ -65,7 +81,7 @@ export function apply(ctx: Context): void {
     async execute(args, exec) {
       const agent = callingAgent(exec.agent, 'accept_worktree')
       const outcome = await ctx.subagentWorktrees.accept({
-        id: brandString<WorktreeId>(args.worktree_id),
+        id: requireWorktreeId(args.worktree_id, 'accept_worktree'),
         owner: { kind: 'session', sessionId: agent.id },
         parent: agent,
         signal: exec.signal,
@@ -91,7 +107,7 @@ export function apply(ctx: Context): void {
     async execute(args, exec) {
       const agent = callingAgent(exec.agent, 'discard_worktree')
       const record = await ctx.subagentWorktrees.discard({
-        id: brandString<WorktreeId>(args.worktree_id),
+        id: requireWorktreeId(args.worktree_id, 'discard_worktree'),
         owner: { kind: 'session', sessionId: agent.id },
         signal: exec.signal,
       })
