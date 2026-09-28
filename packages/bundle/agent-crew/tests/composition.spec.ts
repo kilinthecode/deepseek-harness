@@ -64,8 +64,9 @@ describe('agent-crew bundle composition', () => {
     new SubagentWorktrees(ctx, {
       branchPrefix: 'dsh/worktree/',
       maxWorktrees: 16,
-      requireDistinctReviewer: true,
+      requireDistinctReviewer: false,
       testCommand: [],
+      checkTimeoutMs: 900_000,
       reviewDiffMaxBytes: 49152,
       removeOnMerge: true,
     })
