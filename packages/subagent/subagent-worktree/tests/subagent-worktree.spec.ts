@@ -312,6 +312,13 @@ describe('offersIsolation', () => {
     expect(ctx.subagentWorktrees.offersIsolation).toBe(false)
   })
 
+  it('reads false for a service constructed directly from a config that omits the field', async () => {
+    const ctx = new Context()
+    cleanups.push(() => ctx.fiber.dispose())
+    const service = new SubagentWorktrees(ctx, { ...RAW_BASE_CONFIG, root: await scratchRoot() })
+    expect(service.offersIsolation).toBe(false)
+  })
+
   it('reads the configured value when the deployment turns isolation on', async () => {
     const { ctx, dispose } = await setup({ root: await scratchRoot(), offerIsolation: true })
     cleanups.push(dispose)
