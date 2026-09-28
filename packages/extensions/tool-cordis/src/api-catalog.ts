@@ -2976,6 +2976,7 @@ export const SERVICE_API: readonly ServiceApiEntry[] = [
         description: 'Record one worker Session on an open worktree.',
         parameters: [{ name: 'request', description: 'worktree id, owner, worker Session id, and route.' }],
         returns: 'the updated record.',
+        throws: ['when the id is malformed, no such worktree exists, the owner does not own it, or it is not `open`.'],
       },
       {
         signature: 'resolveReviewer(request: ResolveReviewerRequest): WorktreeRoute',
@@ -2985,16 +2986,18 @@ export const SERVICE_API: readonly ServiceApiEntry[] = [
         throws: ['when `requireDistinctReviewer` is set and the resolved route equals the worker\'s.'],
       },
       {
-        signature: 'accept(request: AcceptWorktreeRequest): Promise<AcceptOutcome>',
+        signature: 'async accept(request: AcceptWorktreeRequest): Promise<AcceptOutcome>',
         description: 'Commit the worktree\'s changes, run the check command, have an independent reviewer check the exact commit, and merge a passing change.',
         parameters: [{ name: 'request', description: 'worktree id, owner, reviewer parent Agent, operator overrides, and cancellation.' }],
         returns: 'the accept outcome.',
+        throws: ['when the id is malformed, or a non-operator owner sets `testCommand` or `reviewer`; see {@link acceptWorktree}.'],
       },
       {
         signature: 'async discard(request: DiscardWorktreeRequest): Promise<WorktreeRecord>',
-        description: 'Delete one worktree and its branch without merging.',
+        description: 'Delete one worktree and its branch without merging. The record is claimed under its lock before any git change, so a concurrent `accept` or second `discard` cannot act on a worktree this call is deleting. A `merged` record is not changed: `discard` only removes a worktree directory or branch that a crash between the merge and its cleanup left behind.',
         parameters: [{ name: 'request', description: 'worktree id, owner, and cancellation.' }],
-        returns: 'the `discarded` record.',
+        returns: 'the `discarded` record, or the unchanged `merged` record after cleaning up its leftovers.',
+        throws: ['when the id is malformed, no such worktree exists, the owner does not own it, an attached worker is still running, the record is `discarded` or being accepted, or a git cleanup command fails.'],
       },
       {
         signature: 'async list(request: ListWorktreesRequest): Promise<WorktreeRecord[]>',
