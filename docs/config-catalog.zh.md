@@ -3359,7 +3359,7 @@ export interface Config {
 ## `@deepseek-ai/dsh-subagent-worktree`
 
 - `inject`: `subprocess` · `subagents` · `agents`
-- `source`: [`packages/subagent/subagent-worktree/src/index.ts:65`](../packages/subagent/subagent-worktree/src/index.ts)
+- `source`: [`packages/subagent/subagent-worktree/src/index.ts:66`](../packages/subagent/subagent-worktree/src/index.ts)
 
 ```ts config-catalog
 /**
