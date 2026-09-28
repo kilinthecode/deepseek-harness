@@ -16,6 +16,8 @@ export interface ScriptedVerdict {
   structured?: unknown
   /** Terminal stop reason; defaults to `completed`. */
   stopReason?: SubagentResult['stopReason']
+  /** When set, `run.result` rejects with this message instead of resolving — an infrastructure fault, not a verdict. */
+  throws?: string
 }
 
 /** Options for the scripted `spawn` provider fixture. */
@@ -48,7 +50,7 @@ class ScriptedReviewerProvider implements SubagentProvider {
     return Promise.resolve({
       id: SessionId(`scripted-reviewer:${this.name}:${this.calls}`),
       localAgent: undefined,
-      result: Promise.resolve(result),
+      result: script?.throws === undefined ? Promise.resolve(result) : Promise.reject(new Error(script.throws)),
       dispose: () => Promise.resolve(),
     })
   }

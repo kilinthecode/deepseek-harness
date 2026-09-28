@@ -95,6 +95,9 @@ async function cleanupStaleReviewDirs(
 async function commitWorktreeChanges(deps: AcceptDeps, record: StoredWorktreeRecord, id: WorktreeId, signal: AbortSignal): Promise<string> {
   await deps.git.expect(['add', '-A'], 'git add', { cwd: record.path, signal })
   const staged = await deps.git.run(['diff', '--cached', '--quiet'], { cwd: record.path, signal })
+  /* v8 ignore next -- `git diff --cached --quiet` in a worktree the immediately preceding `git add -A` just
+   * confirmed valid returns only 0 (clean) or 1 (staged changes) under real git; any other exit code is a
+   * host-level git failure (for example a corrupted index) too invasive to construct without a fake git binary. */
   if (staged.exitCode !== 0 && staged.exitCode !== 1) throw new GitCommandError('git diff --cached --quiet', staged)
   if (staged.exitCode === 1) {
     const authorArgs = deps.commitAuthor === undefined

@@ -1,12 +1,15 @@
 import { spawnSync } from 'node:child_process'
-import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
+import { unlinkSync } from 'node:fs'
+import { mkdir, mkdtemp, readFile, rm, symlink, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
 import type { Context } from '@deepseek-ai/cordis'
 import { SessionId } from '@deepseek-ai/dsh-session'
 import type { SubagentStartRequest } from '@deepseek-ai/dsh-subagent'
-import { requireRecordLocation, updateExistingRecordAt } from '../src/records.ts'
+import { pathExists } from '../src/fs-util.ts'
+import { reviewCheckoutPathFor } from '../src/paths.ts'
+import { layoutForRepo, requireRecordLocation, updateExistingRecordAt } from '../src/records.ts'
 import type { AcceptWorktreeRequest, WorktreeId, WorktreeOwner } from '../src/types.ts'
 import { createWorktree, fakeAgent, git, initFixtureRepo, removeFixture, setup } from './harness.ts'
 import type { TestConfig } from './harness.ts'
@@ -93,6 +96,19 @@ describe('accept: checks-failed', () => {
     expect(outcome.record.state).toBe('open')
     expect(reviewerStarted).toBe(false)
   }, GIT_TEST_TIMEOUT_MS)
+
+  it('proceeds to the reviewer and merges when the check command passes', async () => {
+    let reviewerStarted = false
+    const { ctx, dir } = await harness({ onReviewerStart: () => { reviewerStarted = true } })
+    const provisioned = await createWorktree(ctx, OWNER, dir, 'do the thing')
+    await writeFile(join(provisioned.workDir, 'change.txt'), 'x')
+
+    const outcome = await ctx.subagentWorktrees.accept(acceptRequest(provisioned.record.id, {
+      testCommand: [process.execPath, '-e', 'process.exit(0)'],
+    }))
+    expect(outcome.kind).toBe('merged')
+    expect(reviewerStarted).toBe(true)
+  }, GIT_TEST_TIMEOUT_MS)
 })
 
 describe('accept: rejected', () => {
@@ -162,6 +178,38 @@ describe('accept: merge outcomes', () => {
     expect(outcome.removed).toBe(false)
     expect(git(dir, 'worktree', 'list')).toContain(provisioned.record.path)
     expect(git(dir, 'branch', '--list', provisioned.record.branch).trim()).not.toBe('')
+  }, GIT_TEST_TIMEOUT_MS)
+
+  it('honors an operator reviewer override for one accept', async () => {
+    const otherReviewerRoute = { provider: 'other-reviewer-provider', model: 'other-reviewer-model' }
+    let capturedRoute: unknown
+    const { ctx, dir } = await harness({
+      onReviewerStart: (request) => { capturedRoute = request.agentOptions },
+    })
+    const provisioned = await createWorktree(ctx, OWNER, dir, 'do the thing')
+    await writeFile(join(provisioned.workDir, 'change.txt'), 'x')
+
+    const outcome = await ctx.subagentWorktrees.accept(acceptRequest(provisioned.record.id, { reviewer: otherReviewerRoute }))
+    expect(outcome.kind).toBe('merged')
+    expect(capturedRoute).toEqual(otherReviewerRoute)
+  }, GIT_TEST_TIMEOUT_MS)
+
+  it('keeps the merged record when removeOnMerge cleanup fails after a successful merge', async () => {
+    const { ctx, dir } = await harness()
+    const provisioned = await createWorktree(ctx, OWNER, dir, 'do the thing')
+    await writeFile(join(provisioned.workDir, 'change.txt'), 'x')
+
+    // A second worktree forced onto the same branch (git worktree add --force overrides the
+    // "already checked out" guard) survives the worktree removal but blocks the branch delete,
+    // so the merge fact must still stand even though the best-effort cleanup after it fails.
+    const otherCheckout = await mkdtemp(join(tmpdir(), 'dsh-accept-other-checkout-'))
+    cleanups.push(() => removeFixture(otherCheckout))
+    git(dir, 'worktree', 'add', '--force', otherCheckout, provisioned.record.branch)
+
+    await expect(ctx.subagentWorktrees.accept(acceptRequest(provisioned.record.id))).rejects.toThrow()
+
+    const relisted = await ctx.subagentWorktrees.list({ baseDir: dir, owner: OWNER, includeClosed: true })
+    expect(relisted.find(r => r.id === provisioned.record.id)?.state).toBe('merged')
   }, GIT_TEST_TIMEOUT_MS)
 
   it('merges two parallel worktrees on distinct files, the second landing as a true (non-fast-forward) merge', async () => {
@@ -296,6 +344,88 @@ describe('accept: state machine', () => {
 
     const outcome = await ctx.subagentWorktrees.accept(acceptRequest(provisioned.record.id))
     expect(outcome.kind).toBe('merged')
+  }, GIT_TEST_TIMEOUT_MS)
+
+  it('removes a leftover review checkout from a crashed accept before starting a new one', async () => {
+    const { ctx, dir, root } = await harness()
+    const provisioned = await createWorktree(ctx, OWNER, dir, 'do the thing')
+    await writeFile(join(provisioned.workDir, 'change.txt'), 'x')
+
+    const layout = layoutForRepo(root, provisioned.record.repoRoot)
+    const stalePath = reviewCheckoutPathFor(layout, provisioned.record.id, 'stale')
+    git(dir, 'worktree', 'add', '--detach', stalePath, 'HEAD')
+    expect(await pathExists(stalePath)).toBe(true)
+    // An entry for a different worktree id must survive the sweep: only this id's prefix is removed.
+    const unrelatedPath = reviewCheckoutPathFor(layout, 'wt-unrelated0', 'stale')
+    await mkdir(unrelatedPath, { recursive: true })
+    // A matching entry that readdir lists but no longer exists by the time it is checked
+    // (here, a broken symlink) is skipped rather than handed to git worktree remove.
+    const brokenPath = reviewCheckoutPathFor(layout, provisioned.record.id, 'broken')
+    await symlink(join(layout.reviewsDir, 'does-not-exist'), brokenPath)
+
+    const outcome = await ctx.subagentWorktrees.accept(acceptRequest(provisioned.record.id))
+    expect(outcome.kind).toBe('merged')
+    expect(await pathExists(stalePath)).toBe(false)
+    expect(await pathExists(unrelatedPath)).toBe(true)
+  }, GIT_TEST_TIMEOUT_MS)
+
+  it('returns a still-reviewing record to open and rethrows on an infrastructure failure', async () => {
+    const { ctx, dir } = await harness({ verdicts: [{ throws: 'reviewer infrastructure boom' }] })
+    const provisioned = await createWorktree(ctx, OWNER, dir, 'do the thing')
+    await writeFile(join(provisioned.workDir, 'change.txt'), 'x')
+
+    await expect(ctx.subagentWorktrees.accept(acceptRequest(provisioned.record.id)))
+      .rejects.toThrow('reviewer infrastructure boom')
+
+    const relisted = await ctx.subagentWorktrees.list({ baseDir: dir, owner: OWNER })
+    expect(relisted.find(r => r.id === provisioned.record.id)?.state).toBe('open')
+  }, GIT_TEST_TIMEOUT_MS)
+
+  it('logs but does not fail accept when a stale review directory is not a real git worktree', async () => {
+    const { ctx, dir, root } = await harness()
+    const provisioned = await createWorktree(ctx, OWNER, dir, 'do the thing')
+    await writeFile(join(provisioned.workDir, 'change.txt'), 'x')
+
+    const layout = layoutForRepo(root, provisioned.record.repoRoot)
+    const bogusStalePath = reviewCheckoutPathFor(layout, provisioned.record.id, 'bogus')
+    await mkdir(bogusStalePath, { recursive: true })
+
+    const outcome = await ctx.subagentWorktrees.accept(acceptRequest(provisioned.record.id))
+    expect(outcome.kind).toBe('merged')
+    // git refused to remove a plain directory it never registered as a worktree; the failure was logged, not thrown.
+    expect(await pathExists(bogusStalePath)).toBe(true)
+  }, GIT_TEST_TIMEOUT_MS)
+
+  it('propagates a non-ENOENT failure listing the reviews directory', async () => {
+    const { ctx, dir, root } = await harness()
+    const provisioned = await createWorktree(ctx, OWNER, dir, 'do the thing')
+    await writeFile(join(provisioned.workDir, 'change.txt'), 'x')
+
+    const layout = layoutForRepo(root, provisioned.record.repoRoot)
+    await writeFile(layout.reviewsDir, '') // a file where a directory is expected: readdir fails with ENOTDIR
+
+    await expect(ctx.subagentWorktrees.accept(acceptRequest(provisioned.record.id))).rejects.toThrow()
+  }, GIT_TEST_TIMEOUT_MS)
+
+  it('logs but does not mask the original error when the best-effort reopen also fails', async () => {
+    const pendingDelete: { path: string | undefined } = { path: undefined }
+    const { ctx, dir, root } = await harness({
+      verdicts: [{ throws: 'reviewer infrastructure boom' }],
+      onReviewerStart: () => {
+        // Fire synchronously: the record must already be gone by the time run.result
+        // rejects and the outer catch tries to reopen it, or the race is non-deterministic.
+        if (pendingDelete.path !== undefined) unlinkSync(pendingDelete.path)
+      },
+    })
+    const provisioned = await createWorktree(ctx, OWNER, dir, 'do the thing')
+    await writeFile(join(provisioned.workDir, 'change.txt'), 'x')
+    const located = await requireRecordLocation(root, provisioned.record.id)
+    pendingDelete.path = located.path
+
+    // The original reviewer failure surfaces even though the recovery attempt
+    // that follows it (reopening a now-deleted record) also fails.
+    await expect(ctx.subagentWorktrees.accept(acceptRequest(provisioned.record.id)))
+      .rejects.toThrow('reviewer infrastructure boom')
   }, GIT_TEST_TIMEOUT_MS)
 })
 

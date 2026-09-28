@@ -240,6 +240,18 @@ describe('resolveReviewer', () => {
   const CONFIGURED_ROUTE = { provider: 'configured', model: 'configured-model' }
   const OVERRIDE_ROUTE = { provider: 'override', model: 'override-model' }
 
+  it('carries a configured reviewerReasoningEffort into the resolved route', async () => {
+    const { ctx, dispose } = await setup({
+      root: await scratchRoot(),
+      reviewerProvider: CONFIGURED_ROUTE.provider,
+      reviewerModel: CONFIGURED_ROUTE.model,
+      reviewerReasoningEffort: 'high',
+    })
+    cleanups.push(dispose)
+    expect(ctx.subagentWorktrees.resolveReviewer({ workerRoute: CALLER_ROUTE, callerRoute: CALLER_ROUTE }))
+      .toEqual({ ...CONFIGURED_ROUTE, reasoningEffort: 'high' })
+  })
+
   it('prefers override, then Config.reviewerProvider/Model, then the caller route', async () => {
     const { ctx, dispose } = await setup({
       root: await scratchRoot(), reviewerProvider: CONFIGURED_ROUTE.provider, reviewerModel: CONFIGURED_ROUTE.model,

@@ -3,8 +3,9 @@ import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
+import { ReasoningEffortId } from '@deepseek-ai/dsh-llm'
 import { SessionId } from '@deepseek-ai/dsh-session'
-import { layoutFor } from '../src/paths.ts'
+import { layoutFor, recordPathFor } from '../src/paths.ts'
 import {
   assertNotTerminal, assertOpenOrRecoverable, assertOwnerAuthority, assertStoredWorktreeRecord, countOpenSlots,
   createRecord, formatWorktreeId, generateWorktreeId, listRecords, locateRecord, pickWorktreeId, requireRecordLocation,
@@ -112,14 +113,27 @@ describe('assertStoredWorktreeRecord', () => {
     expect(() => { assertStoredWorktreeRecord(record, path) }).not.toThrow()
   })
 
+  it('accepts an operator-owned record', () => {
+    const record = baseRecord({ owner: operatorOwner })
+    expect(() => { assertStoredWorktreeRecord(record, path) }).not.toThrow()
+  })
+
+  it('accepts a workerRoute that carries a reasoningEffort', () => {
+    const record = baseRecord({ workerRoute: { provider: 'p', model: 'm', reasoningEffort: ReasoningEffortId('high') } })
+    expect(() => { assertStoredWorktreeRecord(record, path) }).not.toThrow()
+  })
+
   it.each([
     ['not an object', 'nope'],
     ['missing id', { ...baseRecord(), id: undefined }],
+    ['owner is not an object', { ...baseRecord(), owner: 'nope' }],
     ['bad owner kind', { ...baseRecord(), owner: { kind: 'nobody' } }],
     ['session owner missing sessionId', { ...baseRecord(), owner: { kind: 'session' } }],
     ['bad state', { ...baseRecord(), state: 'exploding' }],
     ['non-array workerSessionIds', { ...baseRecord(), workerSessionIds: 'nope' }],
     ['workerSessionIds with a non-string entry', { ...baseRecord(), workerSessionIds: [1] }],
+    ['workerRoute is not an object', { ...baseRecord(), workerRoute: 'nope' }],
+    ['workerRoute missing provider', { ...baseRecord(), workerRoute: { model: 'm' } }],
     ['malformed workerRoute', { ...baseRecord(), workerRoute: { provider: 'p' } }],
     ['missing workerRoute', { ...baseRecord(), workerRoute: undefined }],
     ['malformed lastVerdict', { ...baseRecord(), lastVerdict: { verdict: 'pass' } }],
@@ -199,6 +213,30 @@ describe('load, update, and list records', () => {
     await writeFile(join(layout.recordsDir, 'not-a-directory'), '')
     const blockedLayout = layoutFor(join(layout.recordsDir, 'not-a-directory'), 'repo-key')
     await expect(listRecords(blockedLayout)).rejects.toThrow()
+  })
+
+  it('fails loud naming the record path when its JSON is malformed', async () => {
+    const root = await scratchRoot('dsh-wt-corrupt-json-')
+    const layout = layoutFor(root, 'repo-key')
+    await mkdir(layout.recordsDir, { recursive: true })
+    const path = recordPathFor(layout, 'wt-00000000')
+    await writeFile(path, '{not valid json')
+    await expect(requireRecordLocation(root, 'wt-00000000' as WorktreeId)).rejects.toThrow(`worktree record "${path}" is corrupt`)
+  })
+
+  it('propagates a non-ENOENT read failure while searching for a record', async () => {
+    const root = await scratchRoot('dsh-wt-locate-bad-entry-')
+    // "repoKey" that is actually a file: readdir(root) lists it, but reading through it as a
+    // directory to reach records/<id>.json fails with ENOTDIR, not the absence ENOENT expects.
+    await writeFile(join(root, 'not-a-directory'), '')
+    await expect(locateRecord(root, 'wt-00000000' as WorktreeId)).rejects.toThrow()
+  })
+
+  it('propagates a non-ENOENT readdir failure when the root itself is not a directory', async () => {
+    const parent = await scratchRoot('dsh-wt-locate-root-bad-')
+    const notADir = join(parent, 'not-a-directory')
+    await writeFile(notADir, '')
+    await expect(locateRecord(notADir, 'wt-00000000' as WorktreeId)).rejects.toThrow()
   })
 })
 

@@ -78,6 +78,20 @@ describe('runReviewer', () => {
     expect(verdict.at).toBeGreaterThan(0)
   }, 20_000)
 
+  it('forwards reviewerRoute.reasoningEffort to the reviewer child\'s agentOptions', async () => {
+    const { dir, base, head } = await diffOfSize(10)
+    let captured: SubagentStartRequest | undefined
+    const { ctx, git: runner } = await setup(
+      [{ structured: { verdict: 'pass', summary: 's', checks: [], findings: [] } }],
+      (request) => { captured = request },
+    )
+    await runReviewer(ctx, runner, {
+      parent: fakeAgent('parent-effort'), reviewDir: dir, commit: head, baseCommit: base, task: 'do it', label: 'do it',
+      reviewerRoute: { ...REVIEWER_ROUTE, reasoningEffort: ReasoningEffortId('high') }, reviewDiffMaxBytes: 1024, signal,
+    })
+    expect(captured?.agentOptions).toEqual({ provider: REVIEWER_ROUTE.provider, model: REVIEWER_ROUTE.model, reasoningEffort: 'high' })
+  })
+
   it('returns a fail verdict with the reviewer\'s findings', async () => {
     const { dir, base, head } = await diffOfSize(10)
     const { ctx, git: runner } = await setup([{ structured: { verdict: 'fail', summary: 'broken', checks: [], findings: ['x.ts: does not compile'] } }])
