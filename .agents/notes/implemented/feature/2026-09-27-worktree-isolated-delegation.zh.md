@@ -45,4 +45,3 @@ worktree 位于 Harness 主目录之下，而不是仓库内部。`glob` 工具�
 ## Testing
 
 seam 测试覆盖两条路径上对 cwd 的覆盖、校验与能力门禁。服务测试使用真实的临时仓库，覆盖创建、并行 `--no-ff` 合并、冲突、被阻塞的合并、评审结果门禁、失败关闭的评审结果解析、owner 检查与边界。工具、skill、bundle 与 CLI 测试固定模型可见文本与退出码；组合测试会通过 Loader 启动这些 bundle；一次真实模型的端到端运行会走通 worker、reviewer 与合并。
-</parameter>
