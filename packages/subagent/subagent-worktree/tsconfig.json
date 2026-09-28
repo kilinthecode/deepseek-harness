@@ -21,6 +21,9 @@
       "path": "../../core/agent"
     },
     {
+      "path": "../../core/agent-loop"
+    },
+    {
       "path": "../../core/session"
     },
     {
@@ -33,7 +36,19 @@
       "path": "../subagent"
     },
     {
+      "path": "../subagent-in-process-driver"
+    },
+    {
+      "path": "../subagent-spawn-in-process"
+    },
+    {
       "path": "../../subprocess/subprocess"
+    },
+    {
+      "path": "../../subprocess/subprocess-local"
+    },
+    {
+      "path": "../../test-support/agent-loop-testkit"
     },
     {
       "path": "../../util/atomic-write"

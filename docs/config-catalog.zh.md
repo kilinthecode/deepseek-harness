@@ -3312,6 +3312,52 @@ export interface Config {
 ```
 <!-- END GENERATED config-catalog:@deepseek-ai/dsh-subagent-spawn-in-process -->
 
+<!-- BEGIN GENERATED config-catalog:@deepseek-ai/dsh-subagent-worktree -->
+<a id="deepseek-aidsh-subagent-worktree"></a>
+
+## `@deepseek-ai/dsh-subagent-worktree`
+
+- `inject`: `subprocess` · `subagents` · `agents`
+- `source`: [`packages/subagent/subagent-worktree/src/index.ts:63`](../packages/subagent/subagent-worktree/src/index.ts)
+
+```ts config-catalog
+/**
+ * Deployment configuration for worktree placement, review, and merge. The
+ * reviewer route and commit author are flat scalar fields, not nested
+ * objects, because Schemastery materializes an omitted `z.object({...})`
+ * field as `{}` before validating its own `required()` sub-fields — see
+ * {@link resolveConfiguredReviewer} and {@link resolveConfiguredCommitAuthor}
+ * in `./config.ts`, which resolve and validate these flat fields once at load.
+ */
+export interface Config {
+  /** Absolute directory holding worktrees, records, and review checkouts; omitted resolves `<DSH_HOME>/worktrees` at load. */
+  root?: string
+  /** Prefix of every worktree branch name. */
+  branchPrefix: string
+  /** Maximum `open` or `reviewing` worktrees per repository. */
+  maxWorktrees: number
+  /** Reviewer provider route; set together with {@link reviewerModel}. Omitted uses the route of the Agent that accepts. */
+  reviewerProvider?: string
+  /** Reviewer model id; set together with {@link reviewerProvider}. */
+  reviewerModel?: string
+  /** Reviewer reasoning effort; requires {@link reviewerProvider} and {@link reviewerModel}. */
+  reviewerReasoningEffort?: string
+  /** Reject a reviewer route equal to the worker's route. */
+  requireDistinctReviewer: boolean
+  /** Check command (argv) run in the review checkout before the reviewer; empty runs none. A nonzero exit rejects the change. */
+  testCommand: string[]
+  /** Byte bound on the diff embedded in the reviewer prompt. */
+  reviewDiffMaxBytes: number
+  /** Remove the worktree directory and branch after a successful merge. */
+  removeOnMerge: boolean
+  /** Author name for harness commits; set together with {@link commitAuthorEmail}. Omitted uses git's configured identity. */
+  commitAuthorName?: string
+  /** Author email for harness commits; set together with {@link commitAuthorName}. */
+  commitAuthorEmail?: string
+}
+```
+<!-- END GENERATED config-catalog:@deepseek-ai/dsh-subagent-worktree -->
+
 <!-- BEGIN GENERATED config-catalog:@deepseek-ai/dsh-system-prompt -->
 <a id="deepseek-aidsh-system-prompt"></a>
 

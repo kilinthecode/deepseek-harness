@@ -733,6 +733,13 @@ const SERVICE_ROLES: ServiceRole[] = [
     note: 'Providers implement transports; the service also owns optional Activation-based continuation orchestration, tool-subagent selects one-shot or continuable delegation, tool-subagent-control delivers follow-ups, and tool-ralph requires one fresh structured-output route.',
   },
   {
+    key: 'subagentWorktrees',
+    pkg: 'subagent-worktree',
+    title: 'Isolated git worktrees for delegated agents',
+    mode: 'service',
+    note: 'Provisions one linked git worktree per delegated worker, then on accept commits its changes, has an independent reviewer child (a subagents spawn run) check the exact commit, and merges only a passing change with --no-ff.',
+  },
+  {
     key: 'speechToText',
     pkg: 'experimental-speech-to-text',
     title: 'Experimental speech recognition providers',
