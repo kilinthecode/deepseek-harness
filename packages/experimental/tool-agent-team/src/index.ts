@@ -430,7 +430,10 @@ function qualifiesForTeamInstall(agent: Agent, ctx: Context): boolean {
   return false
 }
 
-/** Install Team tools in every live or subsequently published Team member scope. */
+/**
+ * Install Team tools in every live or subsequently published Team member scope
+ * and in each plain fork whose fork chain reaches a live member.
+ */
 export function apply(ctx: Context, config: Config = {}): void {
   const resolved: Required<Config> = {
     freshProvider: config.freshProvider ?? 'spawn',
