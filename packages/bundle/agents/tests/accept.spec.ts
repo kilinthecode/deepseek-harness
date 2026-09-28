@@ -16,6 +16,7 @@ const record: WorktreeRecord = {
   state: 'open',
   createdAt: 0,
   workerSessionIds: ['session-worker' as never],
+  workerRoute: { provider: 'anthropic', model: 'opus' },
 }
 
 const verdict: WorktreeVerdict = {

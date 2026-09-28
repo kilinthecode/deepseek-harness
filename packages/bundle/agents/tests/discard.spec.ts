@@ -16,6 +16,7 @@ const record: WorktreeRecord = {
   state: 'discarded',
   createdAt: 0,
   workerSessionIds: [],
+  workerRoute: { provider: 'anthropic', model: 'opus' },
 }
 
 describe('dsh agents discard', () => {

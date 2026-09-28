@@ -148,7 +148,7 @@ describe('outcomeEvent / outcomeLine', () => {
   })
 
   it('rejects an outcome kind outside the closed union', () => {
-    const bogus = { kind: 'bogus' } as unknown as AcceptOutcome
+    const bogus: AcceptOutcome = { kind: 'bogus' } as never
     expect(() => outcomeEvent(bogus)).toThrow('unknown accept outcome kind')
     expect(() => outcomeLine(bogus)).toThrow('unknown accept outcome kind')
   })

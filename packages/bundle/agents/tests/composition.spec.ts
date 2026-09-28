@@ -80,7 +80,7 @@ export const name = 'agents-runner'
 export const inject = ['agentDefaultModel', 'agents', 'sessions', 'subagents', 'subagentWorktrees']
 export const apply = (ctx, config) => globalThis.__dshAgentsApplyRunner(ctx, config)
 `)
-  const globals = globalThis as unknown as {
+  const globals = globalThis as typeof globalThis & {
     __dshAgentsApplyStartup: typeof applyStartup
     __dshAgentsApplyRunner: (ctx: Context, config: Config) => void
   }

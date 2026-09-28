@@ -1,5 +1,6 @@
 /** `dsh agents run`: route resolution, worktree create/reuse, the worker run, accept, and fix rounds. */
 
+import { Readable } from 'node:stream'
 import { afterEach, describe, expect, it } from 'vitest'
 import type { SubagentRun } from '@deepseek-ai/dsh-subagent'
 import type { AcceptOutcome, ProvisionedWorktree, WorktreeRecord, WorktreeVerdict } from '@deepseek-ai/dsh-subagent-worktree'
@@ -21,6 +22,7 @@ const record: WorktreeRecord = {
   state: 'open',
   createdAt: 0,
   workerSessionIds: [],
+  workerRoute: { provider: 'anthropic', model: 'opus' },
 }
 
 const provisioned: ProvisionedWorktree = { record, workDir: '/worktrees/wt-aaaaaaaa' }
@@ -82,6 +84,36 @@ describe('dsh agents run', () => {
     expect(events[3]).toMatchObject({ type: 'outcome', kind: 'merged' })
     expect(test.calls.worktrees.map(call => call.method)).toEqual(['resolveReviewer', 'create', 'attach', 'accept'])
     await test.ctx.fiber.dispose()
+  })
+
+  it('reports uncommitted base-checkout changes left out of a freshly created worktree', async () => {
+    const baseDirty = { entries: [' M a.ts'], total: 3 }
+    const test = await bench({
+      worktrees: {
+        create: () => ({ ...provisioned, baseDirty }),
+        resolveReviewer: () => ({ provider: 'anthropic', model: 'opus' }),
+        attach: () => record,
+        accept: () => mergedOutcome,
+      },
+      subagentStart: () => completedRun('session-worker'),
+    })
+    const result = await test.run({ verb: 'run', task: 'add the parser', json: true })
+    const events = result.out.trim().split('\n').map(line => JSON.parse(line) as Record<string, unknown>)
+    expect(events[0]).toMatchObject({ type: 'worktree', baseDirty })
+    await test.ctx.fiber.dispose()
+
+    const humanTest = await bench({
+      worktrees: {
+        create: () => ({ ...provisioned, baseDirty }),
+        resolveReviewer: () => ({ provider: 'anthropic', model: 'opus' }),
+        attach: () => record,
+        accept: () => mergedOutcome,
+      },
+      subagentStart: () => completedRun('session-worker'),
+    })
+    const humanResult = await humanTest.run({ verb: 'run', task: 'add the parser' })
+    expect(humanResult.out).toContain('Your checkout has 3 uncommitted change(s) that the worktree does not contain.')
+    await humanTest.ctx.fiber.dispose()
   })
 
   it('prints human-readable text by default', async () => {
@@ -347,5 +379,18 @@ describe('dsh agents run', () => {
     })
     await test.run({ verb: 'run', task: 'add the parser', reviewer: 'anthropic/opus' })
     await test.ctx.fiber.dispose()
+  })
+
+  it('reads the default process stdin when no override is installed', async () => {
+    const original = Object.getOwnPropertyDescriptor(process, 'stdin')
+    Object.defineProperty(process, 'stdin', {
+      value: Readable.from([Buffer.from('piped'), Buffer.from(' task')]),
+      configurable: true,
+    })
+    try {
+      await expect(originalInternals.readStdin()).resolves.toBe('piped task')
+    } finally {
+      if (original !== undefined) Object.defineProperty(process, 'stdin', original)
+    }
   })
 })

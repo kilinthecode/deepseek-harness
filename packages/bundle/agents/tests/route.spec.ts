@@ -1,6 +1,7 @@
 /** Route parsing, label derivation, check-command splitting, and reused-worktree directory resolution. */
 
 import { describe, expect, it } from 'vitest'
+import { ReasoningEffortId } from '@deepseek-ai/dsh-llm'
 import {
   deriveLabel,
   MAX_LABEL_LENGTH,
@@ -97,8 +98,8 @@ describe('toModelSelection', () => {
     expect(toModelSelection({ provider: 'p', model: 'm' })).toEqual({ provider: 'p', model: 'm' })
   })
 
-  it('brands a present reasoningEffort', () => {
-    expect(toModelSelection({ provider: 'p', model: 'm', reasoningEffort: 'high' }))
+  it('carries a present reasoningEffort through unchanged', () => {
+    expect(toModelSelection({ provider: 'p', model: 'm', reasoningEffort: ReasoningEffortId('high') }))
       .toEqual({ provider: 'p', model: 'm', reasoningEffort: 'high' })
   })
 })

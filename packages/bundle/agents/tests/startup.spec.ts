@@ -77,7 +77,7 @@ export const apply = ctx => globalThis.__agentsStartupApply(ctx)
   cmdlineInternals.stdout = observing
   cmdlineInternals.stderr = observingErr
   startupInternals.stdout = observing
-  const globals = globalThis as unknown as { __agentsStartupApply: typeof apply; __agentsStartupObserved: Observed }
+  const globals = globalThis as typeof globalThis & { __agentsStartupApply: typeof apply; __agentsStartupObserved: Observed }
   globals.__agentsStartupApply = apply
   globals.__agentsStartupObserved = observed
 
@@ -168,6 +168,11 @@ describe('dsh agents command-line provider', () => {
   })
 
   describe('accept', () => {
+    it('parses just the worktree id, defaulting every other field', async () => {
+      const { values } = await bootStartup(['accept', 'wt-aaaaaaaa'])
+      expect(values).toEqual({ verb: 'accept', id: 'wt-aaaaaaaa', json: false })
+    })
+
     it('parses the worktree id and every accept flag', async () => {
       const { values } = await bootStartup([
         'accept', 'wt-aaaaaaaa', '--reviewer', 'anthropic/opus', '--reviewer-effort', 'low', '--test', 'pnpm test', '--json',

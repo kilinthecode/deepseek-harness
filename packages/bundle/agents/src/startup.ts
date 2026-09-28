@@ -120,7 +120,8 @@ interface RunOptions extends ReviewOptions {
  * Validate a `<provider>/<model>` flag as early as the grammar can: the split
  * needs no injected service, so a malformed route fails here rather than
  * after the runner has already resolved the default model or created the
- * operator Agent.
+ * operator Agent. `parseRouteFlag` is owned by this package and only ever
+ * throws `Error`, so the caught value is narrowed without a defensive branch.
  * @param command - the command to report a rejection through.
  * @param flag - the flag name, for the error message.
  * @param value - the raw flag value, or undefined when the flag was omitted.
@@ -129,8 +130,8 @@ function validateRouteFlag(command: Command, flag: string, value: string | undef
   if (value === undefined) return
   try {
     parseRouteFlag(flag, value)
-  } catch (error: unknown) {
-    command.error(`error: ${error instanceof Error ? error.message : String(error)}`)
+  } catch (error) {
+    command.error(`error: ${(error as Error).message}`)
   }
 }
 

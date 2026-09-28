@@ -16,6 +16,7 @@ const openRecord: WorktreeRecord = {
   state: 'open',
   createdAt: 0,
   workerSessionIds: [],
+  workerRoute: { provider: 'anthropic', model: 'opus' },
 }
 
 describe('dsh agents list', () => {

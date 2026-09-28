@@ -58,7 +58,7 @@ export function resolveWorkerRoute(
 ): WorktreeRoute {
   if (model === undefined) return fallback
   const { provider, model: modelId } = parseRouteFlag('--model', model)
-  return { provider, model: modelId, ...effort === undefined ? {} : { reasoningEffort: effort } }
+  return { provider, model: modelId, ...effort === undefined ? {} : { reasoningEffort: ReasoningEffortId(effort) } }
 }
 
 /**
@@ -74,7 +74,7 @@ export function resolveReviewerOverride(
 ): WorktreeRoute | undefined {
   if (reviewer === undefined) return undefined
   const { provider, model } = parseRouteFlag('--reviewer', reviewer)
-  return { provider, model, ...reviewerEffort === undefined ? {} : { reasoningEffort: reviewerEffort } }
+  return { provider, model, ...reviewerEffort === undefined ? {} : { reasoningEffort: ReasoningEffortId(reviewerEffort) } }
 }
 
 /**
@@ -94,26 +94,26 @@ export function splitTestCommand(value: string): string[] {
  * @returns the first line, collapsed to single spaces and capped at {@link MAX_LABEL_LENGTH}.
  */
 export function deriveLabel(task: string): string {
-  const firstLine = (task.split('\n')[0] ?? '').trim().replace(/\s+/gu, ' ')
+  const newline = task.indexOf('\n')
+  const firstLine = (newline < 0 ? task : task.slice(0, newline)).trim().replace(/\s+/gu, ' ')
   const label = firstLine === '' ? task.trim().replace(/\s+/gu, ' ') : firstLine
   if (label.length <= MAX_LABEL_LENGTH) return label
   return `${label.slice(0, MAX_LABEL_LENGTH - 1)}…`
 }
 
 /**
- * Convert a {@link WorktreeRoute} into a {@link ModelSelection}: required
- * `provider`/`model` plus a branded `reasoningEffort`. A `ModelSelection` is
- * also a valid {@link AgentOptions} (whose same-named fields are optional), so
- * this single conversion covers both an Agent's `agentOptions` and a
- * `ctx.subagents.start()` request's `agentOptions`.
+ * Convert a {@link WorktreeRoute} into a {@link ModelSelection}. A
+ * `ModelSelection` is also a valid {@link AgentOptions} (whose same-named
+ * fields are optional), so this single conversion covers both an Agent's
+ * `agentOptions` and a `ctx.subagents.start()` request's `agentOptions`.
  * @param route - the resolved worker, fixer, or operator route.
- * @returns the equivalent model selection, with `reasoningEffort` branded.
+ * @returns the equivalent model selection.
  */
 export function toModelSelection(route: WorktreeRoute): ModelSelection {
   return {
     provider: route.provider,
     model: route.model,
-    ...route.reasoningEffort === undefined ? {} : { reasoningEffort: ReasoningEffortId(route.reasoningEffort) },
+    ...route.reasoningEffort === undefined ? {} : { reasoningEffort: route.reasoningEffort },
   }
 }
 
