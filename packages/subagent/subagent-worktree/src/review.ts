@@ -116,7 +116,9 @@ async function boundedDiff(git: GitRunner, params: RunReviewerParams): Promise<{
  * output as a {@link WorktreeVerdict} — fail closed (verdict `fail`, with the
  * single finding {@link NO_VERDICT_MESSAGE}) when it is missing or malformed,
  * whether because the run produced no structured value, failed schema
- * validation, or did not complete.
+ * validation, or did not itself report `stopReason: 'completed'` (an error,
+ * a cancellation, or any other non-`completed` stop is untrusted even when a
+ * structured value happens to be present).
  * @param ctx - host context with the `subagents` registry.
  * @param git - command runner, for the bounded diff.
  * @param params - review checkout, commit range, task, route, and cancellation.
@@ -152,7 +154,7 @@ export async function runReviewer(ctx: Context, git: GitRunner, params: RunRevie
     await run.dispose()
   }
   const at = Date.now()
-  if (!isReviewerVerdictShape(result.structured)) {
+  if (result.stopReason !== 'completed' || !isReviewerVerdictShape(result.structured)) {
     return {
       verdict: 'fail',
       summary: NO_VERDICT_MESSAGE,
