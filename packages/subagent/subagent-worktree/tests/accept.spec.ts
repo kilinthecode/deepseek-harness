@@ -1,5 +1,5 @@
 import { spawnSync } from 'node:child_process'
-import { unlinkSync } from 'node:fs'
+import { readFileSync, unlinkSync, writeFileSync } from 'node:fs'
 import { chmod, mkdir, mkdtemp, readFile, rm, symlink, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -836,6 +836,26 @@ describe('accept: state machine', () => {
     // that follows it (reopening a now-deleted record) also fails.
     await expect(ctx.subagentWorktrees.accept(acceptRequest(provisioned.record.id)))
       .rejects.toThrow('reviewer infrastructure boom')
+  }, GIT_TEST_TIMEOUT_MS)
+
+  it('does not reopen a record that changed state while the failing accept was running', async () => {
+    const pendingChange: { path: string | undefined } = { path: undefined }
+    const { ctx, dir, root } = await harness({
+      verdicts: [{ throws: 'reviewer infrastructure boom' }],
+      onReviewerStart: () => {
+        // Someone else moved the record on while this accept was mid-review (here: discarded it).
+        if (pendingChange.path === undefined) return
+        const stored = JSON.parse(readFileSync(pendingChange.path, 'utf8')) as Record<string, unknown>
+        writeFileSync(pendingChange.path, JSON.stringify({ ...stored, state: 'discarded' }))
+      },
+    })
+    const provisioned = await createWorktree(ctx, OWNER, dir, 'do the thing')
+    await writeFile(join(provisioned.workDir, 'change.txt'), 'x')
+    pendingChange.path = (await requireRecordLocation(root, provisioned.record.id)).path
+
+    await expect(ctx.subagentWorktrees.accept(acceptRequest(provisioned.record.id)))
+      .rejects.toThrow('reviewer infrastructure boom')
+    expect((await requireRecordLocation(root, provisioned.record.id)).record.state).toBe('discarded')
   }, GIT_TEST_TIMEOUT_MS)
 })
 

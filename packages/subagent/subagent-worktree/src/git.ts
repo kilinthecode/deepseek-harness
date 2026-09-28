@@ -115,8 +115,9 @@ export class GitRunner {
     const stderrRead = handle.collected.stderr?.readFrom(0)
     const stdout = stdoutRead?.text ?? ''
     const stderr = stderrRead?.text ?? ''
+    const stdoutLossy = stdoutRead?.lossy ?? false
     /* v8 ignore stop */
-    return { exitCode: outcome.exitCode, stdout, stderr, stdoutLossy: stdoutRead?.lossy ?? false }
+    return { exitCode: outcome.exitCode, stdout, stderr, stdoutLossy }
   }
 
   /**
