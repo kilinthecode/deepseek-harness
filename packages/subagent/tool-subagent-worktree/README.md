@@ -58,7 +58,7 @@ Lists the caller's own still-open worktrees (`open` and `reviewing` states), eac
 
 ### Design concept
 
-Each tool converts the calling Agent into the service's request shape and nothing more: owner is always `{ kind: 'session', sessionId: <calling Agent id> }`, `accept_worktree`'s parent is the calling Agent itself, and `list_worktrees`'s `baseDir` is the calling Session's `header.cwd`. The tools hold no state of their own; every id, state, and verdict comes from `ctx.subagentWorktrees`'s durable record.
+Each tool converts the calling Agent into the service's request shape and nothing more: owner is always `{ kind: 'session', sessionId: <calling Agent id> }`, `accept_worktree`'s parent is the calling Agent itself, and `list_worktrees`'s `baseDir` is the calling Session's `header.cwd`. The `worktree_id` argument of `accept_worktree` and `discard_worktree` is checked with the service's exported `assertWorktreeId` before the service is called, so a malformed id from the model is rejected at the tool boundary with the service's own message. The tools hold no state of their own; every id, state, and verdict comes from `ctx.subagentWorktrees`'s durable record.
 
 ### Declared results and rendered text
 

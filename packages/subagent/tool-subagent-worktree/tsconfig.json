@@ -24,9 +24,6 @@
       "path": "../subagent-worktree"
     },
     {
-      "path": "../../util/brand"
-    },
-    {
       "path": "../../util/values"
     }
   ]

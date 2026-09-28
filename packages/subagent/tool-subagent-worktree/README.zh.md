@@ -58,7 +58,7 @@ kind: "package-reference"
 
 ### 设计概念
 
-每个工具只是把发起调用的 Agent 转换成服务所需的请求形状，不做更多事情：owner 始终是 `{ kind: 'session', sessionId: <发起调用的 Agent id> }`，`accept_worktree` 的 parent 就是发起调用的 Agent 本身，`list_worktrees` 的 `baseDir` 则取自发起调用 Session 的 `header.cwd`。这些工具自身不持有任何状态；每一个 id、state 和 verdict 都来自 `ctx.subagentWorktrees` 的持久化记录。
+每个工具只是把发起调用的 Agent 转换成服务所需的请求形状，不做更多事情：owner 始终是 `{ kind: 'session', sessionId: <发起调用的 Agent id> }`，`accept_worktree` 的 parent 就是发起调用的 Agent 本身，`list_worktrees` 的 `baseDir` 则取自发起调用 Session 的 `header.cwd`。`accept_worktree` 与 `discard_worktree` 的 `worktree_id` 参数会在调用服务之前用服务导出的 `assertWorktreeId` 校验，因此模型给出的格式错误的 id 会在工具边界被拒绝，并带有服务自己的消息。这些工具自身不持有任何状态；每一个 id、state 和 verdict 都来自 `ctx.subagentWorktrees` 的持久化记录。
 
 ### 声明的结果与渲染文本
 
