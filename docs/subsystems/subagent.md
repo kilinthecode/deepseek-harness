@@ -32,6 +32,7 @@ interface SubagentCapabilities {
   readonly depthLimit: boolean
   readonly toolFilter: boolean
   readonly persona: boolean
+  readonly cwd: boolean
 }
 ```
 
@@ -103,6 +104,14 @@ interface SubagentStartRequest {
    * persona (strict `{{…}}` interpolation against the registered variables).
    */
   readonly persona?: string
+  /**
+   * Optional absolute working directory for the child session, replacing the
+   * parent's. Requires {@link SubagentCapabilities.cwd} on the one-shot path;
+   * rejected at start otherwise. The directory must exist when the child is
+   * created; it becomes the child's durable `SessionHeader.cwd`, which scopes
+   * its filesystem tools, shell working directory, and sandbox write root.
+   */
+  readonly cwd?: string
 }
 ```
 
@@ -673,6 +682,62 @@ async start(name: string, request: SubagentStartRequest): Promise<SubagentRun>
 Types: [Agent](core.md) · [ContentBlock](llm-streaming.md) · [MessageId](llm-streaming.md) · [SessionId](core.md)
 
 Source: [`packages/subagent/subagent/src/index.ts`](../../packages/subagent/subagent/src/index.ts)
+
+<a id="ctxsubagentworktrees--subagentworktrees"></a>
+
+### `ctx.subagentWorktrees` — `SubagentWorktrees`
+
+The `ctx.subagentWorktrees` service. Git runs through `ctx.subprocess` with argv and an explicit cwd, in the host realm and outside any session sandbox; its commands and check argv come only from this configuration or operator input, never from model input.
+
+```ts cordis-catalog
+/**
+ * Create one linked worktree on a new branch from the base checkout's `HEAD`.
+ * @param request - owner, base directory, label, task, worker route, and cancellation.
+ * @returns the committed `open` record, the worker directory, and any uncommitted base changes left out.
+ */
+create(request: CreateWorktreeRequest): Promise<ProvisionedWorktree>
+
+/**
+ * Record one worker Session on an open worktree.
+ * @param request - worktree id, owner, worker Session id, and route.
+ * @returns the updated record.
+ */
+async attach(request: AttachWorkerRequest): Promise<WorktreeRecord>
+
+/**
+ * Resolve the reviewer route (operator override, then configuration, then the
+ * accepting Agent's route) and enforce independence from the worker. Routes
+ * are equal when provider and model match; reasoning effort is ignored.
+ * @param request - worker route, caller route, and optional override.
+ * @returns the reviewer route.
+ * @throws when `requireDistinctReviewer` is set and the resolved route equals the worker's.
+ */
+resolveReviewer(request: ResolveReviewerRequest): WorktreeRoute
+
+/**
+ * Commit the worktree's changes, run the check command, have an independent
+ * reviewer check the exact commit, and merge a passing change.
+ * @param request - worktree id, owner, reviewer parent Agent, operator overrides, and cancellation.
+ * @returns the accept outcome.
+ */
+accept(request: AcceptWorktreeRequest): Promise<AcceptOutcome>
+
+/**
+ * Delete one worktree and its branch without merging.
+ * @param request - worktree id, owner, and cancellation.
+ * @returns the `discarded` record.
+ */
+async discard(request: DiscardWorktreeRequest): Promise<WorktreeRecord>
+
+/**
+ * List one repository's worktrees.
+ * @param request - base directory, optional owner filter, and whether to include closed records.
+ * @returns records ordered by creation time.
+ */
+async list(request: ListWorktreesRequest): Promise<WorktreeRecord[]>
+```
+
+Source: [`packages/subagent/subagent-worktree/src/index.ts`](../../packages/subagent/subagent-worktree/src/index.ts)
 
 <a id="subagent-events"></a>
 
