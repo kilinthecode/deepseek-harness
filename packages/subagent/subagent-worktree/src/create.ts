@@ -20,22 +20,23 @@ import type { CreateWorktreeRequest, ProvisionedWorktree } from './types.ts'
 
 /**
  * Best-effort removal of a worktree and branch that provisioning just created,
- * after a later provisioning step failed. It runs on a fresh signal, because
- * the request's own signal is often why provisioning failed and a command
- * started on an aborted signal never runs. Each step is attempted whatever the
- * other did — a worktree that will not remove must not also keep its branch —
- * and uses `run`, not `expect`: the caller's original error is what must reach
- * the caller, so a further failure here is swallowed rather than thrown. A
- * leftover is recovered by a later prune or an operator's cleanup.
+ * after a later provisioning step failed. Each command runs on its own fresh
+ * signal, because the request's own signal is often why provisioning failed
+ * and a command started on an aborted signal never runs, and a removal that
+ * timed out must not abort the branch deletion after it. Each step is
+ * attempted whatever the other did — a worktree that will not remove must not
+ * also keep its branch — and uses `run`, not `expect`: the caller's original
+ * error is what must reach the caller, so a further failure here is swallowed
+ * rather than thrown. A leftover is recovered by a later prune or an
+ * operator's cleanup.
  */
 async function cleanupFailedWorktree(git: GitRunner, repoRoot: string, worktreePath: string, branch: string): Promise<void> {
-  const signal = cleanupSignal()
   try {
-    await git.run(['worktree', 'remove', '--force', worktreePath], { cwd: repoRoot, signal })
+    await git.run(['worktree', 'remove', '--force', worktreePath], { cwd: repoRoot, signal: cleanupSignal() })
   } catch {
     // The branch deletion below still runs, and the caller reports the original failure.
   }
-  await git.run(['branch', '-D', branch], { cwd: repoRoot, signal })
+  await git.run(['branch', '-D', branch], { cwd: repoRoot, signal: cleanupSignal() })
 }
 
 /**

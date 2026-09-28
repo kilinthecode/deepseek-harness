@@ -1,13 +1,20 @@
 import { readFile, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
-import { afterEach, describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import { Context } from '@deepseek-ai/cordis'
 import LocalSubprocessRuntime from '@deepseek-ai/dsh-subprocess-local'
 import { GitRunner } from '../src/git.ts'
+import type * as Git from '../src/git.ts'
 import type { GitCommandResult, GitRunOptions } from '../src/git.ts'
 import { attemptMerge } from '../src/merge.ts'
 import type { MergeAttemptHooks } from '../src/merge.ts'
+import { expireSignal } from './cleanup-signals.ts'
 import { git, initFixtureRepo, removeFixture } from './harness.ts'
+
+// Cleanup signals never run out on their own here, so a test can make one run out at a chosen moment.
+vi.mock('../src/git.ts', async importOriginal => (
+  (await import('./cleanup-signals.ts')).withExpirableCleanupSignals(await importOriginal<typeof Git>())
+))
 
 const cleanups: Array<() => Promise<unknown>> = []
 afterEach(async () => {
@@ -159,6 +166,8 @@ interface Script {
   readonly unmergedScan?: GitCommandResult
   /** Replaces `git merge --abort` (the real command then does not run). */
   readonly mergeAbort?: GitCommandResult
+  /** Runs the real `git merge --abort`, then runs that command's own signal out and reports it killed. */
+  readonly mergeAbortTimesOut?: boolean
   /** Fails the first this many `git rev-parse HEAD` calls with a nonzero exit. */
   readonly failRevParseHead?: number
 }
@@ -176,7 +185,14 @@ class ScriptedGit extends GitRunner {
   override async run(args: readonly string[], options: GitRunOptions): Promise<GitCommandResult> {
     this.commands.push([...args])
     const { script } = this
+    // Like the subprocess runtime, a command started on an aborted signal never runs.
+    if (options.signal?.aborted === true) return KILLED
     if (args[0] === 'merge' && args[1] === '--abort' && script.mergeAbort !== undefined) return script.mergeAbort
+    if (args[0] === 'merge' && args[1] === '--abort' && script.mergeAbortTimesOut === true) {
+      await super.run(args, options)
+      expireSignal(options.signal)
+      return KILLED
+    }
     if (args[0] === 'merge' && args[1] !== '--abort' && script.merge !== undefined) {
       if (script.merge.alongside !== undefined) await super.run(script.merge.alongside, options)
       script.merge.beforeResult?.()
@@ -415,6 +431,20 @@ describe('attemptMerge: a merge that dies or fails after starting', () => {
     expect(hooks.reports[0]).toContain(`the merge of ${sideCommit} in "${dir}" could not be confirmed aborted`)
     expect(hooks.reports[0]).toContain('git merge --abort')
     // The abort itself ran, so nothing is actually left behind.
+    expect(() => git(dir, 'rev-parse', '-q', '--verify', 'MERGE_HEAD')).toThrow()
+    expect(git(dir, 'rev-parse', 'HEAD').trim()).toBe(baseHead)
+  }, GIT_TEST_TIMEOUT_MS)
+
+  it('checks that the abort worked on its own fresh signal, so an abort that timed out does not stop the check', async () => {
+    const { dir, sideCommit, baseHead } = await repoWithConflictingSideBranch('dsh-merge-abort-times-out-')
+    const hooks = recordingHooks()
+    const command = await scripted({ mergeAbortTimesOut: true })
+
+    const result = await attemptMerge(command, dir, 'wt-00000030', 'do the thing', sideCommit, signal, hooks)
+
+    // The abort completed and then ran out of time; the check after it still ran and found nothing left behind.
+    expect(result).toEqual({ kind: 'conflict', files: ['f.txt'] })
+    expect(hooks.reports).toEqual([])
     expect(() => git(dir, 'rev-parse', '-q', '--verify', 'MERGE_HEAD')).toThrow()
     expect(git(dir, 'rev-parse', 'HEAD').trim()).toBe(baseHead)
   }, GIT_TEST_TIMEOUT_MS)

@@ -212,10 +212,11 @@ async function checkAndReview(
 async function removeMergedWorktree(
   deps: AcceptDeps, record: StoredWorktreeRecord, mergeCommit: string,
 ): Promise<boolean> {
-  const signal = cleanupSignal()
   try {
-    await deps.git.expect(['worktree', 'remove', '--force', record.path], 'git worktree remove', { cwd: record.repoRoot, signal })
-    await deps.git.expect(['branch', '-D', record.branch], 'git branch -D', { cwd: record.repoRoot, signal })
+    await deps.git.expect(['worktree', 'remove', '--force', record.path], 'git worktree remove', {
+      cwd: record.repoRoot, signal: cleanupSignal(),
+    })
+    await deps.git.expect(['branch', '-D', record.branch], 'git branch -D', { cwd: record.repoRoot, signal: cleanupSignal() })
     return true
   } catch (error) {
     deps.ctx.logger.warn(
@@ -273,7 +274,7 @@ async function outcomeOfRecoveredMerge(deps: AcceptDeps, recovery: LandedRecover
   let removed = false
   if (deps.config.removeOnMerge) {
     try {
-      await sweepWorktree(deps.git, record, cleanupSignal())
+      await sweepWorktree(deps.git, record, cleanupSignal)
       removed = true
     } catch (error) {
       deps.ctx.logger.warn(

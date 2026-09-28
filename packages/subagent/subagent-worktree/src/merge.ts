@@ -93,14 +93,14 @@ async function readMergeHeadAfterFailure(
 
 /**
  * Abort the merge this call started, which the caller has already established is this call's own (`MERGE_HEAD`
- * names the commit this call merged), and check that it is gone. A merge that survives the abort, and an abort
+ * names the commit this call merged), and check that it is gone. The abort and the check each run on their own
+ * fresh signal, so an abort that timed out does not stop the check. A merge that survives the abort, and an abort
  * or check that failed and so left the state unknown but possibly this call's, are both reported.
  */
 async function abortOwnMerge(git: GitRunner, repoRoot: string, commit: string, hooks: MergeAttemptHooks): Promise<void> {
-  const signal = cleanupSignal()
   try {
-    await git.run(['merge', '--abort'], { cwd: repoRoot, signal })
-    if (await readMergeHead(git, repoRoot, signal) === undefined) return
+    await git.run(['merge', '--abort'], { cwd: repoRoot, signal: cleanupSignal() })
+    if (await readMergeHead(git, repoRoot, cleanupSignal()) === undefined) return
     hooks.report(
       `subagent-worktree: the merge of ${commit} in "${repoRoot}" could not be aborted and is still in progress; `
       + 'run "git merge --abort" there before merging anything else',

@@ -152,11 +152,35 @@ describe('sweepWorktree', () => {
     const f = await fixture()
     const { record } = await requireRecordLocation(f.root, f.record.id)
 
-    await sweepWorktree(f.runner, record, signal)
+    await sweepWorktree(f.runner, record, () => signal)
     expect(await pathExists(record.path)).toBe(false)
     expect(git(f.dir, 'branch', '--list', record.branch).trim()).toBe('')
 
-    await sweepWorktree(f.runner, record, signal)
+    await sweepWorktree(f.runner, record, () => signal)
     expect(await pathExists(record.path)).toBe(false)
+  }, GIT_TEST_TIMEOUT_MS)
+
+  it('asks for a separate signal for each git command it runs, in the order the commands run', async () => {
+    const f = await fixture()
+    const { record } = await requireRecordLocation(f.root, f.record.id)
+    const started: Array<{ args: readonly string[]; signal: AbortSignal | undefined }> = []
+    class RecordingGit extends GitRunner {
+      override run(args: readonly string[], options: GitRunOptions): Promise<GitCommandResult> {
+        started.push({ args, signal: options.signal })
+        return super.run(args, options)
+      }
+    }
+    const issued: AbortSignal[] = []
+    const signalFor = (): AbortSignal => {
+      const issuedSignal = new AbortController().signal
+      issued.push(issuedSignal)
+      return issuedSignal
+    }
+
+    await sweepWorktree(new RecordingGit(f.ctx.subprocess), record, signalFor)
+
+    expect(started.map(command => command.args[0])).toEqual(['worktree', 'worktree', 'rev-parse', 'branch'])
+    expect(issued).toHaveLength(4)
+    started.forEach((command, index) => { expect(command.signal).toBe(issued[index]) })
   }, GIT_TEST_TIMEOUT_MS)
 })

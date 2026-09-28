@@ -77,17 +77,19 @@ export async function recoverLandedMerge(
  * removed by hand, can be finished by running it again.
  * @param git - command runner.
  * @param record - the record whose worktree and branch are removed.
- * @param signal - cancellation for the git work.
+ * @param signalFor - the cancellation signal of each git command, asked for once per command. A caller sweeping
+ *   after a cancellable operation of its own passes that operation's signal; a caller cleaning up after the
+ *   operation ended passes a source of fresh signals, so one command that timed out does not abort the next.
  * @throws when a git command that had something to remove fails.
  */
-export async function sweepWorktree(git: GitRunner, record: StoredWorktreeRecord, signal: AbortSignal): Promise<void> {
-  const cleanup = { cwd: record.repoRoot, signal }
+export async function sweepWorktree(git: GitRunner, record: StoredWorktreeRecord, signalFor: () => AbortSignal): Promise<void> {
+  const options = (): { cwd: string; signal: AbortSignal } => ({ cwd: record.repoRoot, signal: signalFor() })
   if (await pathExists(record.path)) {
-    await git.expect(['worktree', 'remove', '--force', record.path], 'git worktree remove', cleanup)
+    await git.expect(['worktree', 'remove', '--force', record.path], 'git worktree remove', options())
   }
-  await git.expect(['worktree', 'prune'], 'git worktree prune', cleanup)
-  const branch = await git.run(['rev-parse', '-q', '--verify', `refs/heads/${record.branch}`], cleanup)
+  await git.expect(['worktree', 'prune'], 'git worktree prune', options())
+  const branch = await git.run(['rev-parse', '-q', '--verify', `refs/heads/${record.branch}`], options())
   if (branch.exitCode === 0) {
-    await git.expect(['branch', '-D', record.branch], 'git branch -D', cleanup)
+    await git.expect(['branch', '-D', record.branch], 'git branch -D', options())
   }
 }

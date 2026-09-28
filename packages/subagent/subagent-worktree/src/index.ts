@@ -282,7 +282,7 @@ export class SubagentWorktrees extends Service {
 
     // Each removal tolerates the thing it removes already being gone, so a
     // discard that was interrupted after the claim can be finished by hand.
-    await sweepWorktree(this.git, claimed, request.signal)
+    await sweepWorktree(this.git, claimed, () => request.signal)
     return toPublicRecord(claimed)
   }
 

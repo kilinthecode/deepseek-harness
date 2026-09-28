@@ -14,11 +14,13 @@ import { acceptWorktree } from '../src/accept.ts'
 import type { AcceptDeps } from '../src/accept.ts'
 import { pathExists } from '../src/fs-util.ts'
 import { GitRunner } from '../src/git.ts'
+import type * as Git from '../src/git.ts'
 import type { GitCommandResult, GitRunOptions } from '../src/git.ts'
 import type { Config } from '../src/index.ts'
 import { reviewCheckoutPathFor } from '../src/paths.ts'
 import { requireRecordLocation, updateExistingRecordAt } from '../src/records.ts'
 import type { AcceptWorktreeRequest, WorktreeId, WorktreeOwner } from '../src/types.ts'
+import { expireSignal, KILLED_RESULT } from './cleanup-signals.ts'
 import { createWorktree, fakeAgent, git, initFixtureRepo, removeFixture, resolveTestConfig, setup } from './harness.ts'
 import type { TestConfig } from './harness.ts'
 import { mountScriptedReviewer } from './scripted-reviewer.ts'
@@ -44,6 +46,11 @@ vi.mock('@deepseek-ai/dsh-atomic-write', async (importOriginal) => {
     },
   }
 })
+
+// Cleanup signals never run out on their own here, so a test can make one run out at a chosen moment.
+vi.mock('../src/git.ts', async importOriginal => (
+  (await import('./cleanup-signals.ts')).withExpirableCleanupSignals(await importOriginal<typeof Git>())
+))
 
 const cleanups: Array<() => Promise<unknown>> = []
 afterEach(async () => {
@@ -1165,6 +1172,43 @@ function directDeps(h: Harness, command: GitRunner): AcceptDeps {
   }
 }
 
+/**
+ * Real git, except that a command `spendsItsSignal` names completes and then runs its own cleanup signal out. Like
+ * the subprocess runtime, it never runs a command started on an aborted signal.
+ */
+class SignalSpendingGit extends GitRunner {
+  constructor(
+    subprocessRuntime: ConstructorParameters<typeof GitRunner>[0],
+    private readonly spendsItsSignal: (args: readonly string[]) => boolean,
+  ) {
+    super(subprocessRuntime)
+  }
+
+  override async run(args: readonly string[], options: GitRunOptions): Promise<GitCommandResult> {
+    if (options.signal?.aborted === true) return KILLED_RESULT
+    const result = await super.run(args, options)
+    if (this.spendsItsSignal(args)) expireSignal(options.signal)
+    return result
+  }
+}
+
+const isWorktreeRemoval = (args: readonly string[]): boolean => args[0] === 'worktree' && args[1] === 'remove'
+
+describe('accept: cleanup signals', () => {
+  it('removes a merged worktree and then its branch on separate fresh signals, so a removal that ran out of time cannot abort the branch deletion', async () => {
+    const h = await harness()
+    const provisioned = await createWorktree(h.ctx, OWNER, h.dir, 'do the thing')
+    await writeFile(join(provisioned.workDir, 'change.txt'), 'x')
+    const command = new SignalSpendingGit(h.ctx.subprocess, isWorktreeRemoval)
+
+    const outcome = await acceptWorktree(directDeps(h, command), acceptRequest(provisioned.record.id))
+
+    expect(outcome).toMatchObject({ kind: 'merged', removed: true })
+    expect(await pathExists(provisioned.record.path)).toBe(false)
+    expect(git(h.dir, 'branch', '--list', provisioned.record.branch).trim()).toBe('')
+  }, GIT_TEST_TIMEOUT_MS)
+})
+
 /** Real git, except that `git merge --abort` fails without aborting, so the merge it was asked to abort stays in progress. */
 class AbortFailsGit extends GitRunner {
   override async run(args: readonly string[], options: GitRunOptions): Promise<GitCommandResult> {
@@ -1309,6 +1353,17 @@ describe('accept: a merge that landed', () => {
 
     expect(outcome).toMatchObject({ kind: 'merged', removed: false })
     expect(await pathExists(provisioned.record.path)).toBe(true)
+  }, GIT_TEST_TIMEOUT_MS)
+
+  it('sweeps a recovered merge\'s leftovers with a fresh signal for each command, so a removal that ran out of time cannot abort the rest', async () => {
+    const { h, provisioned } = await crashedAfterMerge()
+    const command = new SignalSpendingGit(h.ctx.subprocess, isWorktreeRemoval)
+
+    const outcome = await acceptWorktree(directDeps(h, command), acceptRequest(provisioned.record.id))
+
+    expect(outcome).toMatchObject({ kind: 'merged', removed: true })
+    expect(await pathExists(provisioned.record.path)).toBe(false)
+    expect(git(h.dir, 'branch', '--list', provisioned.record.branch).trim()).toBe('')
   }, GIT_TEST_TIMEOUT_MS)
 
   it('reports removed: false and a warning when sweeping a recovered merge\'s leftovers fails', async () => {
