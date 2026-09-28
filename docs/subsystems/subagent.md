@@ -733,14 +733,15 @@ async accept(request: AcceptWorktreeRequest): Promise<AcceptOutcome>
 
 /**
  * Delete one worktree and its branch without merging. The record is claimed
- * under its lock before any git change, so a concurrent `accept` or second
- * `discard` cannot act on a worktree this call is deleting. A `merged` record
- * is not changed: `discard` only removes a worktree directory or branch that
- * a crash between the merge and its cleanup left behind.
+ * under its lock before any git change, so a concurrent `accept` cannot act on
+ * a worktree this call is deleting. A `merged` or `discarded` record is not
+ * changed: `discard` only removes a worktree directory or branch that a crash
+ * between the merge and its cleanup, or a failed earlier `discard`, left behind,
+ * so a retry after a failure finishes the cleanup.
  * @param request - worktree id, owner, and cancellation.
- * @returns the `discarded` record, or the unchanged `merged` record after cleaning up its leftovers.
+ * @returns the `discarded` record, or the unchanged `merged` or `discarded` record after cleaning up its leftovers.
  * @throws when the id is malformed, no such worktree exists, the owner does not own it, an attached worker is
- *   still running, the record is `discarded` or being accepted, or a git cleanup command fails.
+ *   still running, the record is being accepted, or a git cleanup command fails.
  */
 async discard(request: DiscardWorktreeRequest): Promise<WorktreeRecord>
 

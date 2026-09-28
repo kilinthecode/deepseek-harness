@@ -64,12 +64,12 @@ kind: "package-reference"
 | `attach` | 在一个 `open` 的工作树上记录一个工作者会话 id 及其路由;当某次 `accept` 持有该工作树时,以及工作树已关闭后,均会拒绝 |
 | `resolveReviewer` | 解析评审者路由——依次为操作者覆盖、`Config`、调用者自身的路由——若在 `requireDistinctReviewer` 生效时该路由与工作者路由相同,则抛出异常 |
 | `accept` | 唯一会提交或合并的操作:参见[运行流程](#run-flow) |
-| `discard` | 删除一个工作树及其分支而不合并。它在任何 git 改动之前先在记录锁下占有该记录,因此当某次 `accept` 持有该工作树或已挂接的工作者的 Agent 仍在运行时会拒绝执行;已经不存在的目录或分支会被跳过。对 `merged` 记录,它只清除遗留的工作树或分支,状态保持 `merged` |
+| `discard` | 删除一个工作树及其分支而不合并。它在任何 git 改动之前先在记录锁下占有该记录,因此当某次 `accept` 持有该工作树或已挂接的工作者的 Agent 仍在运行时会拒绝执行;已经不存在的目录或分支会被跳过。对 `merged` 或 `discarded` 记录,它除了清除遗留的工作树或分支外不做任何改动,因此中途失败的 `discard` 可以再次运行以完成清理。若某条过期的 `reviewing` 记录所评审的提交已经落地,则与 `accept` 一样先将其记为 `merged` |
 | `list` | 列出一个仓库的工作树,可按所有者过滤,并可选择包含已关闭的记录 |
 
-每个方法都会对调用者进行鉴权:`session` 所有者只能操作自己的工作树,而 `operator`(`dsh agents` 命令行)可以操作该仓库的任何工作树。`create` 和 `list` 会根据仓库内部的 `baseDir` 解析目标仓库;`attach`、`accept` 和 `discard` 只接收工作树 id,并在 `root` 下的每个仓库中搜索该记录,因为记录自身的 `repoRoot` 之后会为每一条后续 git 命令提供所属仓库。
+每个方法都会对调用者进行鉴权:`session` 所有者只能操作自己的工作树,而 `operator`(`dsh agents` 命令行)可以操作该仓库的任何工作树。`create` 和 `list` 会根据仓库内部的 `baseDir` 解析目标仓库;`attach`、`accept` 和 `discard` 只接收工作树 id,并按名称顺序在 `root` 下的每个仓库中搜索该记录,因为记录自身的 `repoRoot` 之后会为每一条后续 git 命令提供所属仓库。无法作为仓库读取的目录项,以及记录目录中名称不是工作树 id 的 `.json` 文件,会被跳过并记录一条警告;而所请求 id 对应的记录文件若存在但无法读取、已损坏或不一致,仍会立即报错。
 
-`accept` 的 `testCommand` 与 `reviewer` 覆盖项仅限操作者使用:`session` 所有者只要设置其中任何一个,就会在提交任何内容之前被拒绝。每个接收工作树 id 的方法,都会在据此构造任何路径之前,先用导出的 `assertWorktreeId`(`wt-` 后跟八位小写十六进制数字)校验它;从磁盘读取的每条记录,还会与其文件名、工作树目录、分支以及完整的 40 位提交 id 进行核对,不一致时立即报错。
+`accept` 的 `testCommand` 与 `reviewer` 覆盖项仅限操作者使用:`session` 所有者只要设置其中任何一个,就会在提交任何内容之前被拒绝。每个接收工作树 id 的方法,都会在据此构造任何路径之前,先用导出的 `assertWorktreeId`(`wt-` 后跟八位小写十六进制数字)校验它;从磁盘读取的每条记录,还会与其文件名、工作树目录、分支以及完整的提交 id(40 位十六进制数字,SHA-256 仓库中为 64 位)进行核对,不一致时立即报错。
 
 -----
 
@@ -83,19 +83,22 @@ kind: "package-reference"
 
 ### 设计概念
 
-每个工作树、其持久化的 JSON 记录及其一次性的评审检出目录,都存放在以仓库的 git 公共目录哈希值为键的单个按仓库划分的目录下,因此互不相关的两个仓库永远不会冲突,同一仓库的所有关联工作树共用一个记录目录、合并锁和 `maxWorktrees` 计数,工作树也永远不会存在于它所隔离的仓库内部。每条记录仍以创建它的那个检出目录作为合并目标。一条记录会在 `open → reviewing → open | merged` 与 `open → discarded` 之间迁移;向 `reviewing` 与 `discarded` 的迁移以及 `attach`,都在该记录自身的写者锁之下检查状态与正在运行的工作者,而不是在获取锁之前检查,因为只有这把锁才能串行化并发的操作。当任何操作下一次读取某条 `reviewing` 记录时,若其接受进程已不再存在,则会被视为 `open`(崩溃恢复)。
+每个工作树、其持久化的 JSON 记录及其一次性的评审检出目录,都存放在以仓库名称及其 git 公共目录哈希值为键的单个按仓库划分的目录下,因此互不相关的两个仓库永远不会冲突,同一仓库的所有关联工作树共用一个记录目录、合并锁和 `maxWorktrees` 计数,工作树也永远不会存在于它所隔离的仓库内部。每条记录仍以创建它的那个检出目录作为合并目标。一条记录会在 `open → reviewing → open | merged` 与 `open → discarded` 之间迁移;向 `reviewing` 与 `discarded` 的迁移以及 `attach`,都在该记录自身的写者锁之下检查状态与正在运行的工作者,而不是在获取锁之前检查,因为只有这把锁才能串行化并发的操作。当任何操作下一次读取某条 `reviewing` 记录时,若其接受进程已不再存在,则会被视为 `open`(崩溃恢复),除非其所评审的提交已经在基础检出目录的历史中,此时它会被记为 `merged`。`merged` 与 `discarded` 记录已关闭:对它们可以重复执行 `discard` 以清除遗留物,但没有任何操作会重新打开它们。
 
 <a id="run-flow"></a>
 ### 运行流程:`accept`
 
 1. 拒绝设置了 `testCommand` 或 `reviewer` 的 `session` 所有者,然后加载记录并鉴权调用者。
-2. 在记录锁之下检查记录是否为 `open`(或其接受进程已不存在的 `reviewing`),以及已挂接工作者的 Agent 是否仍在运行,然后迁移到 `reviewing`。
-3. 提交:执行 `git add -A`,仅当确有内容被暂存时才提交(仅当配置了 `commitAuthorName`/`commitAuthorEmail` 时才附加 `-c user.name=`/`-c user.email=`)。若得到的提交与工作树的基础提交相同,则结果为 `empty`,记录回到 `open`。
-4. 若针对这一确切提交已记录过通过的评审结果,则直接跳到合并步骤——对未产生新改动的被阻塞或冲突的合并重试,不必为此再付出一次评审的代价。
-5. 否则,在该提交处的一个一次性分离检出目录中(会先清理同一工作树遗留的过期检出目录):在 `checkTimeoutMs` 限制下运行已配置的检查命令(如果有)——非零退出码或超时即为 `checks-failed`,评审者不会启动——然后通过 `ctx.subagents.start('spawn', …)` 启动评审子智能体,其提示词中包含有边界的 diff 与该工作树的任务描述,并在宿主代码中校验其结构化结果是否符合评审结果 schema。缺失或无效的结果,或者停止原因不是 `completed` 的运行,都会被视为 `fail` 评审结果,并附带结论 `the reviewer returned no structured verdict`——即失败关闭(fail closed),绝不会抛出异常,也绝不会视为通过。
-6. `fail` 评审结果会得到 `rejected`;工作树回到 `open`。`pass` 评审结果会在按仓库划分的合并锁之下尝试对基础检出目录执行 `git merge --no-ff --no-edit`,最多等待十分钟以让另一次 accept 的合并完成(并行的工作者从同一基础分支而来,因此在第一次合并之后,后续任何分支都无法再进行快进合并)。尝试开始前会先检查:若基础检出目录已有正在进行的合并(存在 `MERGE_HEAD`)或 `HEAD` 已分离,则不运行 `git merge`,直接报告 `blocked`。真正的冲突会中止合并并报告冲突的路径,同时保留该分支;从未开始的合并(例如因为会覆盖本地改动)会报告有边界的 git 消息;被终止或在开始后失败的合并会被中止——仅限本次 accept 自己发起的合并——并抛出异常。冲突与被阻塞这两种情况都会让记录保持 `open` 并保留评审结果。
-7. 合并尝试一结束就释放该锁。一次成功的合并会先被记录——状态置为 `merged`,记录合并提交 id——然后 `removeOnMerge` 才会删除工作树及分支。合并提交一旦存在,记录就绝不会被重新打开:写入 `merged` 状态失败会抛出一个说明合并已经落地的错误,而删除失败只会被记录日志并返回 `removed: false` 的 `merged` 结果,随后由 `discard` 完成清理。
-8. 合并落地之前抛出的任何错误,都会先让仍处于 `reviewing` 的记录回到 `open`,再重新抛出该错误;这一尽力而为的恢复操作本身若失败,只会被记录日志,绝不会掩盖原始错误,期间状态已被改变的记录则保持不动。
+2. 若记录是接受进程已不存在的 `reviewing`,且其最后一次评审结果所对应的提交已是基础检出目录 `HEAD` 的祖先,说明之前的某次 accept 在合并落地之后才崩溃:将其记为 `merged`(若存在把该提交带入的第一个合并提交,则一并记录),在设置了 `removeOnMerge` 时清除遗留物,并返回 `merged`,不再进行第二次评审或合并。
+3. 在记录锁之下检查记录是否为 `open`(或其接受进程已不存在的 `reviewing`),以及已挂接工作者的 Agent 是否仍在运行,然后迁移到 `reviewing` 并记录接受进程的 id。评审可能持续数分钟,期间工作者可能重新启动,因此对运行中工作者的检查会在 `git add` 之前和 `git merge` 之前各重复一次。
+4. 提交:执行 `git add -A`,仅当确有内容被暂存时才提交(仅当配置了 `commitAuthorName`/`commitAuthorEmail` 时才附加 `-c user.name=`/`-c user.email=`)。若得到的提交与工作树的基础提交相同,则结果为 `empty`,记录回到 `open`。
+5. 若针对这一确切提交已记录过通过的评审结果,则直接跳到合并步骤——对未产生新改动的被阻塞或冲突的合并重试,不必为此再付出一次评审的代价。
+6. 否则,在该提交处的一个一次性分离检出目录中(会先清理同一工作树遗留的过期检出目录):在 `checkTimeoutMs` 限制下运行已配置的检查命令(如果有)——非零退出码或超时即为 `checks-failed`,评审者不会启动——然后通过 `ctx.subagents.start('spawn', …)` 启动评审子智能体,其提示词中包含有边界的 diff 与该工作树的任务描述,并在宿主代码中校验其结构化结果是否符合评审结果 schema。缺失或无效的结果,或者停止原因不是 `completed` 的运行,都会被视为 `fail` 评审结果,并附带结论 `the reviewer returned no structured verdict`——即失败关闭(fail closed),绝不会抛出异常,也绝不会视为通过。
+7. `fail` 评审结果会得到 `rejected`;工作树回到 `open`。`pass` 评审结果会在按仓库划分的合并锁之下尝试对基础检出目录执行 `git merge --no-ff --no-edit`,最多等待十分钟以让另一次 accept 的合并完成(并行的工作者从同一基础分支而来,因此在第一次合并之后,后续任何分支都无法再进行快进合并)。尝试开始前会先检查:若基础检出目录已有正在进行的合并(存在 `MERGE_HEAD`)或 `HEAD` 已分离,则不运行 `git merge`,直接报告 `blocked`;被取消或失败的探测会抛出异常,而不会被当作一个答案。`git merge` 失败时由基础检出目录的状态来判定,因为 git 的退出码无法区分拒绝与错误:`MERGE_HEAD` 就是本次 accept 的提交且停在冲突上的合并会被中止并报告为 `conflict`,附带冲突的路径,同时保留该分支;存在本次 accept 未创建的冲突或 `MERGE_HEAD` 时报告 `blocked`,且保持原状;从未开始的合并(例如因为会覆盖本地改动)报告 `blocked` 并附带有边界的 git 消息;被终止或在开始后没有冲突却失败的合并会被中止——仅限本次 accept 自己发起的合并——并抛出异常。冲突与被阻塞这两种情况都会让记录保持 `open` 并保留评审结果。
+8. 合并尝试一结束就释放该锁。一次成功的合并会先被记录——状态置为 `merged`,记录合并提交 id——然后 `removeOnMerge` 才会删除工作树及分支。自 `git merge` 退出码为 0 起,记录就绝不会被重新打开。读取合并提交 id 失败时会重试一次;若仍无法读取,则记录 `merged` 但不带 id,并抛出一个说明合并已经落地的错误。写入 `merged` 状态失败会尽力释放 accept 的占有标记,使下一次 `accept` 或 `discard` 能把这条过期记录识别为已落地,并抛出一个说明合并已经落地的错误。删除失败只会被记录日志并返回 `removed: false` 的 `merged` 结果,随后由 `discard` 完成清理。
+9. 合并落地之前抛出的任何错误,以及每一种未合并的结果(`empty`、`checks-failed`、`rejected`、`conflict`、`blocked`),都会让记录回到 `open`。只有仍处于 `reviewing` 的记录才会重新打开,并同时放弃其 accept 占有标记;期间已被丢弃或记为 `merged` 的记录则保持存储时的样子。抛出错误之后这一尽力而为的恢复操作本身若失败,只会被记录日志,绝不会掩盖原始错误。
+
+在调用者取消之后仍必须执行的清理——中止本次 accept 自己发起的合并、删除评审检出目录、删除已合并的工作树,以及删除因 `create` 失败而已置备的工作树——都运行在各自独立的 30 秒信号上,而不是请求自身的信号上,因为在已中止的信号上启动的 git 命令永远不会运行。
 
 ### 源码结构
 
@@ -103,18 +106,19 @@ kind: "package-reference"
 |---|---|
 | [`src/types.ts`](src/types.ts) | 公开的请求、记录与结果类型(仅包含类型) |
 | [`src/text.ts`](src/text.ts) | 逐字的工作者简报、评审者提示词,以及评审者的评审结果 schema |
-| [`src/index.ts`](src/index.ts) | `SubagentWorktrees` 服务:`Config` 接口与 schema、加载时对根目录与身份的解析、精简的方法体,以及导出的 `assertWorktreeId` |
+| [`src/index.ts`](src/index.ts) | `SubagentWorktrees` 服务:`Config` 接口与 schema、精简的方法体、导出的 `assertWorktreeId`,以及构造函数——它在加载时一次性解析 `root`、评审者路由与提交作者(`create` 与 `list` 则在每次调用时通过 `repoIdentityOf` 解析仓库) |
 | [`src/config.ts`](src/config.ts) | 在加载时一次性解析并校验扁平化的评审者路由与提交作者 `Config` 字段;`Config` 本身声明在 `src/index.ts` 中 |
-| [`src/worktree-id.ts`](src/worktree-id.ts) | `wt-` id 格式校验器,在每个公开方法处以及据 id 构造任何路径之前使用 |
+| [`src/worktree-id.ts`](src/worktree-id.ts) | `wt-` id 格式:在每个公开方法处以及据 id 构造任何路径之前使用的 `assertWorktreeId`,以及记录列表用来跳过无关文件的、不抛异常的 `isWorktreeId` |
 | [`src/git.ts`](src/git.ts) | 通过 `ctx.subprocess` 执行的 argv 形式 git 命令,带有经过清理的非交互式环境、有边界的输出,以及对需要解析的输出的有损捕获检查 |
 | [`src/check-command.ts`](src/check-command.ts) | 在时限内运行已配置的(非 git)检查命令并收集其合并输出 |
 | [`src/paths.ts`](src/paths.ts) | 纯粹的目录布局计算:按仓库划分的键及其下的每一条路径 |
-| [`src/records.ts`](src/records.ts) | 持久化的按工作树划分的 JSON 记录:schema 与完整性校验、原子化的加锁写入、按 id 的跨仓库查找,以及所有者/状态的断言 |
+| [`src/records.ts`](src/records.ts) | 持久化的按工作树划分的 JSON 记录:schema 与完整性校验、原子化的加锁写入、按 id 的跨仓库查找与按仓库的列表(两者都会跳过无关条目并给出警告),以及所有者/状态的断言 |
 | [`src/workers.ts`](src/workers.ts) | `accept` 与 `discard` 共用的、对正在运行的已挂接工作者的拒绝逻辑 |
-| [`src/repo.ts`](src/repo.ts) | `create` 与 `list` 共用的仓库身份(顶层检出目录与共享的 git 公共目录)解析 |
+| [`src/repo.ts`](src/repo.ts) | `repoIdentityOf`:仓库身份(顶层检出目录与共享的 git 公共目录)解析,由 `create` 与 `list` 在每次调用时使用 |
 | [`src/create.ts`](src/create.ts) | `create` 流程:仓库解析、`maxWorktrees`、失败时带清理的置备过程、基础检出目录的脏改动摘要 |
 | [`src/review.ts`](src/review.ts) | 评审子智能体:限定 diff 的边界、启动它,并校验其结构化结果 |
-| [`src/merge.ts`](src/merge.ts) | `--no-ff` 合并尝试:开始前的拒绝检查,以及冲突、被阻塞与被终止合并的分类 |
+| [`src/merge.ts`](src/merge.ts) | `--no-ff` 合并尝试:开始前的拒绝检查、依据基础检出目录状态对失败合并的分类,以及仅中止本次 accept 自己发起的合并 |
+| [`src/landed.ts`](src/landed.ts) | 对所评审提交已经落地的过期 `reviewing` 记录的恢复,以及 `accept` 与 `discard` 共用的、对工作树目录、注册信息与分支的清扫 |
 | [`src/accept.ts`](src/accept.ts) | [运行流程](#run-flow)中所述的 `accept` 编排逻辑 |
 | — | 本包未发布运行时不变量伴生模块;每一次状态迁移本就只能通过本包自身对记录锁与所有者检查的强制执行才能触及,因此不存在对同一关系的独立观测会与之产生分歧。 |
 
@@ -167,7 +171,7 @@ kind: "package-reference"
 - **`maxWorktrees` 在并发下只是建议值**——`create` 先统计打开的工作树,再在两者之间不加锁的情况下持久化记录,因此对同一仓库同时发起的两次 `create` 可能都通过检查。
 - **被回收的进程 id 可能钉住工作树**——崩溃的 accept 会让其记录保持 `reviewing` 并带着其进程 id;若某个无关的后续进程复用了该 id,这条记录就会被当作仍在运行的 accept:该工作树会一直被拒绝为“正在被接受”,直到操作者清理该记录。`withFileLock` 对自己的锁接管也记录了同样的限制。
 - **diff 超过 8 MiB 的改动无法评审**——`accept` 会立即报错,而不是嵌入不完整的 diff,并让工作树回到 `open`。
-- **被中断的 discard 会留下遗留物**——`discard` 在删除任何东西之前先占有记录,因此中途失败会让记录保持 `discarded`,而工作树或分支仍然存在;请用 `git worktree remove` 与 `git branch -D` 手动清除。
+- **被中断的 discard 会留下遗留物**——`discard` 在删除任何东西之前先占有记录,因此中途失败会让记录保持 `discarded`,而工作树或分支仍然存在;排除原因后对它再次运行 `discard`,即可清除剩余部分。
 
 <a id="dev-note"></a>
 ### 开发备注
