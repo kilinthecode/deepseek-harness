@@ -1,0 +1,19 @@
+# Optional agent-crew bundle: switches the subagent tool to worktree
+# isolation and adds the tools and skill that land, discard, and list those
+# worktrees. An id-targeted patch replaces the whole config, so the
+# tool-subagent row restates its dsh-base fields alongside the new
+# worktreeIsolation switch.
+
+- id: tool-subagent
+  config:
+    provider: spawn
+    toolName: subagent
+    backgroundMode: continuable
+    worktreeIsolation: true
+
+- insert:
+    - id: tool-subagent-worktree
+      name: '@deepseek-ai/dsh-tool-subagent-worktree'
+
+    - id: skill-agent-crew
+      name: '@deepseek-ai/dsh-skill-agent-crew'

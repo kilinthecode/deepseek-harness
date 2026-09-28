@@ -1,0 +1,46 @@
+# Bilingual-pair consistency record for README.md (docs/i18n/README.md): per heading
+# section, a hash of its English and Chinese blocks outside code blocks and generated regions.
+# After editing either side, bring the other along and re-record with:
+#   pnpm run verify-translation-pairing --write packages/bundle/agent-crew/README.md
+/:
+  en: 682745750d6d59f6
+  zh: e53e928c89fb748c
+/deepseek-ai-dsh-agent-crew:
+  en: ae31b825864a2bd7
+  zh: f7b59c3c907a525a
+/deepseek-ai-dsh-agent-crew/summary:
+  en: 15dc53f97df4148c
+  zh: 855fa60a4e2620b5
+/deepseek-ai-dsh-agent-crew/table-of-contents:
+  en: d152484eb41ac6b4
+  zh: 364c80ee00a374ff
+/deepseek-ai-dsh-agent-crew/use-this-package:
+  en: 09bc4582d3d2a366
+  zh: 5af74d5e96a53974
+/deepseek-ai-dsh-agent-crew/understand-the-implementation:
+  en: 6f8c6375ed520e32
+  zh: 66f93cc8697eb808
+/deepseek-ai-dsh-agent-crew/further-exploration:
+  en: 78a53cf801faaa01
+  zh: 1b2858b9fc873aa4
+/deepseek-ai-dsh-agent-crew/model-experience:
+  en: 215e7ba838619b7b
+  zh: a311da3843709f90
+/deepseek-ai-dsh-agent-crew/model-experience/subagent-isolation-option-and-worktree-tools:
+  en: 366ae2d60dd99d7f
+  zh: 021012e9b667c362
+/deepseek-ai-dsh-agent-crew/model-experience/subagent-isolation-option-and-worktree-tools/what-the-model-sees:
+  en: ef3e4e356d9ca958
+  zh: ffd96db0c3f68f43
+/deepseek-ai-dsh-agent-crew/model-experience/subagent-isolation-option-and-worktree-tools/token-effect:
+  en: 54ae431835f04174
+  zh: 6ce1e3f67014de19
+/deepseek-ai-dsh-agent-crew/model-experience/subagent-isolation-option-and-worktree-tools/kv-cache-effect:
+  en: 822e5480f256f36a
+  zh: 6e332c9cb3b3a0ea
+/deepseek-ai-dsh-agent-crew/known-limitations-and-deferred-work:
+  en: 4032186e36d92f80
+  zh: 7968422faa30946a
+/deepseek-ai-dsh-agent-crew/known-limitations-and-deferred-work/dev-note:
+  en: 0225ba087c5266f3
+  zh: 4e706f1b2b984e63
