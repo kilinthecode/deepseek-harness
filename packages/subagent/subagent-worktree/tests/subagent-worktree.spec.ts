@@ -27,7 +27,7 @@ const REVIEWER_ROUTE = { provider: 'reviewer-provider', model: 'reviewer-model' 
 const GIT_TEST_TIMEOUT_MS = 20_000
 
 /** Config fields a raw `ctx.plugin(SubagentWorktrees, ...)` call must always supply. */
-const RAW_BASE_CONFIG = {
+const RAW_BASE_CONFIG: Omit<Config, 'root'> = {
   branchPrefix: 'dsh/worktree/',
   maxWorktrees: 16,
   requireDistinctReviewer: false,

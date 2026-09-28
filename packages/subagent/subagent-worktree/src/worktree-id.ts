@@ -18,6 +18,7 @@ const WORKTREE_ID_PATTERN = /^wt-[0-9a-f]{8}$/
 /**
  * Validate a worktree id's shape.
  * @param value - the candidate id, from a request, a record field, or a record file name.
+ * @returns an assertion that `value` is a {@link WorktreeId}.
  * @throws when `value` does not match `wt-` followed by eight lowercase hexadecimal digits.
  */
 export function assertWorktreeId(value: string): asserts value is WorktreeId {
