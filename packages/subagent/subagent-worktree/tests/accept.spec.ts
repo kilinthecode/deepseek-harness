@@ -1,6 +1,6 @@
 import { spawnSync } from 'node:child_process'
 import { readFileSync, unlinkSync, writeFileSync } from 'node:fs'
-import { chmod, mkdir, mkdtemp, readFile, rm, symlink, writeFile } from 'node:fs/promises'
+import { chmod, mkdir, mkdtemp, readdir, readFile, rm, symlink, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, describe, expect, it, vi } from 'vitest'
@@ -923,6 +923,21 @@ describe('accept: state machine', () => {
 
     const relisted = await ctx.subagentWorktrees.list({ baseDir: dir, owner: OWNER })
     expect(relisted.find(r => r.id === provisioned.record.id)?.state).toBe('open')
+  }, GIT_TEST_TIMEOUT_MS)
+
+  it('removes the review checkout on a fresh signal even when the caller cancelled the accept during the review', async () => {
+    const controller = new AbortController()
+    const { ctx, dir, root } = await harness({ onReviewerStart: () => { controller.abort() } })
+    const provisioned = await createWorktree(ctx, OWNER, dir, 'do the thing')
+    await writeFile(join(provisioned.workDir, 'change.txt'), 'x')
+
+    await expect(ctx.subagentWorktrees.accept(acceptRequest(provisioned.record.id, { signal: controller.signal }))).rejects.toThrow()
+
+    const { layout } = await requireRecordLocation(root, provisioned.record.id)
+    expect(controller.signal.aborted).toBe(true)
+    expect(await readdir(layout.reviewsDir)).toEqual([])
+    expect(git(dir, 'worktree', 'list').trim().split('\n')).toHaveLength(2)
+    expect((await ctx.subagentWorktrees.list({ baseDir: dir }))[0]?.state).toBe('open')
   }, GIT_TEST_TIMEOUT_MS)
 
   it('logs but does not fail accept when a stale review directory is not a real git worktree', async () => {
