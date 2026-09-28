@@ -153,6 +153,8 @@ describe('assertStoredWorktreeRecord', () => {
 
   it.each([
     ['not an object', 'nope'],
+    ['null', null],
+    ['an array', [baseRecord()]],
     ['missing id', { ...baseRecord(), id: undefined }],
     ['owner is not an object', { ...baseRecord(), owner: 'nope' }],
     ['bad owner kind', { ...baseRecord(), owner: { kind: 'nobody' } }],
