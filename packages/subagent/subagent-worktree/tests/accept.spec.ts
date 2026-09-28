@@ -27,15 +27,17 @@ import { mountScriptedReviewer } from './scripted-reviewer.ts'
 import type { ScriptedVerdict } from './scripted-reviewer.ts'
 
 /**
- * Scripted faults for record writes: the next `skip` writes pass through, then the next `fail` writes reject.
- * The mock wraps the real `writeFileAtomic`, so every other write behaves exactly as in production.
+ * Scripted faults for record writes: the next `skip` writes pass through, then the next `fail` writes reject. Every
+ * write is also logged, failed or not, so a test can count the writes an operation makes. The mock wraps the real
+ * `writeFileAtomic`, so every other write behaves exactly as in production.
  */
-const writeFaults = vi.hoisted(() => ({ skip: 0, fail: 0 }))
+const writeFaults = vi.hoisted(() => ({ skip: 0, fail: 0, log: [] as Array<{ path: string; content: string }> }))
 vi.mock('@deepseek-ai/dsh-atomic-write', async (importOriginal) => {
   const actual = await importOriginal<typeof AtomicWrite>()
   return {
     ...actual,
     writeFileAtomic: (...args: Parameters<typeof actual.writeFileAtomic>) => {
+      writeFaults.log.push({ path: args[0], content: args[1] })
       if (writeFaults.skip > 0) {
         writeFaults.skip -= 1
       } else if (writeFaults.fail > 0) {
@@ -57,9 +59,21 @@ afterEach(async () => {
   vi.restoreAllMocks()
   writeFaults.skip = 0
   writeFaults.fail = 0
+  writeFaults.log.length = 0
   for (const cleanup of cleanups.reverse()) await cleanup()
   cleanups.length = 0
 })
+
+/**
+ * The writes to one worktree's record file since `writeFaults.log` was last cleared that carry either half of a
+ * landed merge, `state: 'merged'` or a `mergedCommit`.
+ */
+function landingWrites(id: WorktreeId): Array<{ state: string; mergedCommit?: string; reviewingPid?: number }> {
+  return writeFaults.log
+    .filter(write => write.path.endsWith(`${id}.json`))
+    .map(write => JSON.parse(write.content) as { state: string; mergedCommit?: string; reviewingPid?: number })
+    .filter(record => record.state === 'merged' || record.mergedCommit !== undefined)
+}
 
 /** A promise plus the function that settles it, for holding one step of a scenario until another has happened. */
 function deferred(): { promise: Promise<void>; resolve: () => void } {
@@ -333,6 +347,22 @@ describe('accept: merge outcomes', () => {
     expect(await readFile(join(linked, 'change.txt'), 'utf8')).toBe('from worker')
     expect(await pathExists(join(dir, 'change.txt'))).toBe(false)
     expect(git(linked, 'log', '-1', '--pretty=%s').trim()).toContain(`Merge worktree ${provisioned.record.id}`)
+  }, GIT_TEST_TIMEOUT_MS)
+
+  it('persists state merged and mergedCommit in one write, so no record says one without the other', async () => {
+    const { ctx, dir } = await harness()
+    const provisioned = await createWorktree(ctx, OWNER, dir, 'do the thing')
+    await writeFile(join(provisioned.workDir, 'change.txt'), 'x')
+    writeFaults.log.length = 0
+
+    const outcome = await ctx.subagentWorktrees.accept(acceptRequest(provisioned.record.id))
+
+    if (outcome.kind !== 'merged') throw new Error('unreachable')
+    const writes = landingWrites(provisioned.record.id)
+    expect(writes).toHaveLength(1)
+    expect(writes[0]).toMatchObject({ state: 'merged', mergedCommit: outcome.mergeCommit })
+    // The same write released the claim.
+    expect(writes[0]).not.toHaveProperty('reviewingPid')
   }, GIT_TEST_TIMEOUT_MS)
 
   it('keeps the worktree and branch when removeOnMerge is false', async () => {
@@ -1381,6 +1411,17 @@ describe('accept: a merge that landed', () => {
     // The crashed accept never removed the worktree or branch; the recovery sweeps them.
     expect(await pathExists(provisioned.record.path)).toBe(false)
     expect(git(h.dir, 'branch', '--list', provisioned.record.branch).trim()).toBe('')
+  }, GIT_TEST_TIMEOUT_MS)
+
+  it('records a recovered merge in one write of state merged and mergedCommit', async () => {
+    const { h, provisioned, mergeCommit } = await crashedAfterMerge()
+    writeFaults.log.length = 0
+
+    await h.ctx.subagentWorktrees.accept(acceptRequest(provisioned.record.id))
+
+    const writes = landingWrites(provisioned.record.id)
+    expect(writes).toHaveLength(1)
+    expect(writes[0]).toMatchObject({ state: 'merged', mergedCommit: mergeCommit })
   }, GIT_TEST_TIMEOUT_MS)
 
   it('records merged, and sweeps the leftovers, when a discard finds the reviewed commit already landed', async () => {
