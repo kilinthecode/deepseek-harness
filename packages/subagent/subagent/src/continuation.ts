@@ -14,6 +14,7 @@
  */
 
 import { randomUUID } from 'node:crypto'
+import { realpathSync } from 'node:fs'
 import type { Context } from '@deepseek-ai/cordis'
 import type { Agent } from '@deepseek-ai/dsh-agent'
 import { brandString } from '@deepseek-ai/dsh-brand'
@@ -78,6 +79,23 @@ interface ContinuationHost {
   prepareContinuable(name: string, request: ContinuableCreateRequest): Promise<ContinuableCreateSpec>
   /** Build the lifecycle observer for one Activation residency epoch. */
   observeActivation(provider: string, childId: SessionId, parent: Agent): ActivationObserver
+}
+
+/**
+ * Resolve `cwd` to its canonical spelling for the "does this child share its
+ * parent's workspace" comparison, so a trailing slash or a symlink alias
+ * still counts as the same directory as its resolved target. Falls back to
+ * the raw value when it cannot be resolved: this feeds return-guidance
+ * wording, not a security or access check, so a stat failure should degrade
+ * to the exact-string comparison rather than reject the call.
+ */
+function normalizedCwdForComparison(cwd: string | undefined): string | undefined {
+  if (cwd === undefined) return undefined
+  try {
+    return realpathSync(cwd)
+  } catch {
+    return cwd
+  }
 }
 
 /**
@@ -187,7 +205,8 @@ export class SubagentContinuationManager {
           signal: spec.signal,
         })
         const childHeader = activation.handle.agent.session.header
-        const sharesWorkspace = childHeader.cwd === parent.session.header.cwd
+        const sharesWorkspace = normalizedCwdForComparison(childHeader.cwd)
+          === normalizedCwdForComparison(parent.session.header.cwd)
         return await this.submitMaterialized(
           activation,
           isAdjacentAgentSendMessageTool(this.ctx.get('tools')?.get('send_message', activation.handle.agent))
@@ -449,9 +468,12 @@ export class SubagentContinuationManager {
     // A worktree-isolated child's cwd can disappear between activations (its
     // worktree merged or was discarded); resuming into a missing directory
     // would hand the child a dead workspace instead of failing loud here.
+    // `isEnterableDirectory` also rejects a path that now names a file or an
+    // unsearchable directory, not only a removed one, hence "accessible"
+    // rather than "exists".
     if (persistedCwd !== undefined && !isEnterableDirectory(persistedCwd)) {
       throw new SubagentError(
-        `subagent "${childId}" cannot resume: its working directory "${persistedCwd}" no longer exists`,
+        `subagent "${childId}" cannot resume: its working directory "${persistedCwd}" is no longer an accessible directory`,
         'NOT_RESUMABLE',
       )
     }
