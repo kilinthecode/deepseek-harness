@@ -82,7 +82,13 @@ function short(commit: string): string {
   return commit.slice(0, 7)
 }
 
-/** Build the `worktree` event for a freshly created or reused worktree. */
+/**
+ * Build the `worktree` event for a freshly created or reused worktree.
+ * @param record - the worktree's id, path, branch, and base commit.
+ * @param reused - whether the worktree was reused rather than freshly created.
+ * @param baseDirty - present only for a freshly created worktree whose base checkout had uncommitted changes it does not contain.
+ * @returns the `worktree` event.
+ */
 export function worktreeEvent(
   record: Pick<WorktreeRecord, 'id' | 'path' | 'branch' | 'baseCommit'>,
   reused: boolean,
@@ -94,7 +100,13 @@ export function worktreeEvent(
   }
 }
 
-/** Human line for a freshly created or reused worktree. */
+/**
+ * Human line for a freshly created or reused worktree.
+ * @param record - the worktree's id, path, branch, and base commit.
+ * @param reused - whether the worktree was reused rather than freshly created.
+ * @param baseDirty - present only for a freshly created worktree whose base checkout had uncommitted changes it does not contain.
+ * @returns the human-readable line.
+ */
 export function worktreeLine(
   record: Pick<WorktreeRecord, 'id' | 'path' | 'branch' | 'baseCommit'>,
   reused: boolean,
@@ -106,7 +118,11 @@ export function worktreeLine(
   return `${base} Your checkout has ${String(baseDirty.total)} uncommitted change(s) that the worktree does not contain.`
 }
 
-/** Build the `worktree` event for one `dsh agents list` row. */
+/**
+ * Build the `worktree` event for one `dsh agents list` row.
+ * @param record - the worktree record being listed.
+ * @returns the `list` row event.
+ */
 export function listEvent(record: WorktreeRecord): ListEvent {
   return {
     type: 'worktree', id: record.id, path: record.path, branch: record.branch, baseCommit: record.baseCommit,
@@ -115,17 +131,34 @@ export function listEvent(record: WorktreeRecord): ListEvent {
   }
 }
 
-/** Build the `worker` event for a settled worker or fixer child. */
+/**
+ * Build the `worker` event for a settled worker or fixer child.
+ * @param sessionId - the settled child's session id.
+ * @param route - the route the child ran on.
+ * @param stopReason - why the child's run ended.
+ * @param diagnostic - provider-authored failure detail, present only when the child reported one.
+ * @returns the `worker` event.
+ */
 export function workerEvent(sessionId: string, route: WorktreeRoute, stopReason: SubagentStopReason, diagnostic?: string): WorkerEvent {
   return { type: 'worker', sessionId, route, stopReason, ...diagnostic === undefined ? {} : { diagnostic } }
 }
 
-/** Human line for a settled worker or fixer child. */
+/**
+ * Human line for a settled worker or fixer child.
+ * @param sessionId - the settled child's session id.
+ * @param route - the route the child ran on.
+ * @param stopReason - why the child's run ended.
+ * @returns the human-readable line.
+ */
 export function workerLine(sessionId: string, route: WorktreeRoute, stopReason: SubagentStopReason): string {
   return `Worker ${sessionId} (${route.provider}/${route.model}) finished: ${stopReason}.`
 }
 
-/** Build the `review` event from a recorded verdict. */
+/**
+ * Build the `review` event from a recorded verdict.
+ * @param verdict - the reviewer's recorded verdict.
+ * @returns the `review` event.
+ */
 export function reviewEvent(verdict: WorktreeVerdict): ReviewEvent {
   return {
     type: 'review',
@@ -137,13 +170,21 @@ export function reviewEvent(verdict: WorktreeVerdict): ReviewEvent {
   }
 }
 
-/** Human line for a recorded verdict. */
+/**
+ * Human line for a recorded verdict.
+ * @param verdict - the reviewer's recorded verdict.
+ * @returns the human-readable line.
+ */
 export function reviewLine(verdict: WorktreeVerdict): string {
   return `Reviewer ${verdict.reviewerRoute.provider}/${verdict.reviewerRoute.model} at ${short(verdict.commit)}: `
     + `${verdict.verdict} — ${verdict.summary}`
 }
 
-/** The verdict a merged, rejected, conflicted, or blocked outcome carries; the other kinds carry none. */
+/**
+ * The verdict a merged, rejected, conflicted, or blocked outcome carries; the other kinds carry none.
+ * @param outcome - the settled accept outcome.
+ * @returns the outcome's verdict, or undefined for a kind that carries none.
+ */
 export function outcomeVerdict(outcome: AcceptOutcome): WorktreeVerdict | undefined {
   return outcome.kind === 'merged' || outcome.kind === 'rejected'
     || outcome.kind === 'conflict' || outcome.kind === 'blocked'
@@ -151,7 +192,11 @@ export function outcomeVerdict(outcome: AcceptOutcome): WorktreeVerdict | undefi
     : undefined
 }
 
-/** Build the `outcome` event for one accept result. */
+/**
+ * Build the `outcome` event for one accept result.
+ * @param outcome - the settled accept outcome.
+ * @returns the `outcome` event.
+ */
 export function outcomeEvent(outcome: AcceptOutcome): OutcomeEvent {
   switch (outcome.kind) {
     case 'merged':
@@ -172,7 +217,11 @@ export function outcomeEvent(outcome: AcceptOutcome): OutcomeEvent {
   }
 }
 
-/** Human line for one accept result. */
+/**
+ * Human line for one accept result.
+ * @param outcome - the settled accept outcome.
+ * @returns the human-readable line.
+ */
 export function outcomeLine(outcome: AcceptOutcome): string {
   switch (outcome.kind) {
     case 'merged':
@@ -204,27 +253,49 @@ function findingsBlock(findings: readonly string[]): string {
     : `Findings:\n${findings.map(finding => `- ${finding}`).join('\n')}`
 }
 
-/** Build the `outcome` event for a successful discard. */
+/**
+ * Build the `outcome` event for a successful discard.
+ * @param id - the discarded worktree's id.
+ * @param branch - the discarded worktree's branch.
+ * @returns the `outcome` event with kind `discarded`.
+ */
 export function discardEvent(id: string, branch: string): OutcomeEvent {
   return { type: 'outcome', kind: 'discarded', id, branch }
 }
 
-/** Human line for a successful discard. */
+/**
+ * Human line for a successful discard.
+ * @param id - the discarded worktree's id.
+ * @param branch - the discarded worktree's branch.
+ * @returns the human-readable line.
+ */
 export function discardLine(id: string, branch: string): string {
   return `Discarded worktree ${id} and branch ${branch}.`
 }
 
-/** Build the `error` event for a run-level failure. */
+/**
+ * Build the `error` event for a run-level failure.
+ * @param message - the failure's message text.
+ * @returns the `error` event.
+ */
 export function errorEvent(message: string): ErrorEvent {
   return { type: 'error', message }
 }
 
-/** Human line for a run-level failure, matching the `dsh: <message>` convention every dsh app uses. */
+/**
+ * Human line for a run-level failure, matching the `dsh: <message>` convention every dsh app uses.
+ * @param message - the failure's message text.
+ * @returns the human-readable line.
+ */
 export function errorLine(message: string): string {
   return `dsh: ${message}`
 }
 
-/** One `dsh agents list` row: id, state, branch, label, and the latest verdict or `not reviewed`. */
+/**
+ * One `dsh agents list` row: id, state, branch, label, and the latest verdict or `not reviewed`.
+ * @param record - the worktree record being listed.
+ * @returns the human-readable line.
+ */
 export function listLine(record: WorktreeRecord): string {
   const verdict = record.lastVerdict?.verdict ?? 'not reviewed'
   return `${record.id}  ${record.state}  ${record.branch}  ${record.label}  ${verdict}`
@@ -240,7 +311,11 @@ export function exitCodeForOutcome(outcome: AcceptOutcome): 0 | 2 {
   return outcome.kind === 'merged' ? 0 : 2
 }
 
-/** Whether a fix round may retry this outcome: only a review or check failure is fixable. */
+/**
+ * Whether a fix round may retry this outcome: only a review or check failure is fixable.
+ * @param outcome - the settled accept outcome.
+ * @returns whether `outcome`'s kind is `rejected` or `checks-failed`.
+ */
 export function isFixable(outcome: AcceptOutcome): outcome is Extract<AcceptOutcome, { kind: 'rejected' | 'checks-failed' }> {
   return outcome.kind === 'rejected' || outcome.kind === 'checks-failed'
 }
