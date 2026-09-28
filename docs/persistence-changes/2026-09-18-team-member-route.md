@@ -37,6 +37,8 @@ changes:
 
 Both properties are optional and additive: existing team/member records stay valid and read as members with no recorded route, and a row falls back to the live child Agent whenever one exists. No durable union changes and no Session format version moves.
 
+An older reader does not ignore the addition. The Team projection parses every `team/member` payload against a `.strict()` schema, so a build published before `agentProvider` and `agentModel` existed fails that record, latches the parse failure in its projected state, and drops every later Team event for that session; reloading with the same build fails at the same record. Only a build that declares the properties folds the session.
+
 <a id="verification"></a>
 ## Verification
 

@@ -3,6 +3,7 @@
 import { describe, expect, it } from 'vitest'
 import { Context } from '@deepseek-ai/cordis'
 import AgentDefaultModelConfig, { AGENT_DEFAULT_MODEL_SETTINGS_NAMESPACE } from '../src/index.ts'
+import type { Config } from '../src/index.ts'
 import { SettingsProvider } from '@deepseek-ai/dsh-settings'
 import type { SettingsNamespace } from '@deepseek-ai/dsh-settings'
 import { ReasoningEffortId } from '@deepseek-ai/dsh-llm'
@@ -25,7 +26,7 @@ class MemorySettings extends SettingsProvider {
   }
 }
 
-async function boot(): Promise<{
+async function boot(entry: Config = { provider: 'deepseek-official', model: 'deepseek-v4-flash' }): Promise<{
   ctx: Context
   settingsFiber: Context['fiber']
   defaultModel: AgentDefaultModelConfig
@@ -33,27 +34,23 @@ async function boot(): Promise<{
   const ctx = new Context()
   const settingsFiber = ctx.plugin(MemorySettings)
   await settingsFiber.await()
-  await ctx.plugin(AgentDefaultModelConfig, {
-    provider: 'deepseek-official',
-    model: 'deepseek-v4-flash',
-  })
+  await ctx.plugin(AgentDefaultModelConfig, entry)
   return { ctx, settingsFiber, defaultModel: ctx.agentDefaultModel }
 }
 
 describe('AgentDefaultModelConfig', () => {
-  it('carries a composition-pinned reasoning effort', async () => {
-    const ctx = new Context()
-    await ctx.plugin(AgentDefaultModelConfig, {
+  it('does not re-inherit a composition effort into a saved selection that omits one', async () => {
+    // A cordis.yml written while the config accepted the key still resolves it —
+    // the config schema keeps unknown keys — so the service must ignore it: an
+    // effort a complete saved selection cleared stays cleared.
+    const bench = await boot({
       provider: 'deepseek-official',
       model: 'deepseek-v4-flash',
       reasoningEffort: 'off',
-    })
-    // A deployment pins the effort in its composition, so every Agent that takes
-    // the default selection sends an explicit effort instead of an adapter default.
-    expect(ctx.agentDefaultModel.currentSelection()).toEqual({
-      provider: 'deepseek-official', model: 'deepseek-v4-flash', reasoningEffort: 'off',
-    })
-    await ctx.fiber.dispose()
+    } as Config)
+    await bench.defaultModel.saveSelection({ provider: 'acme-gateway', model: 'acme-plain' })
+    expect(bench.defaultModel.currentSelection()).toEqual({ provider: 'acme-gateway', model: 'acme-plain' })
+    await bench.ctx.fiber.dispose()
   })
 
   it('resolves the user layer over the composition entry', async () => {

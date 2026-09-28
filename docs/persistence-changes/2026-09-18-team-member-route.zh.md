@@ -37,6 +37,8 @@ changes:
 
 两个属性均为可选且为纯新增：已有的 team/member 记录仍然有效，读作未记录路由的成员；只要子 Agent 存活，行就回退到该 Agent。持久 union 不变，Session 格式版本不升级。
 
+较早的读取方并不会忽略这一新增字段。Team 投影对每个 `team/member` payload 都按 `.strict()` schema 解析，因此在 `agentProvider` 与 `agentModel` 出现之前发布的构建会拒绝该记录：fold 会把解析失败锁定在自身投影状态中，并为该会话丢弃之后的所有 Team event；用同一构建重新加载仍会在同一条记录上失败。只有声明了这两个属性的构建才能折叠该会话。
+
 <a id="verification"></a>
 ## 验证
 

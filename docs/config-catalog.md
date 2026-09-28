@@ -44,8 +44,6 @@ export interface Config {
   provider: string
   /** Provider-owned model id. */
   model: string
-  /** Adapter-owned reasoning effort, or provider/default behavior when absent. */
-  reasoningEffort?: string
 }
 ```
 
@@ -866,7 +864,7 @@ export interface Config {
 }
 ```
 
-Source: [`packages/experimental/tool-agent-room/src/index.ts:17`](../packages/experimental/tool-agent-room/src/index.ts)
+Source: [`packages/experimental/tool-agent-room/src/index.ts:18`](../packages/experimental/tool-agent-room/src/index.ts)
 
 <a id="deepseek-aidsh-experimental-tool-agent-team"></a>
 
@@ -3935,6 +3933,7 @@ Imported as libraries by other packages; a `cordis.yml` cannot load them.
 - `@deepseek-ai/dsh-agent-loop-testkit` ([`packages/test-support/agent-loop-testkit/src/index.ts`](../packages/test-support/agent-loop-testkit/src/index.ts))
 - `@deepseek-ai/dsh-anonymous-user-id` ([`packages/identity/anonymous-user-id/src/index.ts`](../packages/identity/anonymous-user-id/src/index.ts))
 - `@deepseek-ai/dsh-app-boot` ([`packages/boot/app-boot/src/index.ts`](../packages/boot/app-boot/src/index.ts))
+- `@deepseek-ai/dsh-async-queue` ([`packages/util/async-queue/src/index.ts`](../packages/util/async-queue/src/index.ts))
 - `@deepseek-ai/dsh-atomic-write` ([`packages/util/atomic-write/src/index.ts`](../packages/util/atomic-write/src/index.ts))
 - `@deepseek-ai/dsh-base` ([`packages/bundle/base/src/index.ts`](../packages/bundle/base/src/index.ts))
 - `@deepseek-ai/dsh-brand` ([`packages/util/brand/src/index.ts`](../packages/util/brand/src/index.ts))

@@ -167,6 +167,10 @@ const packageFileExtras: Readonly<Record<string, readonly string[]>> = {
   '@deepseek-ai/dsh-ptc-runtime-node': ['lib/process.js'],
   // The Host entry starts its sibling Worker by URL rather than a package export.
   '@deepseek-ai/dsh-experimental-inspector': ['lib/worker.js'],
+  // The model-facing Agent Teams tool packages import the shared tool
+  // scaffolding through this subpath, which is not one of the derived artifact
+  // positions.
+  '@deepseek-ai/dsh-experimental-agent-team': ['lib/tool-scaffold.js'],
   // The shipped preset compositions travel inside the roster package.
   '@deepseek-ai/dsh-agent-presets': ['presets'],
   // The Web Host mounts the default-off settings owner independently of each

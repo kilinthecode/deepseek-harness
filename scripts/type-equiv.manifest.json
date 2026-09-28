@@ -348,6 +348,11 @@
       "source": "packages/experimental/agent-team/src/types.ts"
     },
     {
+      "doc": "docs/subsystems/agent-team.md",
+      "symbol": "TeamTaskVerification",
+      "source": "packages/experimental/agent-team/src/types.ts"
+    },
+    {
       "doc": "docs/subsystems/commands.md",
       "symbol": "CommandInputDescriptor",
       "source": "packages/interaction/commands/src/types.ts"
@@ -2205,6 +2210,11 @@
     {
       "doc": "docs/subsystems/agent-team.md",
       "symbol": "RoomReviewSnapshot",
+      "source": "packages/experimental/agent-team/src/types.ts"
+    },
+    {
+      "doc": "docs/subsystems/agent-team.md",
+      "symbol": "RoomReviewTimeoutSnapshot",
       "source": "packages/experimental/agent-team/src/types.ts"
     }
   ]

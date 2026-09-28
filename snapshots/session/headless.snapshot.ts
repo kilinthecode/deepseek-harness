@@ -86,6 +86,8 @@ interface JsonObject {
 interface HeadlessScenario {
   readonly name: string
   readonly dir: string
+  /** Whether the scenario's committed fixtures include a child Session role. */
+  readonly childRoles: boolean
   readonly manifest: SnapshotManifest & {
     composition: string
     recording: 'live' | 'authored'
@@ -513,6 +515,9 @@ async function collectScenarios(): Promise<HeadlessScenario[]> {
     scenarios.push({
       name: entry.name,
       dir,
+      // A borrower owns no fixture role of its own; a positive ordinal in this
+      // directory is a child Session.
+      childRoles: manifest.session === undefined && sessionFixtureNames(await readdir(dir)).length > 1,
       manifest: { ...manifest, composition: manifest.composition, recording: manifest.recording, header: manifest.header },
     })
   }
@@ -541,10 +546,9 @@ for (const scenario of scenarios) {
   }
 }
 
-/** Whether one scenario's manifest declares child Session roles of its own. */
+/** Whether one scenario owns a child Session role of its own. */
 function ownsChildRoles(scenario: HeadlessScenario): boolean {
-  return (scenario.manifest.header.childSystemPrompts?.length ?? 0) > 0
-    || (scenario.manifest.header.childToolSchemas?.length ?? 0) > 0
+  return scenario.childRoles
 }
 
 function ownerOf(scenario: HeadlessScenario): HeadlessScenario {

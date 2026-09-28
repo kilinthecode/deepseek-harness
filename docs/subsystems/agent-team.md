@@ -82,6 +82,20 @@ interface TeamTaskSnapshot {
 }
 ```
 
+```ts type-equiv
+/** Peer verification recorded against one submitted task revision. */
+interface TeamTaskVerification {
+  /** Task revision the owner submitted for verification. */
+  readonly submittedRevision: number
+  /** Peer that recorded the latest verdict; absent until one does. */
+  readonly verifierId?: SessionId
+  /** The peer's verdict on the submitted revision. */
+  readonly verdict?: 'approved' | 'rejected'
+  /** Why the peer approved or rejected; the owner acts on a rejection. */
+  readonly reason?: string
+}
+```
+
 `pending` is unstarted or released, `in_progress` carries an owner, `completed` satisfies blockers, and `deleted` is a retained tombstone. Views add owner name, readiness, and write-scope overlap warnings without changing the durable snapshot.
 
 <a id="shared-room"></a>
@@ -131,11 +145,27 @@ interface RoomReviewSnapshot {
 }
 ```
 
+```ts type-equiv
+/**
+ * Durable record that reviewers of one decision revision produced no activity
+ * for the configured grace period. A reminder re-prompts them; an escalation
+ * hands the decision to the human. Neither records a standing the reviewer
+ * never cast.
+ */
+interface RoomReviewTimeoutSnapshot {
+  readonly proposalId: RoomProposalId
+  readonly proposalRevision: number
+  readonly kind: RoomReviewTimeoutKind
+  /** Reviewers that were silent at this revision when the room acted. */
+  readonly stalled: SessionId[]
+}
+```
+
 `RoomMessageId` identifies one transcript entry; `RoomProposalId` is room-local and allocated as `proposal-<n>`. A reviewer changing its standing appends another record, so the fold keeps the latest verdict per reviewer and revision.
 
 Participants are the Team roster itself: the Lead plus every member that has not failed. A member is a participant from the moment provisioning records it, matching the rule the roster uses to resolve a live member's Team identity. Reading a room is total: a composition without rooms reports `enabled: false` and empty collections rather than failing, while every mutating room operation still refuses with `TEAM_ROOM_DISABLED`. `RoomView` exposes that flag, the roster, the transcript, the decisions, and the rotated chair; `RoomPromptRequest` and `RoomPromptResult` describe giving one participant the floor, `ProposeRoomDecisionRequest`, `ReviewRoomDecisionRequest`, and `EscalateRoomDecisionRequest` describe the decision operations, and `RoomStreamFrame` carries one live participant frame on the `room/stream` event. `RoomParticipantView.quiet` reports a live participant that produced no observed work within `roomReviewGraceMs`, the same window the stall sweep reads, and `roomStream` follows one room through the Remote face: the complete view first, then a view after every committed change and a frame for every text chunk a participant streams. `PanelRoomPromptRequest`, `PanelProposeRoomDecisionRequest`, and `PanelEscalateRoomDecisionRequest` carry the browser panel's own calls to those same operations.
 
-Acceptance requires every eligible reviewer to have voted, at least `roomApprovalRatio` of them to approve, and no standing rejection. A proposer cannot review its own decision, a settled decision is final, and a rejected one is resolved only by carrying a revised statement back to the room. The chair rotates with the transcript and carries no decision authority. A reviewer's silence is measured from that participant's own observed work, never from the room's records: the ask starts a window of `roomReviewGraceMs`, each of at most `roomReviewReminders` reminders restarts the window of the reviewer it reaches, and a decision escalates only once every reviewer still owing a standing has exhausted its window, naming them in `room/review-timeout` without inventing the standing it never received. Every recorded standing carries its reviewer's reason and is visible to the whole room. Shared work follows the same rule: a task owner submits the current revision, only another member's `verify` verdict with a reason carries it to `completed`, and the fold refuses any record whose verification cannot be true.
+Acceptance requires every eligible reviewer to have voted, at least `roomApprovalRatio` of them to approve, and no standing rejection. Rejections settle a decision as soon as they reach that same required count, without waiting for the reviewers that have not voted. A proposer cannot review its own decision, a settled decision is final, and a rejected one is resolved only by carrying a revised statement back to the room. The chair rotates with the transcript and carries no decision authority. A reviewer's silence is measured from that participant's own observed work, never from the room's records: the ask starts a window of `roomReviewGraceMs`, each of at most `roomReviewReminders` reminders restarts the window of the reviewer it reaches, and a decision escalates only once every reviewer still owing a standing has exhausted its window, naming them in `room/review-timeout` without inventing the standing it never received. Every recorded standing carries its reviewer's reason and is visible to the whole room. Shared work follows the same rule: a task owner submits the current revision, only another member's `verify` verdict with a reason carries it to `completed`, and the fold refuses any record whose verification cannot be true.
 
 ## Replay
 
