@@ -123,8 +123,8 @@ export class SubagentWorktrees extends Service {
   /** Resolved once at load: `config.root`, or `<DSH_HOME>/worktrees` when omitted. */
   private readonly root: string
 
-  /** Git command runner shared by every operation. */
-  private readonly git: GitRunner
+  /** Git command runner shared by every operation, created on first use. */
+  private gitRunner: GitRunner | undefined
 
   /** Resolved once at load from the flat `reviewerProvider`/`reviewerModel`/`reviewerReasoningEffort` fields. */
   private readonly configuredReviewer: WorktreeRoute | undefined
@@ -140,7 +140,12 @@ export class SubagentWorktrees extends Service {
     }
     this.configuredReviewer = resolveConfiguredReviewer(config)
     this.commitAuthor = resolveConfiguredCommitAuthor(config)
-    this.git = new GitRunner(ctx.subprocess)
+  }
+
+  /** The git runner over the injected subprocess service; construction touches no service. */
+  private get git(): GitRunner {
+    this.gitRunner ??= new GitRunner(this.ctx.subprocess)
+    return this.gitRunner
   }
 
   /**
