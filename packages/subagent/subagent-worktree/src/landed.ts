@@ -12,6 +12,7 @@
  */
 
 import type { GitCommandResult, GitRunner } from './git.ts'
+import { landedCommitOf } from './merge.ts'
 import type { WorktreeLayout } from './paths.ts'
 import { isStaleReviewing, updateExistingRecordAt, withoutReviewingPid } from './records.ts'
 import type { StoredWorktreeRecord } from './records.ts'
@@ -20,22 +21,12 @@ import { pathExists } from './fs-util.ts'
 
 /** A stale `reviewing` record whose reviewed commit had already landed, now recorded `merged`. */
 export interface LandedRecovery {
-  /** The record as now stored: `merged`, with its merge commit when one could be found. */
+  /** The record as now stored: `merged`, with `mergedCommit` set to {@link mergeCommit}. */
   readonly record: StoredWorktreeRecord
   /** The verdict the merged commit was reviewed under. */
   readonly verdict: WorktreeVerdict
-}
-
-/**
- * The earliest merge commit in the base checkout that brought `reviewed` in,
- * or undefined when no merge commit lies between them (the commit landed
- * without one).
- */
-async function firstMergeContaining(git: GitRunner, repoRoot: string, reviewed: string, signal: AbortSignal): Promise<string | undefined> {
-  const merges = await git.expectComplete(
-    ['rev-list', '--ancestry-path', '--merges', '--reverse', `${reviewed}..HEAD`], 'git rev-list', { cwd: repoRoot, signal },
-  )
-  return merges.stdout.split('\n').find(line => line.length > 0)
+  /** The commit that landed the reviewed commit, as {@link landedCommitOf} defines it. */
+  readonly mergeCommit: string
 }
 
 /**
@@ -93,15 +84,15 @@ export async function recoverLandedMerge(
   if (ancestor.exitCode !== 0) return undefined
   if (!await worktreeHoldsOnly(git, record, verdict.commit, signal)) return undefined
 
-  const mergeCommit = await firstMergeContaining(git, record.repoRoot, verdict.commit, signal)
+  const mergeCommit = await landedCommitOf(git, record.repoRoot, verdict.commit, signal)
   // Tracked on an object: the updater runs later, under the record lock, and may find the record already moved on.
   const outcome = { recorded: false }
   const updated = await updateExistingRecordAt(layout, record.id, (current) => {
     if (!isStaleReviewing(current)) return current
     outcome.recorded = true
-    return { ...withoutReviewingPid(current), state: 'merged', ...mergeCommit === undefined ? {} : { mergedCommit: mergeCommit } }
+    return { ...withoutReviewingPid(current), state: 'merged', mergedCommit: mergeCommit }
   })
-  return outcome.recorded ? { record: updated, verdict } : undefined
+  return outcome.recorded ? { record: updated, verdict, mergeCommit } : undefined
 }
 
 /**

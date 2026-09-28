@@ -87,7 +87,11 @@ export interface WorktreeRecord {
   readonly workerRoute: WorktreeRoute
   /** Latest reviewer verdict. */
   readonly lastVerdict?: WorktreeVerdict
-  /** Merge commit id in the base checkout once merged. */
+  /**
+   * The commit that landed the change in the base checkout, once merged: the merge commit that lists the reviewed
+   * commit as a parent, or the reviewed commit itself when no merge commit lists it (it was fast-forwarded in, or
+   * was already contained in the base branch).
+   */
   readonly mergedCommit?: string
 }
 
@@ -174,6 +178,7 @@ export type AcceptOutcome =
     readonly kind: 'merged'
     readonly record: WorktreeRecord
     readonly commit: string
+    /** The commit that landed `commit` in the base checkout, as {@link WorktreeRecord.mergedCommit} defines it. */
     readonly mergeCommit: string
     readonly verdict: WorktreeVerdict
     /** Whether the worktree directory and branch were removed after the merge. */

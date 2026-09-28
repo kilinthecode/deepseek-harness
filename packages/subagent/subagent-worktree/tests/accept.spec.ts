@@ -1139,8 +1139,8 @@ describe('accept: state machine', () => {
   }, GIT_TEST_TIMEOUT_MS)
 })
 
-/** Real git, except that once a merge has succeeded the next `failures` reads of HEAD fail. */
-class HeadReadFailsAfterMergeGit extends GitRunner {
+/** Real git, except that once a merge has succeeded the next `failures` reads of the landing commit (`git rev-list`) fail. */
+class LandingCommitReadFailsGit extends GitRunner {
   private merged = false
   private remainingFailures: number
 
@@ -1152,7 +1152,7 @@ class HeadReadFailsAfterMergeGit extends GitRunner {
   override async run(args: readonly string[], options: GitRunOptions): Promise<GitCommandResult> {
     const result = await super.run(args, options)
     if (args[0] === 'merge' && args[1] !== '--abort' && result.exitCode === 0) this.merged = true
-    if (this.merged && args[0] === 'rev-parse' && args[1] === 'HEAD' && this.remainingFailures > 0) {
+    if (this.merged && args[0] === 'rev-list' && this.remainingFailures > 0) {
       this.remainingFailures -= 1
       return { exitCode: 128, stdout: '', stderr: 'fatal: scripted read failure\n', stdoutLossy: false }
     }
@@ -1246,12 +1246,12 @@ describe('accept: a merge that cannot be aborted', () => {
 })
 
 describe('accept: a merge that landed', () => {
-  it('reads the merge commit again when the first read fails, and still records merged with it', async () => {
+  it('reads the landing commit again when the first read fails, and still records merged with it', async () => {
     const h = await harness()
     const provisioned = await createWorktree(h.ctx, OWNER, h.dir, 'do the thing')
     await writeFile(join(provisioned.workDir, 'change.txt'), 'x')
 
-    const command = new HeadReadFailsAfterMergeGit(h.ctx.subprocess, 1)
+    const command = new LandingCommitReadFailsGit(h.ctx.subprocess, 1)
     const outcome = await acceptWorktree(directDeps(h, command), acceptRequest(provisioned.record.id))
 
     expect(outcome.kind).toBe('merged')
@@ -1261,12 +1261,12 @@ describe('accept: a merge that landed', () => {
     expect(outcome.record).toMatchObject({ state: 'merged', mergedCommit: head })
   }, GIT_TEST_TIMEOUT_MS)
 
-  it('records merged without a commit id, and says the merge landed, when the id cannot be read at all', async () => {
+  it('records merged without a commit id, and says the merge landed, when the landing commit cannot be read at all', async () => {
     const h = await harness()
     const provisioned = await createWorktree(h.ctx, OWNER, h.dir, 'do the thing')
     await writeFile(join(provisioned.workDir, 'change.txt'), 'x')
 
-    await expect(acceptWorktree(directDeps(h, new HeadReadFailsAfterMergeGit(h.ctx.subprocess, 2)), acceptRequest(provisioned.record.id)))
+    await expect(acceptWorktree(directDeps(h, new LandingCommitReadFailsGit(h.ctx.subprocess, 2)), acceptRequest(provisioned.record.id)))
       .rejects.toThrow(`the merge of worktree ${provisioned.record.id} landed in the base checkout and is recorded merged, but its commit id could not be read`)
 
     const { record } = await requireRecordLocation(h.root, provisioned.record.id)
@@ -1274,6 +1274,27 @@ describe('accept: a merge that landed', () => {
     expect(record.mergedCommit).toBeUndefined()
     expect(record).not.toHaveProperty('reviewingPid')
     expect(git(h.dir, 'rev-list', '--count', '--merges', 'HEAD').trim()).toBe('1')
+  }, GIT_TEST_TIMEOUT_MS)
+
+  it('records the reviewed commit, never a later HEAD, when git merge finds the change already contained in the base checkout', async () => {
+    const h = await harness()
+    const provisioned = await createWorktree(h.ctx, OWNER, h.dir, 'do the thing')
+    // The worker committed its change on the branch, and a user then fast-forwarded the base checkout onto it and went on.
+    await writeFile(join(provisioned.workDir, 'a.txt'), 'a')
+    git(provisioned.record.path, 'add', '-A')
+    git(provisioned.record.path, 'commit', '-q', '-m', 'work')
+    const commit = git(provisioned.record.path, 'rev-parse', 'HEAD').trim()
+    git(h.dir, 'merge', '--ff-only', provisioned.record.branch)
+    git(h.dir, 'commit', '--allow-empty', '-q', '-m', 'later work')
+    const head = git(h.dir, 'rev-parse', 'HEAD').trim()
+
+    const outcome = await h.ctx.subagentWorktrees.accept(acceptRequest(provisioned.record.id))
+
+    expect(outcome).toMatchObject({ kind: 'merged', commit, mergeCommit: commit })
+    expect(outcome.record).toMatchObject({ state: 'merged', mergedCommit: commit })
+    expect(commit).not.toBe(head)
+    // git merge found nothing to do, so the base checkout is exactly where the user left it.
+    expect(git(h.dir, 'rev-parse', 'HEAD').trim()).toBe(head)
   }, GIT_TEST_TIMEOUT_MS)
 
   it('releases its claim when recording the merge fails, so a live process id does not pin the record', async () => {
@@ -1295,7 +1316,7 @@ describe('accept: a merge that landed', () => {
     const provisioned = await createWorktree(h.ctx, OWNER, h.dir, 'do the thing')
     await writeFile(join(provisioned.workDir, 'change.txt'), 'x')
 
-    await expect(acceptWorktree(directDeps(h, new HeadReadFailsAfterMergeGit(h.ctx.subprocess, 2)), acceptRequest(provisioned.record.id)))
+    await expect(acceptWorktree(directDeps(h, new LandingCommitReadFailsGit(h.ctx.subprocess, 2)), acceptRequest(provisioned.record.id)))
       .rejects.toThrow(`the merge of worktree ${provisioned.record.id} landed in the base checkout, but recording it failed`)
 
     const { record } = await requireRecordLocation(h.root, provisioned.record.id)
@@ -1410,7 +1431,7 @@ describe('accept: a merge that landed', () => {
     expect(warn).toHaveBeenCalledWith(expect.stringContaining(`was already merged as ${mergeCommit}, but removing its worktree and branch failed`))
   }, GIT_TEST_TIMEOUT_MS)
 
-  it('reports the reviewed commit as the merge commit when it landed by fast-forward, so no merge commit exists', async () => {
+  it('records the reviewed commit as the merge commit when it landed by fast-forward, so no merge commit lists it', async () => {
     const h = await harness()
     const provisioned = await createWorktree(h.ctx, OWNER, h.dir, 'do the thing')
     await writeFile(join(provisioned.workDir, 'a.txt'), 'a')
@@ -1435,8 +1456,7 @@ describe('accept: a merge that landed', () => {
     const outcome = await h.ctx.subagentWorktrees.accept(acceptRequest(provisioned.record.id))
 
     expect(outcome).toMatchObject({ kind: 'merged', commit, mergeCommit: commit })
-    expect(outcome.record.state).toBe('merged')
-    expect(outcome.record).not.toHaveProperty('mergedCommit')
+    expect(outcome.record).toMatchObject({ state: 'merged', mergedCommit: commit })
   }, GIT_TEST_TIMEOUT_MS)
 
   it('does not treat a stale record as landed when its reviewed commit is not in the base history', async () => {

@@ -114,19 +114,21 @@ describe('recoverLandedMerge', () => {
       .rejects.toThrow(`could not check whether worktree ${f.record.id} already merged (git merge-base was cancelled)`)
   }, GIT_TEST_TIMEOUT_MS)
 
-  it('records merged without a merge commit when the reviewed commit landed by fast-forward', async () => {
+  it('records the reviewed commit itself as the merge commit when it landed by fast-forward, so no merge commit lists it', async () => {
     const f = await fixture()
     const stale = await f.makeStale(f.commit)
     const { layout } = await requireRecordLocation(f.root, f.record.id)
-    // A user fast-forwards the base branch onto the worker's commit: an ancestor, but no merge commit.
+    // A user fast-forwards the base branch onto the worker's commit and goes on: an ancestor, but no merge commit.
     git(f.dir, 'merge', '--ff-only', f.record.branch)
+    git(f.dir, 'commit', '--allow-empty', '-q', '-m', 'later work')
 
     const recovery = await recoverLandedMerge(f.runner, layout, stale, signal)
 
-    expect(recovery?.record.state).toBe('merged')
-    expect(recovery?.record.mergedCommit).toBeUndefined()
+    expect(recovery?.record).toMatchObject({ state: 'merged', mergedCommit: f.commit })
+    expect(recovery?.mergeCommit).toBe(f.commit)
     expect(recovery?.record).not.toHaveProperty('reviewingPid')
     expect(recovery?.verdict.commit).toBe(f.commit)
+    expect(git(f.dir, 'rev-parse', 'HEAD').trim()).not.toBe(f.commit)
   }, GIT_TEST_TIMEOUT_MS)
 
   it('finds the merge commit that brought the reviewed commit in', async () => {
@@ -139,6 +141,44 @@ describe('recoverLandedMerge', () => {
     const recovery = await recoverLandedMerge(f.runner, layout, stale, signal)
 
     expect(recovery?.record).toMatchObject({ state: 'merged', mergedCommit: mergeCommit })
+    expect(recovery?.mergeCommit).toBe(mergeCommit)
+  }, GIT_TEST_TIMEOUT_MS)
+
+  it('names the earliest merge commit that lists the reviewed commit as a parent, not a later merge', async () => {
+    const f = await fixture()
+    const stale = await f.makeStale(f.commit)
+    const { layout } = await requireRecordLocation(f.root, f.record.id)
+    git(f.dir, 'merge', '--no-ff', '--no-edit', f.record.branch)
+    const mergeCommit = git(f.dir, 'rev-parse', 'HEAD').trim()
+    // Unrelated work merges afterwards, so HEAD is a later merge commit that does not list the reviewed commit.
+    git(f.dir, 'checkout', '-q', '-b', 'unrelated')
+    await writeFile(join(f.dir, 'unrelated.txt'), 'x')
+    git(f.dir, 'add', '-A')
+    git(f.dir, 'commit', '-q', '-m', 'unrelated work')
+    git(f.dir, 'checkout', '-q', 'main')
+    git(f.dir, 'merge', '--no-ff', '--no-edit', 'unrelated')
+    expect(git(f.dir, 'rev-parse', 'HEAD').trim()).not.toBe(mergeCommit)
+
+    const recovery = await recoverLandedMerge(f.runner, layout, stale, signal)
+
+    expect(recovery?.record).toMatchObject({ state: 'merged', mergedCommit: mergeCommit })
+  }, GIT_TEST_TIMEOUT_MS)
+
+  it('skips a merge that lists another commit built on the reviewed one, and records the reviewed commit', async () => {
+    const f = await fixture()
+    const stale = await f.makeStale(f.commit)
+    const { layout } = await requireRecordLocation(f.root, f.record.id)
+    // The reviewed commit reached main through a branch built on top of it: the merge commit lists that branch's tip.
+    git(f.dir, 'checkout', '-q', '-b', 'mid', f.commit)
+    await writeFile(join(f.dir, 'mid.txt'), 'mid')
+    git(f.dir, 'add', '-A')
+    git(f.dir, 'commit', '-q', '-m', 'mid work')
+    git(f.dir, 'checkout', '-q', 'main')
+    git(f.dir, 'merge', '--no-ff', '--no-edit', 'mid')
+
+    const recovery = await recoverLandedMerge(f.runner, layout, stale, signal)
+
+    expect(recovery?.record).toMatchObject({ state: 'merged', mergedCommit: f.commit })
   }, GIT_TEST_TIMEOUT_MS)
 
   /** The worktree's branch has landed by fast-forward, as after an accept whose merge landed and whose record write did not. */

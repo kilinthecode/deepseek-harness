@@ -1,4 +1,4 @@
-import { readFile, writeFile } from 'node:fs/promises'
+import { chmod, readFile, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { Context } from '@deepseek-ai/cordis'
@@ -168,14 +168,14 @@ interface Script {
   readonly mergeAbort?: GitCommandResult
   /** Runs the real `git merge --abort`, then runs that command's own signal out and reports it killed. */
   readonly mergeAbortTimesOut?: boolean
-  /** Fails the first this many `git rev-parse HEAD` calls with a nonzero exit. */
-  readonly failRevParseHead?: number
+  /** Fails the first this many `git rev-list` calls, which read the landing commit after a successful merge, with a nonzero exit. */
+  readonly failLandingCommitRead?: number
 }
 
 /** Real git with scripted exceptions, recording every command it is asked to run. */
 class ScriptedGit extends GitRunner {
   readonly commands: string[][] = []
-  private revParseHeadFailures = 0
+  private landingCommitReadFailures = 0
   private mergeHeadProbes = 0
 
   constructor(subprocessRuntime: ConstructorParameters<typeof GitRunner>[0], private readonly script: Script) {
@@ -206,9 +206,9 @@ class ScriptedGit extends GitRunner {
       if (script.mergeHeadProbe !== undefined) return script.mergeHeadProbe
     }
     if (args[0] === 'diff' && args.includes('--diff-filter=U') && script.unmergedScan !== undefined) return script.unmergedScan
-    if (args[0] === 'rev-parse' && args[1] === 'HEAD' && this.revParseHeadFailures < (script.failRevParseHead ?? 0)) {
-      this.revParseHeadFailures += 1
-      return { exitCode: 128, stdout: '', stderr: 'fatal: scripted rev-parse failure\n', stdoutLossy: false }
+    if (args[0] === 'rev-list' && this.landingCommitReadFailures < (script.failLandingCommitRead ?? 0)) {
+      this.landingCommitReadFailures += 1
+      return { exitCode: 128, stdout: '', stderr: 'fatal: scripted rev-list failure\n', stdoutLossy: false }
     }
     return super.run(args, options)
   }
@@ -613,7 +613,7 @@ describe('attemptMerge: a merge state this call did not create', () => {
 })
 
 describe('attemptMerge: a merge that landed', () => {
-  it('tells the caller the merge landed before it reads the merge commit, and returns the commit', async () => {
+  it('tells the caller the merge landed before it reads the landing commit, and returns the commit', async () => {
     const { dir, sideCommit } = await repoWithSideBranch('dsh-merge-landed-')
     const events: string[] = []
     const command = await scripted({})
@@ -621,35 +621,83 @@ describe('attemptMerge: a merge that landed', () => {
     const originalRun = command.run.bind(command)
     // Record the order of the commit-id read relative to the landed notification.
     command.run = (args, options) => {
-      if (args[0] === 'rev-parse' && args[1] === 'HEAD') events.push('read merge commit')
+      if (args[0] === 'rev-list') events.push('read landing commit')
       return originalRun(args, options)
     }
 
     const result = await attemptMerge(command, dir, 'wt-00000018', 'do the thing', sideCommit, signal, hooks)
 
     expect(result).toEqual({ kind: 'merged', mergeCommit: git(dir, 'rev-parse', 'HEAD').trim() })
-    expect(events).toEqual(['landed', 'read merge commit'])
+    expect(events).toEqual(['landed', 'read landing commit'])
   }, GIT_TEST_TIMEOUT_MS)
 
-  it('retries a failed merge commit read on a fresh signal, so one transient failure does not hide a landed merge', async () => {
+  it('retries a failed landing commit read on a fresh signal, so one transient failure does not hide a landed merge', async () => {
     const { dir, sideCommit } = await repoWithSideBranch('dsh-merge-landed-retry-')
-    const command = await scripted({ failRevParseHead: 1 })
+    const command = await scripted({ failLandingCommitRead: 1 })
 
     const result = await attemptMerge(command, dir, 'wt-00000019', 'do the thing', sideCommit, signal, recordingHooks())
 
     expect(result).toEqual({ kind: 'merged', mergeCommit: git(dir, 'rev-parse', 'HEAD').trim() })
-    expect(command.commands.filter(args => args[0] === 'rev-parse' && args[1] === 'HEAD')).toHaveLength(2)
+    expect(command.commands.filter(args => args[0] === 'rev-list')).toHaveLength(2)
   }, GIT_TEST_TIMEOUT_MS)
 
-  it('still reports the merge as landed when the merge commit cannot be read at all', async () => {
+  it('still reports the merge as landed when the landing commit cannot be read at all', async () => {
     const { dir, sideCommit } = await repoWithSideBranch('dsh-merge-landed-unreadable-')
-    const command = await scripted({ failRevParseHead: 2 })
+    const command = await scripted({ failLandingCommitRead: 2 })
     const hooks = recordingHooks()
 
     await expect(attemptMerge(command, dir, 'wt-00000020', 'do the thing', sideCommit, signal, hooks))
-      .rejects.toThrow('git rev-parse failed')
+      .rejects.toThrow('git rev-list failed')
 
     expect(hooks.events).toEqual(['landed'])
+    expect(git(dir, 'rev-list', '--count', '--merges', 'HEAD').trim()).toBe('1')
+  }, GIT_TEST_TIMEOUT_MS)
+})
+
+describe('attemptMerge: which commit stands for the merge', () => {
+  it('names the merge commit that lists the reviewed commit as a parent, not a later HEAD that a hook created', async () => {
+    const { dir, sideCommit } = await repoWithSideBranch('dsh-merge-attribution-hook-')
+    const hook = join(dir, '.git', 'hooks', 'post-merge')
+    await writeFile(hook, '#!/bin/sh\ngit commit --allow-empty -q -m "hook commit"\n')
+    await chmod(hook, 0o755)
+
+    const result = await attemptMerge(await runner(), dir, 'wt-00000032', 'do the thing', sideCommit, signal, recordingHooks())
+
+    // HEAD is the hook's later commit; the merge commit it sits on lists the reviewed commit as its second parent.
+    expect(git(dir, 'log', '-1', '--pretty=%s').trim()).toBe('hook commit')
+    const mergeCommit = git(dir, 'rev-parse', 'HEAD~1').trim()
+    expect(git(dir, 'rev-parse', `${mergeCommit}^2`).trim()).toBe(sideCommit)
+    expect(result).toEqual({ kind: 'merged', mergeCommit })
+  }, GIT_TEST_TIMEOUT_MS)
+
+  it('names the reviewed commit itself, never a later HEAD, when it was already contained and no merge commit was created', async () => {
+    const { dir, sideCommit } = await repoWithSideBranch('dsh-merge-attribution-contained-')
+    git(dir, 'merge', '--ff-only', 'side')
+    git(dir, 'commit', '--allow-empty', '-q', '-m', 'later work')
+    const head = git(dir, 'rev-parse', 'HEAD').trim()
+
+    const result = await attemptMerge(await runner(), dir, 'wt-00000033', 'do the thing', sideCommit, signal, recordingHooks())
+
+    expect(result).toEqual({ kind: 'merged', mergeCommit: sideCommit })
+    expect(sideCommit).not.toBe(head)
+    // "Already up to date": git merge exited 0 and created nothing.
+    expect(git(dir, 'rev-parse', 'HEAD').trim()).toBe(head)
+    expect(git(dir, 'rev-list', '--count', '--merges', 'HEAD').trim()).toBe('0')
+  }, GIT_TEST_TIMEOUT_MS)
+
+  it('skips a merge on the way that does not list the reviewed commit as a parent', async () => {
+    const { dir, sideCommit } = await repoWithSideBranch('dsh-merge-attribution-transitive-')
+    // The reviewed commit reached main through a branch built on top of it: a merge commit exists, but it lists that
+    // branch's tip as its parent, not the reviewed commit.
+    git(dir, 'checkout', '-q', '-b', 'mid', sideCommit)
+    await writeFile(join(dir, 'mid.txt'), 'mid\n')
+    git(dir, 'add', '-A'); git(dir, 'commit', '-q', '-m', 'mid work')
+    git(dir, 'checkout', '-q', 'main')
+    git(dir, 'merge', '--no-ff', '--no-edit', 'mid')
+
+    const result = await attemptMerge(await runner(), dir, 'wt-00000034', 'do the thing', sideCommit, signal, recordingHooks())
+
+    expect(result).toEqual({ kind: 'merged', mergeCommit: sideCommit })
     expect(git(dir, 'rev-list', '--count', '--merges', 'HEAD').trim()).toBe('1')
   }, GIT_TEST_TIMEOUT_MS)
 })

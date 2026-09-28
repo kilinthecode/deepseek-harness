@@ -269,8 +269,7 @@ async function recordLandedMerge(
  * swept when `removeOnMerge` is set.
  */
 async function outcomeOfRecoveredMerge(deps: AcceptDeps, recovery: LandedRecovery): Promise<AcceptOutcome> {
-  const { record, verdict } = recovery
-  const mergeCommit = record.mergedCommit ?? verdict.commit
+  const { record, verdict, mergeCommit } = recovery
   let removed = false
   if (deps.config.removeOnMerge) {
     try {

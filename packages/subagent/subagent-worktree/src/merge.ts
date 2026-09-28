@@ -19,7 +19,10 @@ import { DIAGNOSTIC_TAIL_CHARS, tailChars } from './bounds.ts'
 import { cleanupSignal } from './git.ts'
 import type { GitRunner } from './git.ts'
 
-/** Outcome of one merge attempt into the base checkout. */
+/**
+ * Outcome of one merge attempt into the base checkout. A `merged` outcome names the commit that landed the
+ * reviewed commit, as {@link landedCommitOf} defines it.
+ */
 export type MergeAttemptResult =
   | { readonly kind: 'merged'; readonly mergeCommit: string }
   | { readonly kind: 'conflict'; readonly files: readonly string[] }
@@ -158,14 +161,38 @@ async function readConflicts(git: GitRunner, repoRoot: string): Promise<{ files:
 }
 
 /**
- * Read the merge commit id right after a successful merge. A cancellation or a transient failure must not hide
+ * The commit that landed a reviewed commit in the base checkout's history: the earliest merge commit on the way
+ * from `reviewed` to `HEAD` that lists `reviewed` as a parent, which is the merge commit `git merge --no-ff`
+ * created. When no merge commit lists it (it was fast-forwarded in, or `git merge` found it already contained
+ * and created nothing), the reviewed commit is its own landing commit. It is never `HEAD` as such, which may
+ * be a later commit that has nothing to do with the reviewed one.
+ * @param git - command runner.
+ * @param repoRoot - the base checkout's top-level directory.
+ * @param reviewed - the reviewed commit, which is an ancestor of the base checkout's `HEAD`.
+ * @param signal - cancellation for the read.
+ * @returns the landing commit's full id.
+ * @throws when the merge commits between `reviewed` and `HEAD` could not be listed completely.
+ */
+export async function landedCommitOf(git: GitRunner, repoRoot: string, reviewed: string, signal: AbortSignal): Promise<string> {
+  const merges = await git.expectComplete(
+    ['rev-list', '--ancestry-path', '--merges', '--parents', '--reverse', `${reviewed}..HEAD`], 'git rev-list', { cwd: repoRoot, signal },
+  )
+  for (const line of merges.stdout.split('\n')) {
+    const [merge = '', ...parents] = line.split(' ')
+    if (merge !== '' && parents.includes(reviewed)) return merge
+  }
+  return reviewed
+}
+
+/**
+ * Read the landing commit right after a successful merge. A cancellation or a transient failure must not hide
  * a merge that already landed, so a failed read is retried once on a fresh signal.
  */
-async function readMergeCommit(git: GitRunner, repoRoot: string, signal: AbortSignal): Promise<string> {
+async function readLandedCommit(git: GitRunner, repoRoot: string, reviewed: string, signal: AbortSignal): Promise<string> {
   try {
-    return (await git.expectComplete(['rev-parse', 'HEAD'], 'git rev-parse', { cwd: repoRoot, signal })).stdout.trim()
+    return await landedCommitOf(git, repoRoot, reviewed, signal)
   } catch {
-    return (await git.expectComplete(['rev-parse', 'HEAD'], 'git rev-parse', { cwd: repoRoot, signal: cleanupSignal() })).stdout.trim()
+    return await landedCommitOf(git, repoRoot, reviewed, cleanupSignal())
   }
 }
 
@@ -230,10 +257,10 @@ async function classifyFailedMerge(
  * @param commit - the reviewed commit to merge, as a full commit id.
  * @param signal - cancellation for the whole accept operation.
  * @param hooks - last-moment check, landed notification, and operator reports.
- * @returns the merge outcome.
+ * @returns the merge outcome; a merged one names {@link landedCommitOf} of the reviewed commit.
  * @throws when a pre-merge probe or `hooks.beforeMerge` failed, this call's merge was killed or failed after
  *   starting, a merge this call started could not be aborted or shown to be gone (the base checkout is then left
- *   mid-merge, and the error says so), or the merge commit id could not be read after a successful merge
+ *   mid-merge, and the error says so), or the landing commit could not be read after a successful merge
  *   (`hooks.onLanded` has then already been called).
  */
 export async function attemptMerge(
@@ -257,7 +284,7 @@ export async function attemptMerge(
   const result = await git.run(['merge', '--no-ff', '--no-edit', '-m', message, commit], { cwd: repoRoot, signal })
   if (result.exitCode === 0) {
     hooks.onLanded()
-    return { kind: 'merged', mergeCommit: await readMergeCommit(git, repoRoot, signal) }
+    return { kind: 'merged', mergeCommit: await readLandedCommit(git, repoRoot, commit, signal) }
   }
   return classifyFailedMerge(git, repoRoot, id, commit, result, hooks)
 }
