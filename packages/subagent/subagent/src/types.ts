@@ -133,6 +133,7 @@ export interface SubagentCapabilities {
   readonly depthLimit: boolean
   readonly toolFilter: boolean
   readonly persona: boolean
+  readonly cwd: boolean
 }
 
 /**
@@ -198,6 +199,14 @@ export interface SubagentStartRequest {
    * persona (strict `{{…}}` interpolation against the registered variables).
    */
   readonly persona?: string
+  /**
+   * Optional absolute working directory for the child session, replacing the
+   * parent's. Requires {@link SubagentCapabilities.cwd} on the one-shot path;
+   * rejected at start otherwise. The directory must exist when the child is
+   * created; it becomes the child's durable `SessionHeader.cwd`, which scopes
+   * its filesystem tools, shell working directory, and sandbox write root.
+   */
+  readonly cwd?: string
 }
 
 /**

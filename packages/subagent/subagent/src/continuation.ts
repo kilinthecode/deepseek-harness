@@ -42,6 +42,7 @@ import { foldSubagentDescriptor, snapshotSubagentDescriptor } from './descriptor
 import { establishCatalogChild } from './catalog.ts'
 import { SubagentError } from './error.ts'
 import { isAdjacentAgentSendMessageTool } from './internal.ts'
+import { assertUsableCwd } from './out-of-process.ts'
 import type { ActivationObserver } from './lifecycle.ts'
 import type {
   ContinuableCreateRequest,
@@ -110,6 +111,9 @@ export class SubagentContinuationManager {
     const childId = spec.childId ?? brandString<SessionId>(randomUUID())
     this.activations.assertChildIdAvailable(childId)
     const childDepth = resolveChildDepth(parent, request.maxDepth)
+    const childCwd = request.cwd === undefined
+      ? undefined
+      : assertUsableCwd('subagent', 'child cwd', request.cwd)
     // Snapshot before any await: invalid descriptor JSON rejects the call
     // before a child exists, and the detached value is what reaches the log.
     const agentOptions = resolveChildAgentOptions(parent, request.agentOptions, childDepth)
@@ -164,7 +168,7 @@ export class SubagentContinuationManager {
           parent,
           create: {
             seed,
-            meta: childSessionMeta(parent, childDepth, prepared.seed !== undefined),
+            meta: childSessionMeta(parent, childDepth, prepared.seed !== undefined, childCwd),
             inheritedEventCount,
             delegatedPolicies,
             descriptor,
