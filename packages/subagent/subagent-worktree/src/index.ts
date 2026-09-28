@@ -7,11 +7,25 @@
  * @module @deepseek-ai/dsh-subagent-worktree
  */
 
+import { isAbsolute } from 'node:path'
 import type { Context } from '@deepseek-ai/cordis'
 import { Service } from '@deepseek-ai/cordis'
-import z from '@deepseek-ai/schemastery'
+import { dshHomePath } from '@deepseek-ai/dsh-home-paths'
+import type {} from '@deepseek-ai/dsh-agent'
 import type {} from '@deepseek-ai/dsh-subagent'
 import type {} from '@deepseek-ai/dsh-subprocess'
+import { acceptWorktree } from './accept.ts'
+import { Config as ConfigSchema } from './config.ts'
+import type { Config } from './config.ts'
+import { createWorktree } from './create.ts'
+import { pathExists } from './fs-util.ts'
+import { GitRunner } from './git.ts'
+import {
+  assertNotTerminal, assertOpenOrRecoverable, assertOwnerAuthority, layoutForRepo, listRecords, requireRecordLocation,
+  toPublicRecord, updateExistingRecordAt,
+} from './records.ts'
+import { repoRootOf } from './repo.ts'
+import { assertNoRunningWorkers } from './workers.ts'
 import type {
   AcceptOutcome,
   AcceptWorktreeRequest,
@@ -21,6 +35,7 @@ import type {
   ListWorktreesRequest,
   ProvisionedWorktree,
   ResolveReviewerRequest,
+  WorktreeOwner,
   WorktreeRecord,
   WorktreeRoute,
 } from './types.ts'
@@ -28,6 +43,7 @@ import type {
 export type * from './types.ts'
 export { renderReviewerPrompt, renderWorkerBrief, VERDICT_SCHEMA } from './text.ts'
 export type { ReviewerPromptFacts, WorkerBriefFacts } from './text.ts'
+export type { Config } from './config.ts'
 
 declare module '@deepseek-ai/cordis' {
   interface Context {
@@ -36,26 +52,10 @@ declare module '@deepseek-ai/cordis' {
   }
 }
 
-/** Deployment configuration for worktree placement, review, and merge. */
-export interface Config {
-  /** Absolute directory holding worktrees, records, and review checkouts; omitted resolves `<DSH_HOME>/worktrees` at load. */
-  root?: string
-  /** Prefix of every worktree branch name. */
-  branchPrefix: string
-  /** Maximum `open` or `reviewing` worktrees per repository. */
-  maxWorktrees: number
-  /** Reviewer route; omitted uses the route of the Agent that accepts. */
-  reviewer?: WorktreeRoute
-  /** Reject a reviewer route equal to the worker's route. */
-  requireDistinctReviewer: boolean
-  /** Check command run in the review checkout before the reviewer; a nonzero exit rejects the change. */
-  testCommand?: string[]
-  /** Byte bound on the diff embedded in the reviewer prompt. */
-  reviewDiffMaxBytes: number
-  /** Remove the worktree directory and branch after a successful merge. */
-  removeOnMerge: boolean
-  /** Author identity for harness commits; omitted uses git's configured identity. */
-  commitAuthor?: { name: string; email: string }
+/** Whether a filter owner admits a record's owner: exact match, `operator` filtering only `operator` records. */
+function ownerMatches(recordOwner: WorktreeOwner, filterOwner: WorktreeOwner): boolean {
+  if (filterOwner.kind === 'operator') return recordOwner.kind === 'operator'
+  return recordOwner.kind === 'session' && recordOwner.sessionId === filterOwner.sessionId
 }
 
 /**
@@ -65,29 +65,23 @@ export interface Config {
  * operator input, never from model input.
  */
 export class SubagentWorktrees extends Service {
-  static inject = ['subprocess', 'subagents']
+  static inject = ['subprocess', 'subagents', 'agents']
 
-  static Config: z<Config> = z.object({
-    root: z.string().description('Absolute directory holding worktrees, records, and review checkouts. Omitted resolves <DSH_HOME>/worktrees.'),
-    branchPrefix: z.string().default('dsh/worktree/').description('Prefix of every worktree branch name.'),
-    maxWorktrees: z.natural().min(1).default(16).description('Maximum open or reviewing worktrees per repository.'),
-    reviewer: z.object({
-      provider: z.string().required(),
-      model: z.string().required(),
-      reasoningEffort: z.string(),
-    }).description('Reviewer route. Omitted uses the route of the agent that accepts.'),
-    requireDistinctReviewer: z.boolean().default(true).description('Reject a reviewer route equal to the worker route.'),
-    testCommand: z.array(z.string()).description('Check command (argv) run in the review checkout before the reviewer.'),
-    reviewDiffMaxBytes: z.natural().min(1024).default(49152).description('Byte bound on the diff embedded in the reviewer prompt.'),
-    removeOnMerge: z.boolean().default(true).description('Remove the worktree and its branch after a successful merge.'),
-    commitAuthor: z.object({
-      name: z.string().required(),
-      email: z.string().required(),
-    }).description('Author identity for harness commits. Omitted uses the git configuration.'),
-  })
+  static Config = ConfigSchema
+
+  /** Resolved once at load: `config.root`, or `<DSH_HOME>/worktrees` when omitted. */
+  private readonly root: string
+
+  /** Git command runner shared by every operation. */
+  private readonly git: GitRunner
 
   constructor(ctx: Context, protected readonly config: Config) {
     super(ctx, 'subagentWorktrees')
+    this.root = config.root ?? dshHomePath('worktrees')
+    if (!isAbsolute(this.root)) {
+      throw new Error(`subagent-worktree: configured root "${this.root}" must be an absolute path`)
+    }
+    this.git = new GitRunner(ctx.subprocess)
   }
 
   /**
@@ -96,8 +90,7 @@ export class SubagentWorktrees extends Service {
    * @returns the committed `open` record, the worker directory, and any uncommitted base changes left out.
    */
   create(request: CreateWorktreeRequest): Promise<ProvisionedWorktree> {
-    void request
-    throw new Error('subagent-worktree: create is not implemented')
+    return createWorktree(this.git, this.root, this.config.branchPrefix, this.config.maxWorktrees, request)
   }
 
   /**
@@ -105,9 +98,16 @@ export class SubagentWorktrees extends Service {
    * @param request - worktree id, owner, worker Session id, and route.
    * @returns the updated record.
    */
-  attach(request: AttachWorkerRequest): Promise<WorktreeRecord> {
-    void request
-    throw new Error('subagent-worktree: attach is not implemented')
+  async attach(request: AttachWorkerRequest): Promise<WorktreeRecord> {
+    const located = await requireRecordLocation(this.root, request.id)
+    assertOwnerAuthority(located.record, request.owner, request.id)
+    assertNotTerminal(located.record, request.id)
+    const updated = await updateExistingRecordAt(located.path, request.id, current => ({
+      ...current,
+      workerSessionIds: [...current.workerSessionIds, request.workerSessionId],
+      ...request.workerRoute === undefined ? {} : { workerRoute: request.workerRoute },
+    }))
+    return toPublicRecord(updated)
   }
 
   /**
@@ -118,8 +118,18 @@ export class SubagentWorktrees extends Service {
    * @throws when `requireDistinctReviewer` is set and the resolved route equals the worker's.
    */
   resolveReviewer(request: ResolveReviewerRequest): WorktreeRoute {
-    void request
-    throw new Error('subagent-worktree: resolveReviewer is not implemented')
+    const route = request.override ?? this.config.reviewer ?? request.callerRoute
+    if (
+      this.config.requireDistinctReviewer
+      && route.provider === request.workerRoute.provider
+      && route.model === request.workerRoute.model
+    ) {
+      throw new Error(
+        `subagent-worktree: the reviewer would run on the worker's route ${route.provider}/${route.model}, `
+        + 'so the review would not be independent; start the worker on another model or configure a reviewer route',
+      )
+    }
+    return route
   }
 
   /**
@@ -129,8 +139,13 @@ export class SubagentWorktrees extends Service {
    * @returns the accept outcome.
    */
   accept(request: AcceptWorktreeRequest): Promise<AcceptOutcome> {
-    void request
-    throw new Error('subagent-worktree: accept is not implemented')
+    return acceptWorktree({
+      ctx: this.ctx,
+      git: this.git,
+      root: this.root,
+      config: this.config,
+      resolveReviewer: req => this.resolveReviewer(req),
+    }, request)
   }
 
   /**
@@ -138,9 +153,23 @@ export class SubagentWorktrees extends Service {
    * @param request - worktree id, owner, and cancellation.
    * @returns the `discarded` record.
    */
-  discard(request: DiscardWorktreeRequest): Promise<WorktreeRecord> {
-    void request
-    throw new Error('subagent-worktree: discard is not implemented')
+  async discard(request: DiscardWorktreeRequest): Promise<WorktreeRecord> {
+    const located = await requireRecordLocation(this.root, request.id)
+    assertOwnerAuthority(located.record, request.owner, request.id)
+    assertOpenOrRecoverable(located.record, request.id)
+    assertNoRunningWorkers(this.ctx, located.record, request.id)
+
+    const { record } = located
+    if (await pathExists(record.path)) {
+      await this.git.expect(['worktree', 'remove', '--force', record.path], 'git worktree remove', {
+        cwd: record.repoRoot, signal: request.signal,
+      })
+    }
+    await this.git.expect(['worktree', 'prune'], 'git worktree prune', { cwd: record.repoRoot, signal: request.signal })
+    await this.git.expect(['branch', '-D', record.branch], 'git branch -D', { cwd: record.repoRoot, signal: request.signal })
+
+    const updated = await updateExistingRecordAt(located.path, request.id, current => ({ ...current, state: 'discarded' }))
+    return toPublicRecord(updated)
   }
 
   /**
@@ -148,9 +177,19 @@ export class SubagentWorktrees extends Service {
    * @param request - base directory, optional owner filter, and whether to include closed records.
    * @returns records ordered by creation time.
    */
-  list(request: ListWorktreesRequest): Promise<WorktreeRecord[]> {
-    void request
-    throw new Error('subagent-worktree: list is not implemented')
+  async list(request: ListWorktreesRequest): Promise<WorktreeRecord[]> {
+    const repoRoot = await repoRootOf(this.git, request.baseDir)
+    if (repoRoot === undefined) {
+      throw new Error(`subagent-worktree: "${request.baseDir}" is not inside a git work tree`)
+    }
+    const layout = layoutForRepo(this.root, repoRoot)
+    const records = (await listRecords(layout)).filter((record) => {
+      if (!request.includeClosed && (record.state === 'merged' || record.state === 'discarded')) return false
+      if (request.owner !== undefined && !ownerMatches(record.owner, request.owner)) return false
+      return true
+    })
+    records.sort((a, b) => a.createdAt - b.createdAt)
+    return records.map(toPublicRecord)
   }
 }
 
