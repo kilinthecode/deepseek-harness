@@ -182,7 +182,7 @@ Prefix-stable while the section text and tool presence are unchanged; removing t
 
 #### What the model sees
 
-The call retains the description and prompt. Success contains only the child's final text; other outcomes become `Error: <stop reason>`, followed by a safe provider diagnostic when present and then any partial assistant text. Intermediate child steps stay out of the parent. An isolated call's success text gains a line naming the worktree id and branch and directing the model to `accept_worktree`; unisolated results are unaffected.
+The call retains the description and prompt. Success contains only the child's final text; other outcomes become `Error: <stop reason>`, followed by a safe provider diagnostic when present and then any partial assistant text. Intermediate child steps stay out of the parent. An isolated call's success text gains a line naming the worktree id and branch and directing the model to `accept_worktree`; a failed isolated run's error text gains the same pointer, naming `accept_worktree` or `discard_worktree`, so a failure never strands the model without a way back to the child's changes. Unisolated results are unaffected either way.
 
 #### Token effect
 

@@ -48,11 +48,11 @@ subagent({
 
 Prefer a worker model cheaper than your own when the tool exposes `provider`/`model`: a decomposed, well-specified part needs less capability than the planning you already did. Never use `subagent_fork` for a crew member — it has no model selection and inherits your conversation, defeating both the cost saving and the context isolation this skill exists for.
 
-Keep your own context small while workers run: read their results and the reviewer's verdict, not their transcripts. After a resume or a compaction, call `list_worktrees` to recover which open worktree belongs to which part instead of guessing.
+Keep your own context small while workers run: read their results and the reviewer's verdict, not their transcripts.
 
 ## Land, fix, or discard each part
 
-When a worker finishes, call `accept_worktree` for its worktree. The harness commits the worker's changes, runs any configured checks, and has an independent reviewer check that exact commit before merging:
+After a resume or a compaction, call `list_worktrees` to recover which open worktree belongs to which part instead of guessing. When a worker finishes, call `accept_worktree` for its worktree. The harness commits the worker's changes, runs any configured checks, and has an independent reviewer check that exact commit before merging:
 
 - **Merged** — done; move to the next part.
 - **Rejected**, or **checks failed** — send the returned findings to the worker with `send_message`, wait for it to finish, then call `accept_worktree` again. Forward the findings; do not re-derive or soften them yourself.

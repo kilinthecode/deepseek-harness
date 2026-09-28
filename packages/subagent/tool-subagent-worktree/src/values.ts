@@ -11,6 +11,16 @@ import type { AcceptOutcome, WorktreeRecord } from '@deepseek-ai/dsh-subagent-wo
 import type { InferValue } from '@deepseek-ai/dsh-tools'
 import { assertNever } from '@deepseek-ai/dsh-util-values'
 
+/** End a sentence with terminal punctuation, without doubling an existing one. */
+function terminated(text: string): string {
+  return /[.!?]$/.test(text) ? text : `${text}.`
+}
+
+/** Render argv so a reader can reproduce it: quote any element containing whitespace. */
+function renderArgv(argv: readonly string[]): string {
+  return argv.map(arg => /\s/.test(arg) ? JSON.stringify(arg) : arg).join(' ')
+}
+
 const REVIEWER_SCHEMA = {
   type: 'object',
   additionalProperties: false,
@@ -170,7 +180,7 @@ export function renderAcceptToolValue(value: AcceptToolValue): string {
   switch (value.kind) {
     case 'merged': {
       const base = `Merged worktree ${value.id} into ${value.repoRoot}: commit ${value.commit} as merge `
-        + `${value.mergeCommit}. Reviewer ${value.reviewer.provider}/${value.reviewer.model} passed it: ${value.summary}`
+        + `${value.mergeCommit}. Reviewer ${value.reviewer.provider}/${value.reviewer.model} passed it: ${terminated(value.summary)}`
       return value.removed ? `${base} The worktree was removed; start a new child for further work.` : base
     }
     case 'rejected': {
@@ -179,9 +189,10 @@ export function renderAcceptToolValue(value: AcceptToolValue): string {
         + `Findings:\n${findings}\n`
         + 'Send these findings to the child with send_message, wait for it to finish, then accept again.'
     }
-    case 'checks-failed':
-      return `Checks failed for worktree ${value.id} at commit ${value.commit}: \`${value.argv.join(' ')}\` `
-        + `exited ${String(value.exitCode ?? null)}.\n${value.output}`
+    case 'checks-failed': {
+      const outcome = value.exitCode === undefined ? 'was stopped before it exited' : `exited ${String(value.exitCode)}`
+      return `Checks failed for worktree ${value.id} at commit ${value.commit}: \`${renderArgv(value.argv)}\` ${outcome}.\n${value.output}`
+    }
     case 'conflict':
       return `Worktree ${value.id} passed review at commit ${value.commit} but conflicts with your checkout in: ${value.files.join(', ')}. `
         + `Nothing was merged. Merge branch ${value.branch} yourself and resolve the conflicts, or discard the worktree.`
@@ -269,5 +280,7 @@ export function toListToolValue(records: readonly WorktreeRecord[]): ListToolVal
  */
 export function renderListToolValue(value: ListToolValue): string {
   if (value.length === 0) return 'No open worktrees.'
-  return value.map(row => `${row.id}  ${row.state}  ${row.branch}  ${row.label}  ${row.verdict ?? 'not reviewed'}`).join('\n')
+  return value.map(row =>
+    `${row.id}  state=${row.state}  branch=${row.branch}  review=${row.verdict ?? 'not reviewed'}  label=${JSON.stringify(row.label)}`,
+  ).join('\n')
 }

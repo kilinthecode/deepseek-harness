@@ -109,12 +109,12 @@ Prefix-stable; the schemas do not change at runtime.
 
 #### What the model sees
 
-One of six fixed templates below, chosen by the outcome the service settled on; a merged outcome appends ` The worktree was removed; start a new child for further work.` when the worktree was removed after merging. [`src/values.ts`](src/values.ts) owns the exact wording of each.
+One of six fixed templates below, chosen by the outcome the service settled on. A merged outcome appends ` The worktree was removed; start a new child for further work.` when the worktree was removed after merging. A checks-failed outcome says the command "was stopped before it exited" instead of naming an exit code when the check process left none (for example, killed by a signal), and quotes any argv element containing whitespace so the command can be reproduced. [`src/values.ts`](src/values.ts) owns the exact wording of each.
 
 ##### Merged
 
 ```markdown
-Merged worktree <id> into <repoRoot>: commit <commit> as merge <mergeCommit>. Reviewer <provider>/<model> passed it: <summary>
+Merged worktree <id> into <repoRoot>: commit <commit> as merge <mergeCommit>. Reviewer <provider>/<model> passed it: <summary>.
 ```
 
 ##### Rejected
@@ -177,7 +177,7 @@ Append-only; follows the reusable request prefix.
 
 #### What the model sees
 
-One line per open worktree, `<id>  <state>  <branch>  <label>  <verdict-or-"not reviewed">`, or `No open worktrees.` when none are open.
+One labeled line per open worktree, `<id>  state=<state>  branch=<branch>  review=<verdict-or-"not reviewed">  label="<label>"`, or `No open worktrees.` when none are open.
 
 #### Token effect
 
