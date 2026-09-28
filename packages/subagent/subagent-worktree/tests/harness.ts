@@ -23,11 +23,12 @@ export function git(cwd: string, ...args: string[]): string {
  * Create a temporary git repository with a local commit identity and no GPG
  * signing, so an automated `git commit` never blocks on host or global config.
  * @param prefix - `mkdtemp` prefix.
+ * @param objectFormat - `sha256` for a SHA-256 repository, whose commit ids have 64 digits; default SHA-1.
  * @returns the repository's absolute directory.
  */
-export async function initFixtureRepo(prefix: string): Promise<string> {
+export async function initFixtureRepo(prefix: string, objectFormat: 'sha1' | 'sha256' = 'sha1'): Promise<string> {
   const dir = await mkdtemp(join(tmpdir(), prefix))
-  git(dir, 'init', '-q', '-b', 'main')
+  git(dir, 'init', '-q', '-b', 'main', `--object-format=${objectFormat}`)
   git(dir, 'config', 'user.name', 'Worktree Test')
   git(dir, 'config', 'user.email', 'worktree-test@example.com')
   git(dir, 'config', 'commit.gpgsign', 'false')

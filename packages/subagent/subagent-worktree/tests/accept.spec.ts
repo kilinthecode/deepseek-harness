@@ -88,13 +88,15 @@ interface Harness {
 }
 
 interface HarnessOptions {
+  /** `sha256` runs the scenario in a SHA-256 repository, whose commit ids have 64 digits. */
+  objectFormat?: 'sha1' | 'sha256'
   config?: Partial<TestConfig>
   verdicts?: readonly ScriptedVerdict[]
   onReviewerStart?: (request: SubagentStartRequest) => void
 }
 
 async function harness(options: HarnessOptions = {}): Promise<Harness> {
-  const dir = await initFixtureRepo('dsh-accept-')
+  const dir = await initFixtureRepo('dsh-accept-', options.objectFormat)
   cleanups.push(() => removeFixture(dir))
   git(dir, 'commit', '--allow-empty', '-q', '-m', 'base')
   const root = await scratchRoot()
@@ -233,6 +235,24 @@ describe('accept: rejected', () => {
     },
     GIT_TEST_TIMEOUT_MS,
   )
+})
+
+describe('accept: SHA-256 repositories', () => {
+  it('creates, reviews, and merges in a repository whose commit ids have 64 digits', async () => {
+    const { ctx, dir } = await harness({ objectFormat: 'sha256' })
+    const provisioned = await createWorktree(ctx, OWNER, dir, 'do the thing')
+    await writeFile(join(provisioned.workDir, 'change.txt'), 'x')
+
+    const outcome = await ctx.subagentWorktrees.accept(acceptRequest(provisioned.record.id))
+
+    expect(provisioned.record.baseCommit).toMatch(/^[0-9a-f]{64}$/)
+    expect(outcome.kind).toBe('merged')
+    if (outcome.kind !== 'merged') throw new Error('unreachable')
+    expect(outcome.commit).toMatch(/^[0-9a-f]{64}$/)
+    expect(outcome.mergeCommit).toMatch(/^[0-9a-f]{64}$/)
+    expect(outcome.record.mergedCommit).toBe(outcome.mergeCommit)
+    expect(await readFile(join(dir, 'change.txt'), 'utf8')).toBe('x')
+  }, GIT_TEST_TIMEOUT_MS)
 })
 
 describe('accept: commit identity', () => {

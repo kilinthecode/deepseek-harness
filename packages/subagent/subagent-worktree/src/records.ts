@@ -140,15 +140,19 @@ export function assertStoredWorktreeRecord(value: unknown, sourcePath: string): 
   }
 }
 
-/** Pattern every full git commit id in a stored record must match. */
-const COMMIT_ID_PATTERN = /^[0-9a-f]{40}$/
+/**
+ * Pattern every full git commit id in a stored record must match: 40 lowercase
+ * hexadecimal digits (SHA-1 repositories) or 64 (SHA-256 repositories).
+ */
+const COMMIT_ID_PATTERN = /^(?:[0-9a-f]{40}|[0-9a-f]{64})$/
 
 /**
  * Verify a shape-valid record is consistent with where it is stored, both when
  * it is loaded and before it is written: its own id names its file, its
  * worktree directory is the one this repository layout assigns that id, its
- * branch names its id, and every commit id is a full 40-digit lowercase
- * hexadecimal id. A record failing any of these was corrupted or edited on
+ * branch names its id, and every commit id is a full lowercase hexadecimal id
+ * (40 digits, or 64 in a SHA-256 repository). A record failing any of these
+ * was corrupted or edited on
  * disk, and acting on it could aim a `git worktree remove --force` or a merge
  * at a path or commit that was never this worktree's.
  * @param record - the shape-validated record.

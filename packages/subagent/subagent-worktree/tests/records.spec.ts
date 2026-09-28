@@ -305,6 +305,10 @@ describe('loaded-record integrity', () => {
     ['an abbreviated baseCommit', (layout: WorktreeLayout) => recordIn(layout, id, { baseCommit: 'abc123' }), 'has baseCommit "abc123"'],
     ['an uppercase baseCommit', (layout: WorktreeLayout) => recordIn(layout, id, { baseCommit: 'A'.repeat(40) }), 'has baseCommit'],
     ['a baseCommit that is a ref name', (layout: WorktreeLayout) => recordIn(layout, id, { baseCommit: '--upload-pack=x' }), 'has baseCommit "--upload-pack=x"'],
+    ['a baseCommit between the two hash lengths', (layout: WorktreeLayout) => recordIn(layout, id, { baseCommit: 'a'.repeat(50) }), 'has baseCommit'],
+    ['a baseCommit one digit short of a SHA-256 id', (layout: WorktreeLayout) => recordIn(layout, id, { baseCommit: 'a'.repeat(63) }), 'has baseCommit'],
+    ['a baseCommit one digit past a SHA-256 id', (layout: WorktreeLayout) => recordIn(layout, id, { baseCommit: 'a'.repeat(65) }), 'has baseCommit'],
+    ['an uppercase 64-digit mergedCommit', (layout: WorktreeLayout) => recordIn(layout, id, { mergedCommit: 'A'.repeat(64) }), 'has mergedCommit'],
     ['an abbreviated mergedCommit', (layout: WorktreeLayout) => recordIn(layout, id, { mergedCommit: 'abc123' }), 'has mergedCommit "abc123"'],
     ['a verdict commit that is not a full commit id', (layout: WorktreeLayout) => recordIn(layout, id, {
       lastVerdict: {
@@ -320,6 +324,21 @@ describe('loaded-record integrity', () => {
     await expect(listRecords(layout)).rejects.toThrow(message)
     await expect(updateExistingRecordAt(layout, id as WorktreeId, current => current)).rejects.toThrow(message)
     expect(await readFile(path, 'utf8')).toBe(before)
+  })
+
+  it('accepts a record whose base, merged, and verdict commits are 64-digit SHA-256 commit ids', async () => {
+    const root = await scratchRoot('dsh-wt-integrity-sha256-')
+    const layout = layoutFor(root, 'repo-key')
+    const record = recordIn(layout, id, {
+      baseCommit: 'd'.repeat(64),
+      state: 'merged',
+      mergedCommit: 'e'.repeat(64),
+      lastVerdict: {
+        verdict: 'pass', summary: 's', checks: [], findings: [], commit: 'f'.repeat(64), reviewerSessionId: SessionId('r'), reviewerRoute: { provider: 'p', model: 'm' }, at: 1,
+      },
+    })
+    await createRecord(layout, record)
+    expect((await requireRecordLocation(root, id as WorktreeId)).record).toEqual(record)
   })
 
   it('accepts a record whose merged and verdict commits are full lowercase commit ids', async () => {
