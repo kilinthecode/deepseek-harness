@@ -443,10 +443,30 @@ export function assertOpen(record: Pick<WorktreeRecord, 'state'>, id: WorktreeId
 export function assertOpenOrRecoverable(record: StoredWorktreeRecord, id: WorktreeId): void {
   if (record.state === 'open') return
   if (record.state === 'reviewing') {
-    if (record.reviewingPid !== undefined && isProcessAlive(record.reviewingPid)) {
-      throw new Error(`subagent-worktree: worktree ${id} is already being accepted`)
-    }
+    if (!isStaleReviewing(record)) throw new Error(`subagent-worktree: worktree ${id} is already being accepted`)
     return
   }
   throw new Error(`subagent-worktree: worktree ${id} is ${record.state}`)
+}
+
+/**
+ * Whether a record is `reviewing` on a claim no live process holds: its
+ * accepting process is gone, or never recorded a process id. Such a record is
+ * what a crashed accept leaves behind.
+ * @param record - the record being acted on.
+ * @returns whether the record is `reviewing` and its claim is stale.
+ */
+export function isStaleReviewing(record: StoredWorktreeRecord): boolean {
+  return record.state === 'reviewing' && !(record.reviewingPid !== undefined && isProcessAlive(record.reviewingPid))
+}
+
+/**
+ * The record without its accept claim (`reviewingPid`); the state and every
+ * other field are unchanged.
+ * @param record - the record to release.
+ * @returns the record with no process id claim.
+ */
+export function withoutReviewingPid(record: StoredWorktreeRecord): StoredWorktreeRecord {
+  const { reviewingPid: _reviewingPid, ...released } = record
+  return released
 }

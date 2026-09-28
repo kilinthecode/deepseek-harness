@@ -20,12 +20,15 @@ import { runCheckCommand } from './check-command.ts'
 import type { CommitAuthor } from './config.ts'
 import type { Config } from './index.ts'
 import { cleanupSignal, GitCommandError, type GitRunner } from './git.ts'
+import { recoverLandedMerge, sweepWorktree } from './landed.ts'
+import type { LandedRecovery } from './landed.ts'
 import { attemptMerge } from './merge.ts'
+import type { MergeAttemptResult } from './merge.ts'
 import { reviewCheckoutPathFor, reviewCheckoutPrefixFor } from './paths.ts'
 import type { WorktreeLayout } from './paths.ts'
 import { pathExists } from './fs-util.ts'
 import {
-  assertOpenOrRecoverable, assertOwnerAuthority, requireRecordLocation, toPublicRecord, updateExistingRecordAt,
+  assertOpenOrRecoverable, assertOwnerAuthority, requireRecordLocation, toPublicRecord, updateExistingRecordAt, withoutReviewingPid,
 } from './records.ts'
 import type { StoredWorktreeRecord } from './records.ts'
 import { callerRouteOf, runReviewer } from './review.ts'
@@ -206,16 +209,76 @@ async function removeMergedWorktree(
   }
 }
 
+/** An error raised after the merge landed: the base checkout changed even though the accept failed. */
+class MergeLandedError extends Error {
+  constructor(message: string, cause: unknown) {
+    super(message, { cause })
+    this.name = 'MergeLandedError'
+  }
+}
+
+/** What the merge step settled with: a merge outcome, or a merge that landed whose commit id could not be read. */
+type MergeStep = MergeAttemptResult | { readonly kind: 'unreadable'; readonly cause: unknown }
+
+/**
+ * Persist `merged` (and the merge commit, when it is known) in one write. When
+ * the write fails, this process's claim is released so a live process id does
+ * not pin the record as "being accepted": a later accept or discard finds the
+ * reviewed commit already in the base checkout and records it.
+ * @throws {MergeLandedError} when the write failed.
+ */
+async function recordLandedMerge(
+  deps: AcceptDeps, layout: WorktreeLayout, id: WorktreeId, mergeCommit: string | undefined,
+): Promise<StoredWorktreeRecord> {
+  try {
+    return await updateExistingRecordAt(layout, id, current => ({
+      ...withoutReviewingPid(current), state: 'merged', ...mergeCommit === undefined ? {} : { mergedCommit: mergeCommit },
+    }))
+  } catch (writeError) {
+    await updateExistingRecordAt(layout, id, withoutReviewingPid).catch((clearError: unknown) => {
+      deps.ctx.logger.warn(`subagent-worktree: could not release the accept claim on worktree ${id}: ${String(clearError)}`)
+    })
+    throw new MergeLandedError(
+      `subagent-worktree: the merge of worktree ${id} landed in the base checkout${mergeCommit === undefined ? '' : ` as ${mergeCommit}`}, `
+      + `but recording it failed; the worktree record still says reviewing: ${String(writeError)}`,
+      writeError,
+    )
+  }
+}
+
+/**
+ * The outcome for a worktree that an earlier, crashed accept had already
+ * merged: it is now recorded `merged`, and a leftover worktree or branch is
+ * swept when `removeOnMerge` is set.
+ */
+async function outcomeOfRecoveredMerge(deps: AcceptDeps, recovery: LandedRecovery): Promise<AcceptOutcome> {
+  const { record, verdict } = recovery
+  const mergeCommit = record.mergedCommit ?? verdict.commit
+  let removed = false
+  if (deps.config.removeOnMerge) {
+    try {
+      await sweepWorktree(deps.git, record, cleanupSignal())
+      removed = true
+    } catch (error) {
+      deps.ctx.logger.warn(
+        `subagent-worktree: worktree ${record.id} was already merged as ${mergeCommit}, but removing its worktree and branch failed: ${String(error)}`,
+      )
+    }
+  }
+  return { kind: 'merged', record: toPublicRecord(record), commit: verdict.commit, mergeCommit, verdict, removed }
+}
+
 /**
  * Commit, check, review, and merge one worktree.
  * @param deps - host context, command runner, root, config, and `resolveReviewer`.
  * @param request - worktree id, owner, reviewer parent Agent, operator overrides, and cancellation.
- * @returns the accept outcome.
+ * @returns the accept outcome. A stale `reviewing` record whose reviewed commit already landed (an earlier accept
+ *   crashed before recording it) is recorded `merged` and reported as `merged` without a second review or merge.
  * @throws when `request.testCommand` or `request.reviewer` is set by a non-operator owner, the record is not found,
  *   not owned by `request.owner`, not `open` (or stale `reviewing`), or an attached worker is still running. Any git,
  *   subprocess, or reviewer failure before the merge lands rethrows after returning a still-`reviewing` record to
- *   `open`. A failure after the merge commit exists rethrows without touching the record's state; a failed write of
- *   the `merged` state says the merge landed.
+ *   `open`. Once `git merge` has exited 0 the record is never reopened: a failed write of the `merged` state, or a
+ *   merge commit id that cannot be read, throws an error that says the merge landed.
  */
 export async function acceptWorktree(deps: AcceptDeps, request: AcceptWorktreeRequest): Promise<AcceptOutcome> {
   // `testCommand` runs an operator-supplied argv with host privileges and
@@ -228,6 +291,11 @@ export async function acceptWorktree(deps: AcceptDeps, request: AcceptWorktreeRe
 
   const located = await requireRecordLocation(deps.root, request.id)
   assertOwnerAuthority(located.record, request.owner, request.id)
+
+  // An earlier accept that died after its merge landed but before recording it left a stale `reviewing`
+  // record whose reviewed commit is already in the base checkout: record it `merged`, never re-merge it.
+  const recovery = await recoverLandedMerge(deps.git, located.layout, located.record, request.signal)
+  if (recovery !== undefined) return await outcomeOfRecoveredMerge(deps, recovery)
 
   // The state and running-worker checks run only here, under the record lock:
   // two concurrent accepts (or an accept racing a worker restart) both pass
@@ -268,39 +336,39 @@ export async function acceptWorktree(deps: AcceptDeps, request: AcceptWorktreeRe
     // The merge lock covers only the merge itself: recording the result and
     // removing the worktree happen after it is released, so a slow removal
     // never holds up another accept's merge into the same base checkout.
-    const mergeResult = await withFileLock(
+    const step: MergeStep = await withFileLock(
       located.layout.mergeLockPath,
       () => attemptMerge(deps.git, reviewing.repoRoot, request.id, reviewing.label, commit, request.signal, {
         onLanded: () => { landing.landed = true },
         report: (message) => { deps.ctx.logger.error(message) },
       }),
       { waitMs: MERGE_LOCK_WAIT_MS },
-    )
-    if (mergeResult.kind === 'conflict') {
-      return await reopen(located.layout, request.id, record => ({ kind: 'conflict', record, commit, verdict, files: mergeResult.files }))
+    ).catch((error: unknown): MergeStep => {
+      // `git merge` exited 0 (`onLanded` ran) but reading the merge commit failed even on a retry.
+      if (landing.landed) return { kind: 'unreadable', cause: error }
+      throw error
+    })
+    if (step.kind === 'conflict') {
+      return await reopen(located.layout, request.id, record => ({ kind: 'conflict', record, commit, verdict, files: step.files }))
     }
-    if (mergeResult.kind === 'blocked') {
-      return await reopen(located.layout, request.id, record => ({ kind: 'blocked', record, commit, verdict, reason: mergeResult.reason }))
+    if (step.kind === 'blocked') {
+      return await reopen(located.layout, request.id, record => ({ kind: 'blocked', record, commit, verdict, reason: step.reason }))
     }
 
-    // The merge commit now exists in the base checkout's history (`onLanded`
-    // marked it the instant `git merge` exited 0). From here no failure may
-    // reopen the record: reporting `open` for work that already landed would
-    // invite a second merge of the same branch.
-    let merged: StoredWorktreeRecord
-    try {
-      merged = await updateExistingRecordAt(located.layout, request.id, current => ({
-        ...current, state: 'merged', mergedCommit: mergeResult.mergeCommit,
-      }))
-    } catch (error) {
-      throw new Error(
-        `subagent-worktree: the merge of worktree ${request.id} landed in the base checkout as ${mergeResult.mergeCommit}, `
-        + `but recording it failed; the worktree record still says reviewing: ${String(error)}`,
-        { cause: error },
+    // The merge landed in the base checkout's history (`onLanded` marked it the
+    // instant `git merge` exited 0). From here no failure may reopen the
+    // record: reporting `open` for work that already landed would invite a
+    // second merge of the same branch.
+    const merged = await recordLandedMerge(deps, located.layout, request.id, step.kind === 'merged' ? step.mergeCommit : undefined)
+    if (step.kind === 'unreadable') {
+      throw new MergeLandedError(
+        `subagent-worktree: the merge of worktree ${request.id} landed in the base checkout and is recorded merged, `
+        + `but its commit id could not be read: ${String(step.cause)}`,
+        step.cause,
       )
     }
-    const removed = deps.config.removeOnMerge && await removeMergedWorktree(deps, reviewing, mergeResult.mergeCommit)
-    return { kind: 'merged', record: toPublicRecord(merged), commit, mergeCommit: mergeResult.mergeCommit, verdict, removed }
+    const removed = deps.config.removeOnMerge && await removeMergedWorktree(deps, reviewing, step.mergeCommit)
+    return { kind: 'merged', record: toPublicRecord(merged), commit, mergeCommit: step.mergeCommit, verdict, removed }
   } catch (error) {
     if (!landing.landed) {
       await updateExistingRecordAt(located.layout, request.id, current => (

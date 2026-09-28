@@ -19,8 +19,8 @@ import { acceptWorktree } from './accept.ts'
 import { resolveConfiguredCommitAuthor, resolveConfiguredReviewer } from './config.ts'
 import type { CommitAuthor } from './config.ts'
 import { createWorktree } from './create.ts'
-import { pathExists } from './fs-util.ts'
 import { GitRunner } from './git.ts'
+import { recoverLandedMerge, sweepWorktree } from './landed.ts'
 import {
   assertOpen, assertOpenOrRecoverable, assertOwnerAuthority, layoutForRepo, listRecords, requireRecordLocation,
   toPublicRecord, updateExistingRecordAt,
@@ -265,24 +265,19 @@ export class SubagentWorktrees extends Service {
     const located = await requireRecordLocation(this.root, request.id)
     assertOwnerAuthority(located.record, request.owner, request.id)
 
-    const claimed = await updateExistingRecordAt(located.layout, request.id, (current) => {
+    // A stale `reviewing` record whose reviewed commit already landed (an earlier accept crashed before
+    // recording it) is recorded `merged`, and then only its leftovers are swept.
+    const recovery = await recoverLandedMerge(this.git, located.layout, located.record, request.signal)
+    const claimed = recovery?.record ?? await updateExistingRecordAt(located.layout, request.id, (current) => {
       if (current.state === 'merged') return current
       assertOpenOrRecoverable(current, request.id)
       assertNoRunningWorkers(this.ctx.agents, current, request.id)
       return { ...current, state: 'discarded' }
     })
 
-    // Each step tolerates the thing it removes already being gone, so a
+    // Each removal tolerates the thing it removes already being gone, so a
     // discard that was interrupted after the claim can be finished by hand.
-    const cleanup = { cwd: claimed.repoRoot, signal: request.signal }
-    if (await pathExists(claimed.path)) {
-      await this.git.expect(['worktree', 'remove', '--force', claimed.path], 'git worktree remove', cleanup)
-    }
-    await this.git.expect(['worktree', 'prune'], 'git worktree prune', cleanup)
-    const branch = await this.git.run(['rev-parse', '-q', '--verify', `refs/heads/${claimed.branch}`], cleanup)
-    if (branch.exitCode === 0) {
-      await this.git.expect(['branch', '-D', claimed.branch], 'git branch -D', cleanup)
-    }
+    await sweepWorktree(this.git, claimed, request.signal)
     return toPublicRecord(claimed)
   }
 

@@ -66,6 +66,15 @@ const DEFAULT_TEST_CONFIG = {
 } satisfies Omit<Config, 'root'>
 
 /**
+ * The complete `Config` `setup` mounts the service with: the test defaults with `config` laid over them.
+ * @param config - `root` plus any `Config` overrides.
+ * @returns the full configuration, for tests that call an internal operation directly with their own git runner.
+ */
+export function resolveTestConfig(config: TestConfig): Config {
+  return { ...DEFAULT_TEST_CONFIG, ...config }
+}
+
+/**
  * Mount the real subprocess, subagent, and worktree services in a fresh context.
  * @param config - `root` (always required — an isolated tmp directory) plus any `Config` overrides.
  * @returns the composed context and its disposer.
@@ -75,7 +84,7 @@ export async function setup(config: TestConfig): Promise<{ ctx: Context; dispose
   await ctx.plugin(LocalSubprocessRuntime)
   await ctx.plugin(AgentRegistry)
   await ctx.plugin(SubagentRuntime)
-  await ctx.plugin(SubagentWorktrees, { ...DEFAULT_TEST_CONFIG, ...config })
+  await ctx.plugin(SubagentWorktrees, resolveTestConfig(config))
   return { ctx, dispose: () => ctx.fiber.dispose() }
 }
 
