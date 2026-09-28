@@ -165,7 +165,7 @@ Read these pages when the package-level contract is not enough; they move from t
 
 #### What the model sees
 
-After a successful step crosses the threshold, a mounted pruner's preview decides the order: oversized tool results are rewritten first only when that alone would clear enough headroom below the threshold, in which case summarization is skipped. Otherwise the next request receives the checkpoint preamble below, a blank line, `<compacted-summary>`, the data-dependent summary, and `</compacted-summary>` — built from the original, unpruned history — and the pruner then rewrites whatever oversized tool results remain in the retained tail. Overflow recovery always rewrites oversized tool results first, since the retried request itself must fit, then rebuilds the immediate retry from whatever replacement advanced the surface. A checkpoint replaces the selected older range and is followed by the retained recent units.
+After a successful step crosses the threshold, a mounted pruner's preview decides the order: oversized tool results are rewritten first only when that alone would clear enough headroom below the threshold, in which case summarization is skipped. Otherwise the next request receives the checkpoint preamble below, a blank line, `<compacted-summary>`, the data-dependent summary, and `</compacted-summary>` — built from the original, unpruned history — and the pruner then rewrites whatever oversized tool results remain in the retained tail. A qualifying preview whose landed rewrite still leaves the surface at or above the threshold falls back to this same otherwise-path, so the summary is built from the already-rewritten history instead; a step with nothing left to summarize still gets its oversized tool results rewritten before compaction declines. Overflow recovery always rewrites oversized tool results first, since the retried request itself must fit, then rebuilds the immediate retry from whatever replacement advanced the surface. A checkpoint replaces the selected older range and is followed by the retained recent units.
 
 ##### Conversation checkpoint preamble
 
@@ -179,7 +179,7 @@ Model-free pruning can avoid the auxiliary call entirely; otherwise it reduces t
 
 #### KV Cache effect
 
-Replacing rather than append-only. Each checkpoint invalidates reuse from the first replaced history token; the unchanged request prefix before that range remains reusable.
+Replacing rather than append-only. Each checkpoint invalidates reuse from the first replaced history token; the unchanged request prefix before that range remains reusable. A prune-only pass that lands without a summary invalidates reuse from its first pruned node instead of a checkpoint boundary.
 
 ### Auxiliary summarizer request
 
@@ -232,7 +232,7 @@ This is a separate model call: the replayed conversation prefix plus the fixed i
 
 #### KV Cache effect
 
-The replayed system prompt, tools, and shadowed-region messages match the conversation's last routed request byte-for-byte, so the provider's warm prefix cache is reused up to the trailing instruction; only that instruction, and the summary output, is uncached. Routing the summarizer to a different provider/model, or compacting a non-head range, forgoes this reuse.
+The replayed system prompt, tools, and shadowed-region messages match the conversation's last routed request byte-for-byte, so the provider's warm prefix cache is reused up to the trailing instruction; only that instruction, and the summary output, is uncached. Because pressure previews a prune-only pass before selecting a range, a summary that runs without one landing first matches the conversation's cached prefix through the entire summarized region; a summary that follows a landed prune matches only up to that prune's first replaced node. Routing the summarizer to a different provider/model, or compacting a non-head range, forgoes this reuse.
 
 ## Known Limitations and Deferred Work
 

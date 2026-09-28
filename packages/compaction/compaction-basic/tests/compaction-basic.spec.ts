@@ -1046,11 +1046,11 @@ describe('optional model-free tool-result pruning', () => {
       retainTokens: 100,
     })
     const session = oversizedToolResult()
-    const previewSession = vi.spyOn(prune, 'previewSession')
+    const projectTokenSavings = vi.spyOn(prune, 'projectTokenSavings')
     const pruneSession = vi.spyOn(prune, 'pruneSession')
 
     expect(await compactIfNeeded(compact, session)).toBeNull()
-    expect(previewSession).not.toHaveBeenCalled()
+    expect(projectTokenSavings).not.toHaveBeenCalled()
     expect(pruneSession).not.toHaveBeenCalled()
     expect(compact.calls).toHaveLength(0)
     expect(session.surface.replaceGeneration).toBe(0)
@@ -1082,7 +1082,7 @@ describe('optional model-free tool-result pruning', () => {
   it('proceeds to compaction when a preview finds no prune candidates', async () => {
     const ctx = createContext(1_000)
     const prune = new ToolResultPruner(ctx, pruneConfig)
-    const previewSession = vi.spyOn(prune, 'previewSession')
+    const projectTokenSavings = vi.spyOn(prune, 'projectTokenSavings')
     const compact = new TestCompactionEngine(ctx, {
       headroomTokens: 0,
       maxTokens: 8192,
@@ -1093,7 +1093,7 @@ describe('optional model-free tool-result pruning', () => {
     const session = conversation(4)
 
     expect(await compactIfNeeded(compact, session)).not.toBeNull()
-    expect(previewSession).toHaveReturnedWith({ nodes: 0, tokensSaved: 0 })
+    expect(projectTokenSavings).toHaveReturnedWith(0)
     expect(compact.calls).toHaveLength(1)
   })
 
@@ -1129,7 +1129,7 @@ describe('optional model-free tool-result pruning', () => {
     // Over-report tokensSaved so the qualifying check lands the prune; the
     // real prune it drives still only saves what the fixture actually
     // allows, which is not enough to clear the threshold on its own.
-    vi.spyOn(prune, 'previewSession').mockReturnValue({ nodes: 3, tokensSaved: 1_000_000 })
+    vi.spyOn(prune, 'projectTokenSavings').mockReturnValue(1_000_000)
     const compact = new TestCompactionEngine(ctx, {
       headroomTokens: 0,
       maxTokens: 8192,
@@ -1177,7 +1177,7 @@ describe('optional model-free tool-result pruning', () => {
     // this exact value and fall through to compaction instead of landing the
     // prune-only pass.
     const tokensSaved = measured - (spec.thresholdTokens - spec.pruneHeadroomTokens)
-    vi.spyOn(prune, 'previewSession').mockReturnValue({ nodes: 1, tokensSaved })
+    vi.spyOn(prune, 'projectTokenSavings').mockReturnValue(tokensSaved)
 
     expect(await compactIfNeeded(compact, session)).toBeNull()
     expect(compact.calls).toHaveLength(0)
@@ -1208,7 +1208,7 @@ describe('optional model-free tool-result pruning', () => {
     // dropping the `< thresholdTokens` guard would let this tie qualify and
     // prune before compaction instead of leaving the surface untouched.
     const tokensSaved = measured - spec.thresholdTokens
-    vi.spyOn(prune, 'previewSession').mockReturnValue({ nodes: 1, tokensSaved })
+    vi.spyOn(prune, 'projectTokenSavings').mockReturnValue(tokensSaved)
 
     // A tie against the threshold itself must fall through to compaction
     // instead of landing the prune-only pass, so the leading message is
@@ -1259,6 +1259,15 @@ describe('optional model-free tool-result pruning', () => {
       pruneHeadroomRatio: 0.95,
     })
     const session = oversizedToolResult()
+
+    // Pin the precondition this test's name claims: at this retainTokens
+    // budget, the fixture's single indivisible tool-call/result pair leaves
+    // no compactable range, so the prune-before-decline fallback — not real
+    // compaction — is what lands the prune. If the fixture ever grows a
+    // compactable range, this fails before the outcome assertions below could
+    // pass for the wrong reason.
+    expect(selectCompactableRange(session, ctx.tokenMeter.measure(session), compact.config.retainTokens!))
+      .toBeNull()
 
     expect(await compactIfNeeded(compact, session)).toBeNull()
     expect(compact.calls).toHaveLength(0)

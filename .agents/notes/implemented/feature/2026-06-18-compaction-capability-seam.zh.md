@@ -20,7 +20,7 @@ Status: implemented
 
 1. **接口** — `@deepseek-ai/dsh-compaction`：抽象 `CompactionEngine`，拥有 `ctx.compaction` 键、`CompactionResult` 词汇、`compaction/*` 会话事件、手动失败分类体系以及规范的检查点消息来源。它将 `compactIfNeeded()`、`compactNow()` 和 `compactRegion()` 声明为**抽象方法**——约定说明压缩*做什么*，而非*怎么做*。
 2. **实现** — `@deepseek-ai/dsh-compaction-basic`：具体的 `BasicCompactionEngine`，消费 `ctx.tokenMeter`，并拥有尾→头保留遍历、通过 `ctx.llm.stream()` 生成摘要、surface 替换、锁、步骤前压力处理和规范的上下文溢出恢复。`summarize()` 是其唯一的子类钩子；计价与回放仍归 meter 所有。
-3. **无模型配套服务** — `@deepseek-ai/dsh-compaction-tool-result-pruner`：一个具体的可选服务，在后端选择摘要范围之前，重写当前过大的 `tool/result` 节点。它不是第二种压缩实现，也不实现 `CompactionEngine`。
+3. **无模型配套服务** — `@deepseek-ai/dsh-compaction-tool-result-pruner`：一个具体的可选服务，负责重写当前过大的 `tool/result` 节点；具体是单独落地还是先于摘要范围运行，由一次压力预览决定（确切顺序见[阈值相对的剪枝余量与先压缩后剪枝的压力顺序](../architecture/2026-09-28-cache-aware-pressure-prune.zh.md)决策）。它不是第二种压缩实现，也不实现 `CompactionEngine`。
 4. **面向用户的消费方** — `@deepseek-ai/dsh-command-compact` 通过 `ctx.commands` 注册无参数 `/compact`，并调用后端无关的 `compactNow()` 操作。它是供用户直接控制的命令，不是面向模型的工具。
 
 ### 约定依赖 `dsh-session` 和 `dsh-llm`——有意为之的偏离
@@ -37,7 +37,7 @@ Status: implemented
 
 ### 成功的持久步骤工作完成后运行自动压力检查
 
-成功调用的压力检查在下一个 `agent/pre-step` 运行；此时前一响应、工具结果、缓冲上下文与 steering（中途引导）已经持久化，而下一个请求尚未派生。`dsh-compaction-basic` 通过 `ctx.tokenMeter` 测量规范的已记录请求，因此下一个请求无需推测性覆盖信封即可看到任何替换。压力达到条件后，可选的 `ctx.toolResultPruner` 重写在摘要范围选择前运行；compaction-basic 重新测量持久 surface，如果修剪恢复到安全压力便跳过摘要生成。
+成功调用的压力检查在下一个 `agent/pre-step` 运行；此时前一响应、工具结果、缓冲上下文与 steering（中途引导）已经持久化，而下一个请求尚未派生。`dsh-compaction-basic` 通过 `ctx.tokenMeter` 测量规范的已记录请求，因此下一个请求无需推测性覆盖信封即可看到任何替换。压力达到条件后，compaction-basic 会先预览可选的 `ctx.toolResultPruner`：仅靠剪枝就能把余量清到阈值以下时单独落地该次剪枝，否则先在未剪枝的表层上选择范围并生成摘要，再对剩余表层执行剪枝。
 
 规范的提供方上下文溢出走另一条路径。失败步骤先关闭，`agent/request-error` 接收原始请求错误。compaction-basic 自行持有按 agent 计的溢出次数，在强制执行一次有效且平衡的缩减前先修剪，且仅当 `session.surface.replaceGeneration` 增加时才返回 `{ kind: 'retry' }`；这包括没有摘要范围时仅修剪取得的进展。随后循环关闭失败轮次，开启新的编号重试轮次，并从持久日志重建请求。没有替换、任何替换前的恢复失败、取消、耗尽的上限或无关错误都会保留原始提供方失败。如果修剪已经推进 generation，而后续摘要工作失败，恢复会从该持久的已修剪 surface 重试，除非取消或 dispose（资源释放）先发生。完整生命周期决策见[调用后恢复 Agent Note](../architecture/2026-07-10-after-call-compaction-pressure-and-overflow-recovery.zh.md)。
 

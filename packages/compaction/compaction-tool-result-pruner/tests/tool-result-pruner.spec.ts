@@ -268,7 +268,7 @@ describe('ToolResultPruner session transaction', () => {
     expect(second).toEqual({ pruned: [], charsRemoved: 0 })
   })
 
-  it('previews accurate token savings without mutating the session', () => {
+  it('projects accurate token savings without mutating the session', () => {
     const ctx = new Context()
     new SessionProjectionRegistry(ctx)
     void new TokenMeter(ctx)
@@ -284,15 +284,17 @@ describe('ToolResultPruner session transaction', () => {
       turn: 4,
     })
 
-    const seqBeforePreview = session.seq
+    const seqBeforeProjection = session.seq
     const before = ctx.tokenMeter.measure(session)
-    const preview = prune.previewSession(session)
-    expect(session.seq).toBe(seqBeforePreview)
-    expect(preview.nodes).toBe(2)
+    const projected = prune.projectTokenSavings(session)
+    expect(session.seq).toBe(seqBeforeProjection)
 
-    prune.pruneSession(session)
+    // The two oversized results ('big' and 'mixed') are the only prune
+    // candidates; 'short' stays within budget.
+    const { pruned } = prune.pruneSession(session)
+    expect(pruned).toHaveLength(2)
     const after = ctx.tokenMeter.measure(session)
-    expect(preview.tokensSaved).toBe(before.totalTokens - after.totalTokens)
+    expect(projected).toBe(before.totalTokens - after.totalTokens)
   })
 
   it('replays to the identical pruned model messages', () => {
