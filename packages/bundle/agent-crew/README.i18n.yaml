@@ -15,11 +15,17 @@
   en: d152484eb41ac6b4
   zh: 364c80ee00a374ff
 /deepseek-ai-dsh-agent-crew/use-this-package:
-  en: 09bc4582d3d2a366
-  zh: 5af74d5e96a53974
+  en: 54a598275b229e3e
+  zh: 48d0870fa6ec607f
+/deepseek-ai-dsh-agent-crew/use-this-package/reviewer-route:
+  en: 4e2c976bd364b9cd
+  zh: 1b094f75c6847c61
+/deepseek-ai-dsh-agent-crew/use-this-package/worker-routes:
+  en: 9390505334f30fb3
+  zh: 6e0403f88a37cbc4
 /deepseek-ai-dsh-agent-crew/understand-the-implementation:
-  en: 6f8c6375ed520e32
-  zh: 66f93cc8697eb808
+  en: 7fd30905fe8a8f34
+  zh: eece506ac389ab42
 /deepseek-ai-dsh-agent-crew/further-exploration:
   en: 78a53cf801faaa01
   zh: 1b2858b9fc873aa4
