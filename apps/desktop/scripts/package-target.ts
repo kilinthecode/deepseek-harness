@@ -338,7 +338,7 @@ export async function packageTarget(
       ['--import', 'tsx/esm', join(APP_ROOT, 'scripts/windows-signing-preflight.ts')],
       { cwd: APP_ROOT, env: electronBuilderEnv, timeoutMs: 60_000 })
   }
-  await execute(['run', 'build:official'], buildEnv, REPOSITORY_ROOT)
+  await execute(['run', 'build:portal'], buildEnv, REPOSITORY_ROOT)
   await execute(['run', 'release:pack', '--family', 'dsh', '--out', buildPaths.packedDsh], buildEnv, REPOSITORY_ROOT)
   await execute([
     '--dir',

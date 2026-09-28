@@ -3,4 +3,4 @@
 # after editing either side, bring the other along and re-record with:
 #   pnpm run verify-translation-pairing --write docs/tool-catalog.md
 tool-catalog.md: 5ccd22de0ba1f808f83d09bf24630b0c64f9dd4c
-tool-catalog.zh.md: 1213d6df093230fd403477eaceefcc60c947fee9
+tool-catalog.zh.md: 9687d739d2fbf4a5183518c99846648c34bd15a2

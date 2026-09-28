@@ -61,8 +61,17 @@ it('boots the built plugin graph and renders a fixture session end to end', asyn
 
   // The sidebar renders from the boot graph: every inject layer activated.
   const tree = await screen.findByRole('tree', { name: 'Sessions' }, { timeout: 10_000 })
-  if (clientBuildValue('DSH_CLIENT_BUILD_PROFILE') === 'official') {
+  const profile = clientBuildValue('DSH_CLIENT_BUILD_PROFILE')
+  if (profile === 'official') {
+    // The upstream profile keeps the shipped wordmark and never shows the
+    // unprofiled build label.
     expect(document.querySelector('svg[viewBox="26 0 156 24"]')).not.toBeNull()
+    expect(screen.queryByText('Portal Local Build')).toBeNull()
+  } else if (profile === 'portal') {
+    // The fork's profile dresses the sidebar with its own mark and wordmark, and
+    // a profiled build carries its title instead of the build label.
+    expect(document.querySelector('svg[viewBox="160 160 704 704"]')).not.toBeNull()
+    screen.getByText('PORTAL')
     expect(screen.queryByText('Portal Local Build')).toBeNull()
   } else {
     expect(document.querySelector('svg[viewBox="0 0 23.16 17.04"]')).not.toBeNull()

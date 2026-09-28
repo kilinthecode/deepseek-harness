@@ -146,7 +146,7 @@ for (const [file, jobIds] of [['release.yml', ['dependencies', 'pack']], ['relea
             const output = family === 'dsh' ? 'dist/npm' : 'dist/npm-vendor'
             expect(job.steps[0]?.with?.['fetch-depth']).toBe(0)
             expect(commands).toContain('pnpm run release:verify --family ' + family)
-            expect(commands).toContain('pnpm run ' + (family === 'dsh' ? 'build:official' : 'build:lib:host'))
+            expect(commands).toContain('pnpm run ' + (family === 'dsh' ? 'build:portal' : 'build:lib:host'))
             expect(commands).toContain('pnpm run release:pack --family ' + family + ' --out ' + output + ' --concurrency 8')
             expect(commands).toContain('pnpm run release:verify-packed-install --family ' + family + ' --from ' + output
               + (family === 'dsh' ? ' --from dist/npm-vendor --from dist/npm-landlock' : ''))

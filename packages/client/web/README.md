@@ -118,6 +118,8 @@ These limits define what the boot kernel does not support. They are current pack
 
 - **The application waits for the full roster** — one failed entry keeps the framework-free boot page visible with a per-entry report; partial UI availability is not supported.
 
+- **The covered application stays in the accessibility tree** — the boot page draws over the mounted application but does not mark it `inert`, so a screen reader or keyboard user can reach controls that are not yet visible, and focus set during the hold is not restored afterwards. The overlay does block pointer input for the whole hold.
+
 <a id="dev-note"></a>
 ### Dev Note
 

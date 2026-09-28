@@ -2323,7 +2323,7 @@ Source: [`packages/experimental/tool-agent-team/src/index.ts`](../packages/exper
 
 Source: [`packages/experimental/tool-agent-team/src/index.ts`](../packages/experimental/tool-agent-team/src/index.ts)
 
-All nine tools are scoped to implicit Team Leads and durable teammates. The shipped dsh-base bundle keeps the package disabled; the documented Agent Teams profile patch enables it while disabling the legacy continuable-child control names.
+这九个工具限定于隐式 Team Lead 与持久 teammate 作用域。随包发布的 dsh-base bundle 默认停用本包；文档中的 Agent Teams profile patch 会在启用它的同时禁用旧的 continuable-child 控制名。
 
 <a id="deepseek-aidsh-experimental-tool-agent-room"></a>
 
@@ -2465,7 +2465,7 @@ Source: [`packages/experimental/tool-agent-room/src/index.ts`](../packages/exper
 
 Source: [`packages/experimental/tool-agent-room/src/index.ts`](../packages/experimental/tool-agent-room/src/index.ts)
 
-Five tools are scoped to room participants. The shipped composition keeps them unmounted; a deployment enables them beside `@deepseek-ai/dsh-experimental-agent-team` with `roomEnabled: true`, and every outcome is decided by the service quorum rather than by the tool.
+这五个工具限定于 room participant 作用域。随包发布的组合默认不挂载它们；部署时在 `@deepseek-ai/dsh-experimental-agent-team` 旁以 `roomEnabled: true` 启用，且每个结果都由服务端的法定人数决定，而不是由工具决定。
 
 <a id="deepseek-aidsh-tool-todo"></a>
 
