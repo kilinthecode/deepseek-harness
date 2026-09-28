@@ -1,17 +1,24 @@
 import { chmod, mkdir, mkdtemp, readdir, realpath, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { afterEach, describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import { Context } from '@deepseek-ai/cordis'
 import LocalSubprocessRuntime from '@deepseek-ai/dsh-subprocess-local'
 import { SessionId } from '@deepseek-ai/dsh-session'
 import { BASE_DIRTY_MAX_ENTRIES } from '../src/bounds.ts'
 import { createWorktree } from '../src/create.ts'
 import { GitRunner } from '../src/git.ts'
+import type * as Git from '../src/git.ts'
 import type { GitCommandResult, GitRunOptions } from '../src/git.ts'
 import { layoutForRepo } from '../src/records.ts'
+import { expireSignal, KILLED_RESULT } from './cleanup-signals.ts'
 import { git, initFixtureRepo, removeFixture } from './harness.ts'
 import type { CreateWorktreeRequest } from '../src/types.ts'
+
+// Cleanup signals never run out on their own here, so a test can make one run out at a chosen moment.
+vi.mock('../src/git.ts', async importOriginal => (
+  (await import('./cleanup-signals.ts')).withExpirableCleanupSignals(await importOriginal<typeof Git>())
+))
 
 const cleanups: Array<() => Promise<unknown>> = []
 afterEach(async () => {
@@ -136,23 +143,36 @@ describe('createWorktree', () => {
 
 /**
  * Runs real git, except `git status` reports a lossy capture and, optionally, cancels the request as it does
- * so; `worktree remove` can be made to blow up or to fail with a nonzero exit. Records every command it runs.
+ * so; `worktree remove` can be made to blow up, to fail with a nonzero exit, or to complete and then run out of
+ * time. Like the subprocess runtime, it never runs a command started on an aborted signal. Records every command.
  */
 class BrokenStatusGit extends GitRunner {
   readonly commands: string[][] = []
 
   constructor(
     subprocessRuntime: ConstructorParameters<typeof GitRunner>[0],
-    private readonly options: { readonly removeBlowsUp?: boolean; readonly removeFails?: boolean; readonly cancel?: AbortController } = {},
+    private readonly options: {
+      readonly removeBlowsUp?: boolean
+      readonly removeFails?: boolean
+      readonly removeTimesOut?: boolean
+      readonly cancel?: AbortController
+    } = {},
   ) {
     super(subprocessRuntime)
   }
 
   override async run(args: readonly string[], runOptions: GitRunOptions): Promise<GitCommandResult> {
     this.commands.push([...args])
+    if (runOptions.signal?.aborted === true) return KILLED_RESULT
     if (args[0] === 'worktree' && args[1] === 'remove') {
       if (this.options.removeBlowsUp === true) throw new Error('cleanup blew up')
       if (this.options.removeFails === true) return { exitCode: 128, stdout: '', stderr: 'fatal: scripted removal failure\n', stdoutLossy: false }
+      if (this.options.removeTimesOut === true) {
+        // The removal completes, and its own bound runs out before the runner can report it, so it reads as killed.
+        await super.run(args, runOptions)
+        expireSignal(runOptions.signal)
+        return KILLED_RESULT
+      }
     }
     if (args[0] === 'status') {
       this.options.cancel?.abort()
@@ -230,6 +250,24 @@ describe('createWorktree: failure after `git worktree add`', () => {
     await expect(createWorktree(command, root, 'dsh/worktree/', 16, request(dir)))
       .rejects.toThrow('git status output exceeded its capture limit')
     expect(command.commands.filter(args => args[0] === 'branch' && args[1] === '-D')).toHaveLength(1)
+  }, GIT_TEST_TIMEOUT_MS)
+
+  it('deletes the branch on its own fresh signal, so a worktree removal that timed out does not stop it', async () => {
+    const dir = await initFixtureRepo('dsh-create-remove-times-out-')
+    cleanups.push(() => removeFixture(dir))
+    git(dir, 'commit', '--allow-empty', '-q', '-m', 'base')
+    const root = await scratchRoot()
+    const ctx = new Context()
+    cleanups.push(() => ctx.fiber.dispose())
+    await ctx.plugin(LocalSubprocessRuntime)
+    const command = new BrokenStatusGit(ctx.subprocess, { removeTimesOut: true })
+
+    await expect(createWorktree(command, root, 'dsh/worktree/', 16, request(dir)))
+      .rejects.toThrow('git status output exceeded its capture limit')
+
+    // The removal completed and then ran out of time; the branch deletion after it still ran, for real.
+    expect(git(dir, 'worktree', 'list').trim().split('\n')).toHaveLength(1)
+    expect(git(dir, 'branch', '--list', 'dsh/worktree/*').trim()).toBe('')
   }, GIT_TEST_TIMEOUT_MS)
 
   it('cleans up on a fresh signal when the request was cancelled: the worktree and branch are still removed', async () => {
