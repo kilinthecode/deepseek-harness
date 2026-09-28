@@ -94,6 +94,6 @@ No runtime invariant companion is published: the package owns no runtime state o
 <details>
 <summary>Maintainer notes</summary>
 
-The tool set mirrors `@deepseek-ai/dsh-experimental-tool-agent-team`: the same scoped-installation lifecycle, the same declared-schema result contract, and the same refusal path through tool error results. Keep the two packages symmetric when either changes; the shared delivery and roster machinery lives in `@deepseek-ai/dsh-experimental-agent-team`.
+The tool set mirrors `@deepseek-ai/dsh-experimental-tool-agent-team`: the same scoped-installation lifecycle, the same declared-schema result contract, and the same refusal path through tool error results. Keep the two packages symmetric when either changes; the shared roster and delivery machinery lives in `@deepseek-ai/dsh-experimental-agent-team`, and the scoped-install, disposer, caller, and JSON-output helpers both packages import live in that package's `tool-scaffold` subpath.
 
 </details>

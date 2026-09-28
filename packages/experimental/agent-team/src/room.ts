@@ -103,6 +103,8 @@ export class TeamRoom {
   private readonly activity = new Map<SessionId, number>()
   /** One armed stall check per open decision, replaced on every re-arm. */
   private readonly reviewTimers = new Map<RoomProposalIdType, () => void>()
+  /** Transcript appends this process has started and not yet settled. */
+  private readonly appends = new Set<Promise<unknown>>()
 
   /**
    * @param ctx - Team service context with Agent, Session, and subagent services.
@@ -149,7 +151,7 @@ export class TeamRoom {
       content,
     }
     const { root } = membership
-    void this.journal.transact(root.id, async () => {
+    const append = this.journal.transact(root.id, async () => {
       const state = this.journal.state(root)
       /* v8 ignore next -- the identity is derived from the committed event, so a reload cannot duplicate it. */
       if (state.roomMessages.some(candidate => candidate.id === message.id)) return
@@ -165,6 +167,10 @@ export class TeamRoom {
       if (this.ctx.get('agents')?.get(root.id) === undefined) return
       this.ctx.logger.warn(`room transcript append failed: ${errorMessage(error)}`)
     })
+    // The append is tracked so runtime disposal settles it instead of returning
+    // while the Lead's log still has a room write in flight.
+    this.appends.add(append)
+    void append.finally(() => { this.appends.delete(append) })
   }
 
   /**
@@ -202,6 +208,12 @@ export class TeamRoom {
         )
       }
       const prior = request.supersedes === undefined ? undefined : this.revisableProposal(state, request.supersedes)
+      if (prior !== undefined && prior.proposerId !== caller.id) {
+        throw new TeamError(
+          `room decision "${prior.id}" is revised only by the participant that proposed it`,
+          'TEAM_ROOM_NOT_PROPOSER',
+        )
+      }
       const revision = prior === undefined ? 1 : prior.revision + 1
       if (revision > this.config.maxProposalRevisions) {
         throw new TeamError(
@@ -227,8 +239,15 @@ export class TeamRoom {
     // Resolve the timer before asking anyone, so a composition that cannot serve
     // a deadline fails before the room delivers its requests.
     this.requireTimer()
-    await this.requestReviews(caller, proposal)
-    this.armReview(membership.root, proposal)
+    try {
+      await this.requestReviews(caller, proposal)
+    } finally {
+      // The decision is durable and open from the append above, so it takes its
+      // deadline even when a delivery failure aborted the asks part-way. Arming
+      // here, once the asks settled, starts every window the room just opened
+      // rather than a deadline computed before any reviewer was told.
+      this.armReview(membership.root, proposal)
+    }
     return this.proposalView(membership.root.id, proposal.id)
   }
 
@@ -392,10 +411,19 @@ export class TeamRoom {
     for (const proposal of this.journal.state(root).roomProposals) this.armReview(root, proposal)
   }
 
-  /** Release every armed stall check. */
+  /** Release every armed stall check and the activity it measured. */
   dispose(): void {
     for (const timer of this.reviewTimers.values()) timer()
     this.reviewTimers.clear()
+    this.activity.clear()
+  }
+
+  /**
+   * Transcript appends still in flight.
+   * @returns the append operations runtime disposal must settle.
+   */
+  pendingTranscripts(): readonly Promise<unknown>[] {
+    return [...this.appends]
   }
 
   /** Arm one revision's stall check at its earliest deadline, replacing any armed check. */
@@ -444,8 +472,10 @@ export class TeamRoom {
     // room hands the decision to the human.
     if (stalled.length > 0 && reminders < this.config.reviewReminders) {
       await this.recordTimeout(root, proposal, 'reminder', stalled)
-      await this.promptStalled(root, proposal, stalled)
+      // Re-arm before the reminder reaches anyone: a reminder the mailbox cannot
+      // deliver must leave the decision with a deadline rather than without one.
       this.armReview(root, proposal)
+      await this.promptStalled(root, proposal, stalled)
       return
     }
     // A reviewer still inside its grace window keeps the decision open, so an
@@ -730,11 +760,21 @@ export class TeamRoom {
       text: `Room decision ${proposal.id} (revision ${proposal.revision}) needs your standing.\n\nStatement:\n${proposal.statement}\n\nCall room_review with verdict approve, reject, or abstain and a reason. Approve only if you would defend this decision yourself. Reject when you found a specific problem; state it in the reason.`,
     }]
     for (const reviewer of this.eligibleReviewers(state, proposal.proposerId)) {
-      await this.mailbox.send(caller, {
-        target: reviewer.name,
-        content: this.contextContent(rootId, reviewer.name, instruction),
-        signal: this.lifecycle.signal,
-      })
+      try {
+        await this.mailbox.send(caller, {
+          target: reviewer.name,
+          content: this.contextContent(rootId, reviewer.name, instruction),
+          signal: this.lifecycle.signal,
+        })
+      } catch (error: unknown) {
+        // A member is a reviewer from the moment provisioning records it, while
+        // the mailbox reaches only an active member. The armed deadline asks this
+        // reviewer again once it runs, so one unreachable ask leaves the decision
+        // open with its window intact instead of failing the proposal the room
+        // has already committed.
+        this.ctx.logger.warn(`room review request to "${reviewer.name}" was not delivered: ${errorMessage(error)}`)
+        continue
+      }
       // The ask starts this reviewer's grace window: a participant that was
       // already quiet when the decision opened is still owed the chance to
       // answer it, and delivery to a busy participant is only queued.

@@ -6,8 +6,8 @@ import type { Agent, AgentOptions } from '@deepseek-ai/dsh-agent'
 import { ReasoningEffortId } from '@deepseek-ai/dsh-llm'
 import { TeamTaskId } from '@deepseek-ai/dsh-experimental-agent-team'
 import type { TeamMemberView } from '@deepseek-ai/dsh-experimental-agent-team'
+import { callingAgent, installScopedTools, jsonOutput, toolDisposers } from '@deepseek-ai/dsh-experimental-agent-team/tool-scaffold'
 import { defineTool } from '@deepseek-ai/dsh-tools'
-import type { InferValue, ValueSchemaSpec } from '@deepseek-ai/dsh-tools'
 
 /** Cordis plugin name. */
 export const name = 'tool-agent-team'
@@ -142,35 +142,10 @@ const TASK_LIST_VALUE_SCHEMA = {
   },
 } as const
 
-/**
- * Declare one canonical output schema with compact model-facing JSON. Every
- * Team result is a fixed record, so the declared schema is what makes the
- * compiler check `execute` against the value the model is promised.
- * @param schema - canonical value schema for one tool.
- * @returns the `output` declaration accepted by {@link defineTool}.
- */
-function jsonOutput<const S extends ValueSchemaSpec>(schema: S): {
-  schema: S
-  render: (args: unknown, value: InferValue<S>) => [{ type: 'text'; text: string }]
-} {
-  return {
-    schema,
-    render: (_args: unknown, value: InferValue<S>) => [{ type: 'text', text: JSON.stringify(value) }],
-  }
-}
-
-/** Recover the exact caller guaranteed by Agent-scoped tool discovery. */
-function callingAgent(agent: Agent | undefined, toolName: string): Agent {
-  /* v8 ignore next 2 -- Team tools are registered only in an exact Agent scope, so discovery supplies this carrier. */
-  if (agent === undefined) throw new Error(`${toolName} requires a calling Agent`)
-  return agent
-}
-
 /** Register the complete Team tool set in one exact Agent scope. */
 function install(agent: Agent, ctx: Context, config: Required<Config>): () => void {
   const scoped = agent.ctx
-  const disposers: Array<() => unknown> = []
-  const register = (disposer: () => unknown): void => { disposers.push(disposer) }
+  const { register, dispose } = toolDisposers()
   try {
     register(scoped.systemPrompt.section({
       name: 'team:policy',
@@ -200,8 +175,8 @@ function install(agent: Agent, ctx: Context, config: Required<Config>): () => vo
         },
         reasoning_effort: {
           type: 'string',
-          enum: ['off', 'low', 'medium', 'high'],
-          description: 'Reasoning effort for this teammate. Defaults to your own setting.',
+          description: 'Reasoning effort for this teammate. The effective route declares which values it accepts; '
+            + 'a value that route does not declare is refused before any teammate exists. Defaults to your own setting.',
         },
       },
       output: jsonOutput(SPAWN_VALUE_SCHEMA),
@@ -413,12 +388,10 @@ function install(agent: Agent, ctx: Context, config: Required<Config>): () => vo
       },
     })))
   } catch (error: unknown) {
-    for (const dispose of disposers.reverse()) void dispose()
+    dispose()
     throw error
   }
-  return () => {
-    for (const dispose of disposers.reverse()) void dispose()
-  }
+  return dispose
 }
 
 /** Install Team tools in every live or subsequently published Team member scope. */
@@ -427,19 +400,5 @@ export function apply(ctx: Context, config: Config = {}): void {
     freshProvider: config.freshProvider ?? 'spawn',
     forkProvider: config.forkProvider ?? 'fork',
   }
-  const installed = new Map<Agent, () => void>()
-  const maybeInstall = (agent: Agent): void => {
-    if (installed.has(agent) || ctx.agentTeams.tryMembership(agent) === undefined) return
-    installed.set(agent, install(agent, ctx, resolved))
-  }
-  for (const agent of ctx.agents.list()) maybeInstall(agent)
-  ctx.on('agent/created', ({ agent }) => { maybeInstall(agent) })
-  ctx.on('agent/disposed', ({ agent }) => {
-    installed.get(agent)?.()
-    installed.delete(agent)
-  })
-  ctx.effect(() => () => {
-    for (const dispose of installed.values()) dispose()
-    installed.clear()
-  }, 'tool-team.scopedTools()')
+  installScopedTools(ctx, 'tool-team.scopedTools()', agent => install(agent, ctx, resolved))
 }

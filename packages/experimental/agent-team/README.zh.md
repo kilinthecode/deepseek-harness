@@ -9,7 +9,7 @@ kind: "package-reference"
 
 ## 概述
 
-`dsh-experimental-agent-team` 把一个编码会话变成一个小型工作团队：会话中的 agent 成为 Lead，创建具名 teammate 处理委派的工作，与它们交换持久消息，并在公共任务板上跟踪共享任务。消息与任务状态能挺过崩溃、reload 与中断，因此离线的 teammate 会在恢复后收到排队的消息。开启 `roomEnabled` 后，同一个 roster 还会作为审慎的 room 运行：所有发言汇入一份带署名 transcript，集体决策只由记录在案的 quorum 结清，任何成员都无法独自决定。它本身不提供任何工具——请挂载兄弟包 `dsh-experimental-tool-agent-team`。它以实验性名称公开发布、不承诺稳定性。
+`dsh-experimental-agent-team` 把一个会话变成一个小型工作团队：会话中的 agent 成为 Lead，创建具名 teammate 处理委派的工作，与它们交换持久消息，并在公共任务板上跟踪共享任务。消息与任务状态能挺过崩溃与 reload，因此离线的 teammate 会在恢复后收到排队的消息。开启 `roomEnabled` 后，同一个 roster 还会作为审慎的 room 运行：所有发言汇入一份带署名 transcript，决策只由记录在案的 quorum 结清。它本身不提供任何工具——委派请挂载 `@deepseek-ai/dsh-experimental-tool-agent-team`，room 请挂载 `@deepseek-ai/dsh-experimental-tool-agent-room`。它以实验性名称公开发布、不承诺稳定性。
 
 ## 目录
 
@@ -25,7 +25,7 @@ kind: "package-reference"
 <a id="use-this-package"></a>
 ## 使用本包
 
-当一个 agent 应该在自己的工作目录中运行一支小型具名助手团队、且消息与任务状态需要挺过崩溃与重启时，把本包加入组合。它本身不带工具：请与 `@deepseek-ai/dsh-experimental-tool-agent-team` 一起挂载，让模型能够创建 teammate、给它们发消息并使用任务板。
+当一个 agent 应该在自己的工作目录中运行一支小型具名助手团队、且消息与任务状态需要挺过崩溃与重启时，把本包加入组合。它本身不带工具：请与 `@deepseek-ai/dsh-experimental-tool-agent-team` 一起挂载，让模型能够创建 teammate、给它们发消息并使用任务板。room 还需要在 `roomEnabled` 下挂载 `@deepseek-ai/dsh-experimental-tool-agent-room`，参与者才能读取 transcript、交出发言权、提出决策、review 并升级。
 
 ### 何时选择
 
@@ -122,9 +122,12 @@ Lead 可以停止 teammate 的当前轮次，而不会删除其排队的消息�
 | [`src/task-board.ts`](src/task-board.ts) | 任务 CAS 命令、DAG 校验与派生视图 |
 | [`src/journal.ts`](src/journal.ts) | 串行化的 Lead 日志事务与提交通知 |
 | [`src/projection.ts`](src/projection.ts) | 解码并校验 Team 事件的严格回放投影 |
+| [`src/room.ts`](src/room.ts) | 共享 transcript、发言权交接、决议截止时间与升级 |
+| [`src/room-quorum.ts`](src/room-quorum.ts) | 仅依据已记录 standing 的法定人数计算，本身不持有任何权限 |
 | [`src/activity.ts`](src/activity.ts) | 一次性变更等待者与 dispose（资源释放）时的等待解除 |
 | [`src/lifecycle.ts`](src/lifecycle.ts) | 共享准入截止与有界结算 |
 | [`src/invariant.ts`](src/invariant.ts) | 在 append 前回放候选事件的不变式伴生插件 |
+| [`src/tool-scaffold.ts`](src/tool-scaffold.ts) | 由面向模型的工具包共享的 scoped tool 注册脚手架 |
 
 ### Team 身份与 roster
 
@@ -173,6 +176,7 @@ dispose 会关闭准入、中止并等待已获准的创建与 mailbox dispatch 
 
 - [Agent Teams 子系统](../../../docs/subsystems/agent-team.zh.md)——持久 Team 类型与 `ctx.agentTeams` 服务 API。
 - [tool-agent-team 包](../tool-agent-team/README.zh.md)——让模型创建 teammate、向其发送消息并进行协调的工具。
+- [tool-agent-room 包](../tool-agent-room/README.zh.md)——room 参与者用来读取 transcript、交出发言权、提出决策、review 并升级的五个工具。
 - [Agent Teams Agent Note](../../../.agents/notes/implemented/feature/2026-08-05-agent-teams.zh.md)——身份、mailbox、任务与共享 checkout 决策。
 - [实验包决策](../../../.agents/notes/implemented/architecture/2026-08-18-experimental-agent-teams-packages.zh.md)——位置、公开发布与依赖隔离。
 
@@ -182,7 +186,7 @@ dispose 会关闭准入、中止并等待已获准的创建与 mailbox dispatch 
 
 ### 浏览器 Remote
 
-`TeamService` 除了 roster、mailbox、task 与 lifecycle operation，还拥有生成的 `agentTeams/view`、`agentTeams/createTask` 与 `agentTeams/updateTask` Remote method。`./remote` 导出由 Web UI 挂载的 Client contribution，`./client` 则重新导出可在浏览器 compilation face 中安全使用的 request、view 与 task mutation result type。Typert 在外层 `RemoteResult` 中保留 transport failure；create 与 update rejection 则作为 transport 成功响应中的显式 domain result，其中过期的 update revision 会区分为 task conflict。
+`TeamService` 除了 roster、mailbox、task 与 lifecycle operation，还拥有生成的 `agentTeams/view`、`agentTeams/createTask` 与 `agentTeams/updateTask` Remote method。`./remote` 导出由 Web UI 挂载的 Client contribution，`./client` 则重新导出可在浏览器 compilation face 中安全使用的 request、view 与 task mutation result type。`./tool-scaffold` 导出面向模型的工具包构建其工具集时使用的注册脚手架：紧凑的 JSON output 声明、scoped tool 席位提供的 Agent 载体，以及按成员安装与释放的生命周期。Typert 在外层 `RemoteResult` 中保留 transport failure；create 与 update rejection 则作为 transport 成功响应中的显式 domain result，其中过期的 update revision 会区分为 task conflict。
 
 ## 模型体验
 

@@ -1,5 +1,5 @@
 ---
-description: "Package map for shared utilities: atomic file writes, branded ids, deques, JSON values, harness home paths, launch environment, native commands, output retention, time zones, and timeouts."
+description: "Package map for shared utilities: async queues, atomic file writes, branded ids, deques, JSON values, harness home paths, launch environment, native commands, output retention, time zones, and timeouts."
 kind: "package-group"
 ---
 
@@ -9,7 +9,7 @@ English | [中文](README.zh.md)
 
 ## Summary
 
-The `util/` group gives capability packages shared mechanical primitives instead of duplicate implementations. It covers atomic writes, branded ids, deques, lossless JSON values, UUIDs, Harness-home paths, launch environments, outbound proxy policy, native commands, output retention, time-zone canonicalization, and timeout handling. Every root entry here is a library: it registers no product service or event, and the consuming capability retains the business semantics.
+The `util/` group gives capability packages shared mechanical primitives instead of duplicate implementations. It covers async queues, atomic writes, branded ids, deques, lossless JSON values, UUIDs, Harness-home paths, launch environments, outbound proxy policy, native commands, output retention, time-zone canonicalization, and timeout handling. Every root entry here is a library: it registers no product service or event, and the consuming capability retains the business semantics.
 
 ## Table of Contents
 
@@ -30,6 +30,7 @@ Each package provides one primitive; open a package page for how to use it.
 | [`package-manifest/`](package-manifest/README.md) | Shared TypeScript declarations for package manifests |
 | [`crypto/`](crypto/README.md) | Mints RFC 9562 v4 UUIDs from the cross-runtime `crypto.getRandomValues` primitive |
 | [`deque/`](deque/README.md) | Provides amortized constant-time queue operations with bounded vacant storage |
+| [`async-queue/`](async-queue/README.md) | Buffers a producer's entries for one async-iterator consumer and wakes it on arrival or end |
 | [`chunked-list/`](chunked-list/README.md) | Retains immutable list versions with bounded append copying and checkpoint validation |
 | [`values/`](values/README.md) | Validates, snapshots, compares, and freezes lossless JSON-compatible values |
 | [`home-paths/`](home-paths/README.md) | Resolves the single Harness home and joins shared user-data paths |

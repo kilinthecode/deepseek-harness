@@ -2,7 +2,7 @@
 
 import type { Context } from '@deepseek-ai/cordis'
 import type { Agent } from '@deepseek-ai/dsh-agent'
-import { Deque } from '@deepseek-ai/dsh-deque'
+import { AsyncQueue } from '@deepseek-ai/dsh-async-queue'
 import type { JobSnapshot } from '@deepseek-ai/dsh-jobs'
 import type {
   Session, SessionId,
@@ -114,40 +114,39 @@ export class SessionControlController {
   }
 }
 
+/** One Remote reader's Host-wide control stream: the shared hand-off plus this reader's loop. */
 class ControlQueue {
-  private readonly buffer = new Deque<SessionControlFrame>()
-  private wake: (() => void) | undefined
-  private done = false
+  private readonly queue = new AsyncQueue<SessionControlFrame>()
 
   push(frame: SessionControlFrame): void {
-    if (this.done) return
-    this.buffer.pushBack(frame)
-    const wake = this.wake
-    this.wake = undefined
-    wake?.()
+    this.queue.push(frame)
   }
 
   end(): void {
-    if (this.done) return
-    this.done = true
-    const wake = this.wake
-    this.wake = undefined
-    wake?.()
+    this.queue.end()
   }
 
+  /**
+   * Yield buffered frames as they arrive, then drain the frames buffered before
+   * the end so a disposing controller does not drop committed state; an aborted
+   * signal stops both loops. The drain is why this loop stays local to the
+   * reader instead of moving into the shared queue.
+   * @param signal - Remote stream cancellation, which ends this queue.
+   * @returns every frame committed while this reader stayed open.
+   */
   async *iterate(signal: AbortSignal): AsyncIterable<SessionControlFrame> {
     const onAbort = (): void => { this.end() }
     signal.addEventListener('abort', onAbort, { once: true })
     try {
-      while (!this.done && !signal.aborted) {
-        const frame = this.buffer.popFront()
+      while (!this.queue.finished && !signal.aborted) {
+        const frame = this.queue.take()
         if (frame !== undefined) {
           yield frame
           continue
         }
-        await new Promise<void>((resolve) => { this.wake = resolve })
+        await this.queue.wait()
       }
-      while (this.buffer.size > 0 && !signal.aborted) yield this.buffer.popFront() as SessionControlFrame
+      while (this.queue.size > 0 && !signal.aborted) yield this.queue.take() as SessionControlFrame
     } finally {
       signal.removeEventListener('abort', onAbort)
       this.end()

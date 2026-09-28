@@ -818,6 +818,62 @@ describe('Team shared task DAG', () => {
     })).rejects.toMatchObject({ code: 'TEAM_TASK_HAS_DEPENDENTS' })
   })
 
+  it('keeps a submitted revision awaiting its verdict through release, reassign, and delete', async () => {
+    // The submission wakes the Lead, which is what the refused transitions keep
+    // from moving the task off the revision the pending verdict names.
+    const { ctx, lead } = await setup(['hang', 'hang', textResponse('lead noted the submission')])
+    const ownerStarted = await spawn(ctx, lead, 'owner')
+    const owner = await waitRunning(ctx, ownerStarted.member.id)
+    const verifierStarted = await spawn(ctx, lead, 'verifier')
+    await waitRunning(ctx, verifierStarted.member.id)
+
+    const task = await ctx.agentTeams.createTask(owner, { subject: 'work', description: 'work' })
+    const claimed = await ctx.agentTeams.updateTask(owner, {
+      taskId: task.id,
+      expectedRevision: task.revision,
+      action: 'claim',
+    })
+    const submitted = await ctx.agentTeams.updateTask(owner, {
+      taskId: task.id,
+      expectedRevision: claimed.revision,
+      action: 'submit',
+    })
+    expect(submitted.status).toBe('verifying')
+
+    const awaiting = { code: 'TEAM_TASK_INVALID_TRANSITION' }
+    await expect(ctx.agentTeams.updateTask(owner, {
+      taskId: task.id,
+      expectedRevision: submitted.revision,
+      action: 'release',
+    })).rejects.toMatchObject(awaiting)
+    await expect(ctx.agentTeams.updateTask(lead, {
+      taskId: task.id,
+      expectedRevision: submitted.revision,
+      action: 'reassign',
+      owner: 'verifier',
+    })).rejects.toMatchObject(awaiting)
+    await expect(ctx.agentTeams.updateTask(owner, {
+      taskId: task.id,
+      expectedRevision: submitted.revision,
+      action: 'delete',
+    })).rejects.toMatchObject(awaiting)
+
+    // Nothing was recorded, so the log still folds and the verdict the submission
+    // asked for is still the one the board is waiting on.
+    expect(ctx.agentTeams.getTask(lead, task.id)).toMatchObject({
+      status: 'verifying',
+      revision: submitted.revision,
+    })
+    const completed = await ctx.agentTeams.updateTask(lead, {
+      taskId: task.id,
+      expectedRevision: submitted.revision,
+      action: 'verify',
+      verdict: 'approved',
+      reason: 'the work matches the description',
+    })
+    expect(completed.status).toBe('completed')
+  })
+
   it('refuses verification of unsubmitted work and submissions that block on peers', async () => {
     const { ctx, lead } = await setup(['hang', 'hang'])
     const ownerStarted = await spawn(ctx, lead, 'owner')

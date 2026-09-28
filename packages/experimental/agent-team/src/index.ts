@@ -2,6 +2,7 @@
 
 import { Context } from '@deepseek-ai/cordis'
 import z from '@deepseek-ai/schemastery'
+import { AsyncQueue } from '@deepseek-ai/dsh-async-queue'
 import type { Agent } from '@deepseek-ai/dsh-agent'
 import type {} from '@deepseek-ai/dsh-session-persistence'
 import { Remote, TypertRemoteService } from '@deepseek-ai/dsh-typert-protocol'
@@ -118,7 +119,7 @@ export class TeamService extends TypertRemoteService {
   private readonly tasks: TeamTaskBoard
   private readonly room: TeamRoom
   /** Open live room readers, ended when this service disposes. */
-  private readonly roomReaders = new Set<RoomFollowQueue>()
+  private readonly roomReaders = new Set<AsyncQueue<RoomFollowFrame>>()
 
   constructor(ctx: Context, config: Config = {}) {
     super(ctx, 'agentTeams')
@@ -461,7 +462,7 @@ export class TeamService extends TypertRemoteService {
     signal.throwIfAborted()
     const membership = this.roster.membership(agent)
     const root = membership.root
-    const reader = new RoomFollowQueue()
+    const reader = new AsyncQueue<RoomFollowFrame>()
     this.roomReaders.add(reader)
     const offUpdated = this.ctx.on('room/updated', (payload) => {
       if (payload.teamId !== membership.id) return
@@ -474,7 +475,7 @@ export class TeamService extends TypertRemoteService {
     })
     try {
       yield { type: 'view', view: this.room.remoteView(root) }
-      yield* reader.iterate(signal)
+      yield* iterateFrames(reader, signal)
     } finally {
       offUpdated()
       offFrame()
@@ -592,6 +593,7 @@ export class TeamService extends TypertRemoteService {
     const failures: unknown[] = []
     await this.lifecycle.settle(this.roster.pendingCreations(), failures)
     await this.lifecycle.settle(this.mailbox.pendingDispatches(), failures)
+    await this.lifecycle.settle(this.room.pendingTranscripts(), failures)
     for (const [root, childIds] of this.roster.liveChildrenByRoot()) {
       try {
         await this.roster.stopTeammates(root, childIds)
@@ -605,55 +607,31 @@ export class TeamService extends TypertRemoteService {
 
 /**
  * Buffered hand-off between the room's process-local notifications and one open
- * Remote stream. Frames queue until the consumer asks for them, and the queue is
- * finished by its own abort, by disposal, or by the consumer leaving.
+ * Remote stream. The shared queue owns ordering, waking, and the finished state;
+ * this function owns the room's iteration policy — delivery stops at the end,
+ * because disposal ends readers before their listeners stop.
+ * @param queue - that reader's buffered hand-off.
+ * @param signal - caller cancellation for this stream.
+ * @returns every frame committed while the reader stayed open.
  */
-class RoomFollowQueue {
-  private readonly buffer: RoomFollowFrame[] = []
-  private wake: (() => void) | undefined
-  private done = false
-
-  /** Enqueue one frame for the open reader. */
-  push(frame: RoomFollowFrame): void {
-    /* v8 ignore next -- disposal ends the reader before its listeners stop, so a
-       commit racing disposal is the only frame a finished queue can receive. */
-    if (this.done) return
-    this.buffer.push(frame)
-    const wake = this.wake
-    this.wake = undefined
-    wake?.()
-  }
-
-  /** Finish the reader: no further frame is delivered. */
-  end(): void {
-    if (this.done) return
-    this.done = true
-    const wake = this.wake
-    this.wake = undefined
-    wake?.()
-  }
-
-  /**
-   * Yield buffered frames as they arrive until the reader finishes.
-   * @param signal - caller cancellation for this stream.
-   * @returns every frame committed while the reader stayed open.
-   */
-  async *iterate(signal: AbortSignal): AsyncIterable<RoomFollowFrame> {
-    const onAbort = (): void => { this.end() }
-    signal.addEventListener('abort', onAbort, { once: true })
-    try {
-      while (!this.done && !signal.aborted) {
-        const frame = this.buffer.shift()
-        if (frame !== undefined) {
-          yield frame
-          continue
-        }
-        await new Promise<void>((resolve) => { this.wake = resolve })
+async function* iterateFrames(
+  queue: AsyncQueue<RoomFollowFrame>,
+  signal: AbortSignal,
+): AsyncIterable<RoomFollowFrame> {
+  const onAbort = (): void => { queue.end() }
+  signal.addEventListener('abort', onAbort, { once: true })
+  try {
+    while (!queue.finished && !signal.aborted) {
+      const frame = queue.take()
+      if (frame !== undefined) {
+        yield frame
+        continue
       }
-    } finally {
-      signal.removeEventListener('abort', onAbort)
-      this.end()
+      await queue.wait()
     }
+  } finally {
+    signal.removeEventListener('abort', onAbort)
+    queue.end()
   }
 }
 

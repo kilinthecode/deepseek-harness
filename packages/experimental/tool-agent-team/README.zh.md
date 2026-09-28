@@ -100,7 +100,7 @@ member scope 上的一个 `team:policy` 段落说明共享的协作规则；固�
 
 ### 按作用域注册与拆除
 
-`maybeInstall` 对每个 live Agent 运行，并订阅 `agent/created`；它跳过没有 Team 成员关系的 Agent。Agent 的 dispose（资源释放）会运行已安装的 disposer，插件 HMR（热模块替换）会在重新安装前对每个已安装的 scope 执行 dispose。每个 disposer 按逆序撤销注册，因此失败的安装不会留下残缺 scope。
+本包通过 `@deepseek-ai/dsh-experimental-agent-team` 的 `tool-scaffold` 子路径与 `@deepseek-ai/dsh-experimental-tool-agent-room` 共享 scoped 安装生命周期。它的 `installScopedTools` 对每个 live Agent 安装，并订阅 `agent/created`，跳过没有 Team 成员关系的 Agent。Agent 的 dispose（资源释放）会运行已安装的 disposer，插件 HMR（热模块替换）会在重新安装前对每个已安装的 scope 执行 dispose。每次安装用 `toolDisposers()` 收集注册项，它按逆序撤销，因此失败的安装不会留下残缺 scope。
 
 </details>
 

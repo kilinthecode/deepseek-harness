@@ -9,7 +9,7 @@ English | [中文](README.zh.md)
 
 ## Summary
 
-`dsh-experimental-agent-team` turns one coding session into a small working team: the session's agent becomes the Lead, creates named teammates for delegated work, exchanges durable messages with them, and tracks shared tasks on a common board. Messages and task state survive crashes, reloads, and interruptions, so an offline teammate receives its queued messages when it resumes. With `roomEnabled` the same roster also runs as a deliberative room: utterances join one attributed transcript, and collective decisions settle only by recorded quorum. It ships no tools — mount `@deepseek-ai/dsh-experimental-tool-agent-team`. It is published under its experimental name and carries no stability promise.
+`dsh-experimental-agent-team` turns one session into a small working team: its agent becomes the Lead, creates named teammates for delegated work, exchanges durable messages, and tracks shared tasks on a board. Messages and task state survive crashes and reloads, so an offline teammate receives queued messages on resume. With `roomEnabled` the roster also runs as a deliberative room: utterances join one attributed transcript, and decisions settle only by recorded quorum. It ships no tools — mount `@deepseek-ai/dsh-experimental-tool-agent-team` for delegation and `@deepseek-ai/dsh-experimental-tool-agent-room` for the room. It is published under its experimental name without a stability promise.
 
 ## Table of Contents
 
@@ -25,7 +25,7 @@ English | [中文](README.zh.md)
 <a id="use-this-package"></a>
 ## Use this package
 
-Add this package to a composition when one agent should run a small team of named helpers in its own working directory, with messages and task state that survive crashes and restarts. It ships no tools of its own: mount it together with `@deepseek-ai/dsh-experimental-tool-agent-team` so the model can create teammates, message them, and use the task board.
+Add this package to a composition when one agent should run a small team of named helpers in its own working directory, with messages and task state that survive crashes and restarts. It ships no tools of its own: mount it together with `@deepseek-ai/dsh-experimental-tool-agent-team` so the model can create teammates, message them, and use the task board. A room also needs `@deepseek-ai/dsh-experimental-tool-agent-room`, mounted with `roomEnabled`, so participants can read the transcript, grant the floor, propose a decision, review it, and escalate it.
 
 ### When to choose it
 
@@ -121,9 +121,12 @@ The [Agent Teams Agent Note](../../../.agents/notes/implemented/feature/2026-08-
 | [`src/task-board.ts`](src/task-board.ts) | Task CAS commands, DAG validation, and derived views |
 | [`src/journal.ts`](src/journal.ts) | Serialized Lead-log transactions and commit notification |
 | [`src/projection.ts`](src/projection.ts) | Strict replay projection that decodes and validates Team events |
+| [`src/room.ts`](src/room.ts) | Shared transcript, floor hand-off, decision deadlines, and escalation |
+| [`src/room-quorum.ts`](src/room-quorum.ts) | Quorum arithmetic over recorded standings, with no authority of its own |
 | [`src/activity.ts`](src/activity.ts) | One-shot change waiters and disposal release |
 | [`src/lifecycle.ts`](src/lifecycle.ts) | Shared admission cutoff and bounded settlement |
 | [`src/invariant.ts`](src/invariant.ts) | Invariant companion that replays candidate events before append |
+| [`src/tool-scaffold.ts`](src/tool-scaffold.ts) | Scoped-tool registration scaffolding shared by the model-facing tool packages |
 
 ### Team identity and roster
 
@@ -172,6 +175,7 @@ Read these pages when the package-level contract is not enough. They move from t
 
 - [Agent Teams subsystem](../../../docs/subsystems/agent-team.md) — durable Team types and the `ctx.agentTeams` service API.
 - [tool-agent-team package](../tool-agent-team/README.md) — the tools that let the model create, message, and coordinate teammates.
+- [tool-agent-room package](../tool-agent-room/README.md) — the five tools a room participant uses to read the transcript, grant the floor, propose a decision, review it, and escalate it.
 - [Agent Teams Agent Note](../../../.agents/notes/implemented/feature/2026-08-05-agent-teams.md) — identity, mailbox, task, and shared-checkout decisions.
 - [Experimental package decision](../../../.agents/notes/implemented/architecture/2026-08-18-experimental-agent-teams-packages.md) — placement, publication, and dependency isolation.
 
@@ -181,7 +185,7 @@ Read these pages when the package-level contract is not enough. They move from t
 
 ### Browser Remote
 
-`TeamService` owns the generated `agentTeams/view`, `agentTeams/createTask`, and `agentTeams/updateTask` Remote methods beside the roster, mailbox, task, and lifecycle operations. The `./remote` export supplies the Client contribution mounted by the Web UI, while `./client` re-exports the request, view, and task-mutation result types that are safe in a browser compilation face. Typert retains transport failures in its outer `RemoteResult`; create and update rejections remain explicit domain results inside a successful transport response, with stale update revisions distinguished as task conflicts.
+`TeamService` owns the generated `agentTeams/view`, `agentTeams/createTask`, and `agentTeams/updateTask` Remote methods beside the roster, mailbox, task, and lifecycle operations. The `./remote` export supplies the Client contribution mounted by the Web UI, while `./client` re-exports the request, view, and task-mutation result types that are safe in a browser compilation face. The `./tool-scaffold` export carries the registration scaffolding the model-facing tool packages build their tool sets on — the compact JSON output declaration, the Agent carrier the scoped tool seat supplies, and the per-member install and release lifecycle. Typert retains transport failures in its outer `RemoteResult`; create and update rejections remain explicit domain results inside a successful transport response, with stale update revisions distinguished as task conflicts.
 
 ## Model Experience
 

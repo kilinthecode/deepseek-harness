@@ -148,6 +148,7 @@
       "@deepseek-ai/dsh-scope/invariant": ["./packages/core/scope/src/invariant.ts"],
       "@deepseek-ai/dsh-agent-loop/invariant": ["./packages/core/agent-loop/src/invariant.ts"],
       "@deepseek-ai/dsh-experimental-agent-team/invariant": ["./packages/experimental/agent-team/src/invariant.ts"],
+      "@deepseek-ai/dsh-experimental-agent-team/tool-scaffold": ["./packages/experimental/agent-team/src/tool-scaffold.ts"],
       // host/client package names prefix the group dir (dsh-client-<dir>), so
       // the generated aliases below — which map a package only when its name is
       // exactly dsh-<dir> — skip them; strip the group prefix with a dedicated
@@ -304,6 +305,7 @@
       "@deepseek-ai/dsh-agent-tool-presentation": ["./packages/core/agent-tool-presentation/src"],
       "@deepseek-ai/dsh-anonymous-user-id": ["./packages/identity/anonymous-user-id/src"],
       "@deepseek-ai/dsh-app-boot": ["./packages/boot/app-boot/src"],
+      "@deepseek-ai/dsh-async-queue": ["./packages/util/async-queue/src"],
       "@deepseek-ai/dsh-atomic-write": ["./packages/util/atomic-write/src"],
       "@deepseek-ai/dsh-attachment": ["./packages/attachment/attachment/src"],
       "@deepseek-ai/dsh-attachment-local": ["./packages/attachment/attachment-local/src"],

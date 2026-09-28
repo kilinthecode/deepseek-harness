@@ -100,7 +100,7 @@ One `team:policy` section on the member scope states the shared coordination rul
 
 ### Scoped registration and teardown
 
-`maybeInstall` runs for every live Agent and subscribes to `agent/created`; it skips Agents without Team membership. Disposal of an Agent runs the installed disposer, and plugin HMR disposes every installed scope before reinstall. Each disposer unwinds registrations in reverse order, so a failed install cannot leave a partial scope.
+This package shares its scoped-install lifecycle with `@deepseek-ai/dsh-experimental-tool-agent-room` through the `tool-scaffold` subpath of `@deepseek-ai/dsh-experimental-agent-team`. Its `installScopedTools` installs for every live Agent and subscribes to `agent/created`, skipping Agents without Team membership. Disposal of an Agent runs the installed disposer, and plugin HMR disposes every installed scope before reinstall. Each install collects its registrations with `toolDisposers()`, which unwinds them in reverse order, so a failed install cannot leave a partial scope.
 
 </details>
 

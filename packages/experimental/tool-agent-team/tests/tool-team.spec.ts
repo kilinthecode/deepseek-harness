@@ -565,6 +565,20 @@ describe('dsh-tool-team', () => {
     expect(JSON.stringify(legacySchema)).toContain('agent_id')
   })
 
+  it('leaves the reasoning effort vocabulary to the effective route', async () => {
+    const { ctx, lead } = await setup(['hang'])
+    const spawn = (await assembly(ctx, lead)).tools.find(schema => schema.name === 'spawn_teammate')
+    const properties = (spawn?.parameters as {
+      properties: Record<string, { enum?: readonly string[]; description?: string }>
+    }).properties
+    // Effort ids are route-owned, and the shipped DeepSeek route declares
+    // off|low|high|max: a schema enum would both offer a value that route
+    // refuses and hide the values it accepts.
+    expect(properties['reasoning_effort']?.enum).toBeUndefined()
+    expect(properties['reasoning_effort']?.description)
+      .toContain('The effective route declares which values it accepts')
+  })
+
   it('rolls back partial scoped installation after a same-scope collision', async () => {
     const { ctx, lead, fiber } = await setup([])
     await fiber.dispose()

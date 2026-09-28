@@ -142,6 +142,12 @@ export class TeamTaskBoard {
         case 'release':
           authorizeOwner()
           if (current.status !== 'in_progress') throw new TeamError('only an in-progress task can be released', 'TEAM_TASK_INVALID_TRANSITION')
+          if (this.awaitingVerification(current)) {
+            throw new TeamError(
+              `team task "${current.id}" is awaiting verification; wait for its verdict`,
+              'TEAM_TASK_INVALID_TRANSITION',
+            )
+          }
           next = this.withoutOwner({ ...current, status: 'pending' })
           break
         case 'edit':
@@ -229,6 +235,14 @@ export class TeamTaskBoard {
               'TEAM_TASK_INVALID_TRANSITION',
             )
           }
+          // A reassignment moves the task to another revision while a verdict is
+          // pending on the old one, which the fold refuses.
+          if (this.awaitingVerification(current)) {
+            throw new TeamError(
+              `team task "${current.id}" is awaiting verification; wait for its verdict`,
+              'TEAM_TASK_INVALID_TRANSITION',
+            )
+          }
           if (request.owner === undefined || request.owner.trim().length === 0) {
             next = this.withoutOwner({ ...current, status: 'pending' })
             break
@@ -240,6 +254,14 @@ export class TeamTaskBoard {
         }
         case 'delete': {
           authorizeOwner()
+          // A deletion after a submission moves the task to another revision while
+          // a verdict is pending on the old one, which the fold refuses.
+          if (this.awaitingVerification(current)) {
+            throw new TeamError(
+              `team task "${current.id}" is awaiting verification; wait for its verdict`,
+              'TEAM_TASK_INVALID_TRANSITION',
+            )
+          }
           const dependent = state.tasks.find(task =>
             task.status !== 'deleted' && task.id !== current.id && task.blockedBy.includes(current.id))
           if (dependent !== undefined) {

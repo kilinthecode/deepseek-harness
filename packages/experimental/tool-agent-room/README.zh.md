@@ -94,6 +94,6 @@ kind: "package-reference"
 <details>
 <summary>维护者备注</summary>
 
-这组工具与 `@deepseek-ai/dsh-experimental-tool-agent-team` 对称：相同的 scoped 安装生命周期、相同的声明式 schema 结果契约，以及相同的经 tool error result 返回拒绝的路径。任一方变更时请保持两个包对称；共享的投递与 roster 机制位于 `@deepseek-ai/dsh-experimental-agent-team`。
+这组工具与 `@deepseek-ai/dsh-experimental-tool-agent-team` 对称：相同的 scoped 安装生命周期、相同的声明式 schema 结果契约，以及相同的经 tool error result 返回拒绝的路径。任一方变更时请保持两个包对称；共享的 roster 与投递机制位于 `@deepseek-ai/dsh-experimental-agent-team`，而两个包共同导入的 scoped 安装、disposer、caller 与 JSON 输出辅助函数位于该包的 `tool-scaffold` 子路径。
 
 </details>

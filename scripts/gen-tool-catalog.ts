@@ -8,7 +8,7 @@
 
 import { globSync, readFileSync, writeFileSync } from 'node:fs'
 import { basename, resolve } from 'node:path'
-import { Context } from '@deepseek-ai/cordis'
+import { Context, type Plugin } from '@deepseek-ai/cordis'
 import LlmRuntime from '@deepseek-ai/dsh-llm'
 import type { ToolSchema } from '@deepseek-ai/dsh-llm'
 import AgentRegistry from '@deepseek-ai/dsh-agent'
@@ -151,6 +151,54 @@ async function mountCatalogChildScope(
     mountScoped(createScope(inner, key).ctx)
   }, { inject }))
   catalogChildScopes.set(ctx, key)
+}
+
+/** Harvest recipe for one Agent-scoped Team tool package. */
+interface SingleLeadToolsRecipe {
+  /** Session id the synthetic Lead Agent is published under. */
+  readonly sessionId: string
+  /** Tool plugin mounted once the synthetic Lead is a live member. */
+  readonly plugin: Plugin
+  /** `agentTeams` members the package's tools call beyond membership. */
+  readonly serviceMembers?: Record<string, unknown>
+}
+
+/**
+ * Mount one Agent-scoped Team tool package over a fake single-Lead
+ * `agentTeams` service. Registration is the only way to harvest these
+ * schemas, so the recipe supplies a live membership carrier without starting a
+ * model, Agent loop, or persistence backend.
+ * @param ctx - catalog context already carrying `tools`, `systemPrompt`, and `agents`.
+ * @param recipe - session id, tool plugin, and package-specific service members.
+ */
+async function mountSingleLeadTools(ctx: Context, recipe: SingleLeadToolsRecipe): Promise<void> {
+  await ctx.plugin(AgentRegistry)
+  await ctx.plugin(SessionStore)
+  const session = ctx.sessions.create(SessionId(recipe.sessionId))
+  let agent!: Agent
+  const membership = {
+    get root() { return agent },
+    id: session.id,
+    role: 'lead' as const,
+    name: 'lead',
+  }
+  ctx.provide('agentTeams', {
+    tryMembership: (candidate: Agent) => candidate === agent ? membership : undefined,
+    membership: () => membership,
+    ...recipe.serviceMembers,
+  } as unknown as TeamService)
+  await ctx.plugin(Object.assign(async (inner: Context) => {
+    agent = {
+      id: session.id,
+      session,
+      options: {},
+      status: 'idle',
+    } as unknown as Agent
+    Object.assign(agent, { ctx: createScope(inner, agent).ctx })
+    await inner.agents.register(agent)
+  }, { inject: ['tools', 'systemPrompt', 'agents', 'agentTeams'] }))
+  await ctx.plugin(recipe.plugin)
+  catalogChildScopes.set(ctx, agent)
 }
 
 /**
@@ -582,32 +630,7 @@ const TOOL_PACKAGES: ToolPackage[] = [
     requires: ['ctx.tools', 'ctx.systemPrompt', 'ctx.agentTeams', 'an exact live Team member Agent'],
     writes: ['tool/call', 'team/member', 'team/message/queued', 'team/message/delivered', 'team/task', 'tool/result'],
     async mount(ctx) {
-      await ctx.plugin(AgentRegistry)
-      await ctx.plugin(SessionStore)
-      const session = ctx.sessions.create(SessionId('tool-catalog-team-lead'))
-      let agent!: Agent
-      const membership = {
-        get root() { return agent },
-        id: session.id,
-        role: 'lead' as const,
-        name: 'lead',
-      }
-      ctx.provide('agentTeams', {
-        tryMembership: (candidate: Agent) => candidate === agent ? membership : undefined,
-        membership: () => membership,
-      } as unknown as TeamService)
-      await ctx.plugin(Object.assign(async (inner: Context) => {
-        agent = {
-          id: session.id,
-          session,
-          options: {},
-          status: 'idle',
-        } as unknown as Agent
-        Object.assign(agent, { ctx: createScope(inner, agent).ctx })
-        await inner.agents.register(agent)
-      }, { inject: ['tools', 'systemPrompt', 'agents', 'agentTeams'] }))
-      await ctx.plugin(ToolTeam)
-      catalogChildScopes.set(ctx, agent)
+      await mountSingleLeadTools(ctx, { sessionId: 'tool-catalog-team-lead', plugin: ToolTeam })
     },
     scope: ctx => catalogChildScopes.get(ctx) as Agent,
     note:
@@ -620,33 +643,13 @@ const TOOL_PACKAGES: ToolPackage[] = [
     requires: ['ctx.tools', 'ctx.systemPrompt', 'ctx.agentTeams', 'an exact live room participant Agent'],
     writes: ['tool/call', 'room/message', 'room/proposal', 'room/review', 'team/message/queued', 'team/message/delivered', 'tool/result'],
     async mount(ctx) {
-      await ctx.plugin(AgentRegistry)
-      await ctx.plugin(SessionStore)
-      const session = ctx.sessions.create(SessionId('tool-catalog-room-lead'))
-      let agent!: Agent
-      const membership = {
-        get root() { return agent },
-        id: session.id,
-        role: 'lead' as const,
-        name: 'lead',
-      }
-      ctx.provide('agentTeams', {
-        tryMembership: (candidate: Agent) => candidate === agent ? membership : undefined,
-        membership: () => membership,
-        roomView: () => ({ participants: [], chair: 'lead', messages: [], proposals: [] }),
-      } as unknown as TeamService)
-      await ctx.plugin(Object.assign(async (inner: Context) => {
-        agent = {
-          id: session.id,
-          session,
-          options: {},
-          status: 'idle',
-        } as unknown as Agent
-        Object.assign(agent, { ctx: createScope(inner, agent).ctx })
-        await inner.agents.register(agent)
-      }, { inject: ['tools', 'systemPrompt', 'agents', 'agentTeams'] }))
-      await ctx.plugin(ToolRoom)
-      catalogChildScopes.set(ctx, agent)
+      await mountSingleLeadTools(ctx, {
+        sessionId: 'tool-catalog-room-lead',
+        plugin: ToolRoom,
+        serviceMembers: {
+          roomView: () => ({ participants: [], chair: 'lead', messages: [], proposals: [] }),
+        },
+      })
     },
     scope: ctx => catalogChildScopes.get(ctx) as Agent,
     note:

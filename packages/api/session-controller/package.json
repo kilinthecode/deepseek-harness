@@ -69,6 +69,7 @@
   ],
   "license": "MIT",
   "dependencies": {
+    "@deepseek-ai/dsh-async-queue": "workspace:^",
     "@deepseek-ai/dsh-brand": "workspace:^",
     "@deepseek-ai/dsh-deque": "workspace:^",
     "@deepseek-ai/schemastery": "workspace:^",

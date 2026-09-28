@@ -542,6 +542,53 @@ describe('room collective decisions', () => {
     expect(ctx.agentTeams.roomView(lead).proposals).toEqual([revised])
   })
 
+  it('refuses a revision from a participant that did not propose the decision', async () => {
+    const { ctx, lead, alice } = await room()
+    const opened = await ctx.agentTeams.roomPropose(lead, { statement: 'ship on Friday', signal: SIGNAL })
+    await ctx.agentTeams.roomReview(ctx.agents.get(alice)!, {
+      proposalId: opened.id,
+      proposalRevision: 1,
+      verdict: 'reject',
+      reason: 'no release cover',
+      signal: SIGNAL,
+    })
+    await expect(ctx.agentTeams.roomPropose(ctx.agents.get(alice)!, {
+      statement: 'ship on Monday instead',
+      supersedes: opened.id,
+      signal: SIGNAL,
+    })).rejects.toMatchObject({ code: 'TEAM_ROOM_NOT_PROPOSER' })
+    // The refused revision leaves the decided revision on the board, so no
+    // recorded proposal ever carries a proposer other than the one that opened it.
+    expect(ctx.agentTeams.roomView(lead).proposals).toEqual([
+      expect.objectContaining({ id: opened.id, revision: 1, phase: 'rejected' }),
+    ])
+    const revised = await ctx.agentTeams.roomPropose(lead, {
+      statement: 'ship on Monday with release cover',
+      supersedes: opened.id,
+      signal: SIGNAL,
+    })
+    expect(revised).toMatchObject({ id: opened.id, revision: 2, phase: 'open' })
+  })
+
+  it('opens a decision whose reviewer is still provisioning instead of failing it', async () => {
+    const { ctx, lead } = await room()
+    // The roster records the member before it asks the provider, so this unawaited
+    // spawn leaves carol a participant the mailbox cannot reach yet.
+    const spawning = ctx.agentTeams.spawnTeammate(lead, spawnOptions('carol'))
+    const opened = await ctx.agentTeams.roomPropose(lead, { statement: 'ship with carol', signal: SIGNAL })
+    expect(opened.awaiting).toContain('carol')
+    // The room committed the decision and kept a deadline for the reviewer it
+    // could not reach, so the proposal the room already owns is not reported as
+    // a failure to the proposer.
+    expect(opened.phase).toBe('open')
+    await spawning
+    // Provisioning settles into an ordinary live participant, which is the state
+    // the armed deadline was waiting for.
+    await vi.waitFor(() => {
+      expect(ctx.agentTeams.roomView(lead).participants.map(participant => participant.name)).toContain('carol')
+    }, { timeout: 5_000 })
+  })
+
   it('refuses a revision beyond the configured limit so the room must escalate', async () => {
     const { ctx, lead } = await setup([HANGING, ...acks(4)], { roomMaxProposalRevisions: 1 })
     await addLiveParticipant(ctx, lead, 'alice')
