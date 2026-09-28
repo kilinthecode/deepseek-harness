@@ -74,19 +74,41 @@ async function hasDetachedHead(git: GitRunner, repoRoot: string, signal: AbortSi
 }
 
 /**
- * Abort the merge in progress only when it is this call's own: `MERGE_HEAD` must name the commit this call merged.
- * @returns whether a merge that this call started was aborted and is gone.
+ * The commit `MERGE_HEAD` names right after this call's `git merge` failed. When the probe itself fails, a merge
+ * this call started may be in progress and unnoticed, so that is reported before the probe's error propagates.
  */
-async function abortOwnMerge(
-  git: GitRunner, repoRoot: string, commit: string, mergeHead: string | undefined, hooks: MergeAttemptHooks,
-): Promise<void> {
-  if (mergeHead !== commit) return
+async function readMergeHeadAfterFailure(
+  git: GitRunner, repoRoot: string, commit: string, hooks: MergeAttemptHooks,
+): Promise<string | undefined> {
+  try {
+    return await readMergeHead(git, repoRoot, cleanupSignal())
+  } catch (error) {
+    hooks.report(
+      `subagent-worktree: after the merge of ${commit} in "${repoRoot}" failed, the base checkout could not be checked for a merge `
+      + `left in progress (${String(error)}); run "git status" there, and "git merge --abort" if it shows a merge`,
+    )
+    throw error
+  }
+}
+
+/**
+ * Abort the merge this call started, which the caller has already established is this call's own (`MERGE_HEAD`
+ * names the commit this call merged), and check that it is gone. A merge that survives the abort, and an abort
+ * or check that failed and so left the state unknown but possibly this call's, are both reported.
+ */
+async function abortOwnMerge(git: GitRunner, repoRoot: string, commit: string, hooks: MergeAttemptHooks): Promise<void> {
   const signal = cleanupSignal()
-  await git.run(['merge', '--abort'], { cwd: repoRoot, signal })
-  if (await readMergeHead(git, repoRoot, signal) !== undefined) {
+  try {
+    await git.run(['merge', '--abort'], { cwd: repoRoot, signal })
+    if (await readMergeHead(git, repoRoot, signal) === undefined) return
     hooks.report(
       `subagent-worktree: the merge of ${commit} in "${repoRoot}" could not be aborted and is still in progress; `
       + 'run "git merge --abort" there before merging anything else',
+    )
+  } catch (error) {
+    hooks.report(
+      `subagent-worktree: the merge of ${commit} in "${repoRoot}" could not be confirmed aborted (${String(error)}), so it may still `
+      + 'be in progress; run "git status" there, and "git merge --abort" if it shows a merge',
     )
   }
 }
@@ -95,6 +117,15 @@ async function abortOwnMerge(
 async function unmergedPaths(git: GitRunner, repoRoot: string, signal: AbortSignal): Promise<string[]> {
   const unmerged = await git.expectComplete(['diff', '--name-only', '--diff-filter=U'], 'git diff --diff-filter=U', { cwd: repoRoot, signal })
   return unmerged.stdout.split('\n').filter(line => line.length > 0)
+}
+
+/** The paths that stopped a merge on conflicts, or the failure that kept them from being read; never throws. */
+async function readConflicts(git: GitRunner, repoRoot: string): Promise<{ files: string[] } | { failure: unknown }> {
+  try {
+    return { files: await unmergedPaths(git, repoRoot, cleanupSignal()) }
+  } catch (failure) {
+    return { failure }
+  }
 }
 
 /**
@@ -122,21 +153,29 @@ async function classifyFailedMerge(
   failed: { exitCode: number | null; stderr: string },
   hooks: MergeAttemptHooks,
 ): Promise<MergeAttemptResult> {
-  const signal = cleanupSignal()
-  const mergeHead = await readMergeHead(git, repoRoot, signal)
+  const mergeHead = await readMergeHeadAfterFailure(git, repoRoot, commit, hooks)
   if (failed.exitCode === null) {
-    await abortOwnMerge(git, repoRoot, commit, mergeHead, hooks)
+    if (mergeHead === commit) await abortOwnMerge(git, repoRoot, commit, hooks)
     throw new Error(`subagent-worktree: merge of worktree ${id} was killed before it finished`)
   }
   if (mergeHead === commit) {
-    const files = await unmergedPaths(git, repoRoot, signal)
-    await abortOwnMerge(git, repoRoot, commit, mergeHead, hooks)
-    if (files.length > 0 && failed.exitCode === MERGE_CONFLICT_EXIT_CODE) return { kind: 'conflict', files }
+    // Only a merge that stopped with the conflict exit code can report conflicts, and the abort discards the unmerged
+    // paths that outcome names, so that one case reads them first; a failed read never skips the abort. Every other
+    // failed exit needs no paths and is aborted before any further probe runs.
+    const conflicts = failed.exitCode === MERGE_CONFLICT_EXIT_CODE ? await readConflicts(git, repoRoot) : undefined
+    await abortOwnMerge(git, repoRoot, commit, hooks)
+    if (conflicts !== undefined && 'failure' in conflicts) {
+      throw new Error(
+        `subagent-worktree: merge of worktree ${id} stopped and was aborted, but its conflicting paths could not be read: ${String(conflicts.failure)}`,
+        { cause: conflicts.failure },
+      )
+    }
+    if (conflicts !== undefined && conflicts.files.length > 0) return { kind: 'conflict', files: conflicts.files }
     throw new Error(
       `subagent-worktree: merge of worktree ${id} failed unexpectedly after starting: ${tailChars(failed.stderr.trim(), DIAGNOSTIC_TAIL_CHARS)}`,
     )
   }
-  if (mergeHead !== undefined || (await unmergedPaths(git, repoRoot, signal)).length > 0) {
+  if (mergeHead !== undefined || (await unmergedPaths(git, repoRoot, cleanupSignal())).length > 0) {
     return { kind: 'blocked', reason: 'the base checkout has conflicts this accept did not create' }
   }
   return { kind: 'blocked', reason: tailChars(failed.stderr.trim(), DIAGNOSTIC_TAIL_CHARS) }

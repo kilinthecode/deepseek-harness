@@ -151,8 +151,12 @@ interface Script {
   readonly merge?: { readonly alongside?: readonly string[]; readonly result: GitCommandResult; readonly beforeResult?: () => void }
   /** Replaces `git symbolic-ref`. */
   readonly symbolicRef?: GitCommandResult
-  /** Replaces `git rev-parse -q --verify MERGE_HEAD`. */
+  /** Replaces every `git rev-parse -q --verify MERGE_HEAD`. */
   readonly mergeHeadProbe?: GitCommandResult
+  /** Replaces the nth `git rev-parse -q --verify MERGE_HEAD` (counting from 1); the other probes run as real git. */
+  readonly mergeHeadProbeAt?: Readonly<Record<number, GitCommandResult>>
+  /** Replaces `git diff --name-only --diff-filter=U`, the unmerged-path scan. */
+  readonly unmergedScan?: GitCommandResult
   /** Replaces `git merge --abort` (the real command then does not run). */
   readonly mergeAbort?: GitCommandResult
   /** Fails the first this many `git rev-parse HEAD` calls with a nonzero exit. */
@@ -163,6 +167,7 @@ interface Script {
 class ScriptedGit extends GitRunner {
   readonly commands: string[][] = []
   private revParseHeadFailures = 0
+  private mergeHeadProbes = 0
 
   constructor(subprocessRuntime: ConstructorParameters<typeof GitRunner>[0], private readonly script: Script) {
     super(subprocessRuntime)
@@ -178,7 +183,13 @@ class ScriptedGit extends GitRunner {
       return script.merge.result
     }
     if (args[0] === 'symbolic-ref' && script.symbolicRef !== undefined) return script.symbolicRef
-    if (args[0] === 'rev-parse' && args.includes('MERGE_HEAD') && script.mergeHeadProbe !== undefined) return script.mergeHeadProbe
+    if (args[0] === 'rev-parse' && args.includes('MERGE_HEAD')) {
+      this.mergeHeadProbes += 1
+      const replaced = script.mergeHeadProbeAt?.[this.mergeHeadProbes]
+      if (replaced !== undefined) return replaced
+      if (script.mergeHeadProbe !== undefined) return script.mergeHeadProbe
+    }
+    if (args[0] === 'diff' && args.includes('--diff-filter=U') && script.unmergedScan !== undefined) return script.unmergedScan
     if (args[0] === 'rev-parse' && args[1] === 'HEAD' && this.revParseHeadFailures < (script.failRevParseHead ?? 0)) {
       this.revParseHeadFailures += 1
       return { exitCode: 128, stdout: '', stderr: 'fatal: scripted rev-parse failure\n', stdoutLossy: false }
@@ -343,6 +354,84 @@ describe('attemptMerge: a merge that dies or fails after starting', () => {
     expect(() => git(dir, 'rev-parse', '-q', '--verify', 'MERGE_HEAD')).toThrow()
     expect(git(dir, 'status', '--porcelain').trim()).toBe('')
     expect(git(dir, 'rev-parse', 'HEAD').trim()).toBe(baseHead)
+  }, GIT_TEST_TIMEOUT_MS)
+
+  it('aborts a merge that failed with a fatal exit right after establishing it is its own, before any other probe', async () => {
+    const { dir, sideCommit } = await repoWithConflictingSideBranch('dsh-merge-abort-first-')
+    const command = await scripted({
+      merge: { alongside: ['merge', '--no-ff', '--no-edit', sideCommit], result: FAILED_128 },
+    })
+
+    await expect(attemptMerge(command, dir, 'wt-00000025', 'do the thing', sideCommit, signal, recordingHooks()))
+      .rejects.toThrow('failed unexpectedly after starting')
+
+    const afterMerge = command.commands.slice(command.commands.findIndex(args => args[0] === 'merge' && args[1] !== '--abort') + 1)
+    // The MERGE_HEAD probe that establishes ownership, then the abort, then the probe that checks it worked.
+    expect(afterMerge.map(args => args[0])).toEqual(['rev-parse', 'merge', 'rev-parse'])
+    expect(afterMerge[1]).toEqual(['merge', '--abort'])
+  }, GIT_TEST_TIMEOUT_MS)
+
+  it('throws, and leaves no MERGE_HEAD, for a merge that stopped with the conflict exit code but left no unmerged paths', async () => {
+    const { dir, sideCommit, baseHead } = await repoWithSideBranch('dsh-merge-exit1-no-conflicts-')
+    // A prepared clean merge that a pre-merge-commit hook then refused: MERGE_HEAD is this call's, nothing is unmerged.
+    const command = await scripted({
+      merge: {
+        alongside: ['merge', '--no-ff', '--no-commit', sideCommit],
+        result: { exitCode: 1, stdout: '', stderr: 'error: pre-merge-commit hook failed\n', stdoutLossy: false },
+      },
+    })
+
+    await expect(attemptMerge(command, dir, 'wt-00000026', 'do the thing', sideCommit, signal, recordingHooks()))
+      .rejects.toThrow('merge of worktree wt-00000026 failed unexpectedly after starting: error: pre-merge-commit hook failed')
+
+    expect(() => git(dir, 'rev-parse', '-q', '--verify', 'MERGE_HEAD')).toThrow()
+    expect(git(dir, 'status', '--porcelain').trim()).toBe('')
+    expect(git(dir, 'rev-parse', 'HEAD').trim()).toBe(baseHead)
+  }, GIT_TEST_TIMEOUT_MS)
+
+  it('still aborts the merge it started when reading the conflicting paths fails, then throws', async () => {
+    const { dir, sideCommit, baseHead } = await repoWithConflictingSideBranch('dsh-merge-scan-fails-')
+    const command = await scripted({ unmergedScan: FAILED_128 })
+
+    await expect(attemptMerge(command, dir, 'wt-00000027', 'do the thing', sideCommit, signal, recordingHooks()))
+      .rejects.toThrow('merge of worktree wt-00000027 stopped and was aborted, but its conflicting paths could not be read')
+
+    expect(command.commands).toContainEqual(['merge', '--abort'])
+    expect(() => git(dir, 'rev-parse', '-q', '--verify', 'MERGE_HEAD')).toThrow()
+    expect(git(dir, 'status', '--porcelain').trim()).toBe('')
+    expect(git(dir, 'rev-parse', 'HEAD').trim()).toBe(baseHead)
+  }, GIT_TEST_TIMEOUT_MS)
+
+  it('reports loudly, and still classifies the conflict, when the check that the abort worked fails', async () => {
+    const { dir, sideCommit, baseHead } = await repoWithConflictingSideBranch('dsh-merge-verify-fails-')
+    const hooks = recordingHooks()
+    // Probe 1 is the pre-merge refusal check, probe 2 establishes ownership, probe 3 checks that the abort worked.
+    const command = await scripted({ mergeHeadProbeAt: { 3: FAILED_128 } })
+
+    const result = await attemptMerge(command, dir, 'wt-00000028', 'do the thing', sideCommit, signal, hooks)
+
+    expect(result).toEqual({ kind: 'conflict', files: ['f.txt'] })
+    expect(hooks.reports).toHaveLength(1)
+    expect(hooks.reports[0]).toContain(`the merge of ${sideCommit} in "${dir}" could not be confirmed aborted`)
+    expect(hooks.reports[0]).toContain('git merge --abort')
+    // The abort itself ran, so nothing is actually left behind.
+    expect(() => git(dir, 'rev-parse', '-q', '--verify', 'MERGE_HEAD')).toThrow()
+    expect(git(dir, 'rev-parse', 'HEAD').trim()).toBe(baseHead)
+  }, GIT_TEST_TIMEOUT_MS)
+
+  it('reports loudly, and throws, when the MERGE_HEAD probe after a failed merge fails, aborting nothing it cannot show is its own', async () => {
+    const { dir, sideCommit } = await repoWithConflictingSideBranch('dsh-merge-ownership-probe-fails-')
+    const hooks = recordingHooks()
+    const command = await scripted({ mergeHeadProbeAt: { 2: FAILED_128 } })
+
+    await expect(attemptMerge(command, dir, 'wt-00000029', 'do the thing', sideCommit, signal, hooks))
+      .rejects.toThrow('could not check the base checkout for a merge in progress (git rev-parse exited')
+
+    expect(hooks.reports).toHaveLength(1)
+    expect(hooks.reports[0]).toContain(`after the merge of ${sideCommit} in "${dir}" failed, the base checkout could not be checked`)
+    expect(hooks.reports[0]).toContain('git merge --abort')
+    expect(command.commands).not.toContainEqual(['merge', '--abort'])
+    expect(git(dir, 'rev-parse', '-q', '--verify', 'MERGE_HEAD').trim()).toBe(sideCommit)
   }, GIT_TEST_TIMEOUT_MS)
 
   it('reports blocked, not an error, for a refusal that started no merge', async () => {
