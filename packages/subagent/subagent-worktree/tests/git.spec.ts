@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { Context } from '@deepseek-ai/cordis'
 import LocalSubprocessRuntime from '@deepseek-ai/dsh-subprocess-local'
-import { GitCommandError, GitRunner } from '../src/git.ts'
+import { cleanupSignal, GitCommandError, GitRunner } from '../src/git.ts'
 import { initFixtureRepo, removeFixture } from './harness.ts'
 
 const cleanups: Array<() => Promise<unknown>> = []
@@ -161,5 +161,20 @@ describe('GitRunner.expectComplete', () => {
     const command = await runner()
     await expect(command.expectComplete(['rev-parse', '--verify', 'refs/heads/nope'], 'git rev-parse', { cwd: dir, signal }))
       .rejects.toThrow(GitCommandError)
+  })
+})
+
+describe('cleanupSignal', () => {
+  it('bounds each cleanup command by 30 seconds, on a separate signal per call that has not run out', () => {
+    const timeout = vi.spyOn(AbortSignal, 'timeout')
+
+    const first = cleanupSignal()
+    const second = cleanupSignal()
+
+    expect(timeout).toHaveBeenCalledTimes(2)
+    expect(timeout).toHaveBeenCalledWith(30_000)
+    expect(first).not.toBe(second)
+    expect(first.aborted).toBe(false)
+    expect(second.aborted).toBe(false)
   })
 })
