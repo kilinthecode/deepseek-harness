@@ -136,6 +136,30 @@ function validateRouteFlag(command: Command, flag: string, value: string | undef
 }
 
 /**
+ * Reject `--reviewer-effort` given without `--reviewer`: the CLI has no
+ * configured or operator reviewer route to apply it to at parse time, so
+ * silently dropping it would give the wrong impression that it took effect.
+ * @param command - the command to report a rejection through.
+ * @param options - the parsed reviewer options.
+ */
+function validateReviewerEffort(command: Command, options: ReviewOptions): void {
+  if (options.reviewerEffort !== undefined && options.reviewer === undefined) {
+    command.error('error: --reviewer-effort requires --reviewer')
+  }
+}
+
+/**
+ * Reject a `--name` that is present but blank: an empty display label is
+ * never useful, and rejecting it here catches a stray empty argument instead
+ * of silently falling back to a derived label.
+ * @param command - the command to report a rejection through.
+ * @param name - the raw `--name` value, or undefined when the flag was omitted.
+ */
+function validateName(command: Command, name: string | undefined): void {
+  if (name !== undefined && name.trim() === '') command.error('error: --name requires a non-empty label')
+}
+
+/**
  * Parse and provide the `dsh agents` verb as an ordinary Cordis service. Each
  * verb's action publishes the parsed values; on a grammar rejection, on no
  * verb, on an unknown verb, or on `--help`, nothing is provided and the
@@ -175,6 +199,8 @@ export function apply(ctx: Context): void {
       if (joined.trim() === '') run.error('error: a task is required, for example: dsh agents run "add the parser and its tests"')
       validateRouteFlag(run, '--model', options.model)
       validateRouteFlag(run, '--reviewer', options.reviewer)
+      validateReviewerEffort(run, options)
+      validateName(run, options.name)
       publish({
         verb: 'run',
         task: joined,
@@ -208,6 +234,7 @@ export function apply(ctx: Context): void {
     .action((id: string, options: ReviewOptions) => {
       if (id.trim() === '') accept.error('error: accept needs a worktree id')
       validateRouteFlag(accept, '--reviewer', options.reviewer)
+      validateReviewerEffort(accept, options)
       publish({
         verb: 'accept',
         id,
