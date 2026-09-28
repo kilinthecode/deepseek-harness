@@ -401,23 +401,33 @@ To message another teammate, use send_message({ target: "<teammate name>", messa
 
 /**
  * Whether `agent` qualifies for the Team section and tool set: either it
- * currently has Team membership itself, or it is a plain fork
- * ({@link plainForkParentOf}) of a parent that currently does. A plain fork
- * of a member is not itself a member — `spawn_teammate`/`send_message`/etc.
- * still resolve and authorize the calling agent through `ctx.agentTeams` at
- * execution time and reject a non-member with `TEAM_NOT_MEMBER`, so a fork
- * can never act as its parent — but its assembled prompt must match the
- * parent's declared section and tools so a provider prompt cache keyed on
- * the exact prefix covers the inherited history instead of missing on a
- * dropped section.
+ * currently has Team membership itself, or walking its plain-fork lineage
+ * ({@link plainForkParentOf}, applied repeatedly) reaches an agent that
+ * currently does. Every agent on that lineage is a plain fork and not itself
+ * a member — `spawn_teammate`/`send_message`/etc. still resolve and
+ * authorize the calling agent through `ctx.agentTeams` at execution time and
+ * reject a non-member with `TEAM_NOT_MEMBER`, so no fork in the lineage can
+ * ever act as its ancestor — but its assembled prompt must match its
+ * immediate parent's declared section and tools, and therefore transitively
+ * the member's, so a provider prompt cache keyed on the exact prefix covers
+ * the inherited history instead of missing on a dropped section.
  * @param agent - the exact live candidate agent.
  * @param ctx - the context whose `agentTeams` resolves membership.
  * @returns whether `agent` qualifies for the Team installation.
  */
 function qualifiesForTeamInstall(agent: Agent, ctx: Context): boolean {
-  if (ctx.agentTeams.tryMembership(agent) !== undefined) return true
-  const forkParent = plainForkParentOf(agent)
-  return forkParent !== undefined && ctx.agentTeams.tryMembership(forkParent) !== undefined
+  const visited = new Set<Agent>()
+  let candidate: Agent | undefined = agent
+  while (candidate !== undefined) {
+    // Defensive only: plainForkParentOf walks toward an earlier-created
+    // ancestor session, so this lineage cannot cycle in practice.
+    /* v8 ignore next -- guards a defect elsewhere, not a reachable case. */
+    if (visited.has(candidate)) return false
+    if (ctx.agentTeams.tryMembership(candidate) !== undefined) return true
+    visited.add(candidate)
+    candidate = plainForkParentOf(candidate)
+  }
+  return false
 }
 
 /** Install Team tools in every live or subsequently published Team member scope. */

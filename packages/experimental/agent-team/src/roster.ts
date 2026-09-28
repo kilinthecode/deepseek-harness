@@ -484,14 +484,10 @@ export class TeamRoster {
 
   /**
    * Whether a Session identifies a provider-owned subagent child, from the
-   * durable header alone. `childSessionMeta()` stamps `origin: 'subagent'`
-   * synchronously before either child shape publishes; a one-shot
-   * `subagent/descriptor` event is instead appended lazily, inside the
-   * child's first `agent/pre-step` — strictly after `agent/created` — so
-   * reading the descriptor here would misclassify a fresh one-shot subagent
-   * fork as an independent root for every caller resolving membership before
-   * that first step (in particular a scoped installer reacting to
-   * `agent/created`, such as `tool-agent-team`'s `maybeInstall`).
+   * durable header alone. The header origin is stamped synchronously in
+   * `childSessionMeta()`. The one-shot `subagent/descriptor` event is instead
+   * appended only after `agent/created`, so classification reacting to that
+   * event cannot rely on it.
    */
   private hasSubagentOrigin(agent: Agent): boolean {
     return agent.session.header.origin === 'subagent'

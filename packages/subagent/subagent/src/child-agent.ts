@@ -168,6 +168,10 @@ export interface ChildComposition {
    * attachment itself happens outside `applyChildComposition`, on the
    * caller's own `request.outputSchema`; recorded here so
    * {@link isChildCompositionScoped} sees it alongside persona and toolFilter.
+   * Only the one-shot driver sets this: a continuable start request cannot
+   * carry an output schema (`ContinuableStartSpec.request` in
+   * `./types.ts` omits `outputSchema` from `SubagentStartRequest`), so a
+   * continuable child's composition never has one to report.
    */
   readonly structured?: boolean | undefined
 }

@@ -940,8 +940,8 @@ describe('plain fork parity with Team installation', () => {
     await toolFilterRun.dispose()
   })
 
-  it('does not install Team tools on a plain fork of a non-member parent', async () => {
-    const { ctx, lead } = await setup([
+  it('extends Team tools transitively through a plain fork of a plain fork', async () => {
+    const { ctx, lead, adapter } = await setup([
       textResponse('lead answer'), textResponse('fork1 answer'), textResponse('fork2 answer'),
     ])
     await runTurn(lead, 'Lead task')
@@ -954,15 +954,58 @@ describe('plain fork parity with Team installation', () => {
     // is not itself a member — the roster still rejects it as a caller.
     expect(ctx.tools.get('spawn_teammate', fork1)).toBeDefined()
     expect(() => ctx.agentTeams.membership(fork1)).toThrow(expect.objectContaining({ code: 'TEAM_NOT_MEMBER' }))
+    const fork1Request = serializeRequest(adapter.requests[1]!)
 
     const fork2Run = await ctx.subagents.start('fork', {
       label: 'fork2', prompt: [{ type: 'text', text: 'fork2 task' }], parent: fork1, signal: SIGNAL,
     })
     const fork2 = fork2Run.localAgent!
-    expect(ctx.tools.get('spawn_teammate', fork2)).toBeUndefined()
+    await fork2Run.result
+    // fork2's immediate parent (fork1) is not itself a Team member, so only a
+    // transitive walk through fork1's own plain-fork parent (the member Lead)
+    // extends the section and tools here; a one-hop check would stop at
+    // fork1 and drop them, missing the provider prompt cache on fork2's
+    // first request.
+    expect(ctx.tools.get('spawn_teammate', fork2)).toBeDefined()
+    const fork2Request = serializeRequest(adapter.requests[2]!)
+    expect(fork2Request.tools).toEqual(fork1Request.tools)
+    expect(fork2Request.system).toEqual(fork1Request.system)
+    const denied = await execute(ctx, fork2, 'spawn_teammate', {
+      name: 'rogue', description: 'unauthorized', prompt: 'act as the lead',
+    })
+    expect(denied.isError).toBe(true)
+    expect(denied.error?.info?.code).toBe('TEAM_NOT_MEMBER')
 
     await fork2Run.dispose()
     await fork1Run.dispose()
+  })
+
+  it('does not extend Team tools through a plain fork chain whose root is not a member', async () => {
+    const { ctx, lead } = await setup([
+      textResponse('lead answer'), textResponse('fresh answer'), textResponse('fork-of-fresh answer'),
+    ])
+    await runTurn(lead, 'Lead task')
+    const freshRun = await ctx.subagents.start('spawn', {
+      label: 'fresh', prompt: [{ type: 'text', text: 'fresh task' }], parent: lead, signal: SIGNAL,
+    })
+    const freshChild = freshRun.localAgent!
+    await freshRun.result
+    // A fresh child is not seeded, so plainForkParentOf never resolves a
+    // parent for it: it terminates the lineage walk, and it is not a Team
+    // member.
+    expect(ctx.tools.get('spawn_teammate', freshChild)).toBeUndefined()
+
+    const forkOfFreshRun = await ctx.subagents.start('fork', {
+      label: 'fork-of-fresh', prompt: [{ type: 'text', text: 'fork of fresh task' }], parent: freshChild, signal: SIGNAL,
+    })
+    const forkOfFresh = forkOfFreshRun.localAgent!
+    // forkOfFresh's plain-fork walk reaches freshChild and stops there:
+    // freshChild is neither a member nor itself a plain fork, so the
+    // lineage's root is not a member and the walk finds nothing to inherit.
+    expect(ctx.tools.get('spawn_teammate', forkOfFresh)).toBeUndefined()
+
+    await forkOfFreshRun.dispose()
+    await freshRun.dispose()
   })
 
   it('re-installs Team tools after a cold resume of a continuable plain fork of the Lead', async () => {
