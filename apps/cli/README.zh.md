@@ -12,7 +12,7 @@
 | `dsh --profile <name> --from-default-profile <template>` | 从随附模板创建新的自定义 profile，然后启动它。 |
 | `dsh --profile acp` | 通过 ACP stdio 为自动化客户端提供服务，直至断开连接。 |
 | `dsh --profile headless "job"` | 运行一个全新的持久化会话，打印最终答案并退出。 |
-| `dsh --profile agents run "task"` | 把任务拆分给各自 git worktree 中的多个 worker agent（智能体），在 merge 前进行独立评审。 |
+| `dsh --profile agents run "task"` | 在 worker agent（智能体）专属的 git worktree 中运行一项任务，在 merge 前进行独立评审。 |
 | `dsh --profile sdk` | 通过 JSON-RPC stdio 为 SDK 客户端提供服务，直至关闭或断开连接。 |
 | `dsh --profile sdk-minimal` | 以独立极简 agent（智能体）配置树为 SDK 客户端提供服务。 |
 | `dsh web` | 启动 Web profile。 |
