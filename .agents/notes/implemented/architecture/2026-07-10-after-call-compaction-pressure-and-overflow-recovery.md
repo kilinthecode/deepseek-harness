@@ -42,7 +42,7 @@ The default summarizer resolves explicit configuration, then the latest logged r
 
 ## Testing
 
-Unit tests cover the final-adapter normalization boundary, closed-turn retry numbering and reset, cancellation and disposal, step-boundary ordering, routed-envelope pressure, pressure-gated pruning, pruning-only relief, pruned-input summarization, balanced overflow reduction, durable prune progress before later failure, generation proof, caps, delegation, and auxiliary-call routing. Real-loop tests cover thrown and in-band overflow through pruning or summary compaction to a reconstructed retry request.
+Unit tests cover the final-adapter normalization boundary, closed-turn retry numbering and reset, cancellation and disposal, step-boundary ordering, routed-envelope pressure, pressure-gated pruning, preview-gated pruning-only relief, compact-first summarization of the unpruned surface, pruned-input summarization after an insufficient landed prune and during overflow recovery, balanced overflow reduction, durable prune progress before later failure, generation proof, caps, delegation, and auxiliary-call routing. Real-loop tests cover thrown and in-band overflow through pruning or summary compaction to a reconstructed retry request.
 
 ## Alternatives considered
 

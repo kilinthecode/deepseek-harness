@@ -126,7 +126,7 @@ Read these pages when the package-level contract is not enough; they move from t
 
 - [Compaction subsystem reference](../../../docs/subsystems/compaction.md) — the condensation vocabulary, results, and generated service API.
 - [Compaction basic backend](../compaction-basic/README.md) — the shipped backend that condenses automatically and on demand.
-- [Tool-result pruner](../compaction-tool-result-pruner/README.md) — the optional companion that trims oversized tool outputs first.
+- [Tool-result pruner](../compaction-tool-result-pruner/README.md) — the optional companion that trims oversized tool outputs; under pressure it runs alone only when its projection leaves enough headroom, and otherwise after each compaction.
 - [Human /compact command](../command-compact/README.md) — the on-demand trigger for condensation.
 - [Token meter](../../llm/token-meter/README.md) — the measurement service that decides when to condense.
 - [Compaction capability-seam Agent Note](../../../.agents/notes/implemented/feature/2026-06-18-compaction-capability-seam.md) — the split and the session/llm dependency rationale.
