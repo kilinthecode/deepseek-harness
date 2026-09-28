@@ -15,6 +15,14 @@ import JsonlSessionPersistence from '@deepseek-ai/dsh-session-persistence-jsonl'
 import SessionProjectionRegistry from '@deepseek-ai/dsh-session-projection'
 import SubagentRuntime from '@deepseek-ai/dsh-subagent'
 import type { SubagentStartRequest } from '@deepseek-ai/dsh-subagent'
+import { brandString } from '@deepseek-ai/dsh-brand'
+import { renderWorkerBrief, SubagentWorktrees } from '@deepseek-ai/dsh-subagent-worktree'
+import type {
+  ProvisionedWorktree,
+  WorktreeId,
+  WorktreeRecord,
+  WorktreeRoute,
+} from '@deepseek-ai/dsh-subagent-worktree'
 import LocalJobRegistry from '@deepseek-ai/dsh-jobs-local'
 import * as SubagentSpawn from '@deepseek-ai/dsh-subagent-spawn-in-process'
 import * as ToolJobs from '@deepseek-ai/dsh-tool-jobs'
@@ -22,7 +30,8 @@ import { MockAdapter, textResponse } from '../../../core/agent-loop/tests/mock-a
 import { loadStoredSession } from '../../subagent/tests/persistence-helpers.ts'
 import * as mock from './scripted-provider.ts'
 import * as tool from '../src/index.ts'
-import { Session, SessionId } from '@deepseek-ai/dsh-session'
+import { SESSION_FORMAT_VERSION, Session, SessionId } from '@deepseek-ai/dsh-session'
+import type { SessionHeader } from '@deepseek-ai/dsh-session'
 import {
   callSubagent,
   disposeSetupProvider,
@@ -1467,5 +1476,472 @@ describe('depth budget configuration', () => {
     await callSubagent(ctx, { description: 'd', prompt: 'p' })
     expect(requests[0]?.maxDepth).toBeUndefined()
     expect(requests[0]?.toolFilter).toBeUndefined()
+  })
+})
+
+describe('subagent tool worktree isolation', () => {
+  const workerRoute: WorktreeRoute = { provider: 'parent-provider', model: 'parent-model' }
+  const reviewerRoute: WorktreeRoute = { provider: 'reviewer-provider', model: 'reviewer-model' }
+
+  /** A parent Agent with the effective route and cwd the isolation executor requires. */
+  function isolationParent(
+    cwd: string,
+    options: Agent['options'] = { provider: workerRoute.provider, model: workerRoute.model },
+  ): Agent {
+    const base = fakeAgent('isolation-parent')
+    const header: SessionHeader = {
+      version: SESSION_FORMAT_VERSION,
+      id: base.id,
+      createdAt: 1_700_000_000_000,
+      isSeeded: false,
+      cwd,
+    }
+    return { ...base, options, session: Session.create(base.id, undefined, header) }
+  }
+
+  function fakeWorktreeRecord(overrides: Partial<WorktreeRecord> = {}): WorktreeRecord {
+    return {
+      id: brandString<WorktreeId>('wt-aaaaaaaa'),
+      repoRoot: '/repo',
+      path: '/repo-worktrees/wt-aaaaaaaa',
+      branch: 'dsh/worktree/wt-aaaaaaaa',
+      baseCommit: 'deadbeefdeadbeefdeadbeefdeadbeefdeadbeef',
+      owner: { kind: 'session', sessionId: SessionId('isolation-parent') },
+      label: 'd',
+      task: 'the task',
+      state: 'open',
+      createdAt: 1_700_000_000_000,
+      workerSessionIds: [],
+      workerRoute,
+      ...overrides,
+    }
+  }
+
+  function fakeProvisioned(overrides: Partial<ProvisionedWorktree> = {}): ProvisionedWorktree {
+    return {
+      record: fakeWorktreeRecord(),
+      // A real, always-present directory: the continuable path validates `cwd`
+      // against the filesystem (`assertUsableCwd`), unlike the synthetic
+      // foreground "capture" provider, which never inspects it.
+      workDir: tmpdir(),
+      ...overrides,
+    }
+  }
+
+  const workerBriefFor = (provisioned: ProvisionedWorktree): string => renderWorkerBrief({
+    workDir: provisioned.workDir,
+    branch: provisioned.record.branch,
+    baseCommit: provisioned.record.baseCommit,
+    repoRoot: provisioned.record.repoRoot,
+  })
+
+  /**
+   * A worktree-service shell with every method the executor calls stubbed, because the
+   * real `@deepseek-ai/dsh-subagent-worktree` git implementation is developed in parallel.
+   * `SubagentWorktrees.create/attach/resolveReviewer/discard` throw `not implemented`
+   * bodies; constructing the real class and spying over its methods keeps `ctx.get`
+   * resolution, injection typing, and the public contract real while faking only the
+   * unimplemented behavior.
+   */
+  function installFakeWorktrees(ctx: Context): SubagentWorktrees {
+    const worktrees = new SubagentWorktrees(ctx, {
+      branchPrefix: 'test/',
+      maxWorktrees: 4,
+      requireDistinctReviewer: false,
+      testCommand: [],
+      reviewDiffMaxBytes: 4096,
+      removeOnMerge: true,
+    })
+    vi.spyOn(worktrees, 'resolveReviewer').mockReturnValue(reviewerRoute)
+    vi.spyOn(worktrees, 'create').mockResolvedValue(fakeProvisioned())
+    vi.spyOn(worktrees, 'attach').mockImplementation(async request => fakeWorktreeRecord({
+      workerSessionIds: [request.workerSessionId],
+    }))
+    vi.spyOn(worktrees, 'discard').mockResolvedValue(fakeWorktreeRecord({ state: 'discarded' }))
+    return worktrees
+  }
+
+  /** Mount the tool over a request-capturing one-shot provider with the cwd capability. */
+  async function foregroundCaptureSetup(config: Omit<tool.Config, 'provider' | 'worktreeIsolation'> = {}) {
+    const requests: SubagentStartRequest[] = []
+    const ctx = await projectedContext()
+    await ctx.plugin(SystemPrompt)
+    await ctx.plugin(ToolRuntime)
+    await ctx.plugin(SubagentRuntime)
+    let startCount = 0
+    ctx.subagents.registerProvider({
+      name: 'capture',
+      capabilities: { agentOptions: true, outputSchema: false, depthLimit: false, toolFilter: false, persona: false, cwd: true },
+      inheritsParentContext: false,
+      start: async (request) => {
+        requests.push(request)
+        startCount += 1
+        return {
+          id: SessionId(`capture-child-${startCount}`),
+          localAgent: undefined,
+          result: Promise.resolve({ output: [{ type: 'text', text: 'ok' }], stopReason: 'completed' as const }),
+          dispose: async () => {},
+        }
+      },
+    })
+    await ctx.plugin(tool, { provider: 'capture', worktreeIsolation: true, maxDepth: 'provider-managed', ...config })
+    return { ctx, requests }
+  }
+
+  const parent = isolationParent('/repo/packages/foo')
+
+  it('omits the isolation parameter by default', async () => {
+    const ctx = await setup({ provider: 'mock' })
+    const schema = ctx.tools.schemas().find(s => s.name === 'subagent')!
+    const properties = (schema.parameters as { properties: Record<string, unknown> }).properties
+    expect('isolation' in properties).toBe(false)
+    await disposeSetupProvider(ctx)
+  })
+
+  it('exposes the isolation parameter, verbatim, when worktreeIsolation is enabled', async () => {
+    const ctx = await setup({ provider: 'mock', worktreeIsolation: true })
+    const schema = ctx.tools.schemas().find(s => s.name === 'subagent')!
+    const properties = (schema.parameters as {
+      properties: Record<string, { type: string; enum?: string[]; description?: string }>
+    }).properties
+    expect(properties.isolation).toEqual({
+      type: 'string',
+      enum: ['worktree'],
+      description: 'Set to "worktree" to give the child its own git worktree, branched from your current commit, '
+        + 'so parallel children cannot overwrite your files or each other\'s. Nothing it changes reaches your '
+        + 'checkout until you call accept_worktree, which has an independent reviewer check the change before '
+        + 'merging it. Omit to let the child work in your checkout.',
+    })
+    await disposeSetupProvider(ctx)
+  })
+
+  it('rejects the isolation argument at execute time when worktreeIsolation is disabled', async () => {
+    const ctx = await setup({ provider: 'mock' })
+    const result = await callSubagent(ctx, { description: 'd', prompt: 'p', isolation: 'worktree' })
+    expect(result.isError).toBe(true)
+    expect(text(result)).toContain('subagent: isolation is not enabled for this tool')
+    await disposeSetupProvider(ctx)
+  })
+
+  it('throws when the subagent-worktree service is not loaded', async () => {
+    const { ctx } = await foregroundCaptureSetup()
+    const result = await callSubagent(ctx, { description: 'd', prompt: 'p', isolation: 'worktree' }, { agent: parent })
+    expect(result.isError).toBe(true)
+    expect(text(result)).toContain('subagent: worktree isolation requires the subagent-worktree service')
+  })
+
+  it("rejects isolation for a background job under backgroundMode: 'one-shot'", async () => {
+    const { ctx } = await foregroundCaptureSetup()
+    installFakeWorktrees(ctx)
+    const result = await callSubagent(
+      ctx,
+      { description: 'd', prompt: 'p', isolation: 'worktree', run_in_background: true },
+      { agent: parent },
+    )
+    expect(result.isError).toBe(true)
+    expect(text(result)).toContain(
+      "subagent: worktree isolation does not support a background job under backgroundMode: 'one-shot'",
+    )
+  })
+
+  it('requires the parent session to have a working directory', async () => {
+    const { ctx } = await foregroundCaptureSetup()
+    installFakeWorktrees(ctx)
+    const result = await callSubagent(
+      ctx,
+      { description: 'd', prompt: 'p', isolation: 'worktree' },
+      { agent: fakeAgent('no-cwd-parent') },
+    )
+    expect(result.isError).toBe(true)
+    expect(text(result)).toContain('subagent: worktree isolation requires the parent session to have a working directory')
+  })
+
+  it('requires an effective provider and model to resolve a worktree route', async () => {
+    const { ctx } = await foregroundCaptureSetup()
+    installFakeWorktrees(ctx)
+    const routeless = isolationParent('/repo/packages/foo', {})
+    const result = await callSubagent(ctx, { description: 'd', prompt: 'p', isolation: 'worktree' }, { agent: routeless })
+    expect(result.isError).toBe(true)
+    expect(text(result)).toContain('subagent: worktree isolation requires an effective provider and model')
+  })
+
+  it('calls resolveReviewer before create, and its throw prevents create', async () => {
+    const { ctx } = await foregroundCaptureSetup()
+    const worktrees = installFakeWorktrees(ctx)
+    vi.spyOn(worktrees, 'resolveReviewer').mockImplementation(() => {
+      throw new Error("the reviewer would run on the worker's route")
+    })
+    const createSpy = vi.spyOn(worktrees, 'create')
+
+    const result = await callSubagent(ctx, { description: 'd', prompt: 'p', isolation: 'worktree' }, { agent: parent })
+    expect(result.isError).toBe(true)
+    expect(text(result)).toContain("the reviewer would run on the worker's route")
+    expect(createSpy).not.toHaveBeenCalled()
+  })
+
+  it('resolves the worker route from configured child agentOptions, including its reasoning effort, over the parent route', async () => {
+    // The scripted 'mock' provider (harness.ts) supports agentOptions and cwd,
+    // and configuring a route requires the `llm` service to preflight it.
+    const ctx = await setup({
+      provider: 'mock',
+      worktreeIsolation: true,
+      agentOptions: { provider: 'configured-provider', model: 'configured-model', reasoningEffort: ReasoningEffortId('high') },
+    })
+    ctx.llm.registerAdapter(['configured-provider'], new MockAdapter([], {
+      efforts: [{ id: ReasoningEffortId('high'), name: 'High' }],
+    }))
+    const worktrees = installFakeWorktrees(ctx)
+    const resolveReviewerSpy = vi.spyOn(worktrees, 'resolveReviewer')
+    const attachSpy = vi.spyOn(worktrees, 'attach')
+
+    const result = await callSubagent(ctx, { description: 'd', prompt: 'the task', isolation: 'worktree' }, { agent: parent })
+
+    const configuredRoute: WorktreeRoute = {
+      provider: 'configured-provider',
+      model: 'configured-model',
+      reasoningEffort: ReasoningEffortId('high'),
+    }
+    expect(result.isError).toBe(false)
+    expect(resolveReviewerSpy).toHaveBeenCalledWith({ workerRoute: configuredRoute, callerRoute: workerRoute })
+    expect(attachSpy).toHaveBeenCalledWith(expect.objectContaining({ workerRoute: configuredRoute }))
+    await disposeSetupProvider(ctx)
+  })
+
+  it('propagates a non-isolated foreground start failure without attempting a discard', async () => {
+    const { ctx } = await foregroundCaptureSetup()
+    const worktrees = installFakeWorktrees(ctx)
+    const discardSpy = vi.spyOn(worktrees, 'discard')
+    ctx.subagents.registerProvider({
+      name: 'failing3',
+      capabilities: { agentOptions: false, outputSchema: false, depthLimit: false, toolFilter: false, persona: false, cwd: true },
+      inheritsParentContext: false,
+      start: async () => { throw new Error('plain start failure') },
+    })
+    await ctx.plugin(tool, { provider: 'failing3', toolName: 'subagent_failing3', maxDepth: 'provider-managed' })
+
+    // No `isolation` argument and no `worktreeIsolation` on this mount: the
+    // ordinary non-isolated path must not touch the worktree service at all.
+    const result = await ctx.tools.execute({
+      signal: testToolSignal,
+      callId: ToolCallId('failing3-1'),
+      name: 'subagent_failing3',
+      arguments: { description: 'd', prompt: 'p' },
+      agent: parent,
+    })
+
+    expect(result.isError).toBe(true)
+    expect(text(result)).toContain('plain start failure')
+    expect(discardSpy).not.toHaveBeenCalled()
+  })
+
+  it('passes the worktree cwd and brief-prefixed prompt to the foreground request, attaches the worker, and renders the worktree line', async () => {
+    const { ctx, requests } = await foregroundCaptureSetup()
+    const worktrees = installFakeWorktrees(ctx)
+    const attachSpy = vi.spyOn(worktrees, 'attach')
+    const resolveReviewerSpy = vi.spyOn(worktrees, 'resolveReviewer')
+
+    const result = await callSubagent(ctx, { description: 'd', prompt: 'the task', isolation: 'worktree' }, { agent: parent })
+
+    expect(resolveReviewerSpy).toHaveBeenCalledWith({ workerRoute, callerRoute: workerRoute })
+    const provisioned = fakeProvisioned()
+    expect(requests).toHaveLength(1)
+    expect(requests[0]?.cwd).toBe(provisioned.workDir)
+    expect(requests[0]?.prompt).toEqual([{ type: 'text', text: `${workerBriefFor(provisioned)}the task` }])
+
+    expect(attachSpy).toHaveBeenCalledWith({
+      id: provisioned.record.id,
+      owner: { kind: 'session', sessionId: parent.id },
+      workerSessionId: SessionId('capture-child-1'),
+      workerRoute,
+    })
+
+    expect(result.isError).toBe(false)
+    expect(result.isError ? undefined : result.value).toMatchObject({
+      kind: 'foreground',
+      worktree: {
+        id: provisioned.record.id,
+        path: provisioned.record.path,
+        branch: provisioned.record.branch,
+        baseCommit: provisioned.record.baseCommit,
+      },
+    })
+    expect(text(result)).toBe(
+      `ok\nWorktree ${provisioned.record.id} (branch ${provisioned.record.branch}) holds this child's changes; `
+      + 'call accept_worktree to review and merge them.',
+    )
+  })
+
+  it('keeps the foreground render byte-identical when isolation is configured but not requested', async () => {
+    const { ctx, requests } = await foregroundCaptureSetup()
+    installFakeWorktrees(ctx)
+
+    const result = await callSubagent(ctx, { description: 'd', prompt: 'the task' }, { agent: parent })
+
+    expect(requests[0]?.cwd).toBeUndefined()
+    expect(requests[0]?.prompt).toEqual([{ type: 'text', text: 'the task' }])
+    expect(result.isError).toBe(false)
+    expect(result.isError ? undefined : result.value).toEqual({ kind: 'foreground', runId: SessionId('capture-child-1'), output: [{ type: 'text', text: 'ok' }] })
+    expect(text(result)).toBe('ok')
+  })
+
+  it('discards the fresh worktree, best effort, when the foreground start fails, and rethrows the original error', async () => {
+    const { ctx } = await foregroundCaptureSetup()
+    const worktrees = installFakeWorktrees(ctx)
+    const discardSpy = vi.spyOn(worktrees, 'discard')
+    const attachSpy = vi.spyOn(worktrees, 'attach')
+    ctx.subagents.registerProvider({
+      name: 'failing',
+      capabilities: { agentOptions: false, outputSchema: false, depthLimit: false, toolFilter: false, persona: false, cwd: true },
+      inheritsParentContext: false,
+      start: async () => { throw new Error('provider start failed') },
+    })
+    await ctx.plugin(tool, { provider: 'failing', toolName: 'subagent_failing', worktreeIsolation: true, maxDepth: 'provider-managed' })
+
+    const result = await ctx.tools.execute({
+      signal: testToolSignal,
+      callId: ToolCallId('failing-1'),
+      name: 'subagent_failing',
+      arguments: { description: 'd', prompt: 'p', isolation: 'worktree' },
+      agent: parent,
+    })
+
+    expect(result.isError).toBe(true)
+    expect(text(result)).toContain('provider start failed')
+    const provisioned = fakeProvisioned()
+    expect(discardSpy).toHaveBeenCalledWith(expect.objectContaining({
+      id: provisioned.record.id,
+      owner: { kind: 'session', sessionId: parent.id },
+    }))
+    expect(discardSpy.mock.calls[0]?.[0].signal).toBeInstanceOf(AbortSignal)
+    expect(attachSpy).not.toHaveBeenCalled()
+  })
+
+  it('logs a warning, but still rethrows the original start failure, when the best-effort discard itself fails', async () => {
+    const { ctx } = await foregroundCaptureSetup()
+    const worktrees = installFakeWorktrees(ctx)
+    vi.spyOn(worktrees, 'discard').mockRejectedValue(new Error('discard failed too'))
+    const warnSpy = vi.spyOn(ctx.logger, 'warn').mockImplementation(() => {})
+    ctx.subagents.registerProvider({
+      name: 'failing2',
+      capabilities: { agentOptions: false, outputSchema: false, depthLimit: false, toolFilter: false, persona: false, cwd: true },
+      inheritsParentContext: false,
+      start: async () => { throw new Error('provider start failed') },
+    })
+    await ctx.plugin(tool, { provider: 'failing2', toolName: 'subagent_failing2', worktreeIsolation: true, maxDepth: 'provider-managed' })
+
+    const result = await ctx.tools.execute({
+      signal: testToolSignal,
+      callId: ToolCallId('failing2-1'),
+      name: 'subagent_failing2',
+      arguments: { description: 'd', prompt: 'p', isolation: 'worktree' },
+      agent: parent,
+    })
+
+    expect(result.isError).toBe(true)
+    // The ORIGINAL failure reaches the caller; the discard failure is only logged.
+    expect(text(result)).toContain('provider start failed')
+    expect(text(result)).not.toContain('discard failed too')
+    expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining('discard failed too'))
+  })
+
+  describe('continuable background isolation', () => {
+    const roots: string[] = []
+    afterEach(() => {
+      for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true })
+    })
+
+    /** Boot the real continuable stack (spawn provider, which has the cwd capability) with isolation enabled. */
+    async function continuableIsolationSetup() {
+      const ctx = new Context()
+      await mountAgentLoopTestDependencies(ctx)
+      const root = mkdtempSync(path.join(tmpdir(), 'dsh-tool-subagent-worktree-'))
+      roots.push(root)
+      await ctx.plugin(JsonlSessionPersistence, { root })
+      await ctx.plugin(AgentLoop, { agents: [] })
+      await ctx.plugin(SubagentRuntime)
+      await ctx.plugin(SubagentSpawn, { providerName: 'spawn' })
+      await ctx.plugin(tool, { provider: 'spawn', backgroundMode: 'continuable', worktreeIsolation: true })
+      ctx.llm.registerAdapter(['mock'], new MockAdapter([textResponse('continuable answer')]))
+      const worktrees = installFakeWorktrees(ctx)
+      const routedParent = await ctx.agentLoop.create(
+        SessionId('worktree-parent'),
+        { provider: 'mock', model: 'mock' },
+        { cwd: '/repo/packages/foo' },
+      )
+      return { ctx, parent: routedParent, worktrees }
+    }
+
+    it('passes the worktree cwd and brief-prefixed prompt to the continuable request, attaches the worker, and renders the worktree line', async () => {
+      const { ctx, parent: routedParent, worktrees } = await continuableIsolationSetup()
+      const attachSpy = vi.spyOn(worktrees, 'attach')
+
+      const result = await callSubagent(
+        ctx,
+        { description: 'd', prompt: 'the task', isolation: 'worktree' },
+        { agent: routedParent },
+      )
+
+      expect(result.isError).toBe(false)
+      const provisioned = fakeProvisioned()
+      expect(attachSpy).toHaveBeenCalledTimes(1)
+      const attachCall = attachSpy.mock.calls[0]?.[0]
+      expect(attachCall).toMatchObject({
+        id: provisioned.record.id,
+        owner: { kind: 'session', sessionId: routedParent.id },
+        workerRoute: { provider: 'mock', model: 'mock' },
+      })
+      expect(result.isError ? undefined : result.value).toMatchObject({
+        kind: 'continuable',
+        worktree: {
+          id: provisioned.record.id,
+          path: provisioned.record.path,
+          branch: provisioned.record.branch,
+          baseCommit: provisioned.record.baseCommit,
+        },
+      })
+      expect(attachCall?.workerSessionId).toBe(result.isError ? undefined : (result.value as { subagentId: unknown }).subagentId)
+      expect(text(result)).toBe(
+        `started subagent ${attachCall?.workerSessionId} in worktree ${provisioned.record.id} `
+        + `(branch ${provisioned.record.branch}, base ${provisioned.record.baseCommit})`,
+      )
+    })
+
+    it('appends the uncommitted-changes note when the worktree left base-checkout changes behind', async () => {
+      const { ctx, parent: routedParent, worktrees } = await continuableIsolationSetup()
+      vi.spyOn(worktrees, 'create').mockResolvedValue(fakeProvisioned({ baseDirty: { entries: ['M file.ts'], total: 1 } }))
+
+      const result = await callSubagent(
+        ctx,
+        { description: 'd', prompt: 'the task', isolation: 'worktree' },
+        { agent: routedParent },
+      )
+
+      expect(result.isError).toBe(false)
+      expect(text(result)).toContain('Your checkout has 1 uncommitted change(s) that the worktree does not contain.')
+    })
+
+    it('discards the fresh worktree, best effort, when the continuable start fails', async () => {
+      const { ctx, parent: routedParent, worktrees } = await continuableIsolationSetup()
+      const discardSpy = vi.spyOn(worktrees, 'discard')
+      const attachSpy = vi.spyOn(worktrees, 'attach')
+      // A relative cwd fails the seam's own validation inside startContinuable,
+      // after this tool has already created the worktree.
+      vi.spyOn(worktrees, 'create').mockResolvedValue(fakeProvisioned({ workDir: 'relative/dir' }))
+
+      const result = await callSubagent(
+        ctx,
+        { description: 'd', prompt: 'the task', isolation: 'worktree' },
+        { agent: routedParent },
+      )
+
+      expect(result.isError).toBe(true)
+      expect(text(result)).toContain('must be an absolute path')
+      expect(discardSpy).toHaveBeenCalledWith(expect.objectContaining({
+        id: fakeWorktreeRecord().id,
+        owner: { kind: 'session', sessionId: routedParent.id },
+      }))
+      expect(discardSpy.mock.calls[0]?.[0].signal).toBeInstanceOf(AbortSignal)
+      expect(attachSpy).not.toHaveBeenCalled()
+    })
   })
 })

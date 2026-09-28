@@ -22,9 +22,16 @@ A provider advertises its **start-time** features on a static descriptor the ser
  * degradation" rule). These flags describe the ONE-SHOT
  * {@link SubagentProvider.start} path, where the provider composes the child;
  * continuable children are composed by the continuation manager itself and are
- * gated by {@link SubagentProvider.prepareContinuable} instead. Each flag
- * corresponds one-to-one to a {@link SubagentStartRequest} option: `depthLimit`
- * to `maxDepth`; the other names match.
+ * gated by {@link SubagentProvider.prepareContinuable} instead — except `cwd`,
+ * which the manager also checks against this same capability before composing
+ * a continuable child, because both paths hand the provider's advertised
+ * working-directory support to the same child-composition helper
+ * ({@link childSessionMeta}). Each flag corresponds one-to-one to a
+ * {@link SubagentStartRequest} option: `depthLimit` to `maxDepth`; the other
+ * names match. An out-of-process provider always advertises `cwd: false`: it
+ * still resolves a working directory for the child, from its own
+ * configuration or the parent session's cwd, but does not support a
+ * PER-REQUEST override yet.
  */
 interface SubagentCapabilities {
   readonly agentOptions: boolean
@@ -32,6 +39,7 @@ interface SubagentCapabilities {
   readonly depthLimit: boolean
   readonly toolFilter: boolean
   readonly persona: boolean
+  readonly cwd: boolean
 }
 ```
 
@@ -103,6 +111,14 @@ interface SubagentStartRequest {
    * persona (strict `{{…}}` interpolation against the registered variables).
    */
   readonly persona?: string
+  /**
+   * Optional absolute working directory for the child session, replacing the
+   * parent's. Requires {@link SubagentCapabilities.cwd} on the one-shot path;
+   * rejected at start otherwise. The directory must exist when the child is
+   * created; it becomes the child's durable `SessionHeader.cwd`, which scopes
+   * its filesystem tools, shell working directory, and sandbox write root.
+   */
+  readonly cwd?: string
 }
 ```
 

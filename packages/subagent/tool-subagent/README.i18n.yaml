@@ -18,11 +18,14 @@
   en: 3248a28bba2ef809
   zh: 807cc32c49fcb0cb
 /deepseek-ai-dsh-tool-subagent/use-this-package/minimal-configuration:
-  en: a8809e00166c7f2f
-  zh: 261432232638c445
+  en: d232ad756fc86994
+  zh: 0f490933d413ac50
 /deepseek-ai-dsh-tool-subagent/use-this-package/foreground-and-background-modes:
   en: 8e7319bc2887ae5c
   zh: 87d5abdfbe7562df
+/deepseek-ai-dsh-tool-subagent/use-this-package/worktree-isolation:
+  en: cba5587f3b263bf2
+  zh: 3242caab2bf821c2
 /deepseek-ai-dsh-tool-subagent/use-this-package/selecting-a-child-llm:
   en: 0d37e3b3957515e4
   zh: ea1a94b2f29e7d9a
@@ -54,11 +57,11 @@
   en: e4c7376d4f29dbd5
   zh: 6b7a9eaf69c9ea53
 /deepseek-ai-dsh-tool-subagent/model-experience/tool-schema/what-the-model-sees:
-  en: 5d88050d9496b928
-  zh: 1278b3b7da4335db
+  en: ec406cd4ffe4253b
+  zh: 55292aaae60a8a47
 /deepseek-ai-dsh-tool-subagent/model-experience/tool-schema/token-effect:
-  en: 1aa53b7a4c24cc25
-  zh: bebd5c5ce6443259
+  en: ba949bb00c13d4af
+  zh: 4db9511c0b3d726b
 /deepseek-ai-dsh-tool-subagent/model-experience/tool-schema/kv-cache-effect:
   en: 46f736c6c389052a
   zh: a7765541030e9104
@@ -93,8 +96,8 @@
   en: d83f1f25a3719c54
   zh: 445ca808e28dc936
 /deepseek-ai-dsh-tool-subagent/model-experience/foreground-result/what-the-model-sees:
-  en: 7e5d19839fa69495
-  zh: 0e7ff0d92571ec60
+  en: d806422ba7fc6ead
+  zh: bf37cfb0ea17f4c1
 /deepseek-ai-dsh-tool-subagent/model-experience/foreground-result/token-effect:
   en: 995810727b29f85f
   zh: 4ede7b437091d6ee
@@ -105,8 +108,8 @@
   en: 3f23f9211197b0b9
   zh: 8cff3c78249b66ff
 /deepseek-ai-dsh-tool-subagent/model-experience/background-result/what-the-model-sees:
-  en: d2ba2d8a3e88478d
-  zh: dee910d1d271f75c
+  en: a1b416865b2062c1
+  zh: 39766c94f3e503f7
 /deepseek-ai-dsh-tool-subagent/model-experience/background-result/token-effect:
   en: 3c67cdb1cbf53647
   zh: bfed5f2945a79c9d
@@ -114,8 +117,8 @@
   en: f5d5f97a153f7c70
   zh: 3d6bc05b9eadfbc2
 /deepseek-ai-dsh-tool-subagent/known-limitations-and-deferred-work:
-  en: 30b202766dae2b9d
-  zh: e2654c858b5a2378
+  en: 6143fb73325ad36f
+  zh: 584d80fac73a3388
 /deepseek-ai-dsh-tool-subagent/known-limitations-and-deferred-work/dev-note:
   en: e67f633dc6fe7773
   zh: 3bb0c20c93f16f98

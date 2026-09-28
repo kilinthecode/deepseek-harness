@@ -123,9 +123,16 @@ export interface SubagentRunEndInfo {
  * degradation" rule). These flags describe the ONE-SHOT
  * {@link SubagentProvider.start} path, where the provider composes the child;
  * continuable children are composed by the continuation manager itself and are
- * gated by {@link SubagentProvider.prepareContinuable} instead. Each flag
- * corresponds one-to-one to a {@link SubagentStartRequest} option: `depthLimit`
- * to `maxDepth`; the other names match.
+ * gated by {@link SubagentProvider.prepareContinuable} instead — except `cwd`,
+ * which the manager also checks against this same capability before composing
+ * a continuable child, because both paths hand the provider's advertised
+ * working-directory support to the same child-composition helper
+ * ({@link childSessionMeta}). Each flag corresponds one-to-one to a
+ * {@link SubagentStartRequest} option: `depthLimit` to `maxDepth`; the other
+ * names match. An out-of-process provider always advertises `cwd: false`: it
+ * still resolves a working directory for the child, from its own
+ * configuration or the parent session's cwd, but does not support a
+ * PER-REQUEST override yet.
  */
 export interface SubagentCapabilities {
   readonly agentOptions: boolean

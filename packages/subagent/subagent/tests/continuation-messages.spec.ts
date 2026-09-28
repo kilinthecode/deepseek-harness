@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import { ToolCallId, type ContentBlock } from '@deepseek-ai/dsh-llm'
 import { SessionId } from '@deepseek-ai/dsh-session'
-import { createSettlementMessage } from '../src/continuation-messages.ts'
+import { createSettlementMessage, withContinuableReturnGuidance } from '../src/continuation-messages.ts'
 
 const childId = SessionId('settled-child')
 const summary = { type: 'text', text: `Background subagent ${childId} finished and will do no further work unless you send it more.` }
@@ -53,5 +53,46 @@ describe('continuable settlement content', () => {
       first,
       second,
     ])
+  })
+})
+
+describe('withContinuableReturnGuidance', () => {
+  const parentId = SessionId('parent-1')
+  const prompt: ContentBlock[] = [{ type: 'text', text: 'initial task' }]
+
+  it('keeps the original prompt blocks untouched and appends exactly one guidance block', () => {
+    const original = structuredClone(prompt)
+    const withGuidance = withContinuableReturnGuidance(parentId, prompt, true)
+
+    expect(withGuidance).toHaveLength(prompt.length + 1)
+    expect(withGuidance.slice(0, prompt.length)).toEqual(original)
+    expect(prompt).toEqual(original)
+  })
+
+  it('tells a shared-workspace child the parent shares its workspace, verbatim', () => {
+    const [, guidance] = withContinuableReturnGuidance(parentId, prompt, true)
+
+    expect(guidance).toEqual({
+      type: 'text',
+      text: 'Your parent agent id is "parent-1". Before you finish, send your result to that agent with '
+        + 'send_message({ agent_id: "parent-1", message: "<self-contained result>" }). The parent shares your '
+        + 'workspace but does not automatically receive your transcript, tool output, or reasoning. Send earlier '
+        + 'messages as well when a finding changes what the parent should do next; sending a message does not end '
+        + 'your turn.',
+    })
+  })
+
+  it('tells a distinct-workspace child its parent cannot read its files and where to put its report, verbatim', () => {
+    const [, guidance] = withContinuableReturnGuidance(parentId, prompt, false)
+
+    expect(guidance).toEqual({
+      type: 'text',
+      text: 'Your parent agent id is "parent-1". Before you finish, send your result to that agent with '
+        + 'send_message({ agent_id: "parent-1", message: "<self-contained result>" }). Your parent works in a '
+        + 'different directory and cannot read your files; it does not automatically receive your transcript, tool '
+        + 'output, or reasoning. Put your report — the commands you ran, their results, and anything you did not '
+        + 'verify — in the send_message body. Send earlier messages as well when a finding changes what the parent '
+        + 'should do next; sending a message does not end your turn.',
+    })
   })
 })
