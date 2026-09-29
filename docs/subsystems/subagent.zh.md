@@ -751,6 +751,11 @@ async accept(request: AcceptWorktreeRequest): Promise<AcceptOutcome>
  * changed: `discard` only removes a worktree directory or branch that a crash
  * between the merge and its cleanup, or a failed earlier `discard`, left behind,
  * so a retry after a failure finishes the cleanup.
+ *
+ * A stale `reviewing` record whose reviewed commit already landed is recorded
+ * `merged` first, as `accept` does. A recovery check that fails is logged and
+ * does not stop the removal: `discard` is how a worktree that no probe can
+ * read gets removed, and a merge that did land stays in the base checkout.
  * @param request - worktree id, owner, and cancellation.
  * @returns the `discarded` record, or the unchanged `merged` or `discarded` record after cleaning up its leftovers.
  * @throws when the id is malformed, no such worktree exists, the owner does not own it, an attached worker is
