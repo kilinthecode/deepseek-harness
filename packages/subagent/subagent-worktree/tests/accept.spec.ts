@@ -1245,6 +1245,16 @@ class SignalSpendingGit extends GitRunner {
 
 const isWorktreeRemoval = (args: readonly string[]): boolean => args[0] === 'worktree' && args[1] === 'remove'
 
+/** Real git, logging every command with the signal it ran on. */
+class SignalRecordingGit extends GitRunner {
+  readonly started: Array<{ args: readonly string[]; signal: AbortSignal | undefined }> = []
+
+  override async run(args: readonly string[], options: GitRunOptions): Promise<GitCommandResult> {
+    this.started.push({ args, signal: options.signal })
+    return super.run(args, options)
+  }
+}
+
 describe('accept: cleanup signals', () => {
   it('removes a merged worktree and then its branch on separate fresh signals, so a removal that ran out of time cannot abort the branch deletion', async () => {
     const h = await harness()
@@ -1257,6 +1267,27 @@ describe('accept: cleanup signals', () => {
     expect(outcome).toMatchObject({ kind: 'merged', removed: true })
     expect(await pathExists(provisioned.record.path)).toBe(false)
     expect(git(h.dir, 'branch', '--list', provisioned.record.branch).trim()).toBe('')
+  }, GIT_TEST_TIMEOUT_MS)
+
+  it('runs the merge and the landing commit read on the request signal, and every removal on a fresh signal of its own', async () => {
+    const h = await harness()
+    const provisioned = await createWorktree(h.ctx, OWNER, h.dir, 'do the thing')
+    await writeFile(join(provisioned.workDir, 'change.txt'), 'x')
+    const command = new SignalRecordingGit(h.ctx.subprocess)
+    const request = acceptRequest(provisioned.record.id)
+
+    const outcome = await acceptWorktree(directDeps(h, command), request)
+
+    expect(outcome).toMatchObject({ kind: 'merged', removed: true })
+    // Everything the request asked for runs on the request's signal, so cancelling the request cancels the work.
+    const requested = command.started.filter(started => started.args[0] === 'merge' || started.args[0] === 'rev-list')
+    expect(requested.map(started => started.args[0])).toEqual(['merge', 'rev-list'])
+    expect(requested.every(started => started.signal === request.signal)).toBe(true)
+    // The removals are cleanup: the review checkout, then the merged worktree and its branch, each on its own signal.
+    const removals = command.started.filter(started => started.args[0] === 'branch' || isWorktreeRemoval(started.args))
+    expect(removals.map(started => started.args[0])).toEqual(['worktree', 'worktree', 'branch'])
+    expect(removals.every(started => started.signal !== request.signal)).toBe(true)
+    expect(new Set(removals.map(started => started.signal)).size).toBe(removals.length)
   }, GIT_TEST_TIMEOUT_MS)
 })
 

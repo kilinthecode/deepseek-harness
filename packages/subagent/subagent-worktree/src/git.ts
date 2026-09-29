@@ -46,10 +46,14 @@ export interface GitCommandResult {
   readonly stdout: string
   readonly stderr: string
   /**
-   * Whether `stdout` lost data to its collection byte cap. A caller that only
-   * checks `exitCode` (`git add`, `git commit`, `git merge`) can ignore this;
-   * a caller that parses `stdout` (`rev-parse`, `status`, `diff --name-only`)
-   * must never act on a partial tail — see {@link GitRunner.expectComplete}.
+   * Whether `stdout` lost data to its collection byte cap. The retained text is
+   * the end of the stream, and its first line may have lost its head to the
+   * cut. A caller that only checks `exitCode` (`git add`, `git commit`,
+   * `git merge`) can ignore this; a caller that parses `stdout` (`rev-parse`,
+   * `status`, `diff --name-only`) must use
+   * {@link GitRunner.expectComplete}, which refuses a partial result — only a
+   * listing read by its last lines may accept one, through
+   * {@link GitRunner.expectTruncatable}.
    */
   readonly stdoutLossy: boolean
 }
@@ -169,5 +173,24 @@ export class GitRunner {
       throw new Error(`subagent-worktree: ${what} output exceeded its capture limit; refusing to parse a partial result`)
     }
     return result
+  }
+
+  /**
+   * {@link expect}, additionally accepting a `stdout` whose head the byte cap
+   * dropped, for the one caller that reads a listing by its last lines. The
+   * retained text is the end of the stream, so the lines such a caller needs
+   * are the ones kept — but the first of them may have lost its head to the
+   * cut, so the caller must drop that first line, as
+   * {@link GitCommandResult.stdoutLossy} reports. Every other parsed command
+   * goes through {@link expectComplete}, which refuses a partial result
+   * instead.
+   * @param args - git arguments; never shell-interpreted.
+   * @param what - short command description for the thrown message.
+   * @param options - working directory, output cap, and cancellation.
+   * @returns the successful result, marked lossy when its `stdout` lost its head.
+   * @throws {GitCommandError} when the command exits nonzero.
+   */
+  async expectTruncatable(args: readonly string[], what: string, options: GitRunOptions): Promise<GitCommandResult> {
+    return this.expect(args, what, options)
   }
 }
