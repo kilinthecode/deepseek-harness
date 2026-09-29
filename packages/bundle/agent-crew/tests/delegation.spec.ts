@@ -36,6 +36,7 @@ import SubagentRuntime from '@deepseek-ai/dsh-subagent'
 import { STRUCTURED_OUTPUT_TOOL } from '@deepseek-ai/dsh-subagent-in-process-driver'
 import * as SubagentSpawn from '@deepseek-ai/dsh-subagent-spawn-in-process'
 import SubagentWorktrees from '@deepseek-ai/dsh-subagent-worktree'
+import type { Config as WorktreesConfig } from '@deepseek-ai/dsh-subagent-worktree'
 import LocalSubprocessRuntime from '@deepseek-ai/dsh-subprocess-local'
 import { defineTool } from '@deepseek-ai/dsh-tools'
 import * as ToolSubagent from '@deepseek-ai/dsh-tool-subagent'
@@ -121,7 +122,7 @@ async function mountCrew(
   // The bundle only inserts the worktree tools, whose row registers the isolation offer: the service stays at its
   // defaults, and the tool row may mount before or after the offer exists.
   if (mount === 'host-tool-first') await ctx.plugin(ToolSubagent, hostToolSubagentConfig())
-  await ctx.plugin(SubagentWorktrees, { root: worktreesRoot })
+  await ctx.plugin(SubagentWorktrees, { root: worktreesRoot } as WorktreesConfig)
   if (mount === 'host') await ctx.plugin(ToolSubagent, hostToolSubagentConfig())
   await ctx.plugin(ToolSubagentWorktree)
   if (mount === 'host-tool-last') await ctx.plugin(ToolSubagent, hostToolSubagentConfig())

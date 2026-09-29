@@ -30,6 +30,7 @@ import type { Agent } from '@deepseek-ai/dsh-agent'
 import { SessionId } from '@deepseek-ai/dsh-session'
 import { bindScopeParent, createScope, scopeOf } from '@deepseek-ai/dsh-scope'
 import SubagentWorktrees from '@deepseek-ai/dsh-subagent-worktree'
+import type { Config as WorktreesConfig } from '@deepseek-ai/dsh-subagent-worktree'
 import * as SkillAgentCrew from '@deepseek-ai/dsh-skill-agent-crew'
 import * as ToolSubagent from '@deepseek-ai/dsh-tool-subagent'
 import SubagentModelSelectionConfig from '@deepseek-ai/dsh-tool-subagent/model-selection-settings'
@@ -56,8 +57,8 @@ async function mountBase(): Promise<Context> {
  * @param ctx - the context that owns the service.
  * @param config - service settings; the defaults `dsh-base` uses unless a test pins a reviewer route.
  */
-function mountWorktreesService(ctx: Context, config: Parameters<typeof SubagentWorktrees.Config>[0] = {}): void {
-  new SubagentWorktrees(ctx, SubagentWorktrees.Config(config))
+function mountWorktreesService(ctx: Context, config: Partial<WorktreesConfig> = {}): void {
+  new SubagentWorktrees(ctx, SubagentWorktrees.Config(config as WorktreesConfig))
 }
 
 /**

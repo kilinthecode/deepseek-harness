@@ -22,7 +22,7 @@ afterEach(async () => {
   contexts.clear()
 })
 
-async function setup(config?: Partial<tool.Config>): Promise<{
+async function setup(config?: tool.Config): Promise<{
   ctx: Context
   fake: FakeSubagentWorktrees
   fiber: Awaited<ReturnType<Context['plugin']>>
@@ -137,7 +137,7 @@ describe('tool-subagent-worktree wiring', () => {
     })
 
     it('declares offerIsolation on by default in its Config schema', () => {
-      expect(tool.Config({}).offerIsolation).toBe(true)
+      expect(tool.Config().offerIsolation).toBe(true)
       expect(tool.Config({ offerIsolation: false }).offerIsolation).toBe(false)
     })
   })
