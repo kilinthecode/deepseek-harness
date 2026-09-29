@@ -177,6 +177,8 @@ kind: "package-reference"
 - **被中断的 discard 会留下遗留物**——`discard` 在删除任何东西之前先占有记录,因此中途失败会让记录保持 `discarded`,而工作树或分支仍然存在;排除原因后对它再次运行 `discard`,即可清除剩余部分。
 - **无法中止的合并需要操作者介入**——当 `git merge --abort` 失败或无法确认时,`accept` 会抛出异常,说明基础检出目录仍处于合并中途,并重新打开该工作树;操作者需要在基础检出目录中运行 `git merge --abort`,因为在此之前,之后的每次 `accept` 都会被这场进行中的合并阻塞。
 - **并非由本框架发起的合并绝不会被中止**——退出码为 128 的 `git merge` 在开始合并之前就已中止,最常见的原因是基础检出目录中已有另一场合并正在进行;而本次 accept 自己那次中止之后的检查,也可能在其中发现属于另一个提交的 `MERGE_HEAD`:`accept` 会报告 `blocked` 或抛出异常,并让那场合并完全保持原样,因此在该仓库中,之后的每次 `accept` 都会被它阻塞,直到发起它的那一方完成为止。
+- **失败的恢复探测需要操作者介入**——用于判断一条过期 `reviewing` 记录是否已经合入的探测(`git merge-base --is-ancestor`、`rev-parse HEAD`、`status --porcelain`)都有各自约定的退出码;被取消的探测,或以其他任何退出码结束的探测,都会抛出带工作树 id(绝不含路径)的错误,而不会被当作“未合并”读取。记录会完全保持原样,不会被加上任何占用标记,因此此后对该工作树的每次 `accept` 与 `discard` 都会以同样方式失败——包括 verdict 指向一个 git 已无法解析的提交(即退出码 128)的情况——直到操作者修复 git 状态或清掉该记录。
+- **状态读取会被要求看到 `git add -A` 会暂存的内容**——恢复用的干净性检查与 `create` 的 `baseDirty` 读取会传入 `--untracked-files=all --ignore-submodules=none`,`accept` 的空变更检查会传入 `--ignore-submodules=none`(`git diff` 接受该选项;`--untracked-files` 是 `git status` 的选项),因此 `status.showUntrackedFiles=no`、`status.ignoreSubmodules=all`、`submodule.<name>.ignore=all` 与 `diff.ignoreSubmodules=all` 都无法向它们隐藏改动。当该忽略设置导致 `git commit` 自身拒绝提交它所隐藏的已暂存改动时,`accept` 会以 `git commit failed` 立即报错并保留工作树,而不是报告 `empty`。
 
 <a id="dev-note"></a>
 ### 开发备注

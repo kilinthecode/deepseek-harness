@@ -10,6 +10,8 @@ import SubagentRuntime from '@deepseek-ai/dsh-subagent'
 import SubagentWorktrees from '../src/index.ts'
 import type { Config } from '../src/index.ts'
 import { pathExists } from '../src/fs-util.ts'
+import { GitRunner } from '../src/git.ts'
+import type { GitRunOptions } from '../src/git.ts'
 import { requireRecordLocation } from '../src/records.ts'
 import type { WorktreeId, WorktreeOwner } from '../src/types.ts'
 import { createWorktree, fakeAgent, git, initFixtureRepo, removeFixture, setup } from './harness.ts'
@@ -18,6 +20,7 @@ const cleanups: Array<() => Promise<unknown>> = []
 afterEach(async () => {
   for (const cleanup of cleanups.reverse()) await cleanup()
   vi.unstubAllEnvs()
+  vi.restoreAllMocks()
   cleanups.length = 0
 })
 
@@ -295,6 +298,38 @@ describe('discard cleanup', () => {
     const retried = await ctx.subagentWorktrees.discard({ id: provisioned.record.id, owner: OWNER, signal })
 
     expect(retried.state).toBe('discarded')
+    expect(await pathExists(provisioned.record.path)).toBe(false)
+    expect(git(dir, 'worktree', 'list')).not.toContain(provisioned.record.path)
+    expect(git(dir, 'branch', '--list', provisioned.record.branch).trim()).toBe('')
+  }, GIT_TEST_TIMEOUT_MS)
+
+  it('removes the directory and the branch on fresh signals when the caller is cancelled as the first sweep command starts', async () => {
+    const dir = await initFixtureRepo('dsh-discard-cancelled-')
+    cleanups.push(() => removeFixture(dir))
+    git(dir, 'commit', '--allow-empty', '-q', '-m', 'base')
+    const { ctx, dispose } = await setup({ root: await scratchRoot() })
+    cleanups.push(dispose)
+    const provisioned = await createWorktree(ctx, OWNER, dir, 'x')
+    const controller = new AbortController()
+    // The `discarded` write is discard's point of no return: from the first sweep command on, the caller's signal
+    // must not decide whether the worktree and branch are removed.
+    let sweepSignal: AbortSignal | undefined
+    const spy = vi.spyOn(GitRunner.prototype, 'run')
+    spy.mockImplementation(async function (this: GitRunner, args: readonly string[], options: GitRunOptions) {
+      if (args[0] === 'worktree' && args[1] === 'remove') {
+        sweepSignal = options.signal
+        controller.abort()
+      }
+      spy.mockRestore()
+      return this.run(args, options)
+    })
+
+    const discarded = await ctx.subagentWorktrees.discard({ id: provisioned.record.id, owner: OWNER, signal: controller.signal })
+
+    expect(controller.signal.aborted).toBe(true)
+    expect(discarded.state).toBe('discarded')
+    expect(sweepSignal).toBeDefined()
+    expect(sweepSignal).not.toBe(controller.signal)
     expect(await pathExists(provisioned.record.path)).toBe(false)
     expect(git(dir, 'worktree', 'list')).not.toContain(provisioned.record.path)
     expect(git(dir, 'branch', '--list', provisioned.record.branch).trim()).toBe('')

@@ -127,7 +127,12 @@ async function cleanupStaleReviewDirs(
 async function commitWorktreeChanges(deps: AcceptDeps, record: StoredWorktreeRecord, id: WorktreeId, signal: AbortSignal): Promise<string> {
   assertNoRunningWorkers(deps.ctx.agents, record, id)
   await deps.git.expect(['add', '-A'], 'git add', { cwd: record.path, signal })
-  const staged = await deps.git.run(['diff', '--cached', '--quiet'], { cwd: record.path, signal })
+  const staged = await deps.git.run(
+    // Asked for submodule changes whatever `diff.ignoreSubmodules` or `submodule.<name>.ignore` say, so a config
+    // that hides them from `git diff` cannot make the change `git add -A` just staged read as an empty one.
+    ['diff', '--cached', '--quiet', '--ignore-submodules=none'],
+    { cwd: record.path, signal },
+  )
   /* v8 ignore next -- `git diff --cached --quiet` in a worktree the immediately preceding `git add -A` just
    * confirmed valid returns only 0 (clean) or 1 (staged changes) under real git; any other exit code is a
    * host-level git failure (for example a corrupted index) too invasive to construct without a fake git binary. */

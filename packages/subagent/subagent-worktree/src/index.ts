@@ -19,7 +19,7 @@ import { acceptWorktree } from './accept.ts'
 import { resolveConfiguredCommitAuthor, resolveConfiguredReviewer } from './config.ts'
 import type { CommitAuthor } from './config.ts'
 import { createWorktree } from './create.ts'
-import { GitRunner } from './git.ts'
+import { cleanupSignal, GitRunner } from './git.ts'
 import { recoverLandedMerge, sweepWorktree } from './landed.ts'
 import {
   assertOpen, assertOpenOrRecoverable, assertOwnerAuthority, layoutForRepo, listRecords, requireRecordLocation,
@@ -282,7 +282,10 @@ export class SubagentWorktrees extends Service {
 
     // Each removal tolerates the thing it removes already being gone, so a
     // discard that was interrupted after the claim can be finished by hand.
-    await sweepWorktree(this.git, claimed, () => request.signal)
+    // The claim is the point of no return: every command after it runs on a
+    // fresh bounded cleanup signal, so a caller that cancelled while the record
+    // was being written still gets its directory and branch removed.
+    await sweepWorktree(this.git, claimed, cleanupSignal)
     return toPublicRecord(claimed)
   }
 

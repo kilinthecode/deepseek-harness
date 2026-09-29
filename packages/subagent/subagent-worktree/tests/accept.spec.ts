@@ -17,6 +17,7 @@ import { GitRunner } from '../src/git.ts'
 import type * as Git from '../src/git.ts'
 import type { GitCommandResult, GitRunOptions } from '../src/git.ts'
 import type { Config } from '../src/index.ts'
+import { recoverLandedMerge } from '../src/landed.ts'
 import { reviewCheckoutPathFor } from '../src/paths.ts'
 import { isStaleReviewing, requireRecordLocation, updateExistingRecordAt } from '../src/records.ts'
 import type { AcceptWorktreeRequest, WorktreeId, WorktreeOwner } from '../src/types.ts'
@@ -149,6 +150,55 @@ describe('accept: empty', () => {
     expect(outcome).toMatchObject({ kind: 'empty' })
     expect(outcome.record.state).toBe('open')
     expect((await requireRecordLocation(root, provisioned.record.id)).record).not.toHaveProperty('reviewingPid')
+  }, GIT_TEST_TIMEOUT_MS)
+})
+
+describe('accept: the user\'s git config', () => {
+  it('commits a new untracked file instead of reporting empty when the config hides untracked files from git status', async () => {
+    const { ctx, dir } = await harness()
+    // The config only shapes `git status`; `git add -A` still stages the file, so `accept` must commit it.
+    git(dir, 'config', 'status.showUntrackedFiles', 'no')
+    const provisioned = await createWorktree(ctx, OWNER, dir, 'do the thing')
+    await writeFile(join(provisioned.workDir, 'change.txt'), 'x')
+
+    const outcome = await ctx.subagentWorktrees.accept(acceptRequest(provisioned.record.id))
+
+    expect(outcome.kind).toBe('merged')
+    expect(git(dir, 'ls-files', 'change.txt').trim()).toBe('change.txt')
+  }, GIT_TEST_TIMEOUT_MS)
+
+  it('does not report empty when the config hides a staged submodule change from the empty check', async () => {
+    const { ctx, dir } = await harness()
+    // A gitlink at `sub`, with the `.gitmodules` entry and ignore settings a user could set.
+    await mkdir(join(dir, 'sub'))
+    git(join(dir, 'sub'), 'init', '-q', '-b', 'main')
+    git(join(dir, 'sub'), 'config', 'user.name', 'Sub')
+    git(join(dir, 'sub'), 'config', 'user.email', 'sub@example.com')
+    git(join(dir, 'sub'), 'config', 'commit.gpgsign', 'false')
+    await writeFile(join(dir, 'sub', 's.txt'), 's')
+    git(join(dir, 'sub'), 'add', '-A')
+    git(join(dir, 'sub'), 'commit', '-q', '-m', 'sub base')
+    git(dir, 'add', 'sub')
+    git(dir, 'config', '-f', '.gitmodules', 'submodule.sub.path', 'sub')
+    git(dir, 'config', '-f', '.gitmodules', 'submodule.sub.url', './sub')
+    git(dir, 'config', '-f', '.gitmodules', 'submodule.sub.ignore', 'all')
+    git(dir, 'add', '.gitmodules')
+    git(dir, 'commit', '-q', '-m', 'add the submodule')
+    git(dir, 'config', 'diff.ignoreSubmodules', 'all')
+    const provisioned = await createWorktree(ctx, OWNER, dir, 'do the thing')
+    // The submodule moved in the worktree, which `git add -A` stages as a new gitlink whatever the config says.
+    git(join(provisioned.workDir, 'sub'), 'init', '-q', '-b', 'main')
+    git(join(provisioned.workDir, 'sub'), 'config', 'user.name', 'Sub')
+    git(join(provisioned.workDir, 'sub'), 'config', 'user.email', 'sub@example.com')
+    git(join(provisioned.workDir, 'sub'), 'config', 'commit.gpgsign', 'false')
+    await writeFile(join(provisioned.workDir, 'sub', 's2.txt'), 's2')
+    git(join(provisioned.workDir, 'sub'), 'add', '-A')
+    git(join(provisioned.workDir, 'sub'), 'commit', '-q', '-m', 'sub moved')
+
+    // git itself refuses to commit a change its own config hides, so accept fails loud and keeps the worktree,
+    // instead of reporting `empty` and leaving the staged submodule move unmentioned.
+    await expect(ctx.subagentWorktrees.accept(acceptRequest(provisioned.record.id))).rejects.toThrow('git commit failed')
+    expect(await pathExists(provisioned.record.path)).toBe(true)
   }, GIT_TEST_TIMEOUT_MS)
 })
 
@@ -1255,6 +1305,26 @@ class SignalRecordingGit extends GitRunner {
   }
 }
 
+/**
+ * Real git, except that `onCommand` may abort the caller's controller around each command: called with no result as
+ * the command starts, and with one as soon as it settles.
+ */
+class AbortCallerGit extends GitRunner {
+  constructor(
+    subprocessRuntime: ConstructorParameters<typeof GitRunner>[0],
+    private readonly onCommand: (args: readonly string[], result: GitCommandResult | undefined) => void,
+  ) {
+    super(subprocessRuntime)
+  }
+
+  override async run(args: readonly string[], options: GitRunOptions): Promise<GitCommandResult> {
+    this.onCommand(args, undefined)
+    const result = await super.run(args, options)
+    this.onCommand(args, result)
+    return result
+  }
+}
+
 describe('accept: cleanup signals', () => {
   it('removes a merged worktree and then its branch on separate fresh signals, so a removal that ran out of time cannot abort the branch deletion', async () => {
     const h = await harness()
@@ -1288,6 +1358,27 @@ describe('accept: cleanup signals', () => {
     expect(removals.map(started => started.args[0])).toEqual(['worktree', 'worktree', 'branch'])
     expect(removals.every(started => started.signal !== request.signal)).toBe(true)
     expect(new Set(removals.map(started => started.signal)).size).toBe(removals.length)
+  }, GIT_TEST_TIMEOUT_MS)
+
+  it('removes the merged worktree and its branch when the caller was cancelled the instant the merge landed', async () => {
+    const h = await harness()
+    const provisioned = await createWorktree(h.ctx, OWNER, h.dir, 'do the thing')
+    await writeFile(join(provisioned.workDir, 'change.txt'), 'x')
+    const controller = new AbortController()
+    const command = new AbortCallerGit(h.ctx.subprocess, (args, result) => {
+      if (result !== undefined && args[0] === 'merge' && args[1] !== '--abort' && result.exitCode === 0) controller.abort()
+    })
+
+    const outcome = await acceptWorktree(
+      directDeps(h, command), acceptRequest(provisioned.record.id, { signal: controller.signal }),
+    )
+
+    // The merge landed, so the accept owed the caller a removal: cleanup runs on signals of its own, not the
+    // cancelled request's, and a removal that never started would leave the worktree and branch behind.
+    expect(controller.signal.aborted).toBe(true)
+    expect(outcome).toMatchObject({ kind: 'merged', removed: true })
+    expect(await pathExists(provisioned.record.path)).toBe(false)
+    expect(git(h.dir, 'branch', '--list', provisioned.record.branch).trim()).toBe('')
   }, GIT_TEST_TIMEOUT_MS)
 })
 
@@ -1488,6 +1579,65 @@ describe('accept: a merge that landed', () => {
 
     expect(record.state).toBe('discarded')
     expect(record).not.toHaveProperty('mergedCommit')
+  }, GIT_TEST_TIMEOUT_MS)
+
+  it('sweeps a recovered merge\'s leftovers when the caller was cancelled the moment the sweep began', async () => {
+    const { h, provisioned } = await crashedAfterMerge()
+    const controller = new AbortController()
+    const command = new AbortCallerGit(h.ctx.subprocess, (args, result) => {
+      if (result === undefined && isWorktreeRemoval(args)) controller.abort()
+    })
+
+    // The record was written before the sweep started, so the sweep is cleanup and must not inherit the signal the
+    // caller cancelled: a removal that never started would leave the worktree and branch behind for good.
+    const outcome = await acceptWorktree(
+      directDeps(h, command), acceptRequest(provisioned.record.id, { signal: controller.signal }),
+    )
+
+    expect(controller.signal.aborted).toBe(true)
+    expect(outcome).toMatchObject({ kind: 'merged', removed: true })
+    expect(await pathExists(provisioned.record.path)).toBe(false)
+    expect(git(h.dir, 'branch', '--list', provisioned.record.branch).trim()).toBe('')
+  }, GIT_TEST_TIMEOUT_MS)
+
+  it('does not recover a stale record whose reviewed commit never landed, and merges it for real on the next accept', async () => {
+    const h = await harness()
+    const provisioned = await createWorktree(h.ctx, OWNER, h.dir, 'do the thing')
+    await writeFile(join(provisioned.workDir, 'change.txt'), 'x')
+    git(provisioned.record.path, 'add', '-A')
+    git(provisioned.record.path, 'commit', '-q', '-m', 'work')
+    const commit = git(provisioned.record.path, 'rev-parse', 'HEAD').trim()
+    // An accept that died before its merge: `reviewing` on a dead process id, with a passing verdict for the
+    // worktree's own `HEAD`, which the base branch has never seen. Only the base checkout's history can say so.
+    const dead = spawnSync(process.execPath, ['-e', '0']).pid
+    if (dead === undefined) throw new Error('expected a spawned pid')
+    const { layout } = await requireRecordLocation(h.root, provisioned.record.id)
+    const reviewing = await updateExistingRecordAt(layout, provisioned.record.id, current => ({
+      ...current,
+      state: 'reviewing',
+      reviewingPid: dead,
+      lastVerdict: {
+        verdict: 'pass',
+        summary: 'looks good',
+        checks: [],
+        findings: [],
+        commit,
+        reviewerSessionId: SessionId('reviewer'),
+        reviewerRoute: REVIEWER_ROUTE,
+        at: 1,
+      },
+    }))
+    expect(await recoverLandedMerge(new GitRunner(h.ctx.subprocess), layout, reviewing, signal)).toBeUndefined()
+    expect((await requireRecordLocation(h.root, provisioned.record.id)).record.state).toBe('reviewing')
+
+    const outcome = await h.ctx.subagentWorktrees.accept(acceptRequest(provisioned.record.id))
+
+    const mergeCommit = git(h.dir, 'rev-parse', 'HEAD').trim()
+    expect(outcome).toMatchObject({ kind: 'merged', commit, removed: true })
+    // The commit reached the base branch through the merge that just ran, not through a recorded recovery.
+    expect(mergeCommit).not.toBe(commit)
+    expect(outcome.record).toMatchObject({ state: 'merged', mergedCommit: mergeCommit })
+    expect(git(h.dir, 'ls-files', 'change.txt').trim()).toBe('change.txt')
   }, GIT_TEST_TIMEOUT_MS)
 
   it('leaves the worktree in place when the recovered merge is found and removeOnMerge is off', async () => {

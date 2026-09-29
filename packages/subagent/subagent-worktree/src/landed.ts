@@ -29,33 +29,70 @@ export interface LandedRecovery {
   readonly mergeCommit: string
 }
 
+/** One deciding probe: its git subcommand, and the exit codes that are answers rather than failures. */
+interface DecisiveProbe {
+  /** The git subcommand, named in the thrown message. */
+  readonly what: string
+  /** Every exit code this probe answers in. */
+  readonly answers: readonly number[]
+}
+
+/** git's exit code for a probe that answered "yes". */
+const PROBE_YES_EXIT_CODE = 0
+
 /**
- * Run a git command whose answer decides whether a merge landed. A cancelled command has no exit code and so no
- * answer, which is refused instead of being read as "no".
- * @param what - the git subcommand, named in the thrown message.
- * @throws when the command was cancelled.
+ * git's exit code for `git merge-base --is-ancestor` when the first commit is not an ancestor of the second. Any
+ * other nonzero exit is git itself dying, whose answer is unknown, and is never read as "no".
+ */
+const PROBE_NO_EXIT_CODE = 1
+
+/**
+ * Run a git command whose answer decides whether a merge landed, and take only the exit codes that probe answers
+ * in. A cancelled command has no exit code, and a command that exits with a code outside its documented answers
+ * (128 from `git merge-base --is-ancestor`, or any failure of `rev-parse` or `status`) has no answer either: both
+ * are refused instead of being read as "no", which would let a crashed accept's unreviewed work be removed.
+ * @param probe - the subcommand's name, which the thrown message uses, and the exit codes it answers in.
+ * @throws when the command was cancelled or exited with a code outside `probe.answers`. The message names the
+ *   worktree id, never a path.
  */
 async function decisiveRun(
-  git: GitRunner, args: readonly string[], what: string, cwd: string, id: string, signal: AbortSignal,
+  git: GitRunner, args: readonly string[], probe: DecisiveProbe, cwd: string, id: string, signal: AbortSignal,
 ): Promise<GitCommandResult> {
   const result = await git.run(args, { cwd, signal })
   if (result.exitCode === null) {
-    throw new Error(`subagent-worktree: could not check whether worktree ${id} already merged (git ${what} was cancelled)`)
+    throw new Error(`subagent-worktree: could not check whether worktree ${id} already merged (git ${probe.what} was cancelled)`)
+  }
+  if (!probe.answers.includes(result.exitCode)) {
+    throw new Error(
+      `subagent-worktree: could not check whether worktree ${id} already merged (git ${probe.what} exited ${String(result.exitCode)})`,
+    )
   }
   return result
 }
 
 /**
  * Whether the worktree still holds exactly the reviewed commit: its directory exists, its `HEAD` is that commit,
- * and nothing in it is modified, staged, or untracked. A worktree that holds more holds work nobody reviewed.
- * @throws when a probe was cancelled.
+ * and nothing in it is modified, staged, or untracked. The status read is asked for what `git add -A` would stage
+ * — every untracked file, and submodule changes whatever `status.showUntrackedFiles`, `status.ignoreSubmodules`, or
+ * `submodule.<name>.ignore` say — because the user's git config must not hide work nobody reviewed. A worktree that
+ * holds more holds work nobody reviewed.
+ * @throws when a probe was cancelled or failed, so its answer is unknown.
  */
 async function worktreeHoldsOnly(git: GitRunner, record: StoredWorktreeRecord, reviewed: string, signal: AbortSignal): Promise<boolean> {
   if (!await pathExists(record.path)) return false
-  const head = await decisiveRun(git, ['rev-parse', 'HEAD'], 'rev-parse', record.path, record.id, signal)
-  if (head.exitCode !== 0 || head.stdout.trim() !== reviewed) return false
-  const status = await decisiveRun(git, ['status', '--porcelain'], 'status', record.path, record.id, signal)
-  return status.exitCode === 0 && status.stdout.trim() === ''
+  const head = await decisiveRun(
+    git, ['rev-parse', 'HEAD'], { what: 'rev-parse', answers: [PROBE_YES_EXIT_CODE] }, record.path, record.id, signal,
+  )
+  if (head.stdout.trim() !== reviewed) return false
+  const status = await decisiveRun(
+    git,
+    ['status', '--porcelain', '--untracked-files=all', '--ignore-submodules=none'],
+    { what: 'status', answers: [PROBE_YES_EXIT_CODE] },
+    record.path,
+    record.id,
+    signal,
+  )
+  return status.stdout.trim() === ''
 }
 
 /**
@@ -71,7 +108,8 @@ async function worktreeHoldsOnly(git: GitRunner, record: StoredWorktreeRecord, r
  * @param record - the record as read.
  * @param signal - cancellation for the check.
  * @returns the recovery, or undefined when the record needs no recovery.
- * @throws when a check was cancelled and so has no answer.
+ * @throws when a check was cancelled or failed, and so has no answer: the record is then left exactly as it was,
+ *   with no claim taken on it, so a later `accept` or `discard` either recovers it or fails the same way.
  */
 export async function recoverLandedMerge(
   git: GitRunner, layout: WorktreeLayout, record: StoredWorktreeRecord, signal: AbortSignal,
@@ -79,9 +117,14 @@ export async function recoverLandedMerge(
   const verdict = record.lastVerdict
   if (verdict === undefined || verdict.verdict !== 'pass' || !isStaleReviewing(record)) return undefined
   const ancestor = await decisiveRun(
-    git, ['merge-base', '--is-ancestor', verdict.commit, 'HEAD'], 'merge-base', record.repoRoot, record.id, signal,
+    git,
+    ['merge-base', '--is-ancestor', verdict.commit, 'HEAD'],
+    { what: 'merge-base', answers: [PROBE_YES_EXIT_CODE, PROBE_NO_EXIT_CODE] },
+    record.repoRoot,
+    record.id,
+    signal,
   )
-  if (ancestor.exitCode !== 0) return undefined
+  if (ancestor.exitCode === PROBE_NO_EXIT_CODE) return undefined
   if (!await worktreeHoldsOnly(git, record, verdict.commit, signal)) return undefined
 
   const mergeCommit = await landedCommitOf(git, record.repoRoot, verdict.commit, signal)
