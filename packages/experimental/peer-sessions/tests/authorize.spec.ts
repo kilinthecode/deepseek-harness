@@ -41,6 +41,45 @@ describe('peer authorization', () => {
       .rejects.toThrow('Only top-level sessions in this repository can message each other.')
   })
 
+  it('refuses the display name only the caller itself carries', async () => {
+    const harness = await mountPeerHarness({ peer: { pollMs: 60_000 } })
+    harnesses.push(harness)
+    const sender = await harness.create('peer-a')
+    const caller = await harness.create('peer-caller')
+    // A title that differs from the session id makes the name addressable
+    // without the id form, so only the name check can refuse this send.
+    caller.session.append('session/title', { title: 'named-self', messageSeqs: [], source: { kind: 'user' } })
+    await vi.waitFor(() => {
+      expect(harness.ctx.sessionProjections.stateOf(caller.session, 'title')).toBe('named-self')
+    })
+    await expect(harness.ctx.peers.send(sender, { to: 'named-self', message: 'name me' }))
+      .resolves.toMatchObject({ status: 'delivered' })
+    await expect(harness.ctx.peers.send(caller, { to: 'named-self', message: 'hi' }))
+      .rejects.toThrow('You cannot message your own session.')
+  })
+
+  it('refuses a caller’s own published name before a peer elsewhere carries it too', async () => {
+    const harness = await mountPeerHarness({ peer: { pollMs: 60_000 } })
+    harnesses.push(harness)
+    const caller = await harness.create('peer-a')
+    const elsewhere = await harness.makeDirectory('other-repo')
+    const remote = await harness.create('peer-other', { cwd: elsewhere })
+    remote.session.append('session/title', { title: 'shared', messageSeqs: [], source: { kind: 'user' } })
+    caller.session.append('session/title', { title: 'shared', messageSeqs: [], source: { kind: 'user' } })
+    /** The display name one session published in its presence row. */
+    const publishedName = async (sessionId: string): Promise<string> => {
+      const raw = await readFile(presencePath(harness.home, sessionId), 'utf8')
+      return (JSON.parse(raw) as { name: string }).name
+    }
+    await vi.waitFor(async () => { expect(await publishedName('peer-other')).toBe('shared') })
+    await vi.waitFor(async () => { expect(await publishedName('peer-a')).toBe('shared') })
+    // A session's own name is not an address at all, so it is a self-address
+    // before it is a name that another repository happens to share: the caller
+    // is never admitted against itself, and never told about the wrong peer.
+    await expect(harness.ctx.peers.send(caller, { to: 'shared', message: 'hi' }))
+      .rejects.toThrow('You cannot message your own session.')
+  })
+
   it('accepts a depth-zero fork that records a parent session', async () => {
     const harness = await mountPeerHarness()
     harnesses.push(harness)

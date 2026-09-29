@@ -28,19 +28,61 @@
   zh: 44bf7a9d443860db
 /deepseek-ai-dsh-experimental-peer-sessions/understand-the-implementation:
   en: 8eafc043527aac22
-  zh: 7992cb99e7d68a7f
+  zh: fe09bc1d07fff38e
 /deepseek-ai-dsh-experimental-peer-sessions/further-exploration:
   en: 01fdabf42203bc6c
   zh: dd9be00f84e0a3bf
 /deepseek-ai-dsh-experimental-peer-sessions/model-experience:
-  en: c29a38404f2d046f
-  zh: 408520360a5a88b2
-/deepseek-ai-dsh-experimental-peer-sessions/model-experience/kv-cache-effect:
-  en: 5f23a77acf4949b0
-  zh: a27c680d4689b8b1
+  en: 215e7ba838619b7b
+  zh: a311da3843709f90
+/deepseek-ai-dsh-experimental-peer-sessions/model-experience/framed-peer-message:
+  en: 00dac5eb85406427
+  zh: 741b5f2de4aa29e8
+/deepseek-ai-dsh-experimental-peer-sessions/model-experience/framed-peer-message/what-the-model-sees:
+  en: 107d95960a79e2c9
+  zh: c80453d076c8d003
+/deepseek-ai-dsh-experimental-peer-sessions/model-experience/framed-peer-message/what-the-model-sees/framed-relay-body:
+  en: 14887f02456c1159
+  zh: 99fea1fb8cc18649
+/deepseek-ai-dsh-experimental-peer-sessions/model-experience/framed-peer-message/token-effect:
+  en: 241bc03d95027ff0
+  zh: 08abbbb9e2ff2d22
+/deepseek-ai-dsh-experimental-peer-sessions/model-experience/framed-peer-message/kv-cache-effect:
+  en: 9692e1031822b451
+  zh: 69a48de1cd23d9bd
+/deepseek-ai-dsh-experimental-peer-sessions/model-experience/framed-idle-notice:
+  en: 41d8a8b5ffa8e41d
+  zh: 4fd5eaededd74211
+/deepseek-ai-dsh-experimental-peer-sessions/model-experience/framed-idle-notice/what-the-model-sees:
+  en: 1105e1ab3ebe4113
+  zh: 8c0927949147c74c
+/deepseek-ai-dsh-experimental-peer-sessions/model-experience/framed-idle-notice/what-the-model-sees/framed-notice-body:
+  en: 67425bbec886110f
+  zh: cbeda78277d5ed09
+/deepseek-ai-dsh-experimental-peer-sessions/model-experience/framed-idle-notice/token-effect:
+  en: be3c9374a5a6a20b
+  zh: d781bca05c700f68
+/deepseek-ai-dsh-experimental-peer-sessions/model-experience/framed-idle-notice/kv-cache-effect:
+  en: 14fd68b5220cdaf2
+  zh: dbdbe4a6cd43163b
+/deepseek-ai-dsh-experimental-peer-sessions/model-experience/peer-error-messages:
+  en: 92e2b21874af3b32
+  zh: 51b3f8df9286ec58
+/deepseek-ai-dsh-experimental-peer-sessions/model-experience/peer-error-messages/what-the-model-sees:
+  en: 3373b2fbb0d317f1
+  zh: 131e909c148f1594
+/deepseek-ai-dsh-experimental-peer-sessions/model-experience/peer-error-messages/what-the-model-sees/rejection-texts-by-code:
+  en: 17a72a5497132454
+  zh: d8440a1463f95f06
+/deepseek-ai-dsh-experimental-peer-sessions/model-experience/peer-error-messages/token-effect:
+  en: 5881cdd55bf0686c
+  zh: 5aefa0c443b67c2f
+/deepseek-ai-dsh-experimental-peer-sessions/model-experience/peer-error-messages/kv-cache-effect:
+  en: 4267b13d4128dab2
+  zh: eab86d0a7fad2f61
 /deepseek-ai-dsh-experimental-peer-sessions/known-limitations-and-deferred-work:
-  en: e502d38d25e93447
-  zh: d0f73ec35e537eba
+  en: 224cd46fd864af14
+  zh: 937606e0911008e4
 /deepseek-ai-dsh-experimental-peer-sessions/known-limitations-and-deferred-work/dev-note:
   en: eb48c2b77fcd6026
   zh: 751ab2919b3c5479

@@ -1,6 +1,7 @@
 import { Context } from '@deepseek-ai/cordis'
-import { afterEach, describe, expect, it } from 'vitest'
-import PeerService, { Config, PeerError } from '../src/index.ts'
+import { afterEach, describe, expect, it, vi } from 'vitest'
+import { realpathNormalize } from '@deepseek-ai/dsh-workspace'
+import PeerService, { Config, PeerError, peerRepoKey } from '../src/index.ts'
 import { mountPeerHarness, type PeerHarness } from './harness.ts'
 
 const harnesses: PeerHarness[] = []
@@ -10,6 +11,29 @@ afterEach(async () => {
 })
 
 describe('PeerService configuration', () => {
+  it('adopts agents that existed before the service loaded', async () => {
+    const harness = await mountPeerHarness({ deferPeers: true, peer: { pollMs: 60_000 } })
+    harnesses.push(harness)
+    const caller = await harness.create('peer-a')
+    const target = await harness.create('peer-b')
+    const repoKey = await peerRepoKey(await realpathNormalize(harness.workdir))
+    await harness.plantMail('peer-b', 'peer-message-late.json', `${JSON.stringify({
+      version: 1,
+      messageId: 'peer-message-late',
+      targetId: 'peer-b',
+      senderSessionId: 'peer-a',
+      senderName: 'peer-a',
+      fromRepo: repoKey,
+      relayDepth: 1,
+      kind: 'peer-message',
+      text: 'late load',
+    })}\n`)
+    await harness.mountPeers()
+    // The adopted session publishes its row and drains the mail it already had.
+    await vi.waitFor(() => { expect(harness.userMessages(target)).toHaveLength(1) })
+    expect((await harness.ctx.peers.list(caller)).map(peer => peer.id)).toEqual(['peer-b'])
+  })
+
   it('ships the documented peer limits and inbound mode', () => {
     expect(Config({})).toEqual({
       pollMs: 1_000,

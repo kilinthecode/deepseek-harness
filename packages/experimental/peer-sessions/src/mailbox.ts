@@ -25,7 +25,10 @@ export const PEER_MAIL_VERSION = 1
 
 const envelopeSchema = z.object({
   version: z.literal(PEER_MAIL_VERSION),
-  messageId: z.string().min(1).transform(value => brandString<PeerMessageId>(value)),
+  // The id names the envelope file, so it is constrained at this boundary: a
+  // planted file carrying separators or dots could otherwise make the drain
+  // delete or steer by an id that resolves outside the shard.
+  messageId: z.string().regex(/^[0-9A-Za-z_-]+$/).transform(value => brandString<PeerMessageId>(value)),
   targetId: z.string().min(1).transform(value => brandString<SessionId>(value)),
   senderSessionId: z.string().min(1).transform(value => brandString<SessionId>(value)),
   senderName: z.string().min(1),

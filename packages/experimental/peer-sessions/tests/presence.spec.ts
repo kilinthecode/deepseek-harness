@@ -141,6 +141,22 @@ describe('peer presence', () => {
     expect(harness.ctx.sessionProjections.stateOf(peer.session, 'title')).toBe('')
   })
 
+  it('removes the row of a session disposed while its rename write is still queued', async () => {
+    const harness = await mountPeerHarness({ peer: { pollMs: 60_000 } })
+    harnesses.push(harness)
+    const caller = await harness.create('peer-a')
+    const peer = await harness.create('peer-b')
+    // The rename queues a row write; the disposal that follows synchronously
+    // must land after it, or the queued write recreates the removed row and
+    // peers keep seeing a session this process no longer holds.
+    peer.session.append('session/title', { title: 'renamed', messageSeqs: [], source: { kind: 'user' } })
+    harness.ctx.emit('agent/disposed', { agent: peer })
+    await vi.waitFor(async () => {
+      expect((await readPresenceRows(harness.home)).map(row => row.name)).toEqual([`${sha256Hex('peer-a')}.json`])
+    })
+    expect((await harness.ctx.peers.list(caller)).map(entry => entry.id)).toEqual([])
+  })
+
   it('publishes nothing when a session that is not an addressable peer logs a title', async () => {
     const harness = await mountPeerHarness({ peer: { pollMs: 60_000 } })
     harnesses.push(harness)

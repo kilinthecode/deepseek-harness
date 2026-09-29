@@ -56,6 +56,63 @@ describe('peer idle watches', () => {
     })
   })
 
+  it('drains a local watcher as soon as the target goes idle', async () => {
+    const harness = await mountPeerHarness({ peer: { pollMs: 60_000 } })
+    harnesses.push(harness)
+    const watcher = await harness.create('peer-w')
+    const target = await harness.create('peer-t')
+    const release = gate(harness, 'peer-t')
+    start(target)
+    await vi.waitFor(() => { expect(target.status).toBe('running') })
+    expect((await harness.ctx.peers.notifyIdle(watcher, { to: 'peer-t' })).status).toBe('watching')
+    release()
+    // The watcher is held by this process, so its mailbox drains on the notice
+    // rather than waiting out the poll interval.
+    await vi.waitFor(() => {
+      expect(harness.userMessages(watcher).map(message => message.source.kind)).toEqual(['peer-idle'])
+    })
+  })
+
+  it('queues the notice of a watcher another process holds', async () => {
+    const harness = await mountPeerHarness({ peer: { pollMs: 60_000 } })
+    harnesses.push(harness)
+    const target = await harness.create('peer-t')
+    await writeWatch(harness.home, {
+      version: PEER_WATCH_VERSION,
+      targetId: SessionId('peer-t'),
+      watcherId: SessionId('peer-elsewhere'),
+      watcherRepo: await publishedRepoKey(harness, 'peer-t'),
+      watcherName: 'peer-elsewhere',
+    }, 32, 'peer-t')
+    const release = gate(harness, 'peer-t')
+    start(target)
+    await vi.waitFor(() => { expect(target.status).toBe('running') })
+    release()
+    await vi.waitFor(async () => { expect(await harness.mailFiles('peer-elsewhere')).toHaveLength(1) })
+    expect(await harness.watchFiles('peer-t')).toEqual([])
+  })
+
+  it('reaps a stale watch before it occupies another shard slot', async () => {
+    const harness = await mountPeerHarness({ peer: { pollMs: 60_000 } })
+    harnesses.push(harness)
+    const watcher = await harness.create('peer-w')
+    const target = await harness.create('peer-t')
+    await writeWatch(harness.home, {
+      version: PEER_WATCH_VERSION,
+      targetId: SessionId('peer-gone'),
+      watcherId: SessionId('peer-w'),
+      watcherRepo: await publishedRepoKey(harness, 'peer-w'),
+      watcherName: 'peer-w',
+    }, 32, 'peer-gone')
+    const release = gate(harness, 'peer-t')
+    start(target)
+    await vi.waitFor(() => { expect(target.status).toBe('running') })
+    // The subscription path reaps the watch whose peer is gone, without a poll.
+    expect((await harness.ctx.peers.notifyIdle(watcher, { to: 'peer-t' })).status).toBe('watching')
+    expect(await harness.watchFiles('peer-gone')).toEqual([])
+    release()
+  })
+
   it('delivers a notice immediately for a target that is already idle', async () => {
     const harness = await mountPeerHarness({ peer: { pollMs: 60_000 } })
     harnesses.push(harness)

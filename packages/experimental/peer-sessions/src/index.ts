@@ -23,7 +23,7 @@ import { Context, Service } from '@deepseek-ai/cordis'
 import { brandString } from '@deepseek-ai/dsh-brand'
 import { withFileLock } from '@deepseek-ai/dsh-atomic-write'
 import { resolveDshHome } from '@deepseek-ai/dsh-home-paths'
-import type { Agent, AgentStatus, InboxState } from '@deepseek-ai/dsh-agent'
+import type { Agent, AgentStatus } from '@deepseek-ai/dsh-agent'
 import type { Session, SessionEvent, SessionId } from '@deepseek-ai/dsh-session'
 import type { UserMessage } from '@deepseek-ai/dsh-llm'
 import { boundContextSummary, createUserMessage } from '@deepseek-ai/dsh-llm'
@@ -322,6 +322,10 @@ export default class PeerService extends Service {
         await Promise.all([...this.pendingWork])
       }
     }, 'peers.drainLoop()')
+    // Agents that already existed when this service loaded never fired
+    // `agent/created` here, so adopt them exactly as that event would: publish
+    // their rows and drain their mailboxes.
+    for (const agent of ctx.agents.list()) this.track(this.observeCreated(agent))
   }
 
   /**
@@ -422,6 +426,9 @@ export default class PeerService extends Service {
    */
   async notifyIdle(agent: Agent, request: NotifyPeerIdleRequest): Promise<NotifyPeerIdleResult> {
     const caller = await this.requireCaller(agent)
+    // This path also reaps: a watch whose watched peer is gone must not keep
+    // occupying its shard's cap until the next poll pass frees the slot.
+    await this.reapWatches()
     if (this.deliveryOf(agent.session).peerIdleTurn) throw peerIdleTurn()
     const target = await this.resolvePeer(agent, caller, request.to)
     if (target.status === 'idle') {
@@ -548,9 +555,11 @@ export default class PeerService extends Service {
    * @returns whether a queued `UserMessage` carries that envelope id.
    */
   private isPending(agent: Agent, messageId: PeerMessageId): boolean {
+    const inbox = this.ctx.sessionProjections.stateOf(agent.session, 'inbox')
     // The agent loop registers this unit for every agent it holds, so a live
-    // target always has one; the assertion names that invariant.
-    const inbox = this.ctx.sessionProjections.stateOf(agent.session, 'inbox') as InboxState
+    // target always has one; an id can never be pending without it.
+    /* v8 ignore next -- unregistered inbox unit: no queued splice can carry the id. */
+    if (inbox === undefined) return false
     return [...inbox['next-turn'], ...inbox['next-step']].some((message) => {
       const source = message.source
       return (source.kind === 'peer-message' || source.kind === 'peer-idle') && source.messageId === messageId
@@ -616,7 +625,11 @@ export default class PeerService extends Service {
     if (state === undefined) return
     this.states.delete(agent.id)
     this.drains.delete(agent.id)
-    await removePresence(this.home, agent.id)
+    // The removal rides the same queue as the row writes: a publish already
+    // queued for this session must land before the row it must not resurrect.
+    await this.queuePresence(agent.id, 'removing', async () => {
+      await removePresence(this.home, agent.id)
+    })
     if (state.location === undefined) return
     await this.deleteWatchesOf(agent.id)
   }
@@ -687,7 +700,7 @@ export default class PeerService extends Service {
    * @returns fulfillment once this row is committed.
    */
   private publish(agent: Agent, state: AgentPeerState, location: PeerLocation): Promise<void> {
-    return this.queuePresence(agent.id, async () => {
+    return this.queuePresence(agent.id, 'publishing', async () => {
       const provider = agent.options.provider
       const model = agent.options.model
       await writePresence(this.home, {
@@ -707,15 +720,16 @@ export default class PeerService extends Service {
   /**
    * Run one presence-file operation after every earlier one for that session.
    * @param sessionId - session whose row the operation touches.
+   * @param action - the operation's verb, for the failure log.
    * @param operation - the queued file operation.
    * @returns fulfillment after this operation, and every queued before it, settled.
    */
-  private queuePresence(sessionId: SessionId, operation: () => Promise<void>): Promise<void> {
+  private queuePresence(sessionId: SessionId, action: 'publishing' | 'removing', operation: () => Promise<void>): Promise<void> {
     const previous = this.presenceWrites.get(sessionId) ?? Promise.resolve()
     const queued = previous
       .then(operation)
       .catch((error: unknown) => {
-        this.ctx.logger.warn(`peer-sessions: publishing presence for "${sessionId}" failed: ${describeError(error)}`)
+        this.ctx.logger.warn(`peer-sessions: ${action} presence for "${sessionId}" failed: ${describeError(error)}`)
       })
       .finally(() => {
         if (this.presenceWrites.get(sessionId) === queued) this.presenceWrites.delete(sessionId)
@@ -738,10 +752,15 @@ export default class PeerService extends Service {
     const candidates = await this.candidates()
     const byId = candidates.find(candidate => candidate.id === to)
     if (byId !== undefined) return this.admitPeer(byId, caller)
-    const inRepo = candidates.filter(candidate => candidate.name === to && candidate.repoKey === caller.repoKey)
+    // The caller is no more addressable by its own published name than by its
+    // id, so it never matches itself here; a name only it carries is a
+    // self-address.
+    const inRepo = candidates.filter(candidate =>
+      candidate.name === to && candidate.id !== agent.id && candidate.repoKey === caller.repoKey)
     if (inRepo.length > 1) throw peerAmbiguous(to)
     const only = inRepo[0]
     if (only !== undefined) return this.admitPeer(only, caller)
+    if (this.nameOf(agent) === to) throw peerSelf()
     if (candidates.some(candidate => candidate.name === to)) throw peerOtherRepository()
     throw peerNotFound(to)
   }
@@ -894,7 +913,9 @@ export default class PeerService extends Service {
       return true
     } catch (error: unknown) {
       // The envelope stays on disk: the splice may not be durable, and only an
-      // applied `user/message` licenses deleting the file.
+      // applied `user/message` licenses deleting the file. Dropping the flight
+      // mark lets the next pass retry instead of reporting a steer that failed.
+      state.inFlight.delete(envelope.messageId)
       this.ctx.logger.warn(`peer-sessions: steering "${envelope.messageId}" to peer "${agent.id}" failed: ${describeError(error)}`)
       return false
     }
@@ -1001,6 +1022,10 @@ export default class PeerService extends Service {
           senderId: agent.id,
           senderName: name,
         })
+        // A watcher this process holds is woken now; one another process owns
+        // picks the notice up on its own next pass.
+        const watcher = this.states.get(entry.record.watcherId)
+        if (watcher !== undefined) await this.drainTarget(watcher.agent)
       } catch (error: unknown) {
         // The watch is already retired; a full watcher mailbox must not break
         // the idle transition of this agent.
@@ -1096,9 +1121,10 @@ async function computePeerLocation(cwd: string | undefined): Promise<PeerLocatio
   if (cwd === undefined) return undefined
   try {
     return { cwd, repoKey: await peerRepoKey(await realpathNormalize(cwd)) }
-  } catch {
+  } catch (error: unknown) {
     // A missing or relative working directory yields no repository, so that
     // session publishes nothing and no envelope can authorize against it.
+    void error
     return undefined
   }
 }

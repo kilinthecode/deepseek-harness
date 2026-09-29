@@ -1,8 +1,9 @@
-import { mkdir, readdir, rm, stat, symlink, writeFile } from 'node:fs/promises'
+import { mkdir, readdir, stat, symlink, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { withFileLock } from '@deepseek-ai/dsh-atomic-write'
 import { createUserMessage } from '@deepseek-ai/dsh-llm'
+import type { UserMessage } from '@deepseek-ai/dsh-llm'
 import { SessionId } from '@deepseek-ai/dsh-session'
 import type { Session } from '@deepseek-ai/dsh-session'
 import { framedRelay, readMailShard } from '../src/mailbox.ts'
@@ -280,11 +281,50 @@ describe('peer mailbox', () => {
     await target.whenIdle()
   })
 
-  it('drops an envelope after three undeliverable attempts and warns once', async () => {
-    const harness = await mountPeerHarness({ peer: { pollMs: 10 }, script: textScript(8) })
+  it('keeps an envelope whose waking steer the target aborted before the step delivered it', async () => {
+    const harness = await mountPeerHarness({ peer: { pollMs: 25 }, script: textScript(8) })
     harnesses.push(harness)
     const sender = await harness.create('peer-a')
     const target = await harness.create('peer-b')
+    // The wake claims the splice before the pre-step waterfall runs, so an
+    // abort inside that window consumes it without logging a delivery and
+    // without a discarded-splice event.
+    let release = (): void => {}
+    const held = new Promise<void>((resolve) => { release = resolve })
+    let reachedStep = (): void => {}
+    const inStep = new Promise<void>((resolve) => { reachedStep = resolve })
+    harness.ctx.on('agent/pre-step', async (payload, next) => {
+      if (payload.agent.id !== 'peer-b') return await next()
+      reachedStep()
+      await held
+      return await next()
+    })
+    const result = await harness.ctx.peers.send(sender, { to: 'peer-b', message: 'cancel me' })
+    expect(result.status).toBe('delivered')
+    await inStep
+    target.cancel({ kind: 'user' })
+    const peerMessages = (): readonly UserMessage[] => harness.userMessages(target)
+      .filter(message => message.source.kind === 'peer-message')
+    const canceled = harness.events(target).some(event =>
+      event.type === 'agent/inbox/spliced' && event.data.outcome === 'canceled')
+    expect(canceled).toBe(false)
+    expect(peerMessages()).toEqual([])
+    // The aborted attempt delivered nothing, so the only copy of the body must
+    // still be on disk for the next drain.
+    expect(await harness.mailFiles('peer-b')).toEqual([expect.stringContaining(`${result.messageId}.json`)])
+    release()
+    await target.whenIdle()
+    // The next drain steers it exactly once, and that delivery retires the file.
+    await vi.waitFor(() => { expect(peerMessages()).toHaveLength(1) })
+    await vi.waitFor(async () => { expect(await harness.mailFiles('peer-b')).toEqual([]) })
+  })
+
+  it('drops an envelope after three undeliverable attempts and warns once', async () => {
+    const harness = await mountPeerHarness({ peer: { pollMs: 60_000 }, script: textScript(8) })
+    harnesses.push(harness)
+    const sender = await harness.create('peer-a')
+    const target = await harness.create('peer-b')
+    const pusher = await harness.create('peer-c')
     harness.ctx.on('agent/pre-step', async (payload, next) => {
       if (payload.agent.id === 'peer-b') return { kind: 'reject' as const }
       return await next()
@@ -292,10 +332,27 @@ describe('peer mailbox', () => {
     const warn = vi.spyOn(harness.ctx.logger, 'warn')
     const result = await harness.ctx.peers.send(sender, { to: 'peer-b', message: 'reject me' })
     expect(result.status).toBe('delivered')
-    await vi.waitFor(async () => { expect(await harness.mailFiles('peer-b')).toEqual([]) }, { timeout: 2_000 })
+    const kept = [expect.stringContaining(`${result.messageId}.json`)]
+    /** Whether the target's shard still holds this envelope. */
+    const holdsEnvelope = async (): Promise<boolean> => (await harness.mailFiles('peer-b'))
+      .some(file => file.endsWith(`${result.messageId}.json`))
+    /** One further drain of the target's mailbox, which steers the envelope again. */
+    const drain = async (message: string): Promise<void> => {
+      await harness.ctx.peers.send(pusher, { to: 'peer-b', message })
+      await new Promise(resolve => setTimeout(resolve, 60))
+    }
+    // Attempt one: the rejected step consumed the splice, and the settle kept the
+    // only copy. Two more steers spend the remaining attempts.
+    await target.whenIdle()
+    await new Promise(resolve => setTimeout(resolve, 40))
+    expect(await harness.mailFiles('peer-b')).toEqual(kept)
+    await drain('second attempt')
+    expect(await holdsEnvelope()).toBe(true)
+    await drain('third attempt')
+    await vi.waitFor(async () => { expect(await holdsEnvelope()).toBe(false) }, { timeout: 2_000 })
     expect(harness.userMessages(target)).toEqual([])
-    expect(warn.mock.calls.some(call => String(call[0]).includes(`dropped peer message "${result.messageId}"`))).toBe(true)
-    await harness.dispose()
+    expect(warn.mock.calls.filter(call => String(call[0]).includes(`dropped peer message "${result.messageId}"`)))
+      .toHaveLength(1)
   })
 
   it('leaves the envelope in place when the delivery cannot be checkpointed', async () => {
@@ -318,7 +375,10 @@ describe('peer mailbox', () => {
       if (session.id === 'peer-b' && failFlush) throw new Error('flush failed')
     })
     const warn = vi.spyOn(harness.ctx.logger, 'warn')
-    await harness.ctx.peers.send(sender, { to: 'peer-b', message: 'durable?' })
+    const result = await harness.ctx.peers.send(sender, { to: 'peer-b', message: 'durable?' })
+    // A steer whose checkpoint failed did not deliver: the caller is told the
+    // envelope is still queued, and the next pass may steer it again.
+    expect(result.status).toBe('queued')
     expect(warn.mock.calls.some(call => String(call[0]).includes('failed'))).toBe(true)
     // A checkpoint failure must not delete a body the log never accepted.
     expect(await harness.mailFiles('peer-b')).toHaveLength(1)
@@ -436,7 +496,7 @@ describe('peer mailbox', () => {
     await vi.waitFor(async () => { expect(await harness.mailFiles('peer-t')).toEqual([]) })
   })
 
-  it('leaves an existing envelope alone when the write of a new one fails', async () => {
+  it('leaves an existing envelope alone when a new enqueue fails inside the shard lock', async () => {
     const harness = await mountPeerHarness({ peer: { peerInbound: 'deferred' } })
     harnesses.push(harness)
     const sender = await harness.create('peer-a')
@@ -444,15 +504,26 @@ describe('peer mailbox', () => {
     await harness.ctx.peers.send(sender, { to: 'peer-t', message: 'kept' })
     const [existing] = await harness.mailFiles('peer-t')
     if (existing === undefined) throw new Error('no envelope was written')
-    const blocked = `${mailShardDirectory(harness.home, 'peer-t')}/peer-message-blocked.json`
-    await rm(blocked, { recursive: true, force: true })
-    await writeFile(blocked, 'not a directory', { mode: 0o600 })
-    // A write onto an existing directory path fails; the earlier envelope stays.
-    await rm(blocked, { force: true })
+    // A directory named like an envelope makes the shard reading the enqueue
+    // runs under its lock fail (EISDIR) before it can write its own entry.
+    await mkdir(`${mailShardDirectory(harness.home, 'peer-t')}/peer-message-blocked.json`, { recursive: true, mode: 0o700 })
     await expect(harness.ctx.peers.send(sender, { to: 'peer-t', message: 'second' }))
-      .resolves.toMatchObject({ status: 'deferred' })
-    const files = await harness.mailFiles('peer-t')
-    expect(files).toHaveLength(2)
-    expect(files).toContain(existing)
+      .rejects.toMatchObject({ code: 'EISDIR' })
+    expect(await harness.mailFiles('peer-t')).toEqual([existing])
+  })
+
+  it('deletes a planted envelope whose message id could name a path outside the shard', async () => {
+    const harness = await mountPeerHarness({ peer: { pollMs: 10 } })
+    harnesses.push(harness)
+    const sender = await harness.create('peer-a')
+    const target = await harness.create('peer-t')
+    const repoKey = await repoKeyOf(harness, 'peer-t')
+    // The id names the envelope file, so a hand-planted id that walks out of the
+    // shard must fail the envelope schema instead of steering a delivery whose
+    // later delete resolves to another file.
+    await harness.plantMail('peer-t', 'escape.json', envelopeFor('peer-t', '../../presence/peer-a', repoKey))
+    await vi.waitFor(async () => { expect(await harness.mailFiles('peer-t')).toEqual([]) })
+    expect(harness.userMessages(target)).toEqual([])
+    expect(await readPresence(harness.home, sender.id)).toBeDefined()
   })
 })

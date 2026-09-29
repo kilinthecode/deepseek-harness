@@ -2,7 +2,7 @@ import { readFile } from 'node:fs/promises'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { createUserMessage } from '@deepseek-ai/dsh-llm'
 import { boundContextSummary } from '@deepseek-ai/dsh-llm'
-import type { Session } from '@deepseek-ai/dsh-session'
+import { SessionLogOffset, type Session } from '@deepseek-ai/dsh-session'
 import { peerDeliveryProjection } from '../src/projection.ts'
 import { presencePath } from '../src/paths.ts'
 import { mountPeerHarness, type PeerHarness, textScript } from './harness.ts'
@@ -78,6 +78,9 @@ describe('relay depth', () => {
     const fresh = await harness.ctx.peers.send(target, { to: 'peer-s', message: 'fresh budget' })
     expect(['delivered', 'queued']).toContain(fresh.status)
     await vi.waitFor(() => { expect(harness.userMessages(peer)).toHaveLength(1) })
+    // The reset restarts the budget at one hop, not merely above the bound.
+    const [delivered] = harness.userMessages(peer)
+    expect(delivered?.source.kind === 'peer-message' && delivered.source.relayDepth).toBe(1)
   })
 
   it('does not reset the mark for a message a producer other than the user appended', async () => {
@@ -119,6 +122,39 @@ describe('relay depth', () => {
     expect(harness.userMessages(target).some(message =>
       message.source.kind === 'peer-message' && message.source.messageId === result.messageId)).toBe(true)
     expect(result.status).toBe('delivered')
+  })
+
+  it('does not raise the relay depth of the delivery a notice produced', async () => {
+    const harness = await mountPeerHarness({ peer: { pollMs: 10 }, script: textScript(8) })
+    harnesses.push(harness)
+    const watcher = await harness.create('peer-w')
+    await harness.create('peer-s')
+    await plant(harness, 'peer-w', { messageId: 'peer-idle-depth', relayDepth: 4, kind: 'peer-idle' })
+    await waitForDeliveries(harness, watcher, 1)
+    await watcher.whenIdle()
+    // A notice carries no budget: it neither spends nor raises a relay depth.
+    expect(harness.ctx.sessionProjections.stateOf(watcher.session, 'peerDelivery')?.relayDepth).toEqual({})
+  })
+
+  it('refuses a further send from a fork whose inherited prefix already reached depth four', async () => {
+    const harness = await mountPeerHarness({ peer: { pollMs: 10 } })
+    harnesses.push(harness)
+    await harness.create('peer-s')
+    const origin = await harness.create('peer-t')
+    await plant(harness, 'peer-t', { messageId: 'peer-message-depth4', relayDepth: 4, kind: 'peer-message' })
+    await waitForDeliveries(harness, origin, 1)
+    await origin.whenIdle()
+    // The fork inherits the whole delivered log, so the depth gating its send
+    // sits below `inheritedEventCount`: only a fold over the full log sees it.
+    const prefix = harness.events(origin)
+    const fork = await harness.create('peer-fork', {
+      meta: { isSeeded: true, parentSession: origin.id },
+      seed: prefix,
+      inheritedEventCount: SessionLogOffset(prefix.length),
+    })
+    expect(harness.ctx.sessionProjections.stateOf(fork.session, 'peerDelivery')?.relayDepth['peer-s']).toBe(4)
+    await expect(harness.ctx.peers.send(fork, { to: 'peer-s', message: 'again' }))
+      .rejects.toThrow('This peer conversation already relayed 4 times. Stop and wait for the user.')
   })
 
   it('sets the idle-turn mark from a delivered notice and clears it at turn end', async () => {

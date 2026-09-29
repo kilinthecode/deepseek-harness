@@ -51,6 +51,8 @@ export interface PeerHarnessOptions {
   readonly script?: readonly ScriptEntry[]
   /** Reuse an existing Harness home instead of a fresh one, to model a second process on one home. */
   readonly home?: string
+  /** Mount `PeerService` only when {@link PeerHarness.mountPeers} runs, so a test can create agents first. */
+  readonly deferPeers?: boolean
 }
 
 /** One mounted real-composition peer-session fixture. */
@@ -67,6 +69,8 @@ export interface PeerHarness {
   create(id: string, options?: PeerAgentOptions): Promise<Agent>
   /** Create one live agent and keep its handle, so a test can dispose just that agent. */
   createHandle(id: string, options?: PeerAgentOptions): Promise<AgentHandle>
+  /** Mount the peer service on a harness created with `deferPeers`. */
+  mountPeers(): Promise<void>
   /** Create an extra workspace directory under the harness temp root. */
   makeDirectory(name: string): Promise<string>
   /** Write one raw envelope file into a target's mailbox shard, creating the shard. */
@@ -121,7 +125,8 @@ export async function mountPeerHarness(options: PeerHarnessOptions = {}): Promis
   const adapter = new MockAdapter([...(options.script ?? textScript(64))])
   ctx.llm.registerAdapter(['mock'], adapter)
   ctx.sessionProjections.register(titleProjectionDefinition)
-  await ctx.plugin(PeerService, options.peer ?? {})
+  const mountPeers = async (): Promise<void> => { await ctx.plugin(PeerService, options.peer ?? {}) }
+  if (options.deferPeers !== true) await mountPeers()
 
   const createHandle = async (id: string, agentOptions: PeerAgentOptions = {}): Promise<AgentHandle> => {
     const cwd = agentOptions.cwd === null ? undefined : agentOptions.cwd ?? workdir
@@ -147,6 +152,7 @@ export async function mountPeerHarness(options: PeerHarnessOptions = {}): Promis
     adapter,
     createHandle,
     create: async (id, agentOptions) => (await createHandle(id, agentOptions)).agent,
+    mountPeers,
     makeDirectory: async (name) => {
       const directory = join(tree, name)
       await mkdir(directory, { recursive: true })
