@@ -8,15 +8,17 @@
  * still holds exactly the reviewed commit is recovered: anything newer in it
  * is work nobody reviewed, and an older commit that landed says nothing about it.
  * Once those checks have established that the reviewed commit landed, the record
- * is closed as `merged` whatever the read of the commit that landed it does: a
- * failed read records it without a `mergedCommit` and is logged, because a
- * record left `reviewing` would make every later `accept` fail the same way.
+ * is closed as `merged` whatever the read of the commit that landed it does: the
+ * read is retried once on a fresh signal, as the live merge path retries it, and
+ * a read that fails twice closes the record without a `mergedCommit` and is
+ * logged, because a record left `reviewing` would make every later `accept` fail
+ * the same way.
  *
  * @module @deepseek-ai/dsh-subagent-worktree/landed
  */
 
 import type { GitCommandResult, GitRunner } from './git.ts'
-import { landedCommitOf } from './merge.ts'
+import { readLandedCommit } from './merge.ts'
 import type { WorktreeLayout } from './paths.ts'
 import { isStaleReviewing, updateExistingRecordAt, withoutReviewingPid } from './records.ts'
 import type { StoredWorktreeRecord } from './records.ts'
@@ -30,9 +32,9 @@ export interface LandedRecovery {
   /** The verdict the merged commit was reviewed under. */
   readonly verdict: WorktreeVerdict
   /**
-   * The commit that landed the reviewed commit, as {@link landedCommitOf} defines it, or `undefined` when reading it
-   * failed: the record is then `merged` without a `mergedCommit`, which beats leaving it `reviewing` for every later
-   * `accept` to fail on.
+   * The commit that landed the reviewed commit, as the landing-commit read defines it, or `undefined` when reading it
+   * failed on both signals: the record is then `merged` without a `mergedCommit`, which beats leaving it `reviewing`
+   * for every later `accept` to fail on.
    */
   readonly mergeCommit: string | undefined
 }
@@ -49,8 +51,9 @@ interface DecisiveProbe {
 const PROBE_YES_EXIT_CODE = 0
 
 /**
- * git's exit code for `git merge-base --is-ancestor` when the first commit is not an ancestor of the second. Any
- * other nonzero exit is git itself dying, whose answer is unknown, and is never read as "no".
+ * git's exit code for `git merge-base --is-ancestor` when the first commit is not an ancestor of the second, and for
+ * `git rev-parse -q --verify` when the ref does not exist. Any other nonzero exit is git itself dying, whose answer
+ * is unknown, and is never read as "no".
  */
 const PROBE_NO_EXIT_CODE = 1
 
@@ -115,12 +118,15 @@ async function worktreeHoldsOnly(git: GitRunner, record: StoredWorktreeRecord, r
  * Once those checks have established that the reviewed commit landed, the
  * record is closed as `merged` even when the commit that landed it cannot be
  * read: the merge already happened, and a record left `reviewing` would fail
- * every later `accept` on a read that may never succeed. Such a failure is
- * logged, and the recovery reports no {@link LandedRecovery.mergeCommit}.
+ * every later `accept` on a read that may never succeed. That read is tried on
+ * the caller's signal and retried once on a fresh one, as the live merge path
+ * retries it; a read that fails twice is logged, and the recovery reports no
+ * {@link LandedRecovery.mergeCommit}.
  * @param git - command runner.
  * @param layout - the repository layout the record is stored under.
  * @param record - the record as read.
- * @param signal - cancellation for the check.
+ * @param signal - cancellation for the checks and for the first landing-commit read, whose retry runs on a fresh
+ *   signal so the caller's own cancellation cannot lose a commit id for good.
  * @param log - receives the host-log message of a landing-commit read that failed; the message names the absolute
  *   path and the commit, which the caller's own error then does not.
  * @returns the recovery, or undefined when the record needs no recovery.
@@ -146,7 +152,9 @@ export async function recoverLandedMerge(
 
   let mergeCommit: string | undefined
   try {
-    mergeCommit = await landedCommitOf(git, record.repoRoot, verdict.commit, signal)
+    // Retried once on a fresh signal, exactly as the live merge path reads it: the caller's signal is often why this
+    // first read failed, and a merge that already landed must not lose its commit id for good.
+    mergeCommit = await readLandedCommit(git, record.repoRoot, verdict.commit, signal)
   } catch (error) {
     // The reviewed commit landed, so the record is closed either way: reading which commit landed it is what failed.
     log(
@@ -178,7 +186,9 @@ export async function recoverLandedMerge(
  * @param signalFor - the cancellation signal of each git command, asked for once per command. A caller sweeping
  *   after a cancellable operation of its own passes that operation's signal; a caller cleaning up after the
  *   operation ended passes a source of fresh signals, so one command that timed out does not abort the next.
- * @throws when a git command that had something to remove fails.
+ * @throws when a git command that had something to remove fails, or the branch probe answered with neither of its
+ *   documented exit codes: whether the branch still had to be removed is then unknown, and reporting a discard whose
+ *   branch may still exist as a success would hide it.
  */
 export async function sweepWorktree(git: GitRunner, record: StoredWorktreeRecord, signalFor: () => AbortSignal): Promise<void> {
   const options = (): { cwd: string; signal: AbortSignal } => ({ cwd: record.repoRoot, signal: signalFor() })
@@ -187,7 +197,14 @@ export async function sweepWorktree(git: GitRunner, record: StoredWorktreeRecord
   }
   await git.expect(['worktree', 'prune'], 'git worktree prune', options())
   const branch = await git.run(['rev-parse', '-q', '--verify', `refs/heads/${record.branch}`], options())
-  if (branch.exitCode === 0) {
-    await git.expect(['branch', '-D', record.branch], 'git branch -D', options())
+  if (branch.exitCode === PROBE_NO_EXIT_CODE) return
+  // Only the probe's own answers may skip the deletion: a cancelled probe, or git dying with 128, says nothing about
+  // whether the branch exists, and reading it as "already gone" would report the sweep as done with the branch left.
+  if (branch.exitCode !== PROBE_YES_EXIT_CODE) {
+    throw new Error(
+      `subagent-worktree: could not check whether worktree ${record.id}'s branch still exists `
+      + `(git rev-parse ${branch.exitCode === null ? 'was cancelled' : `exited ${String(branch.exitCode)}`})`,
+    )
   }
+  await git.expect(['branch', '-D', record.branch], 'git branch -D', options())
 }

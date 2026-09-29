@@ -96,11 +96,14 @@ export async function createWorktree(
     const relativeBaseDir = relative(repoRoot, canonicalBaseDir)
     const workDir = relativeBaseDir === '' ? worktreePath : join(worktreePath, relativeBaseDir)
 
-    // Asked for what `git add -A` would stage — every untracked file, and submodule changes whatever
-    // `status.showUntrackedFiles`, `status.ignoreSubmodules`, or `submodule.<name>.ignore` say — so the user's git
-    // config cannot hide base changes this worktree does not contain.
+    // Asked for what `git add -A` would stage: submodule changes whatever `status.ignoreSubmodules` or
+    // `submodule.<name>.ignore` say, and untracked files whatever `status.showUntrackedFiles` says, so the user's git
+    // config cannot hide base changes this worktree does not contain. `--untracked-files=normal`, not `all`: this read
+    // only summarizes, and one entry per untracked directory keeps a checkout whose unignored build output or
+    // virtualenv holds tens of thousands of files inside the capture cap instead of failing `create` outright.
+    // The recovery clean check, where every file matters, asks for `all` instead.
     const status = await git.expectComplete(
-      ['status', '--porcelain', '--untracked-files=all', '--ignore-submodules=none'],
+      ['status', '--porcelain', '--untracked-files=normal', '--ignore-submodules=none'],
       'git status',
       { cwd: repoRoot, signal: request.signal },
     )

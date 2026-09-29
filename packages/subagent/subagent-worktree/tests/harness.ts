@@ -41,6 +41,34 @@ export function removeFixture(dir: string): Promise<void> {
 }
 
 /**
+ * Add one submodule at `sub` to a fixture repository, from a throwaway local source repository, and commit it. The
+ * submodule is left checked out at the source's newer commit — which is what the gitlink records — so a test can move
+ * either side of that pair apart. A real `git submodule add` is used, not `git add` of a plain nested repository,
+ * because `git status` and `git diff` only report a submodule that is active, which the URL in the repository's config
+ * decides; the local-path clone it performs needs `protocol.file.allow=always`, like any other local transport.
+ * @param dir - the fixture repository, which must already have a commit for the gitlink to be committed into.
+ * @param prefix - `mkdtemp` prefix of the throwaway source repository.
+ * @returns the submodule's working directory and the source repository's two commits, older first.
+ */
+export async function addFixtureSubmodule(dir: string, prefix: string): Promise<{ subdir: string; older: string; newer: string }> {
+  const from = await initFixtureRepo(prefix)
+  git(from, 'commit', '--allow-empty', '-q', '-m', 'one')
+  const older = git(from, 'rev-parse', 'HEAD').trim()
+  git(from, 'commit', '--allow-empty', '-q', '-m', 'two')
+  const newer = git(from, 'rev-parse', 'HEAD').trim()
+  git(dir, '-c', 'protocol.file.allow=always', 'submodule', 'add', from, 'sub')
+  const subdir = join(dir, 'sub')
+  // The clone has no commit identity of its own, and it is where these tests make further commits.
+  git(subdir, 'config', 'user.name', 'Worktree Test')
+  git(subdir, 'config', 'user.email', 'worktree-test@example.com')
+  git(subdir, 'config', 'commit.gpgsign', 'false')
+  git(dir, 'config', 'submodule.sub.url', from)
+  git(dir, 'commit', '-q', '-m', 'add the submodule')
+  await removeFixture(from)
+  return { subdir, older, newer }
+}
+
+/**
  * Build a minimal parent Agent: exactly the three members `parentAgentOptionsForDelegation`
  * and the reviewer's `parent` field read (`id`, `options`, `session`). `Agent` is an interface
  * merged from many packages, so a literal of only these members needs one assertion.

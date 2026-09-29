@@ -9,7 +9,7 @@ import type { GitCommandResult, GitRunOptions } from '../src/git.ts'
 import { attemptMerge, landedCommitOf } from '../src/merge.ts'
 import type { MergeAttemptHooks } from '../src/merge.ts'
 import { expireSignal } from './cleanup-signals.ts'
-import { git, initFixtureRepo, removeFixture } from './harness.ts'
+import { git, addFixtureSubmodule, initFixtureRepo, removeFixture } from './harness.ts'
 
 // Cleanup signals never run out on their own here, so a test can make one run out at a chosen moment.
 vi.mock('../src/git.ts', async importOriginal => (
@@ -180,6 +180,43 @@ async function repoWithConflictAndForeignBranch(
   return { dir, sideCommit, baseHead, foreignCommit: await addForeignBranch(dir) }
 }
 
+/**
+ * A repository whose `main` and `side` branches conflict on the `sub` submodule's gitlink alone, left on `main` with
+ * `diff.ignoreSubmodules=all` in its config: a conflict `git diff --name-only --diff-filter=U` only reports when it is
+ * asked for submodules explicitly.
+ */
+async function repoWithSubmoduleConflict(prefix: string): Promise<{ dir: string; sideCommit: string; baseHead: string }> {
+  const dir = await initFixtureRepo(prefix)
+  cleanups.push(() => removeFixture(dir))
+  git(dir, 'commit', '--allow-empty', '-q', '-m', 'base')
+  const { subdir, older } = await addFixtureSubmodule(dir, `${prefix}src-`)
+  // main moves the gitlink to the submodule's older commit, which is where its checkout is too.
+  git(subdir, 'checkout', '-q', '--detach', older)
+  git(dir, 'add', 'sub')
+  git(dir, 'commit', '-q', '-m', 'main moves the submodule back')
+  const baseHead = git(dir, 'rev-parse', 'HEAD').trim()
+
+  git(dir, 'checkout', '-q', '-b', 'side')
+  await writeFile(join(subdir, 's.txt'), 'side\n')
+  git(subdir, 'add', '-A')
+  git(subdir, 'commit', '-q', '-m', 'side moves the submodule')
+  git(dir, 'add', 'sub')
+  git(dir, 'commit', '-q', '-m', 'side moves the submodule')
+  const sideCommit = git(dir, 'rev-parse', 'HEAD').trim()
+
+  git(dir, 'checkout', '-q', 'main')
+  // main's own commit on top of the same one, so neither gitlink follows the other: git cannot merge them.
+  git(subdir, 'checkout', '-q', '--detach', older)
+  await writeFile(join(subdir, 's.txt'), 'main\n')
+  git(subdir, 'add', '-A')
+  git(subdir, 'commit', '-q', '-m', 'main moves the submodule')
+  git(dir, 'add', 'sub')
+  git(dir, 'commit', '-q', '-m', 'main moves the submodule')
+
+  git(dir, 'config', 'diff.ignoreSubmodules', 'all')
+  return { dir, sideCommit, baseHead }
+}
+
 /** What a scripted runner replaces or observes; every command it does not mention runs as real git. */
 interface Script {
   /** Replaces `git merge`: runs `alongside` for real first (leaving whatever merge state it leaves), then returns `result`. */
@@ -192,6 +229,8 @@ interface Script {
   readonly mergeHeadProbeAt?: Readonly<Record<number, GitCommandResult>>
   /** Replaces `git diff --name-only --diff-filter=U`, the unmerged-path scan. */
   readonly unmergedScan?: GitCommandResult
+  /** Replaces `git merge-base --is-ancestor`, the probe that settles an exit-128 merge with no `MERGE_HEAD`. */
+  readonly ancestryProbe?: GitCommandResult
   /** Replaces `git merge --abort` (the real command then does not run). */
   readonly mergeAbort?: GitCommandResult
   /** Runs the real `git merge --abort`, then runs that command's own signal out and reports it killed. */
@@ -236,6 +275,7 @@ class ScriptedGit extends GitRunner {
       if (script.mergeHeadProbe !== undefined) return script.mergeHeadProbe
     }
     if (args[0] === 'diff' && args.includes('--diff-filter=U') && script.unmergedScan !== undefined) return script.unmergedScan
+    if (args[0] === 'merge-base' && args[1] === '--is-ancestor' && script.ancestryProbe !== undefined) return script.ancestryProbe
     if (args[0] === 'rev-list' && script.revList !== undefined) return script.revList
     if (args[0] === 'rev-list' && this.landingCommitReadFailures < (script.failLandingCommitRead ?? 0)) {
       this.landingCommitReadFailures += 1
@@ -649,6 +689,58 @@ describe('attemptMerge: git refused the merge before starting', () => {
   }, GIT_TEST_TIMEOUT_MS)
 })
 
+describe('attemptMerge: an exit-128 merge that may already have landed', () => {
+  it('treats it as landed when the reviewed commit is already in the base checkout, as after a `finish()` that died', async () => {
+    const { dir, sideCommit } = await repoWithSideBranch('dsh-merge-exit128-landed-')
+    // git reached exit 128 after applying the merge — `finish()` can die on a failed commit object write, ref update,
+    // or lock — so the reviewed commit is in the base checkout's history although no MERGE_HEAD is left behind.
+    git(dir, 'merge', '--no-ff', '-q', '-m', 'land the side branch outside this call', sideCommit)
+    const landedCommit = git(dir, 'rev-parse', 'HEAD').trim()
+    const hooks = recordingHooks()
+    const command = await scripted({ merge: { result: FAILED_128 } })
+
+    const result = await attemptMerge(command, dir, 'wt-00000038', 'do the thing', sideCommit, signal, hooks)
+
+    expect(result).toEqual({ kind: 'merged', mergeCommit: landedCommit })
+    expect(hooks.events).toEqual(['landed'])
+    expect(hooks.reports).toEqual([])
+    expect(command.commands).toContainEqual(['merge-base', '--is-ancestor', sideCommit, 'HEAD'])
+    expect(command.commands).not.toContainEqual(['merge', '--abort'])
+  }, GIT_TEST_TIMEOUT_MS)
+
+  it('keeps reporting blocked when the reviewed commit did not land, still with git\'s message', async () => {
+    const { dir, sideCommit, baseHead } = await repoWithSideBranch('dsh-merge-exit128-blocked-')
+    const hooks = recordingHooks()
+    const command = await scripted({ merge: { result: FAILED_128 } })
+
+    const result = await attemptMerge(command, dir, 'wt-00000039', 'do the thing', sideCommit, signal, hooks)
+
+    expect(result).toEqual({ kind: 'blocked', reason: 'fatal: scripted failure' })
+    expect(command.commands).toContainEqual(['merge-base', '--is-ancestor', sideCommit, 'HEAD'])
+    expect(command.commands).not.toContainEqual(['merge', '--abort'])
+    expect(hooks.events).toEqual([])
+    expect(git(dir, 'rev-parse', 'HEAD').trim()).toBe(baseHead)
+  }, GIT_TEST_TIMEOUT_MS)
+
+  it.each([
+    ['exited 128', FAILED_128, 'exited 128'],
+    ['was cancelled', KILLED, 'was cancelled'],
+  ])('throws when the check whether the reviewed commit landed %s, because it has no answer', async (_label, probe, described) => {
+    const { dir, sideCommit } = await repoWithSideBranch('dsh-merge-exit128-probe-fails-')
+    const hooks = recordingHooks()
+    const command = await scripted({ merge: { result: FAILED_128 }, ancestryProbe: probe })
+
+    await expect(attemptMerge(command, dir, 'wt-00000040', 'do the thing', sideCommit, signal, hooks))
+      .rejects.toThrow(
+        `could not check whether worktree wt-00000040's commit already landed in the base checkout (git merge-base ${described})`,
+      )
+
+    // Nothing claimed the merge either way, and nothing was aborted.
+    expect(hooks.events).toEqual([])
+    expect(command.commands).not.toContainEqual(['merge', '--abort'])
+  }, GIT_TEST_TIMEOUT_MS)
+})
+
 describe('attemptMerge: a merge state this call did not create', () => {
   it('never aborts a MERGE_HEAD that names another commit, and reports the checkout blocked', async () => {
     const { dir, sideCommit, foreignCommit } = await withForeignCommit('dsh-merge-foreign-')
@@ -741,6 +833,87 @@ describe('attemptMerge: a merge state this call did not create', () => {
     expect(command.commands.filter(args => args[0] === 'merge' && args[1] === '--abort')).toHaveLength(1)
     expect(git(dir, 'rev-parse', '-q', '--verify', 'MERGE_HEAD').trim()).toBe(foreignCommit)
     expect(git(dir, 'diff', '--cached', '--name-only').trim()).toBe('foreign.txt')
+  }, GIT_TEST_TIMEOUT_MS)
+})
+
+describe('attemptMerge: a conflict on a submodule gitlink', () => {
+  it('reports the conflict even when the config hides submodule changes from the unmerged-path scan', async () => {
+    const { dir, sideCommit } = await repoWithSubmoduleConflict('dsh-merge-submodule-conflict-')
+    const command = await scripted({
+      merge: {
+        alongside: ['merge', '--no-ff', '--no-edit', sideCommit],
+        result: { exitCode: 1, stdout: '', stderr: 'CONFLICT (submodule): Merge conflict in sub\n', stdoutLossy: false },
+      },
+    })
+
+    const result = await attemptMerge(command, dir, 'wt-00000043', 'do the thing', sideCommit, signal, recordingHooks())
+
+    // Without the explicit `--ignore-submodules=none` this scan reads as "no conflicts" on a git whose config can hide
+    // the gitlink, and the attempt is then thrown as `failed unexpectedly after starting` instead of being reported as
+    // the conflict it is, so the flag is asked for by name here as well as by the outcome below.
+    expect(command.commands).toContainEqual(['diff', '--name-only', '--diff-filter=U', '--ignore-submodules=none'])
+    expect(result).toEqual({ kind: 'conflict', files: ['sub'] })
+  }, GIT_TEST_TIMEOUT_MS)
+
+  it('reports unmerged submodule paths another operation left, with no MERGE_HEAD, as conflicts this accept did not create', async () => {
+    const { dir, sideCommit } = await repoWithSubmoduleConflict('dsh-merge-submodule-cherry-pick-')
+    try {
+      // A cherry-pick that conflicts on the gitlink leaves it unmerged with CHERRY_PICK_HEAD, and no MERGE_HEAD.
+      git(dir, 'cherry-pick', sideCommit)
+    } catch {
+      // The conflicting cherry-pick exits nonzero by design; the state it leaves is what this test needs.
+    }
+    expect(git(dir, 'diff', '--name-only', '--diff-filter=U', '--ignore-submodules=none').trim()).toBe('sub')
+    const command = await scripted({ merge: { result: FAILED_128 } })
+
+    const result = await attemptMerge(command, dir, 'wt-00000044', 'do the thing', sideCommit, signal, recordingHooks())
+
+    expect(result).toEqual({ kind: 'blocked', reason: 'the base checkout has conflicts this accept did not create' })
+  }, GIT_TEST_TIMEOUT_MS)
+})
+
+describe('attemptMerge: model-visible text never carries git stderr', () => {
+  it('reports the cause of a failed unmerged-path scan after a refusal, and throws without git\'s text', async () => {
+    const { dir, sideCommit } = await repoWithSideBranch('dsh-merge-refusal-scan-fails-')
+    const hooks = recordingHooks()
+    // git's diagnostics name absolute paths, so they reach the host log and never the error message.
+    const command = await scripted({
+      merge: { result: FAILED_128 },
+      unmergedScan: { exitCode: 128, stdout: '', stderr: `fatal: ${dir}/.git/index: index file corrupt\n`, stdoutLossy: false },
+    })
+
+    const failure = await attemptMerge(command, dir, 'wt-00000041', 'do the thing', sideCommit, signal, hooks)
+      .catch((error: unknown) => error)
+
+    expect(String(failure)).toContain('git refused the merge of worktree wt-00000041 with exit 128')
+    expect(String(failure)).toContain('whether the base checkout has unmerged paths could not be checked')
+    expect(String(failure)).not.toContain(dir)
+    expect(hooks.reports).toHaveLength(1)
+    expect(hooks.reports[0]).toContain(dir)
+    expect(hooks.reports[0]).toContain('index file corrupt')
+  }, GIT_TEST_TIMEOUT_MS)
+
+  it('reports the cause of a failed conflicting-path read, and throws without git\'s text, after aborting', async () => {
+    const { dir, sideCommit, baseHead } = await repoWithConflictingSideBranch('dsh-merge-conflict-scan-fails-')
+    const hooks = recordingHooks()
+    const command = await scripted({
+      unmergedScan: { exitCode: 128, stdout: '', stderr: `fatal: ${dir}/.git/index: index file corrupt\n`, stdoutLossy: false },
+    })
+
+    const failure = await attemptMerge(command, dir, 'wt-00000042', 'do the thing', sideCommit, signal, hooks)
+      .catch((error: unknown) => error)
+
+    expect(String(failure)).toContain(
+      'merge of worktree wt-00000042 stopped and was aborted, but its conflicting paths could not be read',
+    )
+    expect(String(failure)).not.toContain(dir)
+    expect(hooks.reports).toHaveLength(1)
+    expect(hooks.reports[0]).toContain(dir)
+    expect(hooks.reports[0]).toContain('index file corrupt')
+    // The merge this call started is aborted all the same, exactly as before the cause stopped being embedded.
+    expect(command.commands).toContainEqual(['merge', '--abort'])
+    expect(() => git(dir, 'rev-parse', '-q', '--verify', 'MERGE_HEAD')).toThrow()
+    expect(git(dir, 'rev-parse', 'HEAD').trim()).toBe(baseHead)
   }, GIT_TEST_TIMEOUT_MS)
 })
 

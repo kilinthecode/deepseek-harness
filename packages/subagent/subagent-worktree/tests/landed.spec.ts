@@ -1,6 +1,6 @@
 import { spawnSync } from 'node:child_process'
 import { readFileSync, writeFileSync } from 'node:fs'
-import { mkdtemp, rm, writeFile } from 'node:fs/promises'
+import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, describe, expect, it, vi } from 'vitest'
@@ -38,6 +38,9 @@ const ignoreLog = (): void => {}
  * landing-commit listing can each be replaced by a result, and reading merges can run a side effect.
  */
 class ScriptedGit extends GitRunner {
+  /** How many `git rev-list` commands ran, which is how a test sees the landing-commit read and its retry. */
+  revListCalls = 0
+
   constructor(
     subprocessRuntime: ConstructorParameters<typeof GitRunner>[0],
     private readonly script: {
@@ -45,6 +48,7 @@ class ScriptedGit extends GitRunner {
       readonly headRead?: GitCommandResult
       readonly statusRead?: GitCommandResult
       readonly revList?: GitCommandResult
+      readonly revListAt?: Readonly<Record<number, GitCommandResult>>
       readonly beforeRevList?: () => void
     },
   ) {
@@ -55,8 +59,13 @@ class ScriptedGit extends GitRunner {
     if (args[0] === 'merge-base' && this.script.ancestryCheck !== undefined) return this.script.ancestryCheck
     if (args[0] === 'rev-parse' && args[1] === 'HEAD' && this.script.headRead !== undefined) return this.script.headRead
     if (args[0] === 'status' && this.script.statusRead !== undefined) return this.script.statusRead
-    if (args[0] === 'rev-list' && this.script.revList !== undefined) return this.script.revList
-    if (args[0] === 'rev-list') this.script.beforeRevList?.()
+    if (args[0] === 'rev-list') {
+      this.revListCalls += 1
+      const replaced = this.script.revListAt?.[this.revListCalls]
+      if (replaced !== undefined) return replaced
+      if (this.script.revList !== undefined) return this.script.revList
+      this.script.beforeRevList?.()
+    }
     return super.run(args, options)
   }
 }
@@ -286,6 +295,38 @@ describe('recoverLandedMerge', () => {
     return { ...f, layout }
   }
 
+  it('reads the landing commit again on a fresh signal when the first read failed, and records it', async () => {
+    const f = await landedFixture()
+    const stale = await f.makeStale(f.commit)
+    const log = vi.fn<(message: string) => void>()
+    // The caller's signal was cancelled during that one read, which says nothing about the merge that landed: the
+    // commit id must not be lost for good, exactly as the live merge path reads it again.
+    const command = new ScriptedGit(f.ctx.subprocess, { revListAt: { 1: KILLED } })
+
+    const recovery = await recoverLandedMerge(command, f.layout, stale, signal, log)
+
+    expect(command.revListCalls).toBe(2)
+    expect(recovery?.mergeCommit).toBe(f.commit)
+    expect(recovery?.record).toMatchObject({ state: 'merged', mergedCommit: f.commit })
+    expect(log).not.toHaveBeenCalled()
+  }, GIT_TEST_TIMEOUT_MS)
+
+  it('records merged without a merge commit when the retried read fails too', async () => {
+    const f = await landedFixture()
+    const stale = await f.makeStale(f.commit)
+    const log = vi.fn<(message: string) => void>()
+    const command = new ScriptedGit(f.ctx.subprocess, { revList: FAILED_128 })
+
+    const recovery = await recoverLandedMerge(command, f.layout, stale, signal, log)
+
+    expect(command.revListCalls).toBe(2)
+    expect(recovery?.record).toMatchObject({ state: 'merged' })
+    expect(recovery?.record).not.toHaveProperty('mergedCommit')
+    expect(recovery?.mergeCommit).toBeUndefined()
+    expect(log).toHaveBeenCalledTimes(1)
+    expect(git(f.dir, 'branch', '--list', f.record.branch).trim()).not.toBe('')
+  }, GIT_TEST_TIMEOUT_MS)
+
   it('does not recover when the worktree holds a newer commit than the one that landed, and deletes nothing', async () => {
     const f = await landedFixture()
     const stale = await f.makeStale(f.commit)
@@ -361,6 +402,34 @@ describe('recoverLandedMerge', () => {
     expect(await pathExists(f.record.path)).toBe(true)
   }, GIT_TEST_TIMEOUT_MS)
 
+  it('does not recover when the config would hide a submodule move in the worktree from its status read', async () => {
+    const f = await fixture()
+    const sub = join(f.record.path, 'sub')
+    await mkdir(sub)
+    git(sub, 'init', '-q', '-b', 'main')
+    git(sub, 'config', 'user.name', 'Worktree Test')
+    git(sub, 'config', 'user.email', 'worktree-test@example.com')
+    git(sub, 'commit', '--allow-empty', '-q', '-m', 'one')
+    await writeFile(join(f.record.path, '.gitmodules'), '[submodule "sub"]\n\tpath = sub\n\turl = ./sub\n')
+    git(f.record.path, 'add', 'sub', '.gitmodules')
+    git(f.record.path, 'commit', '-q', '-m', 'add the submodule')
+    const reviewed = git(f.record.path, 'rev-parse', 'HEAD').trim()
+    // The submodule's own HEAD moves past the commit the gitlink records, which is a base change the worktree does not
+    // contain. The URL in the config makes the submodule active, so git reports that move at all, and the ignore
+    // setting is what the status read has to overrule.
+    git(sub, 'commit', '--allow-empty', '-q', '-m', 'two')
+    git(f.dir, 'config', 'submodule.sub.url', './sub')
+    git(f.dir, 'config', 'submodule.sub.ignore', 'all')
+    git(f.dir, 'merge', '--ff-only', f.record.branch)
+    const stale = await f.makeStale(reviewed)
+    const { layout } = await requireRecordLocation(f.root, f.record.id)
+
+    expect(await recoverLandedMerge(f.runner, layout, stale, signal, ignoreLog)).toBeUndefined()
+
+    expect((await requireRecordLocation(f.root, f.record.id)).record.state).toBe('reviewing')
+    expect(await pathExists(f.record.path)).toBe(true)
+  }, GIT_TEST_TIMEOUT_MS)
+
   it.each([
     ['HEAD read', 'rev-parse', { headRead: KILLED }],
     ['status read', 'status', { statusRead: KILLED }],
@@ -401,6 +470,32 @@ describe('sweepWorktree', () => {
 
     await sweepWorktree(f.runner, record, () => signal)
     expect(await pathExists(record.path)).toBe(false)
+  }, GIT_TEST_TIMEOUT_MS)
+
+  it.each([
+    ['exited 128', FAILED_128, 'exited 128'],
+    ['was cancelled', KILLED, 'was cancelled'],
+  ])('throws, and keeps the branch, when the branch probe %s instead of answering', async (_label, probe, described) => {
+    const f = await fixture()
+    const { record } = await requireRecordLocation(f.root, f.record.id)
+    /** Real git, except the branch probe, whose only answers are 0 (the branch exists) and 1 (it is gone). */
+    class UnansweredBranchProbeGit extends GitRunner {
+      override async run(args: readonly string[], options: GitRunOptions): Promise<GitCommandResult> {
+        if (args[0] === 'rev-parse' && args.includes('--verify')) return probe
+        return super.run(args, options)
+      }
+    }
+
+    // Reading a probe that never answered as "the branch is gone" would report a discard whose branch is still there
+    // as a success, so the only safe outcome is to fail and let a second discard finish the sweep.
+    await expect(sweepWorktree(new UnansweredBranchProbeGit(f.ctx.subprocess), record, () => signal))
+      .rejects.toThrow(`could not check whether worktree ${record.id}'s branch still exists (git rev-parse ${described})`)
+
+    expect(await pathExists(record.path)).toBe(false)
+    expect(git(f.dir, 'branch', '--list', record.branch).trim()).not.toBe('')
+
+    await sweepWorktree(f.runner, record, () => signal)
+    expect(git(f.dir, 'branch', '--list', record.branch).trim()).toBe('')
   }, GIT_TEST_TIMEOUT_MS)
 
   it('asks for a separate signal for each git command it runs, in the order the commands run', async () => {
