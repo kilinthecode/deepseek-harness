@@ -29,7 +29,7 @@ Enable the plugin to make the `agent-crew` skill available in the session skill 
 
 ### When to choose it
 
-Choose this provider where worker-agent delegation with independent review is available and worth surfacing as a named workflow: alongside `@deepseek-ai/dsh-tool-subagent-worktree` and a `subagent` tool with `worktreeIsolation` enabled (the `@deepseek-ai/dsh-agent-crew` bundle mounts all three together). Skip it where those tools are not mounted — the skill's instructions name them directly, so loading it without them leaves a model unable to follow the workflow.
+Choose this provider where worker-agent delegation with independent review is available and worth surfacing as a named workflow: alongside `@deepseek-ai/dsh-tool-subagent-worktree` and a `subagent` tool that offers `isolation: "worktree"` (the `@deepseek-ai/dsh-agent-crew` bundle provides all three together). Skip it where those tools are not mounted — the skill's instructions name them directly, so loading it without them leaves a model unable to follow the workflow.
 
 ### Enable the plugin
 
@@ -45,7 +45,8 @@ After enabling, `agent-crew` appears in the available skills of the session cata
 
 - **Decomposition guidance.** How to split a goal into parts with disjoint scopes and an acceptance criterion each.
 - **A worker-brief template.** Goal context, exact scope, constraints, acceptance checks, and what to report.
-- **The exact tool call shapes.** `subagent({ description, prompt, isolation: "worktree", provider, model })`, and the `accept_worktree` / `discard_worktree` / `list_worktrees` / `send_message` loop for landing, fixing, or discarding each part.
+- **The exact tool call shapes.** `subagent({ description, prompt, isolation: "worktree" })`, plus `provider` and `model` only where the tool lists them (that needs the `subagent` tool's model selection enabled; otherwise workers inherit the lead's route), with `run_in_background` left unset so each worker stays a background child the lead can message. Then the `accept_worktree` / `discard_worktree` / `list_worktrees` / `send_message` loop for landing, fixing, or discarding each part, including the empty outcome.
+- **Coordination rules.** The lead is notified when each worker settles and accepts then; workers cannot message each other or start workers of their own; a worker on a cheaper model is reviewed on the lead's model unless the deployment pins a reviewer route.
 - **A pointer to `dsh agents run`** for the same loop from a shell, for people and external agents.
 
 ### Observable success and failures
@@ -64,13 +65,13 @@ This section explains how the bundled provider is wired; the observable behavior
 
 ### Design concept
 
-The provider is an immutable, synchronously registered skill source: it registers one fixed candidate at the bundled skill rank (600) under the provider name `agent-crew`, exposes its packaged `assets/` directory as the skill's directory resource base, and reads the skill body from the packaged `assets/agent-crew.md` file on every load. It copies the `skill-badge` shape exactly.
+The provider is an immutable, synchronously registered skill source: it registers one fixed candidate at the bundled skill rank (600) under the provider name `agent-crew`, exposes its packaged `assets/` directory as the skill's directory resource base, and reads the skill body from the packaged `assets/agent-crew.md` file on every load. The provider comes from `bundledSkillProvider` in `@deepseek-ai/dsh-skill`, the same helper `skill-badge` uses.
 
 ### Source map
 
 | File | Role |
 |---|---|
-| [`src/index.ts`](src/index.ts) | Plugin entry and the immutable provider: one candidate, resource base, body load |
+| [`src/index.ts`](src/index.ts) | Plugin entry and the provider, built with `bundledSkillProvider` from `@deepseek-ai/dsh-skill`: one candidate, resource base, body load |
 | [`assets/agent-crew.md`](assets/agent-crew.md) | Packaged skill body: when to use it, decomposition, the worker brief, spawning, and landing each part |
 | — | No runtime invariant companion is published; the package owns one immutable provider registration, while the skill registry owns registration uniqueness and lifecycle checks. |
 

@@ -18,6 +18,7 @@ import type { SubagentStartRequest } from '@deepseek-ai/dsh-subagent'
 import { brandString } from '@deepseek-ai/dsh-brand'
 import { renderWorkerBrief, SubagentWorktrees } from '@deepseek-ai/dsh-subagent-worktree'
 import type {
+  Config as WorktreesConfig,
   ProvisionedWorktree,
   WorktreeId,
   WorktreeRecord,
@@ -1544,7 +1545,7 @@ describe('subagent tool worktree isolation', () => {
    * resolution, injection typing, and the public contract real while faking only the
    * unimplemented behavior.
    */
-  function installFakeWorktrees(ctx: Context): SubagentWorktrees {
+  function installFakeWorktrees(ctx: Context, deployment: Partial<WorktreesConfig> = {}): SubagentWorktrees {
     const worktrees = new SubagentWorktrees(ctx, {
       branchPrefix: 'test/',
       maxWorktrees: 4,
@@ -1553,6 +1554,7 @@ describe('subagent tool worktree isolation', () => {
       checkTimeoutMs: 900_000,
       reviewDiffMaxBytes: 4096,
       removeOnMerge: true,
+      ...deployment,
     })
     vi.spyOn(worktrees, 'resolveReviewer').mockReturnValue(reviewerRoute)
     vi.spyOn(worktrees, 'create').mockResolvedValue(fakeProvisioned())
@@ -1563,8 +1565,15 @@ describe('subagent tool worktree isolation', () => {
     return worktrees
   }
 
-  /** Mount the tool over a request-capturing one-shot provider with the cwd capability. */
-  async function foregroundCaptureSetup(config: Omit<tool.Config, 'provider' | 'worktreeIsolation'> = {}) {
+  /**
+   * Mount the tool over a request-capturing one-shot provider. By default the provider has the cwd capability
+   * and the row enables isolation. `deployment` mounts the worktree service first, so the tool reads its
+   * isolation switch when it mounts.
+   */
+  async function foregroundCaptureSetup(
+    config: Omit<tool.Config, 'provider' | 'worktreeIsolation'> = {},
+    options: { rowIsolation?: boolean; cwdCapability?: boolean; deployment?: Partial<WorktreesConfig> } = {},
+  ) {
     const requests: SubagentStartRequest[] = []
     const disposedRunIds: string[] = []
     const ctx = await projectedContext()
@@ -1574,7 +1583,10 @@ describe('subagent tool worktree isolation', () => {
     let startCount = 0
     ctx.subagents.registerProvider({
       name: 'capture',
-      capabilities: { agentOptions: true, outputSchema: false, depthLimit: false, toolFilter: false, persona: false, cwd: true },
+      capabilities: {
+        agentOptions: true, outputSchema: false, depthLimit: false, toolFilter: false, persona: false,
+        cwd: options.cwdCapability ?? true,
+      },
       inheritsParentContext: false,
       start: async (request) => {
         requests.push(request)
@@ -1588,8 +1600,11 @@ describe('subagent tool worktree isolation', () => {
         }
       },
     })
-    await ctx.plugin(tool, { provider: 'capture', worktreeIsolation: true, maxDepth: 'provider-managed', ...config })
-    return { ctx, requests, disposedRunIds }
+    const deployed = options.deployment === undefined ? undefined : installFakeWorktrees(ctx, options.deployment)
+    await ctx.plugin(tool, {
+      provider: 'capture', worktreeIsolation: options.rowIsolation ?? true, maxDepth: 'provider-managed', ...config,
+    })
+    return { ctx, requests, disposedRunIds, deployed }
   }
 
   const parent = isolationParent('/repo/packages/foo')
@@ -1625,6 +1640,73 @@ describe('subagent tool worktree isolation', () => {
     expect(result.isError).toBe(true)
     expect(text(result)).toContain('subagent: isolation is not enabled for this tool')
     await disposeSetupProvider(ctx)
+  })
+
+  describe('deployment-wide isolation offer', () => {
+    const isolationParameter = (ctx: Context): unknown => {
+      const schema = ctx.tools.schemas().find(candidate => candidate.name === 'subagent')
+      return (schema?.parameters as { properties: Record<string, unknown> } | undefined)?.properties.isolation
+    }
+    const isolatedCall = { description: 'd', prompt: 'p', isolation: 'worktree' }
+
+    /** Mount over a capture provider with the worktree service first, so the tool reads its isolation switch at mount. */
+    async function offerSetup(
+      deployment: Partial<WorktreesConfig>,
+      options: { rowIsolation?: boolean; cwdCapability?: boolean } = {},
+    ) {
+      const { ctx, deployed } = await foregroundCaptureSetup({}, { rowIsolation: false, ...options, deployment })
+      if (deployed === undefined) throw new Error('expected the worktree service to be mounted before the tool')
+      return { ctx, worktrees: deployed, created: vi.spyOn(deployed, 'create') }
+    }
+
+    it('offers the isolation parameter from the service switch alone, and honors it at execute time', async () => {
+      const { ctx, created } = await offerSetup({ offerIsolation: true })
+
+      expect(isolationParameter(ctx)).toMatchObject({ type: 'string', enum: ['worktree'] })
+      const result = await callSubagent(ctx, isolatedCall, { agent: parent })
+      expect(result.isError).toBe(false)
+      expect(created).toHaveBeenCalledTimes(1)
+    })
+
+    it('omits the isolation parameter and rejects the argument when neither the row nor the service offers it', async () => {
+      const { ctx, created } = await offerSetup({})
+
+      expect(isolationParameter(ctx)).toBeUndefined()
+      const result = await callSubagent(ctx, isolatedCall, { agent: parent })
+      expect(result.isError).toBe(true)
+      expect(text(result)).toContain('subagent: isolation is not enabled for this tool')
+      expect(created).not.toHaveBeenCalled()
+    })
+
+    it('offers isolation from the row while the service switch is off', async () => {
+      const { ctx } = await offerSetup({ offerIsolation: false }, { rowIsolation: true })
+
+      expect(isolationParameter(ctx)).toMatchObject({ type: 'string', enum: ['worktree'] })
+    })
+
+    it('does not offer isolation from the service switch on a provider without the cwd capability', async () => {
+      const { ctx, created } = await offerSetup({ offerIsolation: true }, { cwdCapability: false })
+
+      expect(isolationParameter(ctx)).toBeUndefined()
+      const result = await callSubagent(ctx, isolatedCall, { agent: parent })
+      expect(result.isError).toBe(true)
+      expect(text(result)).toContain('subagent: isolation is not enabled for this tool')
+      expect(created).not.toHaveBeenCalled()
+    })
+
+    it('reads the switch once when the tool mounts, so a later change alters neither the schema nor the executor', async () => {
+      const offered = await offerSetup({ offerIsolation: true })
+      vi.spyOn(offered.worktrees, 'offersIsolation', 'get').mockReturnValue(false)
+      expect(isolationParameter(offered.ctx)).toMatchObject({ enum: ['worktree'] })
+      expect((await callSubagent(offered.ctx, isolatedCall, { agent: parent })).isError).toBe(false)
+
+      const withheld = await offerSetup({ offerIsolation: false })
+      vi.spyOn(withheld.worktrees, 'offersIsolation', 'get').mockReturnValue(true)
+      expect(isolationParameter(withheld.ctx)).toBeUndefined()
+      const rejected = await callSubagent(withheld.ctx, isolatedCall, { agent: parent })
+      expect(rejected.isError).toBe(true)
+      expect(text(rejected)).toContain('subagent: isolation is not enabled for this tool')
+    })
   })
 
   it('throws when the subagent-worktree service is not loaded', async () => {

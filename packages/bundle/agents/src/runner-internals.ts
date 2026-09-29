@@ -5,17 +5,8 @@
  * @module @deepseek-ai/dsh-agents/runner-internals
  */
 
-/** The process streams the runner reads and writes; tests substitute captures. */
-export const internals: {
-  stdout: { write(chunk: string): unknown }
-  stderr: { write(chunk: string): unknown }
-  readStdin: () => Promise<string>
-} = {
-  stdout: process.stdout,
-  stderr: process.stderr,
-  readStdin: async () => {
-    const chunks: Buffer[] = []
-    for await (const chunk of process.stdin as AsyncIterable<Buffer>) chunks.push(chunk)
-    return Buffer.concat(chunks).toString('utf8')
-  },
-}
+import { processRunnerStreams } from '@deepseek-ai/dsh-cmdline'
+import type { RunnerStreams } from '@deepseek-ai/dsh-cmdline'
+
+/** The process streams the runner reads and writes; tests substitute captures on this package's own instance. */
+export const internals: RunnerStreams = processRunnerStreams()

@@ -29,7 +29,7 @@ agent（智能体）可以通过该内置提供方加载 `agent-crew` skill，�
 
 ### 何时选择
 
-当支持独立评审的工作 agent 委派可用、并值得作为一个命名工作流公开时，选择此提供方：与 `@deepseek-ai/dsh-tool-subagent-worktree`，以及启用了 `worktreeIsolation` 的 `subagent` 工具一起使用（`@deepseek-ai/dsh-agent-crew` bundle 会把三者一并挂载）。当这些工具未挂载时请跳过——该 skill 的正文直接点名这些工具，未挂载它们时加载该 skill 会让模型拿到无法执行的指令。
+当支持独立评审的工作 agent 委派可用、并值得作为一个命名工作流公开时，选择此提供方：与 `@deepseek-ai/dsh-tool-subagent-worktree`，以及提供 `isolation: "worktree"` 的 `subagent` 工具一起使用（`@deepseek-ai/dsh-agent-crew` bundle 会把三者一并提供）。当这些工具未挂载时请跳过——该 skill 的正文直接点名这些工具，未挂载它们时加载该 skill 会让模型拿到无法执行的指令。
 
 ### 启用插件
 
@@ -45,7 +45,8 @@ agent（智能体）可以通过该内置提供方加载 `agent-crew` skill，�
 
 - **拆分指导。** 如何把一个目标拆分成若干范围互不重叠、各自带有验收标准的部分。
 - **工作简报模板。** 目标背景、精确范围、约束、验收检查，以及需要汇报的内容。
-- **确切的工具调用形状。** `subagent({ description, prompt, isolation: "worktree", provider, model })`，以及用于落地、修复或丢弃每个部分的 `accept_worktree` / `discard_worktree` / `list_worktrees` / `send_message` 循环。
+- **确切的工具调用形状。** `subagent({ description, prompt, isolation: "worktree" })`，仅当工具列出 `provider` 与 `model` 时才加上它们（这需要启用 `subagent` 工具的模型选择；否则 worker 沿用 lead 的路由），并保持 `run_in_background` 不设置，使每个 worker 都保持为 lead 可以向其发消息的后台子级。再加上用于落地、修复或丢弃每个部分的 `accept_worktree` / `discard_worktree` / `list_worktrees` / `send_message` 循环，包括 empty 结果。
+- **协作规则。** lead 会在每个 worker 结束时收到通知，并在那时 accept；worker 之间不能互发消息，也不能启动自己的 worker；除非部署固定了 reviewer 路由，否则使用更便宜模型的 worker 由 lead 的模型评审。
 - **指向 `dsh agents run` 的指引**，供人类和外部 agent 从命令行执行同样的流程。
 
 ### 可观察的成功与失败
@@ -64,13 +65,13 @@ agent（智能体）可以通过该内置提供方加载 `agent-crew` skill，�
 
 ### 设计理念
 
-该提供方是一个不可变、同步注册的 skill 来源：它以 `agent-crew` 作为提供方名称、按内置 skill rank（600）注册一个固定候选项，把随包分发的 `assets/` 目录作为该 skill 的目录资源基底公开，并在每次加载时从随包分发的 `assets/agent-crew.md` 文件读取 skill 正文。其实现与 `skill-badge` 完全同构。
+该提供方是一个不可变、同步注册的 skill 来源：它以 `agent-crew` 作为提供方名称、按内置 skill rank（600）注册一个固定候选项，把随包分发的 `assets/` 目录作为该 skill 的目录资源基底公开，并在每次加载时从随包分发的 `assets/agent-crew.md` 文件读取 skill 正文。该提供方来自 `@deepseek-ai/dsh-skill` 的 `bundledSkillProvider`，`skill-badge` 使用的是同一个辅助函数。
 
 ### 源码地图
 
 | 文件 | 职责 |
 |---|---|
-| [`src/index.ts`](src/index.ts) | 插件入口与不可变提供方：一个候选项、资源基底、正文加载 |
+| [`src/index.ts`](src/index.ts) | 插件入口与提供方，由 `@deepseek-ai/dsh-skill` 的 `bundledSkillProvider` 构建：一个候选项、资源基底、正文加载 |
 | [`assets/agent-crew.md`](assets/agent-crew.md) | 随包分发的 skill 正文：何时使用、如何拆分、工作简报、如何派生工作 agent，以及如何落地每一部分 |
 | — | 不发布运行时不变式伴生入口；本包只持有一个不可变的提供方注册，注册唯一性与生命周期检查由 skill 注册表负责。 |
 

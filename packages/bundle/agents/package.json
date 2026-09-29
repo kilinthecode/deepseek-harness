@@ -1,6 +1,6 @@
 {
   "name": "@deepseek-ai/dsh-agents",
-  "description": "The dsh agents bundle: a CLI runner that splits a task across worker agents in their own git worktrees, with an independent reviewer checking every change before it merges",
+  "description": "The dsh agents bundle: a CLI runner that runs a task in a worker agent's own git worktree, with an independent reviewer checking the change before it merges",
   "version": "0.1.7-rc.2",
   "publishConfig": {
     "access": "public"

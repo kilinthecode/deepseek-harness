@@ -51,7 +51,7 @@ kind: "package-reference"
 | `persona` | — | 每个子 agent 独立的 persona；要求提供方具备 `persona` 能力 |
 | `toolFilter` | — | 每个子 agent 独立的全局工具限制；要求提供方具备 `toolFilter` 能力 |
 | `maxDepth` | Host 设置（`1`） | 绝对委派深度上限（`0` 禁止委派）；`'provider-managed'` 不向进程外提供方发送上限 |
-| `worktreeIsolation` | `false` | 公开 `isolation` 参数，通过 `ctx.subagentWorktrees` 为一次调用分配独立的 git worktree，只能通过 `accept_worktree` 审核并合并；要求 subagent-worktree 服务与具备 `cwd` 能力的提供方 |
+| `worktreeIsolation` | `false` | 公开 `isolation` 参数，通过 `ctx.subagentWorktrees` 为一次调用分配独立的 git worktree，只能通过 `accept_worktree` 审核并合并；要求 subagent-worktree 服务与具备 `cwd` 能力的提供方；当工具挂载时 `ctx.subagentWorktrees.offersIsolation` 成立，也会公开该参数 |
 
 生成的[配置目录](../../../docs/config-catalog.zh.md#deepseek-aidsh-tool-subagent)是每个受支持字段及其 JSDoc 的穷尽式真源。
 
@@ -65,11 +65,11 @@ kind: "package-reference"
 
 ### Worktree 隔离
 
-设置 `worktreeIsolation: true`，即可让调用传入 `isolation: "worktree"`。执行器会在创建前先解析出独立的审阅者路由，通过 `ctx.subagentWorktrees` 创建一个链接的 git worktree，为子 agent 的提示词加上说明该 worktree 的工作简报前缀，并以该 worktree 为 `cwd` 运行子 agent——这要求提供方具备 `cwd` 能力。启动失败会尽力丢弃刚创建的 worktree。子 agent 所做的更改在 `accept_worktree` 提交、审核并合并之前都不会进入调用方的检出；模型通过同级的 `@deepseek-ai/dsh-tool-subagent-worktree` 工具调用 `accept_worktree`、`discard_worktree` 与 `list_worktrees`。在 `backgroundMode: 'one-shot'` 下，`isolation: "worktree"` 与后台任务组合会被直接拒绝；请改用前台调用或 `backgroundMode: 'continuable'`。`worktreeIsolation` 保持默认值 `false` 时，schema 中不包含 `isolation`，传入该参数会导致调用失败。
+当该行设置了 `worktreeIsolation: true`，或 subagent-worktree 服务在每个委派工具上提供隔离（`Config.offerIsolation`，通过 `ctx.subagentWorktrees.offersIsolation` 读取，且仅适用于具备 `cwd` 能力的提供方）时，调用即可传入 `isolation: "worktree"`。服务开关能触及由 agent 预设挂载的工具，而 bundle 补丁无法改动这些预设中的行；工具在每次挂载时只读取一次该开关，因此 schema 与执行器保持一致，开关之后的变更在工具下次挂载时生效。执行器会在创建前先解析出独立的审阅者路由，通过 `ctx.subagentWorktrees` 创建一个链接的 git worktree，为子 agent 的提示词加上说明该 worktree 的工作简报前缀，并以该 worktree 为 `cwd` 运行子 agent——这要求提供方具备 `cwd` 能力。启动失败会尽力丢弃刚创建的 worktree。子 agent 所做的更改在 `accept_worktree` 提交、审核并合并之前都不会进入调用方的检出；模型通过同级的 `@deepseek-ai/dsh-tool-subagent-worktree` 工具调用 `accept_worktree`、`discard_worktree` 与 `list_worktrees`。在 `backgroundMode: 'one-shot'` 下，`isolation: "worktree"` 与后台任务组合会被直接拒绝；请改用前台调用或 `backgroundMode: 'continuable'`。`worktreeIsolation` 保持默认值 `false` 且服务未提供隔离时，schema 中不包含 `isolation`，传入该参数会导致调用失败。
 
 ### 选择子级 LLM
 
-设置 `modelSelectionSettings: true`，即可在组合每个全新顶层 Session 时读取宿主的 `subagent-model-selection` 偏好。没有已记录策略的恢复 Session 会保持禁用，包括显式为空的恢复。启用后，非空的精确 provider/model 路由列表会记录进 Session、由子 Session 继承，后续设置编辑不会改变它。工具随后公开可选的 `provider`、`model` 与 `reasoning_effort` 字段，并注册共享的 `list_subagent_models` 工具。此模式要求后端声明 `agentOptions`；两个进程内后端和 DSH SDK 支持该能力，而 ACP、Codex 与 Claude Code 会拒绝它，而不是忽略它。
+设置 `modelSelectionSettings: true`，即可在组合每个全新顶层 Session 时读取宿主的 `subagent-model-selection` 偏好；该选项需要宿主的模型选择设置服务（`@deepseek-ai/dsh-tool-subagent/model-selection-settings`）和挂载在 agent 预设之内的行，因此无法在以 base 为基础的 profile 的 Host 级行上设置，那样该行会加载失败。没有已记录策略的恢复 Session 会保持禁用，包括显式为空的恢复。启用后，非空的精确 provider/model 路由列表会记录进 Session、由子 Session 继承，后续设置编辑不会改变它。工具随后公开可选的 `provider`、`model` 与 `reasoning_effort` 字段，并注册共享的 `list_subagent_models` 工具。此模式要求后端声明 `agentOptions`；两个进程内后端和 DSH SDK 支持该能力，而 ACP、Codex 与 Claude Code 会拒绝它，而不是忽略它。
 
 一次调用需同时提供 `provider` 与 `model`；当配置值、父 agent 值或提供方持有的默认值能提供路由时，也可只提供推理等级。静态的 `provider.agentRouteDefaults` 在存在时构成提供方／模型基线；工具配置与模型字段会在路由相关强度合并和确切路由预检前覆盖它。没有这些默认值的提供方会使用父 agent 最新已记录请求中的兼容值，再使用父级首次请求前的创建选项，并保留配置的 `maxTokens`。更改路由但未显式提供推理等级时，会清除继承的路由自有等级，使所选模型解析自己的默认值。实时 LLM 适配器在创建子 agent 前校验有效路由。目录成员资格只提供建议，因此适配器接受时，模型可以使用未列出的 id。
 
@@ -134,11 +134,11 @@ kind: "package-reference"
 
 #### 模型看到什么
 
-委派工具的描述使用 `running` 与 `inactive` 表达后续投递的可用状态；`inactive` 不表示任务结果。当提供方存在时，以当前实例配置的名称公开已生成的默认 [`subagent` schema](../../../docs/tool-catalog.zh.md#deepseek-aidsh-tool-subagent)。启用的 Session 策略会添加 `provider`、`model` 与 `reasoning_effort`，以及继承和选择指引；提供方必须支持 `agentOptions`。提供方是否继承上下文会改变工具描述和提示词描述。启用后台模式会添加 `run_in_background`：可继续模式会记录其默认值为 `true`、运行时结算通知与显式前台覆盖；一次性模式会记录其默认值为 `false`，以及用 `job_output` 收集或用 `job_kill` 停止的 job id。启用 `worktreeIsolation` 会添加一个提供 `"worktree"` 选项的 `isolation` 枚举参数，详见"Worktree 隔离"一节。当工具在本次组装的作用域中可见时，一个 `tool:<toolName>` 系统提示词 section 会指示模型同时启动相互独立的可继续委派、在它们运行时继续工作，并且仅当下一步动作依赖结果时选择前台；工具限制会同时移除其 schema 和这段指引。
+委派工具的描述使用 `running` 与 `inactive` 表达后续投递的可用状态；`inactive` 不表示任务结果。当提供方存在时，以当前实例配置的名称公开已生成的默认 [`subagent` schema](../../../docs/tool-catalog.zh.md#deepseek-aidsh-tool-subagent)。启用的 Session 策略会添加 `provider`、`model` 与 `reasoning_effort`，以及继承和选择指引；提供方必须支持 `agentOptions`。提供方是否继承上下文会改变工具描述和提示词描述。启用后台模式会添加 `run_in_background`：可继续模式会记录其默认值为 `true`、运行时结算通知与显式前台覆盖；一次性模式会记录其默认值为 `false`，以及用 `job_output` 收集或用 `job_kill` 停止的 job id。由该行或服务提供的隔离会添加一个提供 `"worktree"` 选项的 `isolation` 枚举参数，详见"Worktree 隔离"一节。当工具在本次组装的作用域中可见时，一个 `tool:<toolName>` 系统提示词 section 会指示模型同时启动相互独立的可继续委派、在它们运行时继续工作，并且仅当下一步动作依赖结果时选择前台；工具限制会同时移除其 schema 和这段指引。
 
 #### Token 影响
 
-每个父级请求支付固定的 schema 成本；模型选择会增加三个参数，`worktreeIsolation` 会增加一个参数，二者都仅在各自配置启用时才生效。每个提供方实例增加一个 schema，每个可继续实例还增加一个简短的系统提示词 section。
+每个父级请求支付固定的 schema 成本；模型选择会增加三个参数，提供隔离会增加一个参数，二者都仅在启用时才生效。每个提供方实例增加一个 schema，每个可继续实例还增加一个简短的系统提示词 section。
 
 #### KV Cache 影响
 

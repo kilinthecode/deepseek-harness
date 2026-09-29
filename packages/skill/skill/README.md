@@ -51,6 +51,7 @@ The generated [configuration catalog](../../../docs/config-catalog.md#deepseek-a
 - **On-demand loading.** Asking for one skill by name returns the full instruction body from whichever provider owns the winning candidate; the registry re-validates the loaded definition and rejects a stale selection whose name changed between discovery and load.
 - **Embedded skills.** Plugins register an in-memory skill with `ctx.skills.register(...)`; the registry fills in a default invocation policy and the `runtime` provider label. Same-name runtime registrations in one layer are first-wins with a warning.
 - **Provider registration.** A provider contributes its catalog with `ctx.skills.registerProvider(...)`; registration is synchronous, and the returned disposer removes the provider. `runtime` is a reserved provider name.
+- **Packaged skills.** `bundledSkillProvider({ name, description, body, resources })` builds the provider for one skill a package ships: a Markdown body file and its asset directory. It lists one candidate at `BUNDLED_SKILL_RANK`, invocable by the model and the user, so a project or user skill of the same name still wins, and it reads the body file on every load. `dsh-skill-badge` and `dsh-skill-agent-crew` use it.
 
 An invocation policy on every skill decides which surfaces may advertise and load it: `modelInvocable` for model-facing tools and catalogs, `userInvocable` for human-facing commands. The registry keeps all four combinations, so one discovery result can serve both surfaces without conflating their catalogs.
 
@@ -87,7 +88,7 @@ The registry is host+per-scope layered, the shape the tools registry established
 
 | File | Role |
 |---|---|
-| [`src/index.ts`](src/index.ts) | Plugin entry, `SkillRegistry` service, candidate and definition validation, shared model-facing rendering |
+| [`src/index.ts`](src/index.ts) | Plugin entry, `SkillRegistry` service, candidate and definition validation, shared model-facing rendering, `bundledSkillProvider` |
 | — | No runtime invariant companion is published; provider/runtime maps and revisioned caches mutate atomically inside the registry, which exposes no independent change event or snapshot for cross-checking them. |
 
 ### Catalog collection

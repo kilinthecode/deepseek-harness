@@ -25,7 +25,7 @@ English | [中文](README.zh.md)
 <a id="use-this-package"></a>
 ## Use this package
 
-Mount this package wherever a `subagent` delegation tool offers `isolation: "worktree"` (see `@deepseek-ai/dsh-tool-subagent`'s `worktreeIsolation` config and the `@deepseek-ai/dsh-agent-crew` bundle). It requires `ctx.subagentWorktrees` (`@deepseek-ai/dsh-subagent-worktree`), already mounted, inert, in the shared `dsh-base` composition.
+Mount this package wherever a `subagent` delegation tool offers `isolation: "worktree"`, whether through a tool row's `worktreeIsolation` config (see `@deepseek-ai/dsh-tool-subagent`) or through the service's `offerIsolation` setting, which the `@deepseek-ai/dsh-agent-crew` bundle sets. It requires `ctx.subagentWorktrees` (`@deepseek-ai/dsh-subagent-worktree`), already mounted, inert, in the shared `dsh-base` composition.
 
 ### Minimal configuration
 
@@ -38,7 +38,7 @@ This package takes no configuration: all three tools register unconditionally on
 
 ### accept_worktree
 
-Commits the named worktree's changes, runs any configured check command, and has an independent reviewer check the exact resulting commit; a passing verdict merges it into the caller's checkout. The render states the outcome precisely: merged (with the merge commit and reviewer route), rejected (with every finding), checks-failed (with the check command and its output), conflict (with the conflicting paths), blocked (with the git refusal reason), or empty (no changes to accept). Only a merged outcome changes the caller's checkout.
+Commits the named worktree's changes, runs any configured check command, and has an independent reviewer check the exact resulting commit; a passing verdict merges it into the caller's checkout. The render states the outcome precisely: merged (with the merge commit and reviewer route), rejected (with every finding), checks-failed (with the check command and its output), conflict (with the conflicting paths), blocked (with the git refusal reason), or empty (no changes to accept). Only a merged outcome changes the caller's checkout. A rejected result says how to fix and resubmit: a background child receives the findings through `send_message` and the caller accepts again once it settles, while a foreground child cannot receive messages, so the caller discards the worktree and starts a new background worker with the task and the findings.
 
 ### discard_worktree
 
@@ -46,7 +46,7 @@ Deletes the named worktree and its branch without merging; the discarded change 
 
 ### list_worktrees
 
-Lists the caller's own still-open worktrees (`open` and `reviewing` states), each with its branch, state, and latest review verdict (`pass`, `fail`, or "not reviewed"). Scoped to the calling Session as owner and to the repository containing the Session's working directory; it never lists another Session's worktrees.
+Lists the caller's own still-open worktrees (`open` and `reviewing` states), each with its branch, path, state, latest worker agent id (`none` when no worker was recorded), and latest review verdict (`pass`, `fail`, or "not reviewed"). The worker id is the `agent_id` `send_message` takes, so a caller that lost its context to compaction can still message the worker that owns a rejected worktree. Scoped to the calling Session as owner and to the repository containing the Session's working directory; it never lists another Session's worktrees.
 
 -----
 
@@ -58,7 +58,7 @@ Lists the caller's own still-open worktrees (`open` and `reviewing` states), eac
 
 ### Design concept
 
-Each tool converts the calling Agent into the service's request shape and nothing more: owner is always `{ kind: 'session', sessionId: <calling Agent id> }`, `accept_worktree`'s parent is the calling Agent itself, and `list_worktrees`'s `baseDir` is the calling Session's `header.cwd`. The tools hold no state of their own; every id, state, and verdict comes from `ctx.subagentWorktrees`'s durable record.
+Each tool converts the calling Agent into the service's request shape and nothing more: owner is always `{ kind: 'session', sessionId: <calling Agent id> }`, `accept_worktree`'s parent is the calling Agent itself, and `list_worktrees`'s `baseDir` is the calling Session's `header.cwd`. The `worktree_id` argument of `accept_worktree` and `discard_worktree` is checked with the service's exported `assertWorktreeId` before the service is called, so a malformed id from the model is rejected at the tool boundary with the service's own message. The tools hold no state of their own; every id, state, and verdict comes from `ctx.subagentWorktrees`'s durable record.
 
 ### Declared results and rendered text
 
@@ -123,7 +123,7 @@ Merged worktree <id> into <repoRoot>: commit <commit> as merge <mergeCommit>. Re
 Review failed for worktree <id> at commit <commit> (reviewer <provider>/<model>): <summary>
 Findings:
 - <finding>
-Send these findings to the child with send_message, wait for it to finish, then accept again.
+If the child is a background subagent, send these findings to it with send_message, wait for it to finish, then accept again. A foreground child cannot receive messages: discard the worktree and start a new background worker with the task and these findings.
 ```
 
 ##### Checks failed
@@ -177,7 +177,7 @@ Append-only; follows the reusable request prefix.
 
 #### What the model sees
 
-One labeled line per open worktree, `<id>  state=<state>  branch=<branch>  review=<verdict-or-"not reviewed">  label="<label>"`, or `No open worktrees.` when none are open.
+One labeled line per open worktree, `<id>  state=<state>  branch=<branch>  path=<path>  worker=<agent-id-or-none>  review=<verdict-or-"not reviewed">  label="<label>"`, or `No open worktrees.` when none are open. A path containing whitespace is quoted.
 
 #### Token effect
 
@@ -194,6 +194,7 @@ Append-only; follows the reusable request prefix.
 - **No cross-session review** — `accept_worktree` and `discard_worktree` accept only the record's own session owner or the CLI operator; a sibling or unrelated Session cannot act on a worktree it did not start, even to help finish a stalled one.
 - **`list_worktrees` reports only open state** — it excludes `merged` and `discarded` records, so a caller cannot audit a worktree's full history through this tool; `ctx.subagentWorktrees.list()`'s `includeClosed` option has no model-facing tool exposing it.
 - **No partial accept** — a rejected or checks-failed worktree must be fixed as a whole and resubmitted; there is no tool to merge part of a worktree's changes.
+- **A rejected foreground child cannot be fixed in place** — a foreground child is disposed when it finishes and cannot receive `send_message`, so its rejected worktree is discarded and redone by a new background worker.
 
 <a id="dev-note"></a>
 ### Dev Note

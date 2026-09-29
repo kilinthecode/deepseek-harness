@@ -25,7 +25,7 @@ kind: "package-reference"
 <a id="use-this-package"></a>
 ## 使用本包
 
-在任何提供 `isolation: "worktree"` 的 `subagent` 委派工具所在的组合中挂载本包（参见 `@deepseek-ai/dsh-tool-subagent` 的 `worktreeIsolation` 配置，以及 `@deepseek-ai/dsh-agent-crew` bundle）。它需要 `ctx.subagentWorktrees`（`@deepseek-ai/dsh-subagent-worktree`），该服务已经以惰性方式挂载在共享的 `dsh-base` 组合中。
+在任何提供 `isolation: "worktree"` 的 `subagent` 委派工具所在的组合中挂载本包，无论它经由工具条目的 `worktreeIsolation` 配置（参见 `@deepseek-ai/dsh-tool-subagent`），还是经由服务的 `offerIsolation` 设置（由 `@deepseek-ai/dsh-agent-crew` bundle 设置）。它需要 `ctx.subagentWorktrees`（`@deepseek-ai/dsh-subagent-worktree`），该服务已经以惰性方式挂载在共享的 `dsh-base` 组合中。
 
 ### 最小配置
 
@@ -38,7 +38,7 @@ kind: "package-reference"
 
 ### accept_worktree
 
-提交指定工作树的更改、运行任何已配置的检查命令，并让独立评审者检查那次确切生成的提交；评审通过后才会合并进调用方的检出。渲染文本会精确说明结果：merged（附合并提交与评审路由）、rejected（附每一条问题）、checks-failed（附检查命令及其输出）、conflict（附冲突路径）、blocked（附 git 拒绝原因），或 empty（没有可接受的更改）。只有 merged 结果才会改变调用方的检出。
+提交指定工作树的更改、运行任何已配置的检查命令，并让独立评审者检查那次确切生成的提交；评审通过后才会合并进调用方的检出。渲染文本会精确说明结果：merged（附合并提交与评审路由）、rejected（附每一条问题）、checks-failed（附检查命令及其输出）、conflict（附冲突路径）、blocked（附 git 拒绝原因），或 empty（没有可接受的更改）。只有 merged 结果才会改变调用方的检出。被拒绝的结果会说明如何修复并重新提交：后台子级通过 `send_message` 接收这些问题，待其结束后调用方再次 accept；前台子级无法接收消息，因此调用方需丢弃该工作树，并带着任务与这些问题启动一个新的后台 worker。
 
 ### discard_worktree
 
@@ -46,7 +46,7 @@ kind: "package-reference"
 
 ### list_worktrees
 
-列出调用方自己仍处于打开状态的工作树（`open` 与 `reviewing` 状态），包含每一个的分支、状态和最近一次评审结论（`pass`、`fail` 或 "not reviewed"）。范围限定为以发起调用的 Session 为 owner，且仓库取自该 Session 工作目录所在的仓库；它从不列出其他 Session 的工作树。
+列出调用方自己仍处于打开状态的工作树（`open` 与 `reviewing` 状态），包含每一个的分支、路径、状态、最近一次 worker 的 agent id（没有记录 worker 时为 `none`）和最近一次评审结论（`pass`、`fail` 或 "not reviewed"）。worker id 就是 `send_message` 接收的 `agent_id`，因此调用方在上下文压缩（context compaction）后仍能联系拥有被拒绝工作树的 worker。范围限定为以发起调用的 Session 为 owner，且仓库取自该 Session 工作目录所在的仓库；它从不列出其他 Session 的工作树。
 
 -----
 
@@ -58,7 +58,7 @@ kind: "package-reference"
 
 ### 设计概念
 
-每个工具只是把发起调用的 Agent 转换成服务所需的请求形状，不做更多事情：owner 始终是 `{ kind: 'session', sessionId: <发起调用的 Agent id> }`，`accept_worktree` 的 parent 就是发起调用的 Agent 本身，`list_worktrees` 的 `baseDir` 则取自发起调用 Session 的 `header.cwd`。这些工具自身不持有任何状态；每一个 id、state 和 verdict 都来自 `ctx.subagentWorktrees` 的持久化记录。
+每个工具只是把发起调用的 Agent 转换成服务所需的请求形状，不做更多事情：owner 始终是 `{ kind: 'session', sessionId: <发起调用的 Agent id> }`，`accept_worktree` 的 parent 就是发起调用的 Agent 本身，`list_worktrees` 的 `baseDir` 则取自发起调用 Session 的 `header.cwd`。`accept_worktree` 与 `discard_worktree` 的 `worktree_id` 参数会在调用服务之前用服务导出的 `assertWorktreeId` 校验，因此模型给出的格式错误的 id 会在工具边界被拒绝，并带有服务自己的消息。这些工具自身不持有任何状态；每一个 id、state 和 verdict 都来自 `ctx.subagentWorktrees` 的持久化记录。
 
 ### 声明的结果与渲染文本
 
@@ -123,7 +123,7 @@ Merged worktree <id> into <repoRoot>: commit <commit> as merge <mergeCommit>. Re
 Review failed for worktree <id> at commit <commit> (reviewer <provider>/<model>): <summary>
 Findings:
 - <finding>
-Send these findings to the child with send_message, wait for it to finish, then accept again.
+If the child is a background subagent, send these findings to it with send_message, wait for it to finish, then accept again. A foreground child cannot receive messages: discard the worktree and start a new background worker with the task and these findings.
 ```
 
 ##### 检查失败（checks-failed）
@@ -177,7 +177,7 @@ Worktree <id> has no changes to accept.
 
 #### 模型看到的内容
 
-每个打开的工作树一行标注字段：`<id>  state=<state>  branch=<branch>  review=<verdict-或-"not reviewed">  label="<label>"`；没有打开的工作树时为 `No open worktrees.`。
+每个打开的工作树一行标注字段：`<id>  state=<state>  branch=<branch>  path=<path>  worker=<agent-id-或-none>  review=<verdict-或-"not reviewed">  label="<label>"`；没有打开的工作树时为 `No open worktrees.`。包含空白字符的路径会加引号。
 
 #### Token 影响
 
@@ -194,6 +194,7 @@ Worktree <id> has no changes to accept.
 - **不支持跨 Session 评审**——`accept_worktree` 与 `discard_worktree` 只接受记录自身的 session owner，或 CLI operator；兄弟 Session 或无关 Session 无法对自己未创建的工作树采取任何操作，即便是想帮忙完成一个停滞的工作树。
 - **`list_worktrees` 只报告打开状态**——它排除 `merged` 与 `discarded` 记录，调用方因此无法通过本工具审查工作树的完整历史；`ctx.subagentWorktrees.list()` 的 `includeClosed` 选项目前没有任何模型可见工具暴露它。
 - **不支持部分接受**——被拒绝或检查失败的工作树必须整体修复后重新提交；没有工具可以只合并工作树更改中的一部分。
+- **被拒绝的前台子级无法就地修复**——前台子级结束时即被释放，无法接收 `send_message`，因此其被拒绝的工作树需被丢弃，并由新的后台 worker 重做。
 
 <a id="dev-note"></a>
 ### 开发备注

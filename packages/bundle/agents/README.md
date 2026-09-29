@@ -1,5 +1,5 @@
 ---
-description: "The dsh agents bundle: a CLI that splits a task across worker agents in their own git worktrees, with an independent reviewer checking every change before it merges, for people and external agents scripting dsh."
+description: "The dsh agents bundle: a CLI that runs a task in a worker agent's own git worktree, with an independent reviewer checking the change before it merges, for people and external agents scripting dsh."
 kind: "package-bundle"
 ---
 
@@ -25,7 +25,7 @@ English | [中文](README.zh.md)
 <a id="use-this-package"></a>
 ## Use this package
 
-### Splitting a task across a worker and a reviewer
+### Running a task in a worker's worktree
 
 ```sh
 dsh agents run "add the parser and its tests"

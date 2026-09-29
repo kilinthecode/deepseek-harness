@@ -3,26 +3,32 @@
 # After editing either side, bring the other along and re-record with:
 #   pnpm run verify-translation-pairing --write packages/bundle/agent-crew/README.md
 /:
-  en: 682745750d6d59f6
-  zh: e53e928c89fb748c
+  en: 90af22ac41f3d680
+  zh: 5b1999b660032fa0
 /deepseek-ai-dsh-agent-crew:
   en: ae31b825864a2bd7
   zh: f7b59c3c907a525a
 /deepseek-ai-dsh-agent-crew/summary:
-  en: 15dc53f97df4148c
-  zh: 855fa60a4e2620b5
+  en: d7a1044efad1fc63
+  zh: 40552ceb2f25b5fa
 /deepseek-ai-dsh-agent-crew/table-of-contents:
   en: d152484eb41ac6b4
   zh: 364c80ee00a374ff
 /deepseek-ai-dsh-agent-crew/use-this-package:
-  en: 09bc4582d3d2a366
-  zh: 5af74d5e96a53974
+  en: 476e3dbacd074ff0
+  zh: eec7d406fd70e49d
+/deepseek-ai-dsh-agent-crew/use-this-package/reviewer-route:
+  en: b88e1b9eafa69bd8
+  zh: 9f68ddec6ec319ea
+/deepseek-ai-dsh-agent-crew/use-this-package/worker-routes:
+  en: 2473226c65bc9db5
+  zh: c91881cf1709e0b8
 /deepseek-ai-dsh-agent-crew/understand-the-implementation:
-  en: 6f8c6375ed520e32
-  zh: 66f93cc8697eb808
+  en: 79899b9ba4d4be8b
+  zh: 6a9e25fbcb16c4a5
 /deepseek-ai-dsh-agent-crew/further-exploration:
-  en: 78a53cf801faaa01
-  zh: 1b2858b9fc873aa4
+  en: af3b8105f37ba5e7
+  zh: 2177bb7ca8267c4d
 /deepseek-ai-dsh-agent-crew/model-experience:
   en: 215e7ba838619b7b
   zh: a311da3843709f90
@@ -30,8 +36,8 @@
   en: 366ae2d60dd99d7f
   zh: 021012e9b667c362
 /deepseek-ai-dsh-agent-crew/model-experience/subagent-isolation-option-and-worktree-tools/what-the-model-sees:
-  en: ef3e4e356d9ca958
-  zh: ffd96db0c3f68f43
+  en: e466122abec58bb4
+  zh: b03993d994f16ea1
 /deepseek-ai-dsh-agent-crew/model-experience/subagent-isolation-option-and-worktree-tools/token-effect:
   en: 54ae431835f04174
   zh: 6ce1e3f67014de19
@@ -39,8 +45,8 @@
   en: 822e5480f256f36a
   zh: 6e332c9cb3b3a0ea
 /deepseek-ai-dsh-agent-crew/known-limitations-and-deferred-work:
-  en: 4032186e36d92f80
-  zh: 7968422faa30946a
+  en: d8d76b07eeb8e0ac
+  zh: b5f86fdea1ee8069
 /deepseek-ai-dsh-agent-crew/known-limitations-and-deferred-work/dev-note:
   en: 0225ba087c5266f3
   zh: 4e706f1b2b984e63

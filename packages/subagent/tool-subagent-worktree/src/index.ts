@@ -9,7 +9,7 @@
 
 import type { Context } from '@deepseek-ai/cordis'
 import type { Agent } from '@deepseek-ai/dsh-agent'
-import { brandString } from '@deepseek-ai/dsh-brand'
+import { assertWorktreeId } from '@deepseek-ai/dsh-subagent-worktree'
 import type { WorktreeId } from '@deepseek-ai/dsh-subagent-worktree'
 import { defineTool } from '@deepseek-ai/dsh-tools'
 import {
@@ -35,20 +35,16 @@ function callingAgent(agent: Agent | undefined, toolName: string): Agent {
   return agent
 }
 
-/** The service's own worktree id shape: `wt-` followed by eight lowercase hexadecimal digits. */
-const WORKTREE_ID_PATTERN = /^wt-[0-9a-f]{8}$/
-
 /**
- * Validate a model-supplied worktree id at this JSON boundary before it reaches the service.
+ * Validate a model-supplied worktree id at this JSON boundary before it reaches the service, with the service's
+ * own id check.
  * @param raw - the `worktree_id` argument as sent by the model.
- * @param toolName - the calling tool, named in a rejection.
- * @throws when `raw` does not match the service's id shape.
+ * @returns the id as the service's branded type.
+ * @throws when `raw` does not have the service's worktree id format.
  */
-function requireWorktreeId(raw: string, toolName: string): WorktreeId {
-  if (!WORKTREE_ID_PATTERN.test(raw)) {
-    throw new Error(`${toolName}: "${raw}" is not a worktree id (expected "wt-" followed by eight lowercase hexadecimal digits)`)
-  }
-  return brandString<WorktreeId>(raw)
+function requireWorktreeId(raw: string): WorktreeId {
+  assertWorktreeId(raw)
+  return raw
 }
 
 /** The caller's working directory, required to scope `list_worktrees` to one repository. */
@@ -65,8 +61,9 @@ export function apply(ctx: Context): void {
     description:
       'Land an isolated child\'s work. The harness commits the worktree\'s changes, runs any configured checks, '
       + 'and has an independent reviewer check that exact commit; only a passing change is merged into your '
-      + 'checkout. A failing review returns its findings: send them to the child with send_message, wait for it '
-      + 'to finish, and accept again. Call it only after the child has finished.',
+      + 'checkout. A failing review returns its findings: send them to a background child with send_message, wait '
+      + 'for it to finish, and accept again; a foreground child cannot receive messages, so discard the worktree '
+      + 'and start a new background worker with the task and the findings. Call it only after the child has finished.',
     parameters: {
       worktree_id: {
         type: 'string',
@@ -81,7 +78,7 @@ export function apply(ctx: Context): void {
     async execute(args, exec) {
       const agent = callingAgent(exec.agent, 'accept_worktree')
       const outcome = await ctx.subagentWorktrees.accept({
-        id: requireWorktreeId(args.worktree_id, 'accept_worktree'),
+        id: requireWorktreeId(args.worktree_id),
         owner: { kind: 'session', sessionId: agent.id },
         parent: agent,
         signal: exec.signal,
@@ -107,7 +104,7 @@ export function apply(ctx: Context): void {
     async execute(args, exec) {
       const agent = callingAgent(exec.agent, 'discard_worktree')
       const record = await ctx.subagentWorktrees.discard({
-        id: requireWorktreeId(args.worktree_id, 'discard_worktree'),
+        id: requireWorktreeId(args.worktree_id),
         owner: { kind: 'session', sessionId: agent.id },
         signal: exec.signal,
       })
@@ -117,7 +114,7 @@ export function apply(ctx: Context): void {
 
   ctx.tools.register(defineTool({
     name: 'list_worktrees',
-    description: 'List the isolated worktrees you started that are still open, with each one\'s branch, state, and latest review verdict.',
+    description: 'List the isolated worktrees you started that are still open, with each one\'s branch, path, state, latest worker agent id, and latest review verdict.',
     parameters: {},
     output: {
       schema: LIST_VALUE_SCHEMA,

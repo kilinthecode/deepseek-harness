@@ -64,6 +64,33 @@ describe('optional bundles', () => {
     }
   })
 
+  it('offers Agent crew isolation through the shared service row on every shipped profile shape, and leaves the tool rows alone', () => {
+    const { patches } = bundle('@deepseek-ai/dsh-agent-crew')
+    const profiles = {
+      web: ['@deepseek-ai/dsh-base', '@deepseek-ai/dsh-web-app'],
+      headless: ['@deepseek-ai/dsh-base', '@deepseek-ai/dsh-headless'],
+      sdk: ['@deepseek-ai/dsh-base', '@deepseek-ai/dsh-sdk-app'],
+      acp: ['@deepseek-ai/dsh-base', '@deepseek-ai/dsh-acp-app'],
+    }
+    for (const [profile, names] of Object.entries(profiles)) {
+      const layers = names.map(name => bundle(name).patches)
+      const without = composeEntries(layers)
+      const withCrew = composeEntries([...layers, patches])
+      const rowOf = (entries: typeof withCrew, id: string) => entries.find(entry => entry.id === id)
+
+      // The base row carries no config, so the bundle's setting replaces nothing.
+      expect(rowOf(without, 'subagent-worktree')?.config, profile).toBeUndefined()
+      expect(rowOf(withCrew, 'subagent-worktree')?.config, profile).toEqual({ offerIsolation: true })
+      // Host-level rows (headless, sdk, acp) and the preset-owned rows on Web read that switch as they are.
+      for (const id of ['tool-subagent', 'tool-subagent-fork']) {
+        expect(rowOf(withCrew, id), `${profile} ${id}`).toEqual(rowOf(without, id))
+      }
+    }
+    // A base-backed profile mounts the Host-level `subagent` row, which the switch reaches.
+    const headless = composeEntries([...profiles.headless.map(name => bundle(name).patches), patches])
+    expect(headless.find(entry => entry.id === 'tool-subagent')?.disabled).toBeUndefined()
+  })
+
   it('adds the three Schedule rows the shipped Web composition leaves out', () => {
     const { patches } = bundle('@deepseek-ai/dsh-experimental-schedule-bundle')
     const scheduleRows = (entries: ReturnType<typeof composeEntries>) =>

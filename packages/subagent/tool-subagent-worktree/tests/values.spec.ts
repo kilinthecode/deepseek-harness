@@ -7,6 +7,7 @@
 
 import { describe, expect, it } from 'vitest'
 import { brandString } from '@deepseek-ai/dsh-brand'
+import { SessionId } from '@deepseek-ai/dsh-session'
 import type { AcceptOutcome, WorktreeId } from '@deepseek-ai/dsh-subagent-worktree'
 import { validateJsonSchemaValue, valueSchemaSpecToJsonSchema } from '@deepseek-ai/dsh-tools'
 import {
@@ -86,7 +87,7 @@ describe('accept_worktree values', () => {
     )
   })
 
-  it('renders a rejected outcome with every finding and the resend instruction', () => {
+  it('renders a rejected outcome with every finding and a fix path for both background and foreground children', () => {
     const outcome: AcceptOutcome = {
       kind: 'rejected',
       record: baseRecord(),
@@ -105,7 +106,8 @@ describe('accept_worktree values', () => {
     expect(renderAcceptToolValue(value)).toBe(
       `Review failed for worktree ${id} at commit ${commit} (reviewer test-provider/test-model): needs work\n`
       + 'Findings:\n- fix the thing\n- fix another thing\n'
-      + 'Send these findings to the child with send_message, wait for it to finish, then accept again.',
+      + 'If the child is a background subagent, send these findings to it with send_message, wait for it to finish, then accept again. '
+      + 'A foreground child cannot receive messages: discard the worktree and start a new background worker with the task and these findings.',
     )
   })
 
@@ -219,33 +221,58 @@ describe('list_worktrees values', () => {
       id,
       state: 'open',
       branch: 'dsh/worktree/wt-1a2b3c4d',
+      path: '/repo-worktrees/wt-1a2b3c4d',
       label: 'fix bug',
+      workerSessionIds: [SessionId('worker-a')],
       lastVerdict: baseVerdict({ verdict: 'pass' }),
     })
     const failed = baseRecord({
       id: otherId,
       state: 'reviewing',
       branch: 'dsh/worktree/wt-5e6f7a8b',
+      path: '/repo-worktrees/wt-5e6f7a8b',
       label: 'add feature',
+      workerSessionIds: [SessionId('worker-b')],
       lastVerdict: baseVerdict({ verdict: 'fail' }),
     })
     const unreviewed = baseRecord({
       id: thirdId,
       state: 'open',
       branch: 'dsh/worktree/wt-9c8d7e6f',
+      path: '/repo-worktrees/wt-9c8d7e6f',
       label: 'new part',
+      workerSessionIds: [SessionId('worker-c')],
     })
     const value = toListToolValue([passed, failed, unreviewed])
     expect(value).toEqual([
-      { id, state: 'open', branch: 'dsh/worktree/wt-1a2b3c4d', label: 'fix bug', verdict: 'pass' },
-      { id: otherId, state: 'reviewing', branch: 'dsh/worktree/wt-5e6f7a8b', label: 'add feature', verdict: 'fail' },
-      { id: thirdId, state: 'open', branch: 'dsh/worktree/wt-9c8d7e6f', label: 'new part' },
+      { id, state: 'open', branch: 'dsh/worktree/wt-1a2b3c4d', path: '/repo-worktrees/wt-1a2b3c4d', label: 'fix bug', workerAgentId: 'worker-a', verdict: 'pass' },
+      { id: otherId, state: 'reviewing', branch: 'dsh/worktree/wt-5e6f7a8b', path: '/repo-worktrees/wt-5e6f7a8b', label: 'add feature', workerAgentId: 'worker-b', verdict: 'fail' },
+      { id: thirdId, state: 'open', branch: 'dsh/worktree/wt-9c8d7e6f', path: '/repo-worktrees/wt-9c8d7e6f', label: 'new part', workerAgentId: 'worker-c' },
     ])
     expect(renderListToolValue(value)).toBe(
-      `${id}  state=open  branch=dsh/worktree/wt-1a2b3c4d  review=pass  label="fix bug"\n`
-      + `${otherId}  state=reviewing  branch=dsh/worktree/wt-5e6f7a8b  review=fail  label="add feature"\n`
-      + `${thirdId}  state=open  branch=dsh/worktree/wt-9c8d7e6f  review=not reviewed  label="new part"`,
+      `${id}  state=open  branch=dsh/worktree/wt-1a2b3c4d  path=/repo-worktrees/wt-1a2b3c4d  worker=worker-a  review=pass  label="fix bug"\n`
+      + `${otherId}  state=reviewing  branch=dsh/worktree/wt-5e6f7a8b  path=/repo-worktrees/wt-5e6f7a8b  worker=worker-b  review=fail  label="add feature"\n`
+      + `${thirdId}  state=open  branch=dsh/worktree/wt-9c8d7e6f  path=/repo-worktrees/wt-9c8d7e6f  worker=worker-c  review=not reviewed  label="new part"`,
     )
+  })
+
+  it('names the most recently attached worker, so a caller that lost its context can message it', () => {
+    const value = toListToolValue([baseRecord({ workerSessionIds: [SessionId('first-worker'), SessionId('fixer')] })])
+    expect(value).toEqual([expect.objectContaining({ workerAgentId: 'fixer' })])
+    expect(renderListToolValue(value)).toContain('  worker=fixer  ')
+  })
+
+  it('omits the worker from the value and renders none when no worker was recorded', () => {
+    const value = toListToolValue([baseRecord({ workerSessionIds: [] })])
+    expect(value[0]).not.toHaveProperty('workerAgentId')
+    expect(renderListToolValue(value)).toContain('  worker=none  ')
+  })
+
+  it('quotes a worktree path that contains whitespace and leaves a plain path bare', () => {
+    const spaced = toListToolValue([baseRecord({ path: '/home/a b/.dsh/worktrees/wt-1a2b3c4d' })])
+    expect(renderListToolValue(spaced)).toContain('  path="/home/a b/.dsh/worktrees/wt-1a2b3c4d"  ')
+    const plain = toListToolValue([baseRecord({ path: '/repo-worktrees/wt-1a2b3c4d' })])
+    expect(renderListToolValue(plain)).toContain('  path=/repo-worktrees/wt-1a2b3c4d  ')
   })
 })
 
@@ -274,10 +301,17 @@ describe('declared schema validation', () => {
     expect(validateJsonSchemaValue(discardSchema, value)).toEqual([])
   })
 
-  it('list_worktrees value satisfies LIST_VALUE_SCHEMA, with and without a verdict', () => {
-    const reviewed = baseRecord({ lastVerdict: baseVerdict({ verdict: 'fail' }) })
-    const unreviewed = baseRecord({ id: otherId })
-    const value = toListToolValue([reviewed, unreviewed])
+  it('list_worktrees value satisfies LIST_VALUE_SCHEMA, with and without a verdict or a worker', () => {
+    const reviewed = baseRecord({ workerSessionIds: [SessionId('worker-a')], lastVerdict: baseVerdict({ verdict: 'fail' }) })
+    const unreviewed = baseRecord({ id: otherId, workerSessionIds: [SessionId('worker-b')] })
+    const withoutWorker = baseRecord({ id: brandString<WorktreeId>('wt-9c8d7e6f'), workerSessionIds: [] })
+    const value = toListToolValue([reviewed, unreviewed, withoutWorker])
+    expect(value.map(row => 'workerAgentId' in row)).toEqual([true, true, false])
     expect(validateJsonSchemaValue(listSchema, value)).toEqual([])
+  })
+
+  it('LIST_VALUE_SCHEMA requires the worktree path on every row', () => {
+    const { path: _path, ...withoutPath } = toListToolValue([baseRecord()])[0]!
+    expect(validateJsonSchemaValue(listSchema, [withoutPath]).length).toBeGreaterThan(0)
   })
 })

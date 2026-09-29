@@ -39,6 +39,8 @@ An app launched with no arguments sees an empty list — that is the honest answ
 
 `exitOnStdinEnd(ctx, label)` binds a successfully started stdio application's EOF to `ctx.appExit(0)`. It never reads or resumes stdin, so a protocol transport receives bytes buffered before it mounts; startup rejection wins over a racing EOF, and the owning fiber removes both pending listeners.
 
+`processRunnerStreams()` gives a one-shot app runner its own `stdout`, `stderr`, and `readStdin`, bound to the process. Each call returns a separate object, so one runner's tests can substitute its streams without touching another runner's. `readStdin` joins the bytes before decoding, so a multibyte character split across chunks decodes whole.
+
 ### Parsing your flags
 
 You bring your own commander program: declare your flags and your actions, and the package runs it against the inner arguments. Your action is the only place validation happens, and it publishes whatever your rows need. The plugin's Loader row carries no special marker:
@@ -87,6 +89,7 @@ This section explains how the outcomes above are realized and points at the code
 - **Positional split.** The launcher recognizes no app row: the first token after its own flags starts the app's arguments, so the app owns its flag family, its `--help` text, and its parse errors.
 - **Structural error detection.** `isCommanderError` reads commander's error code prefix instead of using `instanceof`, because an out-of-tree plugin brings its own commander copy whose `CommanderError` identity differs; `configureExitAndOutput` walks every subcommand because commander copies exit and output settings only at registration.
 - **Injectable output streams.** `internals` holds the output streams so tests can capture commander's text without touching the process.
+- **One stdin reader for runners.** The `headless` and `agents` runners share `processRunnerStreams` instead of each carrying a copy; each keeps its own instance, so a test captures one runner's output apart from the other's and from `internals`.
 
 ### Parsing contract
 
@@ -96,7 +99,7 @@ The parse path is one small family with two owners: `provideCmdline` freezes the
 
 | File | Role |
 |---|---|
-| [`src/index.ts`](src/index.ts) | `CmdlineArgs`/`AppExit` types, `provideCmdline`, `parseCmdline`, commander exit/output routing |
+| [`src/index.ts`](src/index.ts) | `CmdlineArgs`/`AppExit` types, `provideCmdline`, `parseCmdline`, `processRunnerStreams`, commander exit/output routing |
 | — | No runtime invariant companion is published; `cmdlineArgs` is an immutable launcher fact that any number of ordinary plugins may read. App-owned providers and consumers use normal Cordis service injection, whose missing dependencies are already reported by Loader settlement. |
 
 </details>
