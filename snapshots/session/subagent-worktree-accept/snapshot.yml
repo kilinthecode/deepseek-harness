@@ -1,0 +1,20 @@
+version: 1
+scenario: subagent-worktree-accept
+profile: headless
+composition: subagent-worktree-accept
+recording: authored
+header:
+  class: subagent-worktree-accept
+  pin: true
+  childSystemPrompts: [1, 2]
+  childToolSchemas: [2]
+replay:
+  override: true
+platform: posix
+workspace:
+  setup: git-repo
+  final: true
+# Ignoring the host's git configuration keeps the diff text the reviewer receives, and every other git call the app makes, the same on every host.
+environment:
+  GIT_CONFIG_GLOBAL: /dev/null
+  GIT_CONFIG_NOSYSTEM: '1'

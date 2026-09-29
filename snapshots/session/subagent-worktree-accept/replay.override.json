@@ -1,0 +1,42 @@
+[
+  {
+    "kind": "chunks",
+    "chunks": [
+      { "type": "block-start", "index": 0, "blockType": "tool-call" },
+      { "type": "tool-call-delta", "index": 0, "id": "call_start_worker", "name": "subagent", "argumentsDelta": "{\"description\":\"Append a line to app.txt\",\"prompt\":\"In app.txt, add a second line that reads \\\"appended by worker\\\". Read the file first, edit it in place, and report what you changed.\",\"isolation\":\"worktree\"}" },
+      { "type": "block-end", "index": 0, "block": { "type": "tool-call", "id": "call_start_worker", "name": "subagent", "arguments": "{\"description\":\"Append a line to app.txt\",\"prompt\":\"In app.txt, add a second line that reads \\\"appended by worker\\\". Read the file first, edit it in place, and report what you changed.\",\"isolation\":\"worktree\"}" } },
+      { "type": "usage", "usage": { "inputTokens": 10, "outputTokens": 5 } },
+      { "type": "finish", "reason": { "kind": "tool-calls" } }
+    ]
+  },
+  {
+    "kind": "chunks",
+    "chunks": [
+      { "type": "block-start", "index": 0, "blockType": "text" },
+      { "type": "text-delta", "index": 0, "text": "Worker started in its own worktree; I will accept it once it settles." },
+      { "type": "block-end", "index": 0, "block": { "type": "text", "text": "Worker started in its own worktree; I will accept it once it settles." } },
+      { "type": "usage", "usage": { "inputTokens": 8, "outputTokens": 3 } },
+      { "type": "finish", "reason": { "kind": "stop" } }
+    ]
+  },
+  {
+    "kind": "chunks",
+    "chunks": [
+      { "type": "block-start", "index": 0, "blockType": "tool-call" },
+      { "type": "tool-call-delta", "index": 0, "id": "call_accept_worktree", "name": "accept_worktree", "argumentsDelta": "{\"worktree_id\":\"{{fromRequest:in worktree (wt-[0-9a-f]{8})}}\"}" },
+      { "type": "block-end", "index": 0, "block": { "type": "tool-call", "id": "call_accept_worktree", "name": "accept_worktree", "arguments": "{\"worktree_id\":\"{{fromRequest:in worktree (wt-[0-9a-f]{8})}}\"}" } },
+      { "type": "usage", "usage": { "inputTokens": 10, "outputTokens": 5 } },
+      { "type": "finish", "reason": { "kind": "tool-calls" } }
+    ]
+  },
+  {
+    "kind": "chunks",
+    "chunks": [
+      { "type": "block-start", "index": 0, "blockType": "text" },
+      { "type": "text-delta", "index": 0, "text": "Merged: app.txt now ends with the appended line." },
+      { "type": "block-end", "index": 0, "block": { "type": "text", "text": "Merged: app.txt now ends with the appended line." } },
+      { "type": "usage", "usage": { "inputTokens": 10, "outputTokens": 5 } },
+      { "type": "finish", "reason": { "kind": "stop" } }
+    ]
+  }
+]
