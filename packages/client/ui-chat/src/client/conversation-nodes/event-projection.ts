@@ -68,6 +68,11 @@ export function contextProducer(source: unknown): ContextProducerView {
       return { role: 'inject', label: joined(collect(record, 'changes', 'path')) ?? kind }
     case 'skill-invocation':
       return { role: 'inject', label: readString(record, 'name') ?? kind }
+    // A peer message and an idle notice are both attributed to the session that
+    // sent them, whatever it called itself.
+    case 'peer-message':
+    case 'peer-idle':
+      return { role: 'inject', label: readString(record, 'senderName') ?? kind }
     default:
       // MessageSourceMap is merge-extensible; keep an unknown producer
       // visible by its durable kind.
