@@ -8,13 +8,13 @@
 
 import { globSync, readFileSync, writeFileSync } from 'node:fs'
 import { basename, resolve } from 'node:path'
-import { Context } from '@deepseek-ai/cordis'
+import { Context, Service } from '@deepseek-ai/cordis'
 import LlmRuntime from '@deepseek-ai/dsh-llm'
 import type { ToolSchema } from '@deepseek-ai/dsh-llm'
 import AgentRegistry from '@deepseek-ai/dsh-agent'
 import type { Agent } from '@deepseek-ai/dsh-agent'
 import { createScope } from '@deepseek-ai/dsh-scope'
-import SessionStore, { SessionId } from '@deepseek-ai/dsh-session'
+import SessionStore, { SessionId, type Session } from '@deepseek-ai/dsh-session'
 import SessionProjectionRegistry from '@deepseek-ai/dsh-session-projection'
 import SqliteSessionQueryEngine from '@deepseek-ai/dsh-session-query-sqlite'
 import GoalService from '@deepseek-ai/dsh-goal'
@@ -64,6 +64,8 @@ import * as StagehandBrowserTools from '@deepseek-ai/dsh-experimental-browser-us
 import type TeamService from '@deepseek-ai/dsh-experimental-agent-team'
 import * as ToolTeam from '@deepseek-ai/dsh-experimental-tool-agent-team'
 import * as ToolRoom from '@deepseek-ai/dsh-experimental-tool-agent-room'
+import type { NotifyPeerIdleRequest, SendPeerMessageRequest } from '@deepseek-ai/dsh-experimental-peer-sessions'
+import * as ToolPeerSessions from '@deepseek-ai/dsh-experimental-tool-peer-sessions'
 import * as ToolTodo from '@deepseek-ai/dsh-tool-todo'
 import type PluginManager from '@deepseek-ai/dsh-plugin-manager'
 import * as PluginManagerTools from '@deepseek-ai/dsh-plugin-manager/tools'
@@ -114,6 +116,29 @@ class CatalogWorkflowEngine extends WorkflowEngine {
 }
 
 /**
+ * Peer service stand-in for the peer session tools: they declare their schemas
+ * with no mailbox, presence file, or peer process behind them, and schema
+ * harvest never executes one.
+ */
+class CatalogPeers extends Service {
+  constructor(ctx: Context) {
+    super(ctx, 'peers')
+  }
+
+  list(_agent: Agent): Promise<never> {
+    return Promise.reject(new Error('gen-tool-catalog: peer calls are unreachable during schema harvest'))
+  }
+
+  send(_agent: Agent, _request: SendPeerMessageRequest): Promise<never> {
+    return Promise.reject(new Error('gen-tool-catalog: peer calls are unreachable during schema harvest'))
+  }
+
+  notifyIdle(_agent: Agent, _request: NotifyPeerIdleRequest): Promise<never> {
+    return Promise.reject(new Error('gen-tool-catalog: peer calls are unreachable during schema harvest'))
+  }
+}
+
+/**
  * Register the descriptor needed to mount schema-producing consumers. Declares
  * the full capability set of the shipped in-process providers so consumers
  * mount under their shipped defaults (tool-subagent's default numeric maxDepth
@@ -155,6 +180,46 @@ async function mountCatalogChildScope(
 }
 
 /**
+ * Mint the stub Agent one scoped tool package reads, with the Agent and Session
+ * registries it needs. No model, Agent loop, or persistence backend starts:
+ * schema harvest reads only the Agent's scope, session header, and registry
+ * membership.
+ * @param ctx - catalog context owning the Agent scope.
+ * @param sessionId - Session id for the stub Agent; a bare `create` leaves the
+ *   header without `origin` or `delegationDepth`, which is a top-level Agent.
+ * @returns the Agent, still unscoped and unregistered, plus its Session.
+ */
+async function createCatalogAgent(ctx: Context, sessionId: SessionId): Promise<{ agent: Agent; session: Session }> {
+  await ctx.plugin(AgentRegistry)
+  await ctx.plugin(SessionStore)
+  const session = ctx.sessions.create(sessionId)
+  return {
+    agent: {
+      id: session.id,
+      session,
+      options: {},
+      status: 'idle',
+    } as unknown as Agent,
+    session,
+  }
+}
+
+/**
+ * Give one stub Agent its own child scope and register it in the Agent registry,
+ * so a package that installs its tools per Agent has a live carrier to install
+ * into.
+ * @param ctx - catalog context owning the Agent scope.
+ * @param agent - stub Agent to scope and register.
+ * @param inject - services the registering plugin must await before mounting.
+ */
+async function registerCatalogAgent(ctx: Context, agent: Agent, inject: string[]): Promise<void> {
+  await ctx.plugin(Object.assign(async (inner: Context) => {
+    Object.assign(agent, { ctx: createScope(inner, agent).ctx })
+    await inner.agents.register(agent)
+  }, { inject }))
+}
+
+/**
  * Install one Team tool package for a stub Team Lead whose membership is the
  * only Team-service behavior schema harvest reaches.
  * @param ctx - catalog context owning the Lead scope.
@@ -166,10 +231,7 @@ async function mountTeamCatalogLead(
   sessionId: SessionId,
   plugin: typeof ToolTeam | typeof ToolRoom,
 ): Promise<void> {
-  await ctx.plugin(AgentRegistry)
-  await ctx.plugin(SessionStore)
-  const session = ctx.sessions.create(sessionId)
-  let agent!: Agent
+  const { agent, session } = await createCatalogAgent(ctx, sessionId)
   const membership = {
     get root() { return agent },
     id: session.id,
@@ -180,16 +242,7 @@ async function mountTeamCatalogLead(
     tryMembership: (candidate: Agent) => candidate === agent ? membership : undefined,
     membership: () => membership,
   } as unknown as TeamService)
-  await ctx.plugin(Object.assign(async (inner: Context) => {
-    agent = {
-      id: session.id,
-      session,
-      options: {},
-      status: 'idle',
-    } as unknown as Agent
-    Object.assign(agent, { ctx: createScope(inner, agent).ctx })
-    await inner.agents.register(agent)
-  }, { inject: ['tools', 'systemPrompt', 'agents', 'agentTeams'] }))
+  await registerCatalogAgent(ctx, agent, ['tools', 'systemPrompt', 'agents', 'agentTeams'])
   await ctx.plugin(plugin)
   catalogChildScopes.set(ctx, agent)
 }
@@ -642,6 +695,23 @@ const TOOL_PACKAGES: ToolPackage[] = [
     scope: ctx => catalogChildScopes.get(ctx) as Agent,
     note:
       'Five tools are scoped to room participants. The shipped composition keeps them unmounted; a deployment enables them beside `@deepseek-ai/dsh-experimental-agent-team` with `roomEnabled: true`, and every outcome is decided by the service quorum rather than by the tool.',
+  },
+  {
+    pkg: '@deepseek-ai/dsh-experimental-tool-peer-sessions',
+    dir: 'tool-peer-sessions',
+    source: 'packages/experimental/tool-peer-sessions/src/index.ts',
+    requires: ['ctx.tools', 'ctx.systemPrompt', 'ctx.peers', 'an exact live top-level Agent'],
+    writes: ['tool/call', 'tool/result'],
+    async mount(ctx) {
+      await ctx.plugin(CatalogPeers)
+      const { agent } = await createCatalogAgent(ctx, SessionId('tool-catalog-peer-session'))
+      await registerCatalogAgent(ctx, agent, ['tools', 'systemPrompt', 'agents'])
+      await ctx.plugin(ToolPeerSessions)
+      catalogChildScopes.set(ctx, agent)
+    },
+    scope: ctx => catalogChildScopes.get(ctx) as Agent,
+    note:
+      'list_peers, send_peer_message, and notify_peer_idle are scoped to top-level sessions; subagents never see them. The package ships in the optional peer-sessions profile bundle, which the shipped composition keeps unmounted, and every outcome is decided by the peer service rather than by the tool.',
   },
   {
     pkg: '@deepseek-ai/dsh-tool-todo',

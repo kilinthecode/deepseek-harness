@@ -1,0 +1,61 @@
+# Bilingual-pair consistency record for README.md (docs/i18n/README.md): per heading
+# section, a hash of its English and Chinese blocks outside code blocks and generated regions.
+# After editing either side, bring the other along and re-record with:
+#   pnpm run verify-translation-pairing --write packages/experimental/tool-peer-sessions/README.md
+/:
+  en: cd5840eadc610564
+  zh: 0242ded1ab6ac0df
+/deepseek-ai-dsh-experimental-tool-peer-sessions:
+  en: 534826f53ec53ab3
+  zh: 1e7ec8449394c19c
+/deepseek-ai-dsh-experimental-tool-peer-sessions/summary:
+  en: 3939ba87335653d3
+  zh: 65423a38070939c8
+/deepseek-ai-dsh-experimental-tool-peer-sessions/table-of-contents:
+  en: 35291ef202af40d0
+  zh: c3ec64b050efd986
+/deepseek-ai-dsh-experimental-tool-peer-sessions/use-this-package:
+  en: 243cbdc888009714
+  zh: ac0152f06a860655
+/deepseek-ai-dsh-experimental-tool-peer-sessions/use-this-package/tools:
+  en: f989689bf439599e
+  zh: a3b316d6b8043567
+/deepseek-ai-dsh-experimental-tool-peer-sessions/use-this-package/prompt-section:
+  en: 444d2163a1bbd793
+  zh: 947687727cae28dd
+/deepseek-ai-dsh-experimental-tool-peer-sessions/further-exploration:
+  en: 97f7080c2d84998a
+  zh: 5912f82db0eedb70
+/deepseek-ai-dsh-experimental-tool-peer-sessions/model-experience:
+  en: 215e7ba838619b7b
+  zh: a311da3843709f90
+/deepseek-ai-dsh-experimental-tool-peer-sessions/model-experience/peer-tools-and-coordination-prompt:
+  en: dd09b2d114e11727
+  zh: 11a73ebafb8e6cfc
+/deepseek-ai-dsh-experimental-tool-peer-sessions/model-experience/peer-tools-and-coordination-prompt/what-the-model-sees:
+  en: 3457465c8ab29292
+  zh: ef18491eadd2b228
+/deepseek-ai-dsh-experimental-tool-peer-sessions/model-experience/peer-tools-and-coordination-prompt/what-the-model-sees/list-peers-description:
+  en: 321ee429b4c403d5
+  zh: 367894709cf58f2c
+/deepseek-ai-dsh-experimental-tool-peer-sessions/model-experience/peer-tools-and-coordination-prompt/what-the-model-sees/send-peer-message-description:
+  en: 6e0e37b608252bb4
+  zh: 4d70cb72fce06d05
+/deepseek-ai-dsh-experimental-tool-peer-sessions/model-experience/peer-tools-and-coordination-prompt/what-the-model-sees/notify-peer-idle-description:
+  en: 10546566ab7a593e
+  zh: 3018a3b8b3c0ecc7
+/deepseek-ai-dsh-experimental-tool-peer-sessions/model-experience/peer-tools-and-coordination-prompt/what-the-model-sees/peer-coordination-section-text:
+  en: d818f7f64c860ca2
+  zh: a6eb9dbc8e94021b
+/deepseek-ai-dsh-experimental-tool-peer-sessions/model-experience/peer-tools-and-coordination-prompt/token-effect:
+  en: 5c900185d80c2d30
+  zh: 442932abd99e9e8c
+/deepseek-ai-dsh-experimental-tool-peer-sessions/model-experience/peer-tools-and-coordination-prompt/kv-cache-effect:
+  en: 4ee7a48cb69d64e2
+  zh: 706b871ddc69eada
+/deepseek-ai-dsh-experimental-tool-peer-sessions/known-limitations-and-deferred-work:
+  en: 4913c6432925f86b
+  zh: 8353bbe8d4748d91
+/deepseek-ai-dsh-experimental-tool-peer-sessions/known-limitations-and-deferred-work/dev-note:
+  en: f6992c4258c31b7a
+  zh: e11a8e5584669d53

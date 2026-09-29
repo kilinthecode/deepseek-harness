@@ -30,12 +30,13 @@ describe('gen-tool-catalog collectToolCatalog', () => {
       'cordis_inspect_query',
       'create_goal', 'edit', 'exit_plan_mode', 'get_goal', 'glob', 'grep',
       'interrupt_agent', 'interrupt_agent', 'job_kill', 'job_list', 'job_output',
-      'list_agents', 'list_agents', 'list_mcp_resource_templates', 'list_mcp_resources',
-      'list_subagent_models', 'load_workspace_dependencies', 'lsp', 'plugin_manager', 'present', 'pwsh', 'pwsh', 'ralph',
+      'list_agents', 'list_agents', 'list_mcp_resource_templates', 'list_mcp_resources', 'list_peers',
+      'list_subagent_models', 'load_workspace_dependencies', 'lsp', 'notify_peer_idle', 'plugin_manager', 'present', 'pwsh', 'pwsh', 'ralph',
       'read', 'read_image', 'read_mcp_resource',
       'room_escalate', 'room_prompt', 'room_propose', 'room_review', 'room_view',
       'run_code', 'schedule_create', 'schedule_delete',
-      'schedule_list', 'schedule_update', 'send_message', 'send_message', 'session_event_read', 'session_event_search',
+      'schedule_list', 'schedule_update', 'send_message', 'send_message', 'send_peer_message',
+      'session_event_read', 'session_event_search',
       'session_event_trace', 'session_search', 'session_trace', 'skill', 'spawn_teammate',
       'stagehand_act', 'stagehand_extract', 'stagehand_navigate', 'stagehand_observe', 'stagehand_screenshot', 'stagehand_tabs',
       'str_replace_editor', 'subagent', 'team_task_create',
@@ -49,6 +50,13 @@ describe('gen-tool-catalog collectToolCatalog', () => {
         expect((schema.parameters as unknown as JsonSchema).type).toBe('object')
       }
     }
+  })
+
+  it('boots the peer session tools in exactly one top-level Agent scope', async () => {
+    const catalog = await collectToolCatalog()
+    const peers = catalog.find(entry => entry.pkg === '@deepseek-ai/dsh-experimental-tool-peer-sessions')
+    expect(peers?.schemas.map(s => s.name)).toEqual(['list_peers', 'notify_peer_idle', 'send_peer_message'])
+    expect(peers?.sources.list_peers).toBe('packages/experimental/tool-peer-sessions/src/index.ts')
   })
 
   it('resolves a runtime-spread enum to its literal members (the payoff over AST)', async () => {
