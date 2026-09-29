@@ -18,11 +18,11 @@ import type { Fiber } from '@deepseek-ai/cordis'
 import type { Agent, AgentHandle, CreateAgentOptions } from '@deepseek-ai/dsh-agent'
 import AgentLoop from '@deepseek-ai/dsh-agent-loop'
 import { mountAgentLoopTestDependencies } from '@deepseek-ai/dsh-agent-loop-testkit'
-import { PeerError } from '@deepseek-ai/dsh-experimental-peer-sessions'
 import type {
   NotifyPeerIdleRequest,
   NotifyPeerIdleResult,
   PeerEntry,
+  PeerError,
   PeerMessageId,
   SendPeerMessageRequest,
   SendPeerMessageResult,
@@ -33,6 +33,7 @@ import { SessionId } from '@deepseek-ai/dsh-session'
 import { defineContentToolFixture } from '@deepseek-ai/dsh-tools'
 import type { ToolDefinition, ToolExecutionResult } from '@deepseek-ai/dsh-tools'
 import { MockAdapter, textResponse } from '../../../core/agent-loop/tests/mock-adapter.ts'
+import { peerNotFound } from '../../peer-sessions/src/errors.ts'
 import * as toolPeerSessions from '../src/index.ts'
 
 /** Exact model-visible `list_peers` description. */
@@ -363,11 +364,13 @@ describe('dsh-tool-peer-sessions', () => {
   it('surfaces a thrown PeerError as the exact tool error message', async () => {
     const { ctx, script, createAgent } = await setup()
     const lead = await createAgent('peer-error')
-    const failure = new PeerError('PEER_NOT_FOUND', 'No peer session named "builder" is live in this repository.')
+    // The service mints this text; asserting its literal from the minted error
+    // fails if the required wording in errors.ts drifts.
+    const failure = peerNotFound('builder')
+    expect(failure.message).toBe('No peer session named "builder" is live in this repository.')
     script.sendError = failure
     const result = await callTool(ctx, lead, 'send_peer_message', { to: 'builder', message: 'ping' })
     expect(result.isError).toBe(true)
-    expect(failure.message).toBe('No peer session named "builder" is live in this repository.')
     expect(result.error?.message).toBe(failure.message)
     expect(text(result)).toBe(`Error: ${failure.message}`)
   })

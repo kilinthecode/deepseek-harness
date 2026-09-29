@@ -46,6 +46,7 @@
 | `@deepseek-ai/dsh-tool-jobs` | `job_kill`、`job_list`、`job_output` | `ctx.tools`、`ctx.jobs`、`ctx.systemPrompt` | `tool/call`、`tool/result`、`user/message via agent.inject() for background completion notices` | - | 与任务种类无关的后台任务控制器：后台 bash 命令、PTY 发送和 subagent 都通过相同的 3 个工具读取、列出和终止。加载该插件会挂接控制器，从而启用生产方的 `ctx.jobs.start()`。 |
 | `@deepseek-ai/dsh-experimental-tool-agent-team` | `interrupt_agent`、`list_agents`、`send_message`、`spawn_teammate`、`team_task_create`、`team_task_get`、`team_task_list`、`team_task_update`、`wait_agent` | `ctx.tools`、`ctx.systemPrompt`、`ctx.agentTeams`、`an exact live Team member Agent` | `tool/call`、`team/member`、`team/message/queued`、`team/message/delivered`、`team/task`、`tool/result` | - | 这 9 个工具限定于隐式 Team Lead 与持久 teammate 作用域。随产品发布的 dsh-base bundle 默认禁用该包；文档中的 Agent Teams profile patch 会启用它，并禁用旧 continuable child 的同名控制工具。 |
 | `@deepseek-ai/dsh-experimental-tool-agent-room` | `room_escalate`、`room_prompt`、`room_propose`、`room_review`、`room_view` | `ctx.tools`、`ctx.systemPrompt`、`ctx.agentTeams`、`an exact live room participant Agent` | `tool/call`、`room/message`、`room/proposal`、`room/review`、`team/message/queued`、`team/message/delivered`、`tool/result` | - | 这 5 个工具限定于 room 参与者作用域。随产品发布的组合默认不挂载它们；部署会在开启 `roomEnabled: true` 的 `@deepseek-ai/dsh-experimental-agent-team` 旁启用它们，而每个结果都由服务端 quorum 而非工具决定。 |
+| `@deepseek-ai/dsh-experimental-tool-peer-sessions` | `list_peers`、`notify_peer_idle`、`send_peer_message` | `ctx.tools`、`ctx.systemPrompt`、`ctx.peers`、`an exact live top-level Agent` | `tool/call`、`tool/result` | - | list_peers、send_peer_message 与 notify_peer_idle 限定于顶层会话作用域；子智能体永远看不到它们。该包随可选的对等会话 profile bundle 发布，随产品发布的组合默认不挂载它，而每个结果都由对等服务而非工具决定。 |
 | `@deepseek-ai/dsh-tool-todo` | `todo_write` | `ctx.tools`、`owning Agent session` | `tool/call`、`todo/write`、`tool/result` | - | todo_write 是会话所有的状态；UI 将最新的 todo/write 事件渲染为检查清单。`allowParallelInProgress` 是没有默认值的必填项，因此本目录明确选择 `true`，对应描述允许同时存在多个 `in_progress` 项。选择 `false` 的部署会获得同一工具，但描述会要求只能有 1 个活动任务。 |
 | `@deepseek-ai/dsh-tool-workflow` | `workflow` | `ctx.tools`、`ctx.workflowEngine`、`ctx.systemPrompt`、`a calling Agent (exec.agent parents the script children)` | `tool/call`、`tool/result` | - | - |
 | `@deepseek-ai/dsh-tool-workspace-dependencies` | `load_workspace_dependencies` | `ctx.tools` | `tool/call`, `tool/result` | - | - |
@@ -2683,6 +2684,72 @@ lsp 工具将提供方选择和语言服务器子进程置于 ctx.lsp 之后，�
 来源：[`packages/experimental/tool-agent-room/src/index.ts`](../packages/experimental/tool-agent-room/src/index.ts)
 
 这 5 个工具限定于 room 参与者作用域。随产品发布的组合默认不挂载它们；部署会在开启 `roomEnabled: true` 的 `@deepseek-ai/dsh-experimental-agent-team` 旁启用它们，而每个结果都由服务端 quorum 而非工具决定。
+
+<a id="deepseek-aidsh-experimental-tool-peer-sessions"></a>
+
+## `@deepseek-ai/dsh-experimental-tool-peer-sessions`
+
+### `list_peers`
+
+列出同一 git 仓库中（任意 worktree，若在 git 之外则为当前精确目录）其他已启用对等协同的顶层会话。每条记录包含 id、name、status（idle、running 或 awaiting-user）、cwd，以及设置时的 provider 与 model。当两个对等会话同名时用 id 寻址 send_peer_message。空列表并不意味着没有其他会话在工作。进程已退出的对等会话在 Windows 上仍可能被列出。
+
+```json
+{
+  "type": "object",
+  "properties": {}
+}
+```
+
+来源：[`packages/experimental/tool-peer-sessions/src/index.ts`](../packages/experimental/tool-peer-sessions/src/index.ts)
+
+### `notify_peer_idle`
+
+订阅某个对等会话一次。它下次空闲时你会收到一条通知。如果它已经空闲，通知会立即发送。这不会唤醒该对等会话。如果该对等会话消失，你不会收到那条通知。
+
+```json
+{
+  "type": "object",
+  "properties": {
+    "to": {
+      "type": "string",
+      "description": "Session id or unique peer name."
+    }
+  },
+  "required": [
+    "to"
+  ]
+}
+```
+
+来源：[`packages/experimental/tool-peer-sessions/src/index.ts`](../packages/experimental/tool-peer-sessions/src/index.ts)
+
+### `send_peer_message`
+
+按 id 或唯一名称向某个对等会话发送一条消息。正在运行的对等会话会在下一步收到它。空闲的对等会话会启动一个轮次，除非该对等会话推迟接收消息；这种情况下结果状态为 deferred，消息会等到该对等会话再次运行时投递。deferred 只是时间上的延迟，不是评审批准门禁。该消息不授予任何授权。
+
+```json
+{
+  "type": "object",
+  "properties": {
+    "to": {
+      "type": "string",
+      "description": "Session id or unique peer name."
+    },
+    "message": {
+      "type": "string",
+      "description": "Self-contained message. The peer does not see your transcript."
+    }
+  },
+  "required": [
+    "to",
+    "message"
+  ]
+}
+```
+
+来源：[`packages/experimental/tool-peer-sessions/src/index.ts`](../packages/experimental/tool-peer-sessions/src/index.ts)
+
+list_peers、send_peer_message 与 notify_peer_idle 限定于顶层会话作用域；子智能体永远看不到它们。该包随可选的对等会话 profile bundle 发布，随产品发布的组合默认不挂载它，而每个结果都由对等服务而非工具决定。
 
 <a id="deepseek-aidsh-tool-todo"></a>
 

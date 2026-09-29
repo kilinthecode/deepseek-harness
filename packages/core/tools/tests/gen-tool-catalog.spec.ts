@@ -2,6 +2,7 @@
  * Guarantee tests for the tool-schema catalog generator (`scripts/gen-tool-catalog.ts`).
  */
 
+import { readFileSync } from 'node:fs'
 import { describe, expect, it } from 'vitest'
 import {
   assertManifestComplete,
@@ -57,6 +58,14 @@ describe('gen-tool-catalog collectToolCatalog', () => {
     const peers = catalog.find(entry => entry.pkg === '@deepseek-ai/dsh-experimental-tool-peer-sessions')
     expect(peers?.schemas.map(s => s.name)).toEqual(['list_peers', 'notify_peer_idle', 'send_peer_message'])
     expect(peers?.sources.list_peers).toBe('packages/experimental/tool-peer-sessions/src/index.ts')
+  })
+
+  it('keeps the committed catalog identical to a fresh harvest', async () => {
+    // The in-process counterpart of `pnpm run verify-tool-catalog --check`: a
+    // package added to the manifest without regenerating the artifact would
+    // otherwise stay invisible until the doc-sync gate runs.
+    const committed = readFileSync(new URL('../../../../docs/tool-catalog.md', import.meta.url), 'utf8')
+    expect(render(await collectToolCatalog())).toBe(committed)
   })
 
   it('resolves a runtime-spread enum to its literal members (the payoff over AST)', async () => {

@@ -180,6 +180,13 @@ async function mountCatalogChildScope(
 }
 
 /**
+ * The Agent fields schema harvest reads: the scope carrier's identity, its
+ * Session, its options, and its status. Typing the stub as the real interface's
+ * own subset keeps every field a checked assignment.
+ */
+type CatalogAgentFields = Pick<Agent, 'id' | 'session' | 'options' | 'status'>
+
+/**
  * Mint the stub Agent one scoped tool package reads, with the Agent and Session
  * registries it needs. No model, Agent loop, or persistence backend starts:
  * schema harvest reads only the Agent's scope, session header, and registry
@@ -193,13 +200,11 @@ async function createCatalogAgent(ctx: Context, sessionId: SessionId): Promise<{
   await ctx.plugin(AgentRegistry)
   await ctx.plugin(SessionStore)
   const session = ctx.sessions.create(sessionId)
+  const fields: CatalogAgentFields = { id: session.id, session, options: {}, status: 'idle' }
   return {
-    agent: {
-      id: session.id,
-      session,
-      options: {},
-      status: 'idle',
-    } as unknown as Agent,
+    // Harvest reaches these fields plus the scope `registerCatalogAgent`
+    // assigns; the Agent face, inbox, and driver methods are never called.
+    agent: fields as Agent,
     session,
   }
 }

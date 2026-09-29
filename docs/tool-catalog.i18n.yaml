@@ -9,8 +9,8 @@
   en: 6cc2cd9ced70bb09
   zh: 1c0e6cb4ba2ed637
 /tool-schema-catalog/tool-package-map:
-  en: 30b58b1bd829ed36
-  zh: b9bee73fafac6df0
+  en: 0a698e66db174828
+  zh: 71bf7af4533ebd45
 /tool-schema-catalog/deepseek-ai-dsh-plugin-manager:
   en: e0143916bb634762
   zh: e0143916bb634762
@@ -300,8 +300,20 @@
   en: 90b78cf7e2ffddbb
   zh: 862be30aeafa3f02
 /tool-schema-catalog/deepseek-ai-dsh-experimental-tool-agent-room/room-view:
-  en: f53905d054b0821f
-  zh: 66440c3a0e08580e
+  en: 5fab32d1898fa897
+  zh: 834d38637c32d844
+/tool-schema-catalog/deepseek-ai-dsh-experimental-tool-peer-sessions:
+  en: 5be4f8115e835ad6
+  zh: 5be4f8115e835ad6
+/tool-schema-catalog/deepseek-ai-dsh-experimental-tool-peer-sessions/list-peers:
+  en: bacf201e6a86f262
+  zh: 63bd1f7efd3f068f
+/tool-schema-catalog/deepseek-ai-dsh-experimental-tool-peer-sessions/notify-peer-idle:
+  en: d4c62ce389a4e6e0
+  zh: 02bf3afbc73b9491
+/tool-schema-catalog/deepseek-ai-dsh-experimental-tool-peer-sessions/send-peer-message:
+  en: 80b41a8232f3bedf
+  zh: 3db0e7d0bd336b14
 /tool-schema-catalog/deepseek-ai-dsh-tool-todo:
   en: dea62d26fb18ff68
   zh: dea62d26fb18ff68
