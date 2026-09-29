@@ -4,6 +4,7 @@
  * @module @deepseek-ai/dsh-client-web/src/boot-page
  */
 import type { LoaderEntryState } from './loader-status.ts'
+import type { BootCopy } from './locales.ts'
 import css from './boot-page.module.css'
 
 /** Look up one generated class name; every class this module reads is defined in the stylesheet beside it. */
@@ -144,12 +145,15 @@ export class BootPage {
   private disposed = false
   private readonly reduced = prefersReducedMotion()
   private readonly mountedAt = Date.now()
+  private readonly copy: BootCopy
 
   /**
    * Build and attach the boot page.
    * @param container - Application mount point.
+   * @param copy - Already-localized product copy; the boot page owns none of its own.
    */
-  constructor(container: HTMLElement) {
+  constructor(container: HTMLElement, copy: BootCopy) {
+    this.copy = copy
     const reduced = this.reduced
     this.root = div(css.boot)
     this.root.dataset.dshBoot = ''
@@ -171,7 +175,7 @@ export class BootPage {
     this.status = div(css.status)
     this.spinner = div(css.spinner)
     this.spinner.dataset.dshBootSpinner = ''
-    this.hint = div(css.hint, 'Loading plugins…')
+    this.hint = div(css.hint, this.copy.pluginsLoading)
     this.status.append(this.spinner, this.hint)
     this.card.append(this.brand)
     this.root.append(this.card)
@@ -244,7 +248,7 @@ export class BootPage {
     // The lettering is brand artwork drawn glyph by glyph, so the row carries
     // one name rather than letting a reader spell it out.
     brand.setAttribute('role', 'img')
-    brand.setAttribute('aria-label', 'Portal Harness')
+    brand.setAttribute('aria-label', this.copy.brandName)
     brand.append(this.buildMark())
     const row = div(css.row)
     const word = typedWord(WORD, css.word, LETTER_START_MS, LETTER_STEP_MS)
@@ -327,7 +331,7 @@ export class BootPage {
       return
     }
     const report = div(css.failed)
-    report.append(div(css.failedTitle, 'Failed to load plugins'))
+    report.append(div(css.failedTitle, this.copy.pluginsFailed))
     for (const id of failed) report.append(div(css.failedItem, id))
     if (this.failure !== undefined) report.append(div(css.failedItem, this.failure))
     // Retain the brand node; reattaching it restarts every CSS reveal.

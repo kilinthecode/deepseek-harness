@@ -1,5 +1,6 @@
 // @vitest-environment jsdom
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { bootCopyFor, type BootCopy } from '../src/locales.ts'
 import { BootPage } from '../src/boot-page.ts'
 import css from '../src/boot-page.module.css'
 
@@ -13,10 +14,10 @@ afterEach(() => {
   vi.useRealTimers()
 })
 
-function mount() {
+function mount(copy: BootCopy = bootCopyFor('en')) {
   const el = document.createElement('div')
   document.body.append(el)
-  return { el, page: new BootPage(el) }
+  return { el, page: new BootPage(el, copy) }
 }
 
 function finishBrand(el: HTMLElement): void {
@@ -34,6 +35,14 @@ describe('BootPage', () => {
     expect(el.textContent).toContain('PORTAL')
     expect(el.textContent).toContain('HARNESS')
     expect(el.querySelector('[role="img"]')?.getAttribute('aria-label')).toBe('Portal Harness')
+  })
+
+  it('renders the localized copy it is handed rather than owning any', () => {
+    const { el } = mount(bootCopyFor('zh-CN'))
+    vi.advanceTimersByTime(STATUS_MS)
+    finishBrand(el)
+    expect(el.textContent).toContain('正在加载插件…')
+    expect(el.textContent).not.toContain('Loading plugins…')
   })
 
   it('draws the center spokes before connecting the inner and outer cells', () => {

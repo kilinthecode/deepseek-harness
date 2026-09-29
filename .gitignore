@@ -47,3 +47,8 @@ worktrees/
 .agents/worktrees/
 .typert-*/
 native/system/test/bin/
+# Local tool state and stray shell output; never part of the tree.
+.codesight/
+.dev-home/
+--write
+PR-REVIEW-DRAFTS.md

@@ -10,6 +10,7 @@ import type {
   BootManifest, ClientModuleCreateOptions, ClientModuleSystem, DshWindow,
 } from '@deepseek-ai/dsh-client-modules/client'
 import { bootClient } from './boot-client.ts'
+import { bootCopy } from './locales.ts'
 import { BootPage } from './boot-page.ts'
 import { mountClient } from './mount.ts'
 import { getStaticModules } from './seed.ts'
@@ -48,7 +49,7 @@ export class AppWebEntry {
     // A pre-boot stage (the preview source chooser) owns the screen until the
     // boot gate settles; every other carrier wants the brand up before its
     // injections land so no empty frame precedes the boot page.
-    if ((globalThis as PreBootStageGlobal).__DSH_PREBOOT_OWNED__ !== true) this.page = new BootPage(container)
+    if ((globalThis as PreBootStageGlobal).__DSH_PREBOOT_OWNED__ !== true) this.page = new BootPage(container, bootCopy())
   }
 
   /**
@@ -68,7 +69,7 @@ export class AppWebEntry {
       await (globalThis as { __DSH_BOOT_READY__?: { promise: Promise<void> } }).__DSH_BOOT_READY__?.promise
       // The pre-boot stage releases the page here; draw the brand moment only
       // over an actual boot.
-      const page = this.page ??= new BootPage(this.container)
+      const page = this.page ??= new BootPage(this.container, bootCopy())
       const win = globalThis as DshWindow
       const moduleLoader = win.__ModuleLoader__
       if (moduleLoader === undefined) {
@@ -111,7 +112,7 @@ export class AppWebEntry {
       console.error(reason)
       // A gate rejection arrives before the page draws; the failure report
       // still needs the kernel-owned surface to render on.
-      const page = this.page ??= new BootPage(this.container)
+      const page = this.page ??= new BootPage(this.container, bootCopy())
       if (onFailure !== undefined) onFailure(reason)
       else page.fail(reason instanceof Error ? reason.message : String(reason))
     }
