@@ -19,6 +19,7 @@ import SessionProjectionRegistry from '@deepseek-ai/dsh-session-projection'
 import type { Session, SessionId, UserMessage } from '@deepseek-ai/dsh-session'
 import { SessionQueryError } from '@deepseek-ai/dsh-session-query'
 import { createInboxStub } from '@deepseek-ai/dsh-agent-loop-testkit'
+import { scopeTarget } from '@deepseek-ai/dsh-scope'
 import { apply, Config } from '../src/index.ts'
 import { internals } from '../src/runner-internals.ts'
 
@@ -220,6 +221,37 @@ async function bench(script: Script, options: BenchOptions = {}): Promise<{
       })
       return { code: await exited, out, err, order }
     },
+  }
+}
+
+/** One published child lifecycle epoch, dispatched the way the subagent runtime publishes it. */
+function childEpoch(agent: Agent, runId: string): { start(): void; settle(): void } {
+  // oxlint-disable-next-line typescript/unbound-method -- the events mixin accessor returns a pre-bound function
+  const emit = agent.ctx.emit as (carrier: object, name: string, edge: { runId: string }) => void
+  const dispatch = (name: 'subagent/start' | 'subagent/end'): void => {
+    emit(scopeTarget(agent, agent), name, { runId })
+  }
+  return {
+    start(): void {
+      dispatch('subagent/start')
+    },
+    settle(): void {
+      dispatch('subagent/end')
+    },
+  }
+}
+
+/** Yield to a macrotask so a pending runner decision has certainly run. */
+function tick(): Promise<void> {
+  return new Promise(resolve => setTimeout(resolve, 0))
+}
+
+function noticeMessage(id: string): UserMessage {
+  return {
+    role: 'user',
+    content: [{ type: 'text', text: 'background child settled' }],
+    source: { kind: 'user' },
+    id: brandString<MessageId>(id),
   }
 }
 
@@ -1042,6 +1074,126 @@ describe('headless runner', () => {
   it('fails loud without the launcher-provided exit request', () => {
     const ctx = new Context()
     expect(() => { apply(ctx, { task: 't' }) }).toThrow('must provide ctx.appExit')
+  })
+
+  it('waits for a continuable child and for every turn its settlement notice starts', async () => {
+    const firstTurnDone = Promise.withResolvers<undefined>()
+    let lead: Agent | undefined
+    let first: { start(): void; settle(): void } | undefined
+    let second: { start(): void; settle(): void } | undefined
+    let prompts = 0
+    const test = await bench({
+      afterPrompt(session, message, agent) {
+        lead = agent
+        switch (prompts++) {
+          case 0:
+            appendTurn(session, 1, message, 'handed off to the crew', true)
+            first = childEpoch(agent, 'child-1')
+            first.start()
+            firstTurnDone.resolve(undefined)
+            return
+          case 1:
+            appendTurn(session, 2, message, 'still working', true)
+            second = childEpoch(agent, 'child-2')
+            second.start()
+            return
+          default:
+            appendTurn(session, 3, message, 'crew answer', true)
+        }
+      },
+    })
+    const running = test.run()
+    await firstTurnDone.promise
+    // The lead's first turn is over while its child still runs: no exit yet.
+    await tick()
+    expect(test.output().order).toEqual([])
+    lead!.followup(noticeMessage('notice-1'))
+    first!.settle()
+    // The notice's turn starts a second child, so the run waits again.
+    await tick()
+    expect(test.output().order).toEqual([])
+    lead!.followup(noticeMessage('notice-2'))
+    second!.settle()
+    expect(await running).toEqual({
+      code: 0,
+      out: 'crew answer\n',
+      err: '',
+      order: ['flush', 'exit'],
+    })
+    await test.ctx.fiber.dispose()
+  })
+
+  it('keeps waiting when a child reaches idle before its settlement notice is delivered', async () => {
+    const firstTurnDone = Promise.withResolvers<undefined>()
+    let lead: Agent | undefined
+    let child: { start(): void; settle(): void } | undefined
+    let prompts = 0
+    const test = await bench({
+      afterPrompt(session, message, agent) {
+        lead = agent
+        if (prompts++ === 0) {
+          appendTurn(session, 1, message, 'handed off to the crew', true)
+          child = childEpoch(agent, 'child-1')
+          child.start()
+          firstTurnDone.resolve(undefined)
+          return
+        }
+        appendTurn(session, 2, message, 'crew answer', true)
+      },
+    })
+    const running = test.run()
+    await firstTurnDone.promise
+    // The child's Activation is past its last turn and still settling: its Agent
+    // is idle, the lead is idle, and the notice has not been delivered yet. A
+    // "no child running" decision would exit here and lose the notice's turn.
+    await tick()
+    await tick()
+    expect(lead!.status).toBe('idle')
+    expect(test.output().order).toEqual([])
+    lead!.followup(noticeMessage('notice-1'))
+    child!.settle()
+    expect(await running).toEqual({
+      code: 0,
+      out: 'crew answer\n',
+      err: '',
+      order: ['flush', 'exit'],
+    })
+    await test.ctx.fiber.dispose()
+  })
+
+  it('exits after the first turn when the lead starts no child', async () => {
+    const test = await bench({
+      afterPrompt(session, message) { appendTurn(session, 1, message, 'solo answer', true) },
+    })
+    expect(await test.run()).toEqual({
+      code: 0,
+      out: 'solo answer\n',
+      err: '',
+      order: ['flush', 'exit'],
+    })
+    await test.ctx.fiber.dispose()
+  })
+
+  it('ends without an exit request when the tree is disposed under an unsettled child', async () => {
+    const firstTurnDone = Promise.withResolvers<undefined>()
+    let child: { start(): void; settle(): void } | undefined
+    const test = await bench({
+      afterPrompt(session, message, agent) {
+        appendTurn(session, 1, message, 'handed off to the crew', true)
+        child = childEpoch(agent, 'child-1')
+        child.start()
+        firstTurnDone.resolve(undefined)
+      },
+    })
+    void test.run()
+    await firstTurnDone.promise
+    await test.ctx.fiber.dispose()
+    await tick()
+    expect(test.output()).toEqual({ out: '', err: '', order: [] })
+    // A settlement that arrives after disposal must not revive the run.
+    child!.settle()
+    await tick()
+    expect(test.output()).toEqual({ out: '', err: '', order: [] })
   })
 
   it('validates config: the task and run options are optional', () => {
