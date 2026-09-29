@@ -25,7 +25,7 @@ kind: "package-reference"
 <a id="use-this-package"></a>
 ## 使用本包
 
-在任何提供 `isolation: "worktree"` 的 `subagent` 委派工具所在的组合中挂载本包，无论它经由工具条目的 `worktreeIsolation` 配置（参见 `@deepseek-ai/dsh-tool-subagent`），还是经由服务的 `offerIsolation` 设置（由 `@deepseek-ai/dsh-agent-crew` bundle 设置）。它需要 `ctx.subagentWorktrees`（`@deepseek-ai/dsh-subagent-worktree`），该服务已经以惰性方式挂载在共享的 `dsh-base` 组合中。
+在任何应当提供 `isolation: "worktree"` 的 `subagent` 委派工具所在的组合中挂载本包。只要该条目处于挂载状态且 `offerIsolation` 保持默认值 `true`，它就会在 `ctx.subagentWorktrees` 上持有一个隔离提供，因此每个提供方具备 `cwd` 能力的委派工具都会提供该参数，包括由 agent 预设挂载的工具（bundle 补丁无法触及这些预设中的条目）。`tool-subagent` 条目仍可通过自身的 `worktreeIsolation` 设置提供隔离（参见 `@deepseek-ai/dsh-tool-subagent`）。它需要 `ctx.subagentWorktrees`（`@deepseek-ai/dsh-subagent-worktree`），该服务已经以惰性方式挂载在共享的 `dsh-base` 组合中。
 
 ### 最小配置
 
@@ -34,7 +34,13 @@ kind: "package-reference"
 - name: '@deepseek-ai/dsh-tool-subagent-worktree'
 ```
 
-本包不需要任何配置：只要 `ctx.subagentWorktrees` 可用，三个工具就会无条件注册。
+只要 `ctx.subagentWorktrees` 可用，三个工具就会无条件注册；`offerIsolation` 只控制该提供。
+
+| 字段 | 默认值 | 含义 |
+|---|---|---|
+| `offerIsolation` | `true` | 只要该条目处于挂载状态就持有隔离提供；`false` 则把隔离交给各 `tool-subagent` 条目自身的 `worktreeIsolation` 设置 |
+
+采用默认值时，这三个工具与创建它们所操作工作树的那个参数同时出现、同时消失。
 
 ### accept_worktree
 
@@ -68,7 +74,7 @@ kind: "package-reference"
 
 | 文件 | 作用 |
 |---|---|
-| [`src/index.ts`](src/index.ts) | 工具注册：`accept_worktree`、`discard_worktree`、`list_worktrees` |
+| [`src/index.ts`](src/index.ts) | 工具注册——`accept_worktree`、`discard_worktree`、`list_worktrees`——以及这些工具的条目在挂载期间持有的计数式隔离提供 |
 | [`src/values.ts`](src/values.ts) | 声明的结果 schema、服务到值的投影，以及逐字渲染模板 |
 | — | 未发布运行时不变量配套包：这个模型可见适配器自身没有独立的生命周期流——工作树的状态与权限属于 `ctx.subagentWorktrees`。 |
 

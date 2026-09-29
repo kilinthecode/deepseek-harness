@@ -292,7 +292,7 @@ export interface BundledSkillSpec {
  * Build the provider for one packaged skill: a single immutable candidate that
  * both the model and the user may invoke, ranked at {@link BUNDLED_SKILL_RANK}
  * so a project or user skill of the same name still wins. The body file is
- * read on every load.
+ * read on every load, and `get` rejects when that read fails.
  * @param spec - the skill's name, description, body file, and asset directory.
  * @returns a provider to pass to `ctx.skills.registerProvider`.
  */

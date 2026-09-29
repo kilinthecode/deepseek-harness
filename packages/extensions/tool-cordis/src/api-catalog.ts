@@ -2966,6 +2966,12 @@ export const SERVICE_API: readonly ServiceApiEntry[] = [
     description: 'The `ctx.subagentWorktrees` service. Git runs through `ctx.subprocess` with argv and an explicit cwd, in the host realm and outside any session sandbox; its commands and check argv come only from this configuration or operator input, never from model input.',
     methods: [
       {
+        signature: 'offerIsolation(): () => void',
+        description: 'Offer worktree isolation on delegation tools until the returned disposer runs. Offers are counted: the offer stands while at least one registration is live, so two consumers can offer independently. `subagent-worktree/offer-changed` fires when this registration is the first live offer, and when withdrawing it leaves none.',
+        parameters: [],
+        returns: 'a disposer that withdraws this offer; calling it again has no effect.',
+      },
+      {
         signature: 'create(request: CreateWorktreeRequest): Promise<ProvisionedWorktree>',
         description: 'Create one linked worktree on a new branch from the base checkout\'s `HEAD`.',
         parameters: [{ name: 'request', description: 'owner, base directory, label, task, worker route, and cancellation.' }],
@@ -4249,6 +4255,14 @@ export const EVENT_API: readonly EventApiEntry[] = [
     summary: 'A skill provider, runtime contribution, or provider-backed catalog may have changed.',
     description: 'A skill provider, runtime contribution, or provider-backed catalog may have changed. This is an unfiltered invalidation notification; consumers refetch the catalog for their own lookup options. Listener failures are contained and cannot veto the registry mutation.',
     parameters: [],
+  },
+  {
+    name: 'subagent-worktree/offer-changed',
+    mode: 'emit',
+    signature: '\'subagent-worktree/offer-changed\'(offered: boolean): void',
+    summary: 'Whether worktree isolation is offered on delegation tools changed: the first live offer was registered, or the last one was withdrawn.',
+    description: 'Whether worktree isolation is offered on delegation tools changed: the first live offer was registered, or the last one was withdrawn. It does not fire while offers are added or withdrawn with at least one other still live. Delegation tools listen and mount again; a listener failure is logged and does not stop the other listeners or the offer that triggered it.',
+    parameters: [{ name: 'offered', description: 'the new value of {@link SubagentWorktrees.offersIsolation}.' }],
   },
   {
     name: 'subagent/end',

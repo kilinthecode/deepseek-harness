@@ -25,7 +25,7 @@ English | [中文](README.zh.md)
 <a id="use-this-package"></a>
 ## Use this package
 
-Mount this package wherever a `subagent` delegation tool offers `isolation: "worktree"`, whether through a tool row's `worktreeIsolation` config (see `@deepseek-ai/dsh-tool-subagent`) or through the service's `offerIsolation` setting, which the `@deepseek-ai/dsh-agent-crew` bundle sets. It requires `ctx.subagentWorktrees` (`@deepseek-ai/dsh-subagent-worktree`), already mounted, inert, in the shared `dsh-base` composition.
+Mount this package wherever a `subagent` delegation tool should offer `isolation: "worktree"`. While this row is mounted and `offerIsolation` is at its `true` default, it holds one isolation offer on `ctx.subagentWorktrees`, so every delegation tool whose provider has the `cwd` capability offers the parameter, including tools that agent presets mount, whose rows a bundle patch cannot reach. A `tool-subagent` row can still offer isolation through its own `worktreeIsolation` setting (see `@deepseek-ai/dsh-tool-subagent`). It requires `ctx.subagentWorktrees` (`@deepseek-ai/dsh-subagent-worktree`), already mounted, inert, in the shared `dsh-base` composition.
 
 ### Minimal configuration
 
@@ -34,7 +34,13 @@ Mount this package wherever a `subagent` delegation tool offers `isolation: "wor
 - name: '@deepseek-ai/dsh-tool-subagent-worktree'
 ```
 
-This package takes no configuration: all three tools register unconditionally once `ctx.subagentWorktrees` is available.
+The three tools register unconditionally once `ctx.subagentWorktrees` is available; `offerIsolation` controls only the offer.
+
+| Field | Default | Meaning |
+|---|---|---|
+| `offerIsolation` | `true` | Hold the isolation offer for as long as this row is mounted; `false` leaves isolation to each `tool-subagent` row's own `worktreeIsolation` setting |
+
+With the default, the three tools and the parameter that creates the worktrees they act on appear and disappear together.
 
 ### accept_worktree
 
@@ -68,7 +74,7 @@ Each tool declares a complete canonical result schema — a discriminated union 
 
 | File | Role |
 |---|---|
-| [`src/index.ts`](src/index.ts) | Tool registration: `accept_worktree`, `discard_worktree`, `list_worktrees` |
+| [`src/index.ts`](src/index.ts) | Tool registration — `accept_worktree`, `discard_worktree`, `list_worktrees` — plus the counting isolation offer these tools' row holds while mounted |
 | [`src/values.ts`](src/values.ts) | Declared result schemas, service-to-value projection, and verbatim render templates |
 | — | No runtime invariant companion is published; this model-facing adapter holds no independent lifecycle stream of its own — worktree state and authority belong to `ctx.subagentWorktrees`. |
 

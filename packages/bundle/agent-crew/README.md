@@ -9,7 +9,7 @@ English | [中文](README.zh.md)
 
 ## Summary
 
-This optional bundle switches the `subagent-worktree` service's `offerIsolation` on, which offers `isolation: "worktree"` on every `subagent` delegation tool, and inserts the `tool-subagent-worktree` and `skill-agent-crew` rows the shipped compositions leave out. Shipped profiles leave it switched off.
+This optional bundle inserts the `tool-subagent-worktree` and `skill-agent-crew` rows the shipped compositions leave out. That mounted row holds an isolation offer, so every `subagent` delegation tool whose provider has the `cwd` capability offers `isolation: "worktree"`. Shipped profiles leave it switched off.
 
 ## Table of Contents
 
@@ -25,11 +25,11 @@ This optional bundle switches the `subagent-worktree` service's `offerIsolation`
 <a id="use-this-package"></a>
 ## Use this package
 
-Open Plugins in the Web sidebar (or a CLI profile's plugin manager) and enable Agent Crew. Once enabled, every `subagent` delegation tool, whether mounted at the Host level or inside an agent preset, gains an `isolation: "worktree"` option: a caller that sets it gets a child working in its own git worktree, isolated from the caller's checkout and every other child. A tool whose provider cannot start a child in a chosen directory, such as `subagent_fork`, does not offer it. A tool reads the switch when it mounts, so a Web session sees a change from its creation on, and a Host-level tool at its next mount. The session also gains `accept_worktree`, `discard_worktree`, and `list_worktrees` to land, discard, and list those worktrees, and the `agent-crew` skill becomes available in the session skill catalog, giving the model a named, practiced workflow for decomposing a goal across several worktree-isolated workers. Disabling the bundle restores the shipped `subagent-worktree` configuration (no `offerIsolation`) and removes the two inserted rows; a worktree already created keeps existing until an operator accepts or discards it with `dsh agents accept`/`discard`.
+Open Plugins in the Web sidebar (or a CLI profile's plugin manager) and enable Agent Crew. Once enabled, every `subagent` delegation tool whose provider has the `cwd` capability, whether mounted at the Host level or inside an agent preset, gains an `isolation: "worktree"` option: a caller that sets it gets a child working in its own git worktree, isolated from the caller's checkout and every other child. A tool whose provider cannot start a child in a chosen directory, such as `subagent_fork`, does not offer it. The tool mounts its definition again when the offer appears or lapses, so the option follows the bundle toggle whatever the load order. The session also gains `accept_worktree`, `discard_worktree`, and `list_worktrees` to land, discard, and list those worktrees, and the `agent-crew` skill becomes available in the session skill catalog, giving the model a named, practiced workflow for decomposing a goal across several worktree-isolated workers. Disabling the bundle removes the two inserted rows, which withdraws the offer; a worktree already created keeps existing until an operator accepts or discards it with `dsh agents accept`/`discard`.
 
 ### Reviewer route
 
-`accept_worktree` has the accepting agent's own model route review each worker's commit unless the `subagent-worktree` row sets a reviewer route, so a worker running on a cheaper route is reviewed on the lead's model. To pin the reviewer, set `reviewerProvider` and `reviewerModel` (and optionally `reviewerReasoningEffort`) on the `subagent-worktree` row in the profile patch, restating `offerIsolation: true` beside them because a patch replaces the row's whole config. Also set `requireDistinctReviewer: true` there to make the service refuse a review that would run on the worker's own route: a call whose worker would share the reviewer's route then fails before any worktree is created, so start the worker on another model or configure a reviewer route.
+`accept_worktree` has the accepting agent's own model route review each worker's commit unless the `subagent-worktree` row sets a reviewer route, so a worker running on a cheaper route is reviewed on the lead's model. To pin the reviewer, set `reviewerProvider` and `reviewerModel` (and optionally `reviewerReasoningEffort`) on the `subagent-worktree` row in the profile patch; that patch replaces the row's whole config but leaves the offer alone, because the worktree-tools row holds it. Also set `requireDistinctReviewer: true` there to make the service refuse a review that would run on the worker's own route: a call whose worker would share the reviewer's route then fails before any worktree is created, so start the worker on another model or configure a reviewer route.
 
 ### Worker routes
 
@@ -43,11 +43,11 @@ This bundle does not change which routes a `subagent` call can choose: a worker 
 <details>
 <summary>Maintainer details — click to expand</summary>
 
-`cordis.patch.yml` sets `offerIsolation: true` on the shared `subagent-worktree` row and inserts the `tool-subagent-worktree` and `skill-agent-crew` rows. The switch is on the service row, not on a `tool-subagent` row, because agent presets mount their own `tool-subagent` rows, which an id-targeted patch cannot reach, while every delegation tool reads `ctx.subagentWorktrees.offersIsolation` when it mounts. The `dsh-base` row carries no config, so the patch replaces nothing; a restated `tool-subagent` row would replace that row's whole config and drift from the base. `package.json` depends on those two inserted rows' packages so they resolve from this bundle; the `subagent-worktree` service row itself lives in the shared `dsh-base` composition (mounted inert until a consumer like this bundle switches it on), so it is not a dependency of this bundle. `OPTIONAL_BUNDLES` in `packages/boot/app-boot/src/profile.ts` names this package and `apps/cli` depends on it, so every installation ships it switched off and the plugin manager offers it in the Official group. No runtime invariant companion is published because this configuration-only package owns no mutable runtime state.
+`cordis.patch.yml` inserts the `tool-subagent-worktree` and `skill-agent-crew` rows and configures no shared row. The offer lives on the worktree-tools row rather than on a `tool-subagent` row because agent presets mount their own `tool-subagent` rows, which an id-targeted patch cannot reach, while every delegation tool whose provider has the `cwd` capability reads `ctx.subagentWorktrees.offersIsolation` and mounts again when it changes. A profile patch that replaces the `subagent-worktree` row's config, for example to pin a reviewer route, cannot switch the offer off; a restated `tool-subagent` row would replace that row's whole config and drift from the base. `package.json` depends on those two inserted rows' packages so they resolve from this bundle; the `subagent-worktree` service row itself lives in the shared `dsh-base` composition (mounted inert until a consumer like this bundle's tools register an offer), so it is not a dependency of this bundle. `OPTIONAL_BUNDLES` in `packages/boot/app-boot/src/profile.ts` names this package and `apps/cli` depends on it, so every installation ships it switched off and the plugin manager offers it in the Official group. No runtime invariant companion is published because this configuration-only package owns no mutable runtime state.
 
 | File | Role |
 |---|---|
-| [`cordis.patch.yml`](cordis.patch.yml) | Sets `offerIsolation: true` on the `subagent-worktree` row; inserts `tool-subagent-worktree` and `skill-agent-crew` |
+| [`cordis.patch.yml`](cordis.patch.yml) | Inserts the `tool-subagent-worktree` and `skill-agent-crew` rows; configures no shared row |
 | [`package.json`](package.json) | The two inserted rows' packages as dependencies |
 | [`locale/en.json`](locale/en.json), [`locale/zh.json`](locale/zh.json) | Plugin-manager title and description |
 | [`icon.svg`](icon.svg) | Plugin-manager icon |
@@ -63,8 +63,8 @@ This bundle does not change which routes a `subagent` call can choose: a worker 
 
 - [`@deepseek-ai/dsh-tool-subagent-worktree`](../../subagent/tool-subagent-worktree/README.md) — the `accept_worktree`, `discard_worktree`, and `list_worktrees` tools this bundle adds.
 - [`@deepseek-ai/dsh-skill-agent-crew`](../../skill/skill-agent-crew/README.md) — the skill this bundle adds.
-- `@deepseek-ai/dsh-subagent-worktree` (`packages/subagent/subagent-worktree/`) — the service behind the worktree lifecycle these tools expose, and the owner of the `offerIsolation` switch.
-- [`@deepseek-ai/dsh-tool-subagent`](../../subagent/tool-subagent/README.md) — the delegation tool that reads the switch when it mounts.
+- `@deepseek-ai/dsh-subagent-worktree` (`packages/subagent/subagent-worktree/`) — the service behind the worktree lifecycle these tools expose, which counts the isolation offers its consumers register.
+- [`@deepseek-ai/dsh-tool-subagent`](../../subagent/tool-subagent/README.md) — the delegation tool that offers `isolation` while the service holds an offer.
 
 -----
 
@@ -75,7 +75,7 @@ This bundle does not change which routes a `subagent` call can choose: a worker 
 
 #### What the model sees
 
-Every `subagent` delegation tool schema gains an `isolation` parameter (enum `["worktree"]`); the session gains `accept_worktree`, `discard_worktree`, and `list_worktrees`. Once enabled, `agent-crew` also appears in the session skill catalog.
+Every `subagent` delegation tool schema whose provider has the `cwd` capability gains an `isolation` parameter (enum `["worktree"]`); the session gains `accept_worktree`, `discard_worktree`, and `list_worktrees`. Once enabled, `agent-crew` also appears in the session skill catalog.
 
 #### Token effect
 
@@ -89,7 +89,7 @@ These schema and catalog changes apply once, at the request prefix, when the bun
 
 <a id="known-limitations-and-deferred-work"></a>
 
-- **The three rows are not independently useful** — switching `tool-subagent-worktree` off while `offerIsolation` stays on leaves a caller able to create worktrees it can never land or discard through a model-facing tool (only through `dsh agents accept`/`discard`).
+- **The three rows are not independently useful** — a `tool-subagent` row that sets `worktreeIsolation: true` while no `tool-subagent-worktree` row is mounted leaves a caller able to create worktrees it can never land or discard through a model-facing tool (only through `dsh agents accept`/`discard`).
 - **Disabling the bundle does not touch existing worktrees** — a worktree created while the bundle was enabled remains on disk with its branch until an operator runs `dsh agents accept` or `discard`.
 - A profile patch or `--patch` overlay that targets `tool-subagent-worktree` or `skill-agent-crew` by id matches no row while this bundle is not selected: the loader warns `patch: entry <id> not found` for each such patch. Select this bundle instead of switching the rows on by id.
 
