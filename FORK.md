@@ -62,6 +62,12 @@ These are upstream files the fork edits with the smallest possible change, delib
 | `apps/cli/package.json` | Adds the `@deepseek-ai/dsh-experimental-agent-room-profile` dependency, which an `OPTIONAL_BUNDLES` entry requires the installation to ship. | 2026-09-17 |
 | `tsconfig.host.json`, `apps/web/tsconfig.json` | Add the `tool-agent-room` and `agent-room-profile` project references and `apps/web/tests/agent-room-panel.e2e.ts`. | 2026-09-17 |
 | `apps/web/tests/expected/plugin-manager/{manager,live-enabled}.expected.md`, `apps/web/tests/expected/plugin-config/official.expected.md` | List the room bundle in the Official group, whose count is eight: four optional bundles and four configuration pages. The e2e files count `OPTIONAL_BUNDLES.length` as upstream's do. | 2026-09-24 |
+| `apps/web/tests/expected/plugin-manager/{manager,live-enabled}.expected.md`, `apps/web/tests/expected/plugin-config/official.expected.md` | The same three files list the peer sessions bundle in the Official group and carry its count to nine: five optional bundles and four configuration pages. | 2026-09-28 |
+| `packages/boot/app-boot/src/profile.ts` | Adds `@deepseek-ai/dsh-experimental-peer-sessions-profile` to `OPTIONAL_BUNDLES`, after the room bundle. The peer sessions bundle declares the `icon` and `./locale` metadata that upstream's `scripts/optional-bundles.spec.ts` requires. | 2026-09-28 |
+| `apps/cli/package.json` | Adds the `@deepseek-ai/dsh-experimental-peer-sessions-profile` dependency, which an `OPTIONAL_BUNDLES` entry requires the installation to ship. | 2026-09-28 |
+| `tsconfig.host.json`, `tsconfig.base.json` | Add the `peer-sessions`, `tool-peer-sessions`, and `peer-sessions-profile` project references and the matching hand-written aliases. | 2026-09-28 |
+| `scripts/verify-package-readme-model-experience.ts` | Adds `packages/experimental/peer-sessions-profile` to `SENTENCE_MODEL_EXPERIENCE` with `kind: 'none'`, so the bundle's one-sentence Model Experience stays gated. | 2026-09-28 |
+| `packages/core/system-prompt/src/index.ts` | Adds the `PEER_COORDINATION` section order (2750) between the tool and subagent sections, which the `peer:coordination` prompt section mounts at instead of picking its own slot. | 2026-09-28 |
 
 ## Category B — the model-visible identity (largest divergence)
 
@@ -104,7 +110,8 @@ Files whose *content* is fork brand material. No seam exists for these, so they 
 
 ## Category D — fork features that extend upstream packages
 
-The rooms and verification work necessarily modifies upstream-owned packages rather than only adding new ones.
+The rooms and verification work necessarily modifies upstream-owned packages rather than only adding new ones, and so does
+peer sessions, whose only upstream edit is the Chat labels its messages project into.
 
 | Area | Files | Since |
 |---|---|---|
@@ -118,6 +125,8 @@ The rooms and verification work necessarily modifies upstream-owned packages rat
 | `apps/cli/tests/profiles/headless/**` | Owner-local expectations and the scripted team fixture. | 2026-09-17 |
 | `packages/client/web/**`, `packages/client/ui-renderer/**` | Boot-page overlay, handoff, and mount-into-host, with the Portal boot brand drawn under every build profile. The overlay's z-index (1150) sits above application layers (1100) and below the WebWorker preview's pre-boot source chooser (1200), and it starts below the Windows desktop caption strip so that strip's menus (1100) stay reachable. On the macOS desktop the overlay precedes the application host inside `#root` and marks no `data-window-drag` row, so upstream's marked chrome rows beneath it stay the window drag regions while it holds and fades. | 2026-09-19 |
 | `apps/web/tests/settings-chrome.e2e.ts`, `apps/web/tests/preview-boot.e2e.ts`, `apps/web/tests/lifecycle-chrome.e2e.ts` | Find the boot page by `[data-dsh-boot]`: the fork's overlay nests the progress hint in a status block, shows it only when boot outlasts the brand moment, and holds over the mounted application on page timers, which a test's installed clock must run out. | 2026-09-23 |
+| `packages/experimental/peer-sessions/**`, `tool-peer-sessions/**`, `peer-sessions-profile/**` | Peer sessions: top-level sessions in one repository find each other in `list_peers`, exchange framed messages through Harness-home mailboxes, and subscribe to an idle notice, where `tool-peer-sessions` adds the peer tools and the `peer:coordination` prompt section and `peer-sessions-profile` mounts both with the shipped limits as an optional bundle. | 2026-09-28 |
+| `packages/client/ui-chat/**` | The peer turn triggers and producer labels: `turn-trigger.ts` maps `peer-message` and `peer-idle` to `message.trigger.peer` and `message.trigger.peerIdle` under the `agent` icon, `event-projection.ts` labels both injections with the sender's display name, and both locale dictionaries and the two specs carry the copy and the assertions. | 2026-09-28 |
 
 ## Category E — generated (never merged by hand)
 

@@ -3,7 +3,7 @@
 - button "刷新"
 - button "添加插件"
 - heading "官方" [level=3]
-- text: "8"
+- text: "9"
 - list:
   - listitem:
     - button "查看 智能体讨论室": 智能体讨论室
@@ -17,6 +17,10 @@
     - button "查看 自动授权审查": 自动授权审查
     - text: 实验性 提供自动审查权限模式，由模型在每次工具调用前判断是否授权。
     - switch "启用 自动授权审查"
+  - listitem:
+    - button "查看 对等会话": 对等会话
+    - text: 实验性 让同一仓库中的顶层智能体会话彼此可见并互相收发消息。每个对等进程都要在自己的 profile 中启用该 bundle，并共用同一个 Harness home。
+    - switch "启用 对等会话"
   - listitem:
     - button "查看 语音输入": 语音输入
     - text: 实验性 在本机使用 SenseVoice 转写录音；首次使用需安装依赖

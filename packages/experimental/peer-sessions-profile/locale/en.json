@@ -1,0 +1,6 @@
+{
+  "meta": {
+    "title": "Peer Sessions",
+    "description": "Let top-level sessions in one repository see each other and exchange messages. Every peer process enables the bundle in its own profile and shares one Harness home."
+  }
+}

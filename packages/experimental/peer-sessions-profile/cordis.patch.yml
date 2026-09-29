@@ -1,2 +1,21 @@
-# Experimental peer sessions profile layer (scaffold; the crew writes the rows).
-[]
+# Experimental peer sessions profile layer. Apply after dsh-base so top-level
+# sessions in one repository can see each other: the service owns the mailbox
+# and presence files under the Harness home, and the tool package adds the peer
+# tools and the coordination prompt section.
+#
+# Mounting this layer is the switch. Every peer process enables it in its own
+# profile, and all of them share one Harness home.
+
+- insert:
+    - id: peer-sessions
+      name: '@deepseek-ai/dsh-experimental-peer-sessions'
+      config:
+        pollMs: 1000
+        maxPendingPerTarget: 8
+        maxPendingPerSenderPerTarget: 4
+        maxMessageBytes: 8192
+        maxIdleWatches: 32
+        peerInbound: steer
+
+    - id: tool-peer-sessions
+      name: '@deepseek-ai/dsh-experimental-tool-peer-sessions'

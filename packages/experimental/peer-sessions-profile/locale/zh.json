@@ -1,0 +1,6 @@
+{
+  "meta": {
+    "title": "对等会话",
+    "description": "让同一仓库中的顶层智能体会话彼此可见并互相收发消息。每个对等进程都要在自己的 profile 中启用该 bundle，并共用同一个 Harness home。"
+  }
+}
