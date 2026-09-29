@@ -18,6 +18,7 @@ vi.mock('../src/git.ts', async importOriginal => (
 
 const cleanups: Array<() => Promise<unknown>> = []
 afterEach(async () => {
+  vi.unstubAllEnvs()
   for (const cleanup of cleanups.reverse()) await cleanup()
   cleanups.length = 0
 })
@@ -197,6 +198,8 @@ interface Script {
   readonly mergeAbortTimesOut?: boolean
   /** Fails the first this many `git rev-list` calls, which read the landing commit after a successful merge, with a nonzero exit. */
   readonly failLandingCommitRead?: number
+  /** Replaces every `git rev-list`, the landing-commit listing, with this result; real git does not run. */
+  readonly revList?: GitCommandResult
 }
 
 /** Real git with scripted exceptions, recording every command it is asked to run. */
@@ -233,6 +236,7 @@ class ScriptedGit extends GitRunner {
       if (script.mergeHeadProbe !== undefined) return script.mergeHeadProbe
     }
     if (args[0] === 'diff' && args.includes('--diff-filter=U') && script.unmergedScan !== undefined) return script.unmergedScan
+    if (args[0] === 'rev-list' && script.revList !== undefined) return script.revList
     if (args[0] === 'rev-list' && this.landingCommitReadFailures < (script.failLandingCommitRead ?? 0)) {
       this.landingCommitReadFailures += 1
       return { exitCode: 128, stdout: '', stderr: 'fatal: scripted rev-list failure\n', stdoutLossy: false }
@@ -596,26 +600,35 @@ describe('attemptMerge: a merge that dies or fails after starting', () => {
 })
 
 describe('attemptMerge: git refused the merge before starting', () => {
-  it('reports blocked, and aborts nothing, when the merge in progress is of the very commit this call was merging', async () => {
+  it('throws, and leaves the merge in place, when exit 128 left a merge of the very commit this call was merging', async () => {
     const { dir, sideCommit, baseHead } = await repoWithSideBranch('dsh-merge-refused-same-commit-')
     const hooks = recordingHooks()
-    // A user starts their own merge of that same commit after the pre-merge probes: this call's `git merge` then dies
-    // with git's "You have not concluded your merge (MERGE_HEAD exists)." — exit 128, having changed nothing.
+    // Either a user started their own merge of that same commit after the pre-merge probes, so this call's `git merge`
+    // died with git's "You have not concluded your merge (MERGE_HEAD exists).", or this call's own merge died after
+    // writing MERGE_HEAD. Both leave that state and that exit code, and nothing can tell them apart, so the merge is
+    // left exactly as it is: aborting it would destroy a merge this call never started.
     const command = await scripted({
       merge: { alongside: ['merge', '--no-ff', '--no-commit', sideCommit], result: FAILED_128 },
     })
 
-    const result = await attemptMerge(command, dir, 'wt-00000035', 'do the thing', sideCommit, signal, hooks)
+    const failure = await attemptMerge(command, dir, 'wt-00000035', 'do the thing', sideCommit, signal, hooks)
+      .catch((error: unknown) => error)
 
-    expect(result).toEqual({
-      kind: 'blocked',
-      reason: 'the base checkout has a merge in progress (MERGE_HEAD exists), and git refused this merge before starting it',
-    })
+    expect(String(failure)).toContain(
+      'git exited 128 with a merge of worktree wt-00000035\'s commit in progress in the base checkout',
+    )
+    expect(String(failure)).toContain('it cannot be told apart from a merge another operation started')
+    expect(String(failure)).toContain('must be finished or aborted there with "git merge --abort"')
+    expect(String(failure)).not.toContain(dir)
     expect(command.commands).not.toContainEqual(['merge', '--abort'])
-    // The user's merge is exactly as they left it, and this call changed nothing.
+    // The merge is exactly as it was left, and this call changed nothing.
     expect(git(dir, 'rev-parse', '-q', '--verify', 'MERGE_HEAD').trim()).toBe(sideCommit)
     expect(git(dir, 'rev-parse', 'HEAD').trim()).toBe(baseHead)
-    expect(hooks.reports).toEqual([])
+    // The absolute path goes to the host log, where an operator can act on it.
+    expect(hooks.reports).toEqual([
+      `subagent-worktree: git merge of ${sideCommit} in "${dir}" exited 128 with a merge of that same commit in `
+      + 'progress; it was left in place, because it cannot be told apart from a merge another operation started',
+    ])
   }, GIT_TEST_TIMEOUT_MS)
 
   it('reports blocked, and aborts nothing, when the merge in progress is of another commit', async () => {
@@ -820,6 +833,36 @@ describe('attemptMerge: which commit stands for the merge', () => {
     expect(git(dir, 'rev-list', '--count', '--merges', 'HEAD').trim()).toBe('1')
   }, GIT_TEST_TIMEOUT_MS)
 
+  it('names the earlier landing merge in DAG order, not the one date order lists last, when a re-landing is backdated', async () => {
+    const { dir, sideCommit, baseHead } = await repoWithSideBranch('dsh-merge-topo-order-')
+    const tree = `${baseHead}^{tree}`
+    // The first merge that lists the reviewed commit, dated 2021.
+    vi.stubEnv('GIT_COMMITTER_DATE', '2021-01-01T00:00:00Z')
+    const firstLanding = git(dir, 'commit-tree', tree, '-p', baseHead, '-p', sideCommit, '-m', 'first landing').trim()
+    // An ordinary commit on top of it, dated 2022, which gives the listing a second way down to the first landing.
+    vi.stubEnv('GIT_COMMITTER_DATE', '2022-01-01T00:00:00Z')
+    const laterWork = git(dir, 'commit-tree', tree, '-p', firstLanding, '-m', 'later work').trim()
+    // A second merge that lists the reviewed commit again, a descendant of the first landing, dated 2020: date order
+    // lists it after its own ancestor, as the last line that lists the reviewed commit, while topological order
+    // cannot list it before the ancestor, because a parent follows all of its children. Porcelain git cannot build
+    // this pair at all — it refuses to merge a commit an ancestor already contains — so it is committed directly.
+    vi.stubEnv('GIT_COMMITTER_DATE', '2020-01-01T00:00:00Z')
+    const secondLanding = git(dir, 'commit-tree', tree, '-p', firstLanding, '-p', sideCommit, '-m', 'land it again').trim()
+    vi.stubEnv('GIT_COMMITTER_DATE', '2023-01-01T00:00:00Z')
+    const head = git(dir, 'commit-tree', tree, '-p', laterWork, '-p', secondLanding, '-m', 'merge the branch back').trim()
+    git(dir, 'reset', '--hard', head)
+
+    // The fixture really holds two merges that list the reviewed commit, the second one a backdated descendant of the
+    // first: that is what makes the listing order decide the answer.
+    expect(git(dir, 'rev-list', '-1', '--parents', firstLanding).trim().split(' ')).toEqual([firstLanding, baseHead, sideCommit])
+    expect(git(dir, 'rev-list', '-1', '--parents', secondLanding).trim().split(' ')).toEqual([secondLanding, firstLanding, sideCommit])
+    expect(git(dir, 'merge-base', '--is-ancestor', firstLanding, secondLanding)).toBe('')
+    const dates = [secondLanding, firstLanding].map(commit => Number(git(dir, 'log', '-1', '--format=%ct', commit).trim()))
+    expect(dates[0]).toBeLessThan(dates[1] ?? 0)
+
+    expect(await landedCommitOf(await runner(), dir, sideCommit, signal)).toBe(firstLanding)
+  }, GIT_TEST_TIMEOUT_MS)
+
   it('finds the landing merge in a listing that lost its head to the output cap, instead of failing on a long history', async () => {
     const { dir, sideCommit } = await repoWithSideBranch('dsh-merge-long-history-')
     const landed = await attemptMerge(await runner(), dir, 'wt-00000038', 'do the thing', sideCommit, signal, recordingHooks())
@@ -843,18 +886,41 @@ describe('attemptMerge: which commit stands for the merge', () => {
     expect(command.revListResults[0]?.stdoutLossy).toBe(true)
   }, GIT_TEST_TIMEOUT_MS)
 
-  it('never returns a commit id cut short: the possibly partial first line of a truncated listing is dropped', async () => {
+  it('refuses a truncated listing whose only line lost its head, instead of naming the reviewed commit from a fragment', async () => {
     const { dir, sideCommit, baseHead } = await repoWithSideBranch('dsh-merge-partial-line-')
     git(dir, 'merge', '--no-ff', '--no-edit', 'side')
     const landingMerge = git(dir, 'rev-parse', 'HEAD').trim()
     // A cap this small leaves only the tail of that one merge line, which begins inside the merge commit's own id: the
-    // first line is a fragment, so nothing in it can answer, and the reviewed commit is its own landing commit.
+    // first line is a fragment, so nothing in it can answer, and the merge that lists the reviewed commit may be
+    // exactly what the cut dropped — the reviewed commit must not stand in for it.
     const line = `${landingMerge} ${baseHead} ${sideCommit}\n`
     const command = new CappedRevListGit(await subprocess(), 100)
 
     expect(line.length).toBeGreaterThan(100)
-    expect(await landedCommitOf(command, dir, sideCommit, signal)).toBe(sideCommit)
+    await expect(landedCommitOf(command, dir, sideCommit, signal))
+      .rejects.toThrow('no merge in the part that was read lists the reviewed commit')
     expect(command.revListResults[0]?.stdoutLossy).toBe(true)
+  }, GIT_TEST_TIMEOUT_MS)
+
+  it('refuses a truncated listing whose retained lines list only other parents', async () => {
+    const { dir, sideCommit } = await repoWithSideBranch('dsh-merge-lossy-no-answer-')
+    git(dir, 'merge', '--no-ff', '--no-edit', 'side')
+    // The lines the cap kept are whole merge lines, but none of them lists the reviewed commit: the cut may have
+    // dropped the landing merge itself, so this cannot answer "the reviewed commit landed on its own".
+    const command = await scripted({
+      revList: {
+        exitCode: 0,
+        stdout: `${'a'.repeat(40)} ${'b'.repeat(40)} ${'c'.repeat(40)}\n${'d'.repeat(40)} ${'e'.repeat(40)} ${'f'.repeat(40)}\n`,
+        stdoutLossy: true,
+        stderr: '',
+      },
+    })
+
+    const failure = await landedCommitOf(command, dir, sideCommit, signal).catch((error: unknown) => error)
+
+    expect(String(failure)).toContain('no merge in the part that was read lists the reviewed commit')
+    expect(String(failure)).toContain('the commit that landed it cannot be named')
+    expect(String(failure)).not.toContain(dir)
   }, GIT_TEST_TIMEOUT_MS)
 })
 

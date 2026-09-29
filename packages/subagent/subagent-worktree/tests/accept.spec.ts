@@ -1261,6 +1261,22 @@ class LandingCommitReadFailsGit extends GitRunner {
   }
 }
 
+/** Real git, except that the landing-commit listing (`git rev-list`) comes back truncated with no line that can answer. */
+class LossyLandingListingGit extends GitRunner {
+  override async run(args: readonly string[], options: GitRunOptions): Promise<GitCommandResult> {
+    if (args[0] === 'rev-list') {
+      // Whole lines, but none of them lists the reviewed commit: the cut may have dropped the merge that did.
+      return {
+        exitCode: 0,
+        stdout: `${'a'.repeat(40)} ${'b'.repeat(40)} ${'c'.repeat(40)}\n${'d'.repeat(40)} ${'e'.repeat(40)} ${'f'.repeat(40)}\n`,
+        stdoutLossy: true,
+        stderr: '',
+      }
+    }
+    return super.run(args, options)
+  }
+}
+
 /** The collaborators `acceptWorktree` needs, with a caller-chosen git runner. */
 function directDeps(h: Harness, command: GitRunner): AcceptDeps {
   return {
@@ -1627,7 +1643,7 @@ describe('accept: a merge that landed', () => {
         at: 1,
       },
     }))
-    expect(await recoverLandedMerge(new GitRunner(h.ctx.subprocess), layout, reviewing, signal)).toBeUndefined()
+    expect(await recoverLandedMerge(new GitRunner(h.ctx.subprocess), layout, reviewing, signal, () => {})).toBeUndefined()
     expect((await requireRecordLocation(h.root, provisioned.record.id)).record.state).toBe('reviewing')
 
     const outcome = await h.ctx.subagentWorktrees.accept(acceptRequest(provisioned.record.id))
@@ -1700,6 +1716,47 @@ describe('accept: a merge that landed', () => {
 
     expect(outcome).toMatchObject({ kind: 'merged', commit, mergeCommit: commit })
     expect(outcome.record).toMatchObject({ state: 'merged', mergedCommit: commit })
+  }, GIT_TEST_TIMEOUT_MS)
+
+  it('records the recovered merge as merged without a merge commit, and throws, when no reading can name it', async () => {
+    const h = await harness()
+    const provisioned = await createWorktree(h.ctx, OWNER, h.dir, 'do the thing')
+    await writeFile(join(provisioned.workDir, 'a.txt'), 'a')
+    git(provisioned.record.path, 'add', '-A')
+    git(provisioned.record.path, 'commit', '-q', '-m', 'work')
+    const commit = git(provisioned.record.path, 'rev-parse', 'HEAD').trim()
+    // A user fast-forwards the base branch onto the worker's commit by hand, so no merge commit lists it, and the
+    // listing that would have to say so comes back truncated without a line that lists it.
+    git(h.dir, 'merge', '--ff-only', provisioned.record.branch)
+    const dead = spawnSync(process.execPath, ['-e', '0']).pid
+    if (dead === undefined) throw new Error('expected a spawned pid')
+    const { layout } = await requireRecordLocation(h.root, provisioned.record.id)
+    await updateExistingRecordAt(layout, provisioned.record.id, current => ({
+      ...current,
+      state: 'reviewing',
+      reviewingPid: dead,
+      lastVerdict: {
+        verdict: 'pass', summary: 's', checks: [], findings: [], commit, reviewerSessionId: SessionId('reviewer'), reviewerRoute: REVIEWER_ROUTE, at: 1,
+      },
+    }))
+    const warn = vi.spyOn(h.ctx.logger, 'warn').mockImplementation(() => {})
+
+    const failure = await acceptWorktree(directDeps(h, new LossyLandingListingGit(h.ctx.subprocess)), acceptRequest(provisioned.record.id))
+      .catch((error: unknown) => error)
+
+    // The merge landed, so the record is closed as `merged` even without it: a record left `reviewing` would fail
+    // every later accept on the same read, and the error still says the merge landed.
+    expect(String(failure)).toContain(
+      `the merge of worktree ${provisioned.record.id} landed in the base checkout and is recorded merged, but its commit id could not be read`,
+    )
+    expect(String(failure)).not.toContain(h.dir)
+    const { record } = await requireRecordLocation(h.root, provisioned.record.id)
+    expect(record.state).toBe('merged')
+    expect(record).not.toHaveProperty('mergedCommit')
+    // The read failure names the path and the commit in the host log, where an operator can act on them.
+    expect(warn).toHaveBeenCalledWith(
+      expect.stringContaining(`worktree ${provisioned.record.id} already landed in "${provisioned.record.repoRoot}" (commit ${commit})`),
+    )
   }, GIT_TEST_TIMEOUT_MS)
 
   it('does not treat a stale record as landed when its reviewed commit is not in the base history', async () => {

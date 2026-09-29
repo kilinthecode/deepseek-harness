@@ -245,7 +245,7 @@ async function releaseClaim(deps: AcceptDeps, layout: WorktreeLayout, id: Worktr
 
 /** An error raised after the merge landed: the base checkout changed even though the accept failed. */
 class MergeLandedError extends Error {
-  constructor(message: string, cause: unknown) {
+  constructor(message: string, cause?: unknown) {
     super(message, { cause })
     this.name = 'MergeLandedError'
   }
@@ -282,9 +282,17 @@ async function recordLandedMerge(
  * The outcome for a worktree that an earlier, crashed accept had already
  * merged: it is now recorded `merged`, and a leftover worktree or branch is
  * swept when `removeOnMerge` is set.
+ * @throws {MergeLandedError} when the commit that landed it could not be read. The record is `merged` either way, so
+ *   nothing reopens it; only the id is missing, and `discard` still clears any leftover worktree or branch.
  */
 async function outcomeOfRecoveredMerge(deps: AcceptDeps, recovery: LandedRecovery): Promise<AcceptOutcome> {
   const { record, verdict, mergeCommit } = recovery
+  if (mergeCommit === undefined) {
+    throw new MergeLandedError(
+      `subagent-worktree: the merge of worktree ${record.id} landed in the base checkout and is recorded merged, `
+      + 'but its commit id could not be read',
+    )
+  }
   let removed = false
   if (deps.config.removeOnMerge) {
     try {
@@ -304,12 +312,15 @@ async function outcomeOfRecoveredMerge(deps: AcceptDeps, recovery: LandedRecover
  * @param deps - host context, command runner, root, config, and `resolveReviewer`.
  * @param request - worktree id, owner, reviewer parent Agent, operator overrides, and cancellation.
  * @returns the accept outcome. A stale `reviewing` record whose reviewed commit already landed (an earlier accept
- *   crashed before recording it) is recorded `merged` and reported as `merged` without a second review or merge.
+ *   crashed before recording it) is recorded `merged` and reported as `merged` without a second review or merge;
+ *   when the commit that landed it cannot be read, the record is still recorded `merged` without a `mergedCommit`
+ *   and the error thrown says the merge landed, exactly as for this accept's own merge.
  * @throws when `request.testCommand` or `request.reviewer` is set by a non-operator owner, the record is not found,
  *   not owned by `request.owner`, not `open` (or stale `reviewing`), or an attached worker is still running. Any git,
  *   subprocess, or reviewer failure before the merge lands rethrows after returning a still-`reviewing` record to
  *   `open`. Once `git merge` has exited 0 the record is never reopened: a failed write of the `merged` state, or a
- *   merge commit id that cannot be read, throws an error that says the merge landed.
+ *   merge commit id that cannot be read — this accept's merge or a recovered one — throws an error that says the
+ *   merge landed.
  */
 export async function acceptWorktree(deps: AcceptDeps, request: AcceptWorktreeRequest): Promise<AcceptOutcome> {
   // `testCommand` runs an operator-supplied argv with host privileges and
@@ -325,7 +336,9 @@ export async function acceptWorktree(deps: AcceptDeps, request: AcceptWorktreeRe
 
   // An earlier accept that died after its merge landed but before recording it left a stale `reviewing`
   // record whose reviewed commit is already in the base checkout: record it `merged`, never re-merge it.
-  const recovery = await recoverLandedMerge(deps.git, located.layout, located.record, request.signal)
+  const recovery = await recoverLandedMerge(deps.git, located.layout, located.record, request.signal, (message) => {
+    deps.ctx.logger.warn(message)
+  })
   if (recovery !== undefined) return await outcomeOfRecoveredMerge(deps, recovery)
 
   // The state and running-worker checks run only here, under the record lock:

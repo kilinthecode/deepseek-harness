@@ -12,7 +12,7 @@ import type { Config } from '../src/index.ts'
 import { pathExists } from '../src/fs-util.ts'
 import { GitRunner } from '../src/git.ts'
 import type { GitRunOptions } from '../src/git.ts'
-import { requireRecordLocation } from '../src/records.ts'
+import { requireRecordLocation, updateExistingRecordAt } from '../src/records.ts'
 import type { WorktreeId, WorktreeOwner } from '../src/types.ts'
 import { createWorktree, fakeAgent, git, initFixtureRepo, removeFixture, setup } from './harness.ts'
 
@@ -249,6 +249,46 @@ describe('discard cleanup', () => {
     expect(git(dir, 'branch', '--list', provisioned.record.branch).trim()).toBe('')
   }, GIT_TEST_TIMEOUT_MS)
 
+  it('discards a stale reviewing record whose recovery probe failed, where accept still refuses to act on it', async () => {
+    const dir = await initFixtureRepo('dsh-discard-probe-fails-')
+    cleanups.push(() => removeFixture(dir))
+    git(dir, 'commit', '--allow-empty', '-q', '-m', 'base')
+    const root = await scratchRoot()
+    const { ctx, dispose } = await setup({ root })
+    cleanups.push(dispose)
+    const provisioned = await createWorktree(ctx, OWNER, dir, 'x')
+    // A stale `reviewing` record whose verdict names a commit git can no longer resolve: whether it already landed is
+    // decided by an ancestry probe in the base checkout, and that probe exits 128, which answers neither "yes" nor
+    // "no" and so leaves the state unknown.
+    const { layout } = await requireRecordLocation(root, provisioned.record.id)
+    await updateExistingRecordAt(layout, provisioned.record.id, current => ({
+      ...current,
+      state: 'reviewing',
+      lastVerdict: {
+        verdict: 'pass', summary: 's', checks: [], findings: [], commit: 'f'.repeat(40),
+        reviewerSessionId: SessionId('reviewer'), reviewerRoute: REVIEWER_ROUTE, at: 1,
+      },
+    }))
+    const warn = vi.spyOn(ctx.logger, 'warn').mockImplementation(() => {})
+
+    // accept cannot safely merge or mark state while the probe has no answer, and says so without the path.
+    await expect(ctx.subagentWorktrees.accept({
+      id: provisioned.record.id, owner: OWNER, parent: fakeAgent('parent', WORKER_ROUTE), signal,
+    })).rejects.toThrow(`could not check whether worktree ${provisioned.record.id} already merged (git merge-base exited 128)`)
+    expect((await requireRecordLocation(root, provisioned.record.id)).record.state).toBe('reviewing')
+
+    // discard is how such a worktree gets removed: the probe failure is logged, and the removal goes ahead.
+    const discarded = await ctx.subagentWorktrees.discard({ id: provisioned.record.id, owner: OWNER, signal })
+
+    expect(discarded.state).toBe('discarded')
+    expect(warn).toHaveBeenCalledWith(
+      expect.stringContaining(`could not check whether worktree ${provisioned.record.id} already landed before discarding it`),
+    )
+    expect(await pathExists(provisioned.record.path)).toBe(false)
+    expect(git(dir, 'worktree', 'list')).not.toContain(provisioned.record.path)
+    expect(git(dir, 'branch', '--list', provisioned.record.branch).trim()).toBe('')
+  }, GIT_TEST_TIMEOUT_MS)
+
   it('finishes when both the directory and the branch are already gone', async () => {
     const dir = await initFixtureRepo('dsh-discard-all-gone-')
     cleanups.push(() => removeFixture(dir))
@@ -261,6 +301,55 @@ describe('discard cleanup', () => {
 
     const updated = await ctx.subagentWorktrees.discard({ id: provisioned.record.id, owner: OWNER, signal })
     expect(updated.state).toBe('discarded')
+  }, GIT_TEST_TIMEOUT_MS)
+
+  it('discards a stale landed record whose landing-commit read failed, logging that failure', async () => {
+    const dir = await initFixtureRepo('dsh-discard-landing-read-')
+    cleanups.push(() => removeFixture(dir))
+    git(dir, 'commit', '--allow-empty', '-q', '-m', 'base')
+    const root = await scratchRoot()
+    const { ctx, dispose } = await setup({ root })
+    cleanups.push(dispose)
+    const provisioned = await createWorktree(ctx, OWNER, dir, 'x')
+    const commit = git(provisioned.record.path, 'rev-parse', 'HEAD').trim()
+    // The reviewed commit lands by fast-forward, as an accept whose record write never happened leaves it, and the
+    // worker made no further change, so the recovery takes the worktree as already landed.
+    git(dir, 'merge', '--ff-only', provisioned.record.branch)
+    const { layout } = await requireRecordLocation(root, provisioned.record.id)
+    await updateExistingRecordAt(layout, provisioned.record.id, current => ({
+      ...current,
+      state: 'reviewing',
+      lastVerdict: {
+        verdict: 'pass', summary: 's', checks: [], findings: [], commit,
+        reviewerSessionId: SessionId('reviewer'), reviewerRoute: REVIEWER_ROUTE, at: 1,
+      },
+    }))
+    const warn = vi.spyOn(ctx.logger, 'warn').mockImplementation(() => {})
+    // Everything but the landing-merge listing runs as real git, through the runner bound before the spy goes in.
+    const delegate = new GitRunner(ctx.subprocess)
+    const realRun = delegate.run.bind(delegate)
+    vi.spyOn(GitRunner.prototype, 'run').mockImplementation(function (this: GitRunner, args: readonly string[], options: GitRunOptions) {
+      // The landing-merge listing comes back truncated without a line that lists the reviewed commit, so the commit
+      // that landed it cannot be read.
+      if (args[0] === 'rev-list') {
+        return Promise.resolve({
+          exitCode: 0, stdout: `${'a'.repeat(40)} ${'b'.repeat(40)} ${'c'.repeat(40)}\n`, stdoutLossy: true, stderr: '',
+        })
+      }
+      return realRun(args, options)
+    })
+
+    const discarded = await ctx.subagentWorktrees.discard({ id: provisioned.record.id, owner: OWNER, signal })
+
+    // The recovery already recorded it `merged`, and discard then swept the leftovers, without a throw to the caller.
+    expect(discarded.state).toBe('merged')
+    // The read failure reaches the host log with its absolute path and commit, and the removal goes ahead anyway.
+    expect(warn).toHaveBeenCalledWith(
+      expect.stringContaining(`worktree ${provisioned.record.id} already landed in "${provisioned.record.repoRoot}" (commit ${commit})`),
+    )
+    expect(await pathExists(provisioned.record.path)).toBe(false)
+    expect(git(dir, 'worktree', 'list')).not.toContain(provisioned.record.path)
+    expect(git(dir, 'branch', '--list', provisioned.record.branch).trim()).toBe('')
   }, GIT_TEST_TIMEOUT_MS)
 
   it('claims the record before any git change, so a failing removal leaves it discarded rather than open', async () => {

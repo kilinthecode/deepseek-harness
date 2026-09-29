@@ -7,6 +7,10 @@
  * review and a second merge of work that already landed. Only a worktree that
  * still holds exactly the reviewed commit is recovered: anything newer in it
  * is work nobody reviewed, and an older commit that landed says nothing about it.
+ * Once those checks have established that the reviewed commit landed, the record
+ * is closed as `merged` whatever the read of the commit that landed it does: a
+ * failed read records it without a `mergedCommit` and is logged, because a
+ * record left `reviewing` would make every later `accept` fail the same way.
  *
  * @module @deepseek-ai/dsh-subagent-worktree/landed
  */
@@ -21,12 +25,16 @@ import { pathExists } from './fs-util.ts'
 
 /** A stale `reviewing` record whose reviewed commit had already landed, now recorded `merged`. */
 export interface LandedRecovery {
-  /** The record as now stored: `merged`, with `mergedCommit` set to {@link mergeCommit}. */
+  /** The record as now stored: `merged`, with `mergedCommit` set to {@link mergeCommit} when that read succeeded. */
   readonly record: StoredWorktreeRecord
   /** The verdict the merged commit was reviewed under. */
   readonly verdict: WorktreeVerdict
-  /** The commit that landed the reviewed commit, as {@link landedCommitOf} defines it. */
-  readonly mergeCommit: string
+  /**
+   * The commit that landed the reviewed commit, as {@link landedCommitOf} defines it, or `undefined` when reading it
+   * failed: the record is then `merged` without a `mergedCommit`, which beats leaving it `reviewing` for every later
+   * `accept` to fail on.
+   */
+  readonly mergeCommit: string | undefined
 }
 
 /** One deciding probe: its git subcommand, and the exit codes that are answers rather than failures. */
@@ -103,16 +111,25 @@ async function worktreeHoldsOnly(git: GitRunner, record: StoredWorktreeRecord, r
  * that commit being an ancestor of the merge target's `HEAD`
  * (`git merge-base --is-ancestor`). Any other record is left for the caller's
  * ordinary handling, which reviews whatever the worktree holds now.
+ *
+ * Once those checks have established that the reviewed commit landed, the
+ * record is closed as `merged` even when the commit that landed it cannot be
+ * read: the merge already happened, and a record left `reviewing` would fail
+ * every later `accept` on a read that may never succeed. Such a failure is
+ * logged, and the recovery reports no {@link LandedRecovery.mergeCommit}.
  * @param git - command runner.
  * @param layout - the repository layout the record is stored under.
  * @param record - the record as read.
  * @param signal - cancellation for the check.
+ * @param log - receives the host-log message of a landing-commit read that failed; the message names the absolute
+ *   path and the commit, which the caller's own error then does not.
  * @returns the recovery, or undefined when the record needs no recovery.
  * @throws when a check was cancelled or failed, and so has no answer: the record is then left exactly as it was,
  *   with no claim taken on it, so a later `accept` or `discard` either recovers it or fails the same way.
  */
 export async function recoverLandedMerge(
   git: GitRunner, layout: WorktreeLayout, record: StoredWorktreeRecord, signal: AbortSignal,
+  log: (message: string) => void,
 ): Promise<LandedRecovery | undefined> {
   const verdict = record.lastVerdict
   if (verdict === undefined || verdict.verdict !== 'pass' || !isStaleReviewing(record)) return undefined
@@ -127,13 +144,27 @@ export async function recoverLandedMerge(
   if (ancestor.exitCode === PROBE_NO_EXIT_CODE) return undefined
   if (!await worktreeHoldsOnly(git, record, verdict.commit, signal)) return undefined
 
-  const mergeCommit = await landedCommitOf(git, record.repoRoot, verdict.commit, signal)
+  let mergeCommit: string | undefined
+  try {
+    mergeCommit = await landedCommitOf(git, record.repoRoot, verdict.commit, signal)
+  } catch (error) {
+    // The reviewed commit landed, so the record is closed either way: reading which commit landed it is what failed.
+    log(
+      `subagent-worktree: worktree ${record.id} already landed in "${record.repoRoot}" (commit ${verdict.commit}), but `
+      + `the commit that landed it could not be read: ${String(error)}`,
+    )
+    mergeCommit = undefined
+  }
   // Tracked on an object: the updater runs later, under the record lock, and may find the record already moved on.
   const outcome = { recorded: false }
   const updated = await updateExistingRecordAt(layout, record.id, (current) => {
     if (!isStaleReviewing(current)) return current
     outcome.recorded = true
-    return { ...withoutReviewingPid(current), state: 'merged', mergedCommit: mergeCommit }
+    return {
+      ...withoutReviewingPid(current),
+      state: 'merged',
+      ...mergeCommit === undefined ? {} : { mergedCommit: mergeCommit },
+    }
   })
   return outcome.recorded ? { record: updated, verdict, mergeCommit } : undefined
 }
