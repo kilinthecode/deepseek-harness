@@ -12,7 +12,7 @@ import type * as Git from '../src/git.ts'
 import type { GitCommandResult, GitRunOptions } from '../src/git.ts'
 import { layoutForRepo } from '../src/records.ts'
 import { expireSignal, KILLED_RESULT } from './cleanup-signals.ts'
-import { git, initFixtureRepo, removeFixture } from './harness.ts'
+import { addFixtureSubmodule, git, initFixtureRepo, removeFixture } from './harness.ts'
 import type { CreateWorktreeRequest } from '../src/types.ts'
 
 // Cleanup signals never run out on their own here, so a test can make one run out at a chosen moment.
@@ -153,6 +153,40 @@ describe('createWorktree', () => {
     const provisioned = await createWorktree(await runner(), root, 'dsh/worktree/', 16, request(dir))
 
     expect(provisioned.baseDirty?.entries).toEqual(['?? untracked.txt'])
+  }, GIT_TEST_TIMEOUT_MS)
+
+  it('reports an untracked directory as one entry even when the config hides untracked files', async () => {
+    const dir = await initFixtureRepo('dsh-create-untracked-dir-')
+    cleanups.push(() => removeFixture(dir))
+    git(dir, 'commit', '--allow-empty', '-q', '-m', 'base')
+    git(dir, 'config', 'status.showUntrackedFiles', 'no')
+    await mkdir(join(dir, 'build'))
+    for (const name of ['a.js', 'b.js', 'c.js']) await writeFile(join(dir, 'build', name), 'x')
+    const root = await scratchRoot()
+
+    // The status read asks for untracked files explicitly, so the config cannot hide the directory, and it asks for
+    // one entry per directory rather than one per file: a checkout whose build output or virtualenv holds tens of
+    // thousands of files then still summarizes inside the capture cap instead of failing `create` outright.
+    const provisioned = await createWorktree(await runner(), root, 'dsh/worktree/', 16, request(dir))
+
+    expect(provisioned.baseDirty?.entries).toEqual(['?? build/'])
+    expect(provisioned.baseDirty?.total).toBe(1)
+  }, GIT_TEST_TIMEOUT_MS)
+
+  it('reports a base submodule whose checkout moved, even when the config hides submodule changes', async () => {
+    const dir = await initFixtureRepo('dsh-create-submodule-')
+    cleanups.push(() => removeFixture(dir))
+    git(dir, 'commit', '--allow-empty', '-q', '-m', 'base')
+    const { subdir, older } = await addFixtureSubmodule(dir, 'dsh-create-submodule-src-')
+    // The submodule is checked out at a commit its own gitlink does not name, which is a base change the worktree
+    // would not contain.
+    git(subdir, 'checkout', '-q', '--detach', older)
+    git(dir, 'config', 'submodule.sub.ignore', 'all')
+    const root = await scratchRoot()
+
+    const provisioned = await createWorktree(await runner(), root, 'dsh/worktree/', 16, request(dir))
+
+    expect(provisioned.baseDirty?.entries).toEqual([' M sub'])
   }, GIT_TEST_TIMEOUT_MS)
 
   it('scopes workDir inside the worktree when baseDir is reached through a symlinked directory prefix', async () => {
