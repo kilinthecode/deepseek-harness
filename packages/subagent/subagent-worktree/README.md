@@ -46,13 +46,12 @@ Mount this service so a delegation consumer can offer worktree isolation. Loadin
 | `reviewDiffMaxBytes` | `49152` | Byte bound on the diff embedded in the reviewer prompt |
 | `removeOnMerge` | `true` | Remove the worktree directory and branch after a successful merge |
 | `commitAuthorName` / `commitAuthorEmail` | — | Author identity for harness commits, set together; omitted uses git's configured identity |
-| `offerIsolation` | `false` | Offer the `isolation: "worktree"` parameter on every subagent delegation tool, including tools mounted inside agent presets |
 
 `reviewerProvider`/`reviewerModel` and `commitAuthorName`/`commitAuthorEmail` each fail loud at load if only one half of the pair is set, and `reviewerReasoningEffort` fails loud if set without both reviewer fields. The generated [configuration catalog](../../../docs/config-catalog.md#deepseek-aidsh-subagent-worktree) is the exhaustive source for every accepted field and its JSDoc.
 
 By default the reviewer runs on the route of the accepting agent, so a worker started on a cheaper route is reviewed on the accepting agent's route automatically. To enforce a reviewer on a different model than the worker, configure `reviewerProvider`/`reviewerModel` and set `requireDistinctReviewer: true`.
 
-`offerIsolation` is a deployment-wide switch on this service's own top-level row. The `subagent` tool is also mounted inside agent presets, whose nested rows a bundle patch cannot reach, so this is the one setting that turns the `isolation: "worktree"` parameter on for every such tool. A delegation tool reads `ctx.subagentWorktrees.offersIsolation`, a read-only getter, when it mounts, in addition to its own `worktreeIsolation` row setting.
+Worktree isolation is offered on delegation tools by registration, not configuration: `ctx.subagentWorktrees.offerIsolation()` counts one live offer and returns the disposer that withdraws it, and the read-only `offersIsolation` getter is true while at least one offer is live. A delegation tool whose provider has the `cwd` capability offers the `isolation: "worktree"` parameter while `offersIsolation` is true, in addition to its own `worktreeIsolation` row setting, and mounts again when `subagent-worktree/offer-changed` reports a flip. `@deepseek-ai/dsh-tool-subagent-worktree` registers an offer for as long as its tools are mounted, so the offer comes and goes with them and reaches tools that agent presets mount, whose rows a bundle patch cannot change; a profile patch on this service's row cannot remove it.
 
 ### The service surface
 

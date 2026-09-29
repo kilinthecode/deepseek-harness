@@ -118,10 +118,12 @@ export interface Config {
    * `isolation: "worktree"`. Requires `ctx.subagentWorktrees`
    * (`@deepseek-ai/dsh-subagent-worktree`) and a provider with the `cwd`
    * capability — the seam's own capability check rejects a provider without
-   * it. Defaults to `false`: unless the service offers isolation on every
-   * delegation tool (`ctx.subagentWorktrees.offersIsolation`, read when the
-   * tool mounts, and only for a provider with the `cwd` capability), the
-   * schema omits the `isolation` parameter and the executor rejects it.
+   * it. Defaults to `false`: unless the worktree service holds a live
+   * isolation offer (`ctx.subagentWorktrees.offersIsolation`, registered by a
+   * mounted `@deepseek-ai/dsh-tool-subagent-worktree` row, and only for a
+   * provider with the `cwd` capability), the schema omits the `isolation`
+   * parameter and the executor rejects it. The tool mounts again when that
+   * offer appears or lapses.
    */
   worktreeIsolation?: boolean
 }
@@ -154,7 +156,8 @@ export const Config: z<Config> = z.object({
   worktreeIsolation: z.boolean().default(false).description(
     'Give each delegation its own git worktree, isolated until an independent reviewer approves merging it. '
     + 'Requires the subagent-worktree service and a provider with the cwd capability. '
-    + 'The service can also offer isolation on every delegation tool through its offerIsolation setting.',
+    + 'Without this setting the tool still offers isolation while a tool-subagent-worktree row is mounted '
+    + '(the Agent Crew bundle mounts one) and the provider has the cwd capability.',
   ),
 })
 
@@ -367,6 +370,14 @@ interface DelegationIsolationRequest {
   readonly isolation?: 'worktree'
 }
 
+/**
+ * The failure for an `isolation` argument sent to a tool whose schema did not offer it. The model cannot
+ * change the offer, so the text names the operator-side ways to make it.
+ */
+const ISOLATION_NOT_OFFERED = 'subagent: isolation is not offered on this tool; omit the isolation argument. '
+  + 'Isolation needs a provider with the cwd capability, and an operator offers it by enabling the Agent Crew '
+  + 'bundle (or mounting a tool-subagent-worktree row) or by setting worktreeIsolation: true on this tool\'s row.'
+
 /** Resolve the model's optional isolation request, enforcing the offer the schema made at mount. */
 function resolveDelegationIsolation(
   request: DelegationIsolationRequest,
@@ -376,7 +387,7 @@ function resolveDelegationIsolation(
     // The validator permits undeclared keys, so schema omission also needs
     // execution-time enforcement.
     if (request.isolation !== undefined) {
-      throw new Error('subagent: isolation is not enabled for this tool')
+      throw new Error(ISOLATION_NOT_OFFERED)
     }
     return undefined
   }
@@ -484,18 +495,27 @@ export function apply(ctx: Context, config: Config, session?: Session): void {
   const install = (runtimeCtx: Context, modelSelectionPolicy: ModelSelectionPolicy | undefined): void => {
     const modelSelectionEnabled = modelSelectionPolicy !== undefined
     if (modelSelectionPolicy !== undefined) registerListSubagentModels(runtimeCtx, modelSelectionPolicy)
+    // Whether this tool offers `isolation: "worktree"` on a provider: the row's own switch, or a live offer on the
+    // worktree service, which the worktree tools' row registers. The offer reaches a tool mounted inside an agent
+    // preset, whose row a bundle patch cannot change, and never counts for a provider without the `cwd`
+    // capability, which cannot place a child in a worktree.
+    const isolationOffered = (subagentProvider: SubagentProvider): boolean =>
+      config.worktreeIsolation === true
+      || (subagentProvider.capabilities.cwd && runtimeCtx.get('subagentWorktrees')?.offersIsolation === true)
     // Load order and HMR replacement can change provider availability while
     // this fiber remains active.
-    let mounted: { subagentProvider: SubagentProvider; disposeTool: () => void } | undefined
+    let mounted: {
+      subagentProvider: SubagentProvider
+      disposeTool: () => void
+      /** What the mounted schema and executor decided, to compare with a later answer. */
+      isolationOffered: boolean
+    } | undefined
     const mount = (subagentProvider: SubagentProvider): void => {
       assertSubagentProviderConfiguration(subagentProvider)
       const wording = providerWording(subagentProvider.inheritsParentContext)
       const providerRouteDefaults = subagentProvider.agentRouteDefaults
-      // The service's deployment-wide switch reaches a tool mounted inside an agent preset, whose row a bundle
-      // patch cannot change; a provider without the `cwd` capability cannot place a child in a worktree, so the
-      // switch never offers isolation on it. Read once per mount: the schema and the executor below share it.
-      const worktreeIsolationOffered = config.worktreeIsolation === true
-        || (subagentProvider.capabilities.cwd && runtimeCtx.get('subagentWorktrees')?.offersIsolation === true)
+      // One answer per mount: the schema and the executor below share it, so a call the schema hid is rejected.
+      const worktreeIsolationOffered = isolationOffered(subagentProvider)
       const selectionDescription = providerRouteDefaults !== undefined
         ? ' Child LLM selection is optional. Omit `provider`, `model`, and `reasoning_effort` to use configured child defaults and this provider\'s route defaults. Supply `provider` and `model` together after using `list_subagent_models` to inspect advertised routes and efforts. Changing the effective route without naming an effort uses the selected model\'s default effort.'
         : ' Child LLM selection is optional. Omit `provider`, `model`, and `reasoning_effort` to use configured child defaults and inherit compatible missing values from the parent Agent. Supply `provider` and `model` together after using `list_subagent_models` to inspect advertised routes and efforts. Changing the effective route without naming an effort uses the selected model\'s default effort.'
@@ -857,7 +877,7 @@ export function apply(ctx: Context, config: Config, session?: Session): void {
           )
         },
       }))
-      mounted = { subagentProvider, disposeTool }
+      mounted = { subagentProvider, disposeTool, isolationOffered: worktreeIsolationOffered }
     }
 
     // Register listeners before checking presence so no synchronous change is missed.
@@ -873,6 +893,16 @@ export function apply(ctx: Context, config: Config, session?: Session): void {
       if (name !== config.provider || mounted === undefined) return
       mounted.disposeTool()
       mounted = undefined
+    })
+    // The offer belongs to the worktree tools' row, which can mount before or after this tool and comes and goes
+    // with a bundle toggle or an HMR restart: replace the mounted definition whenever the answer for its
+    // provider changes.
+    runtimeCtx.on('subagent-worktree/offer-changed', () => {
+      if (mounted === undefined || isolationOffered(mounted.subagentProvider) === mounted.isolationOffered) return
+      const { subagentProvider, disposeTool } = mounted
+      disposeTool()
+      mounted = undefined
+      mount(subagentProvider)
     })
     const present = runtimeCtx.subagents.getProvider(config.provider)
     if (present !== undefined) {

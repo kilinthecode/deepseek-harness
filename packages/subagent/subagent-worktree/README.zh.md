@@ -46,13 +46,12 @@ kind: "package-reference"
 | `reviewDiffMaxBytes` | `49152` | 嵌入评审者提示词中的 diff 的字节上限 |
 | `removeOnMerge` | `true` | 合并成功后删除工作树目录及其分支 |
 | `commitAuthorName` / `commitAuthorEmail` | — | 用于 harness 提交的作者身份,需成对设置;省略时使用 git 自身已配置的身份 |
-| `offerIsolation` | `false` | 在每个 subagent 委派工具上提供 `isolation: "worktree"` 参数,包括挂载在智能体预设内部的工具 |
 
 若 `reviewerProvider`/`reviewerModel` 或 `commitAuthorName`/`commitAuthorEmail` 中只设置了一半,会在加载时立即报错;若设置了 `reviewerReasoningEffort` 但未同时设置两个评审者字段,同样会立即报错。生成的[配置目录](../../../docs/config-catalog.zh.md#deepseek-aidsh-subagent-worktree)是每个可接受字段及其 JSDoc 的完整来源。
 
 默认情况下,评审者运行在执行接受操作的智能体自身的路由上,因此以更便宜的路由启动的工作者会自动由接受者的路由评审。若要强制评审者使用与工作者不同的模型,请配置 `reviewerProvider`/`reviewerModel` 并设置 `requireDistinctReviewer: true`。
 
-`offerIsolation` 是本服务自身顶层配置行上的部署级开关。`subagent` 工具也会挂载在智能体预设内部,而 bundle 补丁无法触及预设中的嵌套行,因此这是让每个此类工具都启用 `isolation: "worktree"` 参数的唯一设置。委派工具在挂载时会读取只读的 getter `ctx.subagentWorktrees.offersIsolation`,同时仍会参考其自身 `worktreeIsolation` 行的设置。
+工作树隔离通过注册而不是配置向委派工具提供：`ctx.subagentWorktrees.offerIsolation()` 计入一个有效的提供，并返回撤回它的 disposer（资源释放）；只读的 `offersIsolation` getter 在至少存在一个有效提供时为 true。提供方具备 `cwd` 能力的委派工具，在 `offersIsolation` 为 true 期间会提供 `isolation: "worktree"` 参数（同时仍参考其自身 `worktreeIsolation` 行的设置），并在 `subagent-worktree/offer-changed` 报告翻转时重新挂载。`@deepseek-ai/dsh-tool-subagent-worktree` 在其工具挂载期间注册一个提供，因此提供随这些工具出现和消失，并能触及由智能体预设挂载的工具（bundle 补丁无法改动这些预设中的行）；针对本服务条目的 profile 补丁无法移除它。
 
 ### 服务接口
 

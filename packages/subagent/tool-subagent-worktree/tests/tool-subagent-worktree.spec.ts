@@ -22,16 +22,21 @@ afterEach(async () => {
   contexts.clear()
 })
 
-async function setup(): Promise<{ ctx: Context; fake: FakeSubagentWorktrees; fiber: Awaited<ReturnType<Context['plugin']>> }> {
+async function setup(config?: Partial<tool.Config>): Promise<{
+  ctx: Context
+  fake: FakeSubagentWorktrees
+  fiber: Awaited<ReturnType<Context['plugin']>>
+  serviceFiber: Awaited<ReturnType<Context['plugin']>>
+}> {
   const ctx = new Context()
   contexts.add(ctx)
   await mountAgentLoopTestDependencies(ctx)
   await mountAgentLoopTestHarness(ctx)
-  await ctx.plugin(FakeSubagentWorktrees)
+  const serviceFiber = await ctx.plugin(FakeSubagentWorktrees)
   const service = ctx.get('subagentWorktrees')
   if (!(service instanceof FakeSubagentWorktrees)) throw new Error('expected the fake worktree service to be mounted')
-  const fiber = await ctx.plugin(tool)
-  return { ctx, fake: service, fiber }
+  const fiber = await ctx.plugin(tool, config)
+  return { ctx, fake: service, fiber, serviceFiber }
 }
 
 let calls = 0
@@ -101,6 +106,39 @@ describe('tool-subagent-worktree wiring', () => {
     expect(list.parameters).toEqual({
       type: 'object',
       properties: {},
+    })
+  })
+
+  describe('isolation offer', () => {
+    it('offers isolation for as long as the tools are mounted, and withdraws the offer with the plugin fiber', async () => {
+      const { ctx, fiber } = await setup()
+      expect(ctx.subagentWorktrees.offersIsolation).toBe(true)
+
+      await fiber.dispose()
+
+      expect(ctx.subagentWorktrees.offersIsolation).toBe(false)
+    })
+
+    it('offers nothing when configured off, though the tools still register', async () => {
+      const { ctx } = await setup({ offerIsolation: false })
+
+      expect(ctx.tools.schemas().some(schema => schema.name === 'accept_worktree')).toBe(true)
+      expect(ctx.subagentWorktrees.offersIsolation).toBe(false)
+    })
+
+    it('offers again after the worktree service restarts, because the tools re-mount against the new instance', async () => {
+      const { ctx, serviceFiber } = await setup()
+      const before = ctx.subagentWorktrees
+
+      await serviceFiber.restart()
+
+      expect(ctx.subagentWorktrees).not.toBe(before)
+      expect(ctx.subagentWorktrees.offersIsolation).toBe(true)
+    })
+
+    it('declares offerIsolation on by default in its Config schema', () => {
+      expect(tool.Config({}).offerIsolation).toBe(true)
+      expect(tool.Config({ offerIsolation: false }).offerIsolation).toBe(false)
     })
   })
 

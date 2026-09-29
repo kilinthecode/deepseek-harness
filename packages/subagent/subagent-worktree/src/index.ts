@@ -53,6 +53,18 @@ declare module '@deepseek-ai/cordis' {
     /** Isolated git worktrees for delegated agents. */
     subagentWorktrees: SubagentWorktrees
   }
+
+  interface Events {
+    /**
+     * Whether worktree isolation is offered on delegation tools changed: the first live offer was
+     * registered, or the last one was withdrawn. It does not fire while offers are added or withdrawn
+     * with at least one other still live. Delegation tools listen and mount again; a listener failure is
+     * logged and does not stop the other listeners or the offer that triggered it.
+     * @param offered - the new value of {@link SubagentWorktrees.offersIsolation}.
+     * @mode emit
+     */
+    'subagent-worktree/offer-changed'(offered: boolean): void
+  }
 }
 
 /**
@@ -94,12 +106,6 @@ export interface Config {
   commitAuthorName?: string
   /** Author email for harness commits; set together with {@link commitAuthorName}. */
   commitAuthorEmail?: string
-  /**
-   * Offer the `isolation: "worktree"` parameter on every subagent delegation tool, including tools mounted
-   * inside agent presets, whose nested rows a bundle patch cannot reach. Omitted or `false` leaves each tool to
-   * its own `worktreeIsolation` setting; read through {@link SubagentWorktrees.offersIsolation}.
-   */
-  offerIsolation?: boolean
 }
 
 /** Schemastery validation for {@link Config}. */
@@ -117,7 +123,6 @@ const ConfigSchema: z<Config> = z.object({
   removeOnMerge: z.boolean().default(true).description('Remove the worktree and its branch after a successful merge.'),
   commitAuthorName: z.string().description('Author name for harness commits, set together with commitAuthorEmail. Omitted uses the git configuration.'),
   commitAuthorEmail: z.string().description('Author email for harness commits, set together with commitAuthorName.'),
-  offerIsolation: z.boolean().default(false).description('Offer the isolation: "worktree" parameter on every subagent delegation tool, including tools mounted inside agent presets.'),
 })
 
 /** Whether a filter owner admits a record's owner: exact match, `operator` filtering only `operator` records. */
@@ -152,6 +157,9 @@ export class SubagentWorktrees extends Service {
   /** Logs a candidate directory or stray file that a record scan skipped instead of failing on. */
   private readonly warnScan: ScanWarning = (message) => { this.ctx.logger.warn(message) }
 
+  /** Isolation offers registered through {@link offerIsolation} and not yet withdrawn. */
+  private liveOffers = 0
+
   constructor(ctx: Context, protected readonly config: Config) {
     super(ctx, 'subagentWorktrees')
     this.root = config.root ?? dshHomePath('worktrees')
@@ -169,14 +177,53 @@ export class SubagentWorktrees extends Service {
   }
 
   /**
-   * Whether this deployment offers worktree isolation on every subagent delegation tool, including tools
-   * mounted inside agent presets, whose nested rows a bundle patch cannot reach. Delegation tools consult it
-   * at mount time in addition to their own `worktreeIsolation` row setting. Read-only: it is set through
-   * `Config.offerIsolation`, at load.
-   * @returns `Config.offerIsolation`, or `false` when it is omitted.
+   * Whether at least one offer of worktree isolation is live. A delegation tool whose provider has the `cwd`
+   * capability offers the `isolation: "worktree"` parameter while this holds, in addition to its own
+   * `worktreeIsolation` row setting, and mounts again when it changes. Registered offers include those
+   * that reach tools mounted inside agent presets, whose rows a bundle patch cannot change.
+   * @returns whether any offer registered through {@link offerIsolation} has not been withdrawn.
    */
   get offersIsolation(): boolean {
-    return this.config.offerIsolation ?? false
+    return this.liveOffers > 0
+  }
+
+  /**
+   * Offer worktree isolation on delegation tools until the returned disposer runs. Offers are counted: the
+   * offer stands while at least one registration is live, so two consumers can offer independently.
+   * `subagent-worktree/offer-changed` fires when this registration is the first live offer, and when
+   * withdrawing it leaves none.
+   * @returns a disposer that withdraws this offer; calling it again has no effect.
+   */
+  offerIsolation(): () => void {
+    this.liveOffers += 1
+    if (this.liveOffers === 1) this.notifyOfferChanged(true)
+    let live = true
+    return () => {
+      if (!live) return
+      live = false
+      this.liveOffers -= 1
+      if (this.liveOffers === 0) this.notifyOfferChanged(false)
+    }
+  }
+
+  /**
+   * Tell every listener that {@link offersIsolation} flipped. A listener that throws or rejects is
+   * logged, never propagated: the count is already updated, and the caller of `offerIsolation` must
+   * still receive its disposer.
+   * @param offered - the value of {@link offersIsolation} after the flip.
+   */
+  private notifyOfferChanged(offered: boolean): void {
+    const args: unknown[] = ['subagent-worktree/offer-changed', offered]
+    for (const callback of this.ctx.events.dispatch('emit', args)) {
+      try {
+        const returned: unknown = callback(...args)
+        void Promise.resolve(returned).catch((error: unknown) => {
+          this.ctx.logger.warn(`subagent-worktree/offer-changed listener rejected: ${String(error)}`)
+        })
+      } catch (error: unknown) {
+        this.ctx.logger.warn(`subagent-worktree/offer-changed listener threw: ${String(error)}`)
+      }
+    }
   }
 
   /**
