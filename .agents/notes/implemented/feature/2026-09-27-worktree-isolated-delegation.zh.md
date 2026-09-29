@@ -14,7 +14,7 @@ Lead agent 已经可以把工作拆分给多个 subagent，但每个 child 都�
 
 - **Seam.** `SubagentStartRequest.cwd` 会替换子级持久 `SessionHeader.cwd` 中父级的工作目录。文件工具、shell 工作目录与沙箱写入根目录都源自该 header，因此无需改动沙箱。一次性路径以 `cwd` 能力作为该字段的准入条件，而只有全新的 `spawn` 提供方声明该能力；continuation manager 会校验该目录，并以同一能力为准入条件。cwd 与父级不同的可继续 child 不会被告知父级与它共享工作区。
 - **Service.** `@deepseek-ai/dsh-subagent-worktree` 拥有 `ctx.subagentWorktrees`：它用 `git worktree add -b` 从基础 checkout 的 `HEAD` 出发，在 `<DSH_HOME>/worktrees/<repository key>/` 下创建分支，为每个 worktree 保留一条经 schema 校验的记录，并在宿主域中通过 `ctx.subprocess` 运行 git，其 argv 只来自配置或 operator 输入。
-- **Accept.** harness 会提交该 worktree（被限制在自身 worktree 内的 child 无法写入基础仓库 `.git` 的 index 与 object），为该 commit 创建一次性的分离 checkout，运行可选的已配置检查命令，并在那里以结构化的评审结果 schema 启动一个 reviewer child。reviewer 路由的解析顺序是 operator 覆盖、配置，然后是接受操作所属 agent 的路由，且仅在设置了 `requireDistinctReviewer` 时才必须与 worker 的路由不同。只有绑定到该确切 commit 的 `pass` 才会被合并，合并时在跨进程锁下使用 `--no-ff`；冲突会中止合并并保留该 branch。
+- **Accept.** harness 会提交该 worktree（被限制在自身 worktree 内的 child 无法写入基础仓库 `.git` 的 index 与 object），为该 commit 创建一次性的分离 checkout，运行可选的已配置检查命令，并在那里以结构化的评审结果 schema 启动一个 reviewer child。reviewer 路由的解析顺序是 operator 覆盖、配置，然后是接受操作所属 agent 的路由，且仅在设置了 `requireDistinctReviewer` 时才必须与 worker 的路由不同。只有绑定到该确切 commit 的 `pass` 才会被合并，合并时在跨进程锁下使用 `--no-ff`；冲突会中止合并并保留该 branch。基础 checkout 是用户的工作树，因此 harness 只中止它能证明由自己发起的合并：已在进行中的合并会阻止接受，无法归属的合并保持原样并被报告。在中断前已经落地的合并会在下一次 accept 或 discard 时记录为已合并，绝不会重新打开进行另一次评审。
 - **Consumers.** 当 `subagent` 工具的条目设置了 `worktreeIsolation`，或工作树工具条目在 `ctx.subagentWorktrees` 上持有一个提供（`offerIsolation()`，在该条目挂载期间一直有效）且其提供方具备 `cwd` 能力时，该工具会新增一个 `isolation: "worktree"` 参数。offer 放在共享服务上，是因为 agent 预设挂载它们自己的 `subagent` 条目，bundle 补丁无法触及；采用注册而不是配置，是因为替换该服务条目配置的 profile 补丁（例如固定审查路由）否则会把它关掉；委派工具在挂载时读取 `offersIsolation`，并在 `subagent-worktree/offer-changed` 时重新挂载，因此加载顺序与 bundle 开关都不再决定答案。后台 worker 会在启动之前以预留的 child id 记录到它自己的 worktree 上，因此 accept 绝不会与它看不到的活跃 worker 竞争。`accept_worktree`、`discard_worktree` 与 `list_worktrees` 只作用于调用 Session 自己创建的 worktree，并在模型边界校验 worktree id；`agent-crew` skill 负责传授任务拆分、更便宜的 worker 路由与评审循环。可选的 `Agent crew` bundle 会在 Plugins 页面加入这些工具与 skill，且不配置任何共享条目。`dsh agents` 命令就是随发行版交付的 `agents` profile：operator Session 每次 `run` 运行一个 worker，以 operator 身份接受它，并可选启动会收到 worker brief 与发现的 fixer。
 - **Lifecycle.** 可继续 child 的工作目录若已不存在（例如其 worktree 已被合并并删除），恢复时会以类型化错误失败，而不是恢复进一个缺失的目录。
 
@@ -44,4 +44,4 @@ worktree 位于 Harness 主目录之下，而不是仓库内部。`glob` 工具�
 
 ## Testing
 
-seam 测试覆盖两条路径上对 cwd 的覆盖、校验与能力门禁。服务测试使用真实的临时仓库，覆盖创建、并行 `--no-ff` 合并、冲突、被阻塞的合并、评审结果门禁、失败关闭的评审结果解析、owner 检查与边界。工具、skill、bundle 与 CLI 测试固定模型可见文本与退出码；组合测试会通过 Loader 启动这些 bundle；一次真实模型的端到端运行会走通 worker、reviewer 与合并。
+seam 测试覆盖两条路径上对 cwd 的覆盖、校验与能力门禁。服务测试使用真实的临时仓库，覆盖创建、并行 `--no-ff` 合并、冲突、被阻塞的合并、评审结果门禁、失败关闭的评审结果解析、owner 检查与边界。工具、skill、bundle 与 CLI 测试固定模型可见文本与退出码；组合测试会通过 Loader 启动这些 bundle；一个无需密钥的录制会话快照会通过 headless profile 回放一次经评审后被接受的隔离委派；一次真实模型的端到端运行会走通 worker、reviewer 与合并。
