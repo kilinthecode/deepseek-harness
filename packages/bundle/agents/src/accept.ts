@@ -30,18 +30,21 @@ export async function acceptVerb(ctx: Context, config: AgentsStartupValues, io: 
   const cwd = await resolveCwd(ctx)
   const operatorRoute = ctx.agentDefaultModel.currentSelection()
   const handle = await createOperatorAgent(ctx, cwd, operatorRoute)
+  let exitCode: number
   try {
     const controller = new AbortController()
-    const { exitCode } = await performAccept(ctx, {
+    ;({ exitCode } = await performAccept(ctx, {
       id,
       owner: { kind: 'operator' },
       parent: handle.agent,
       ...reviewer === undefined ? {} : { reviewer },
       ...config.test === undefined ? {} : { testCommand: splitTestCommand(config.test) },
       signal: controller.signal,
-    }, io, config.json)
-    io.exit(exitCode)
+    }, io, config.json))
   } finally {
     await releaseOperatorAgent(ctx, handle)
   }
+  // Only after the operator Session is flushed and released: the exit request disposes the whole tree, which
+  // closes that Session's handle under any flush still in flight.
+  io.exit(exitCode)
 }

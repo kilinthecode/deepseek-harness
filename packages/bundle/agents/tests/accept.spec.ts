@@ -53,7 +53,7 @@ describe('dsh agents accept', () => {
     expect(events[1]).toMatchObject({ kind: 'merged' })
     // The operator Agent created as the reviewer's parent is flushed and
     // released once its work is done, even though it never took a turn.
-    expect(test.calls.operator).toEqual(['flush', 'dispose'])
+    expect(test.calls.operator).toEqual(['flush', 'dispose', 'exit'])
     await test.ctx.fiber.dispose()
   })
 
@@ -100,7 +100,7 @@ describe('dsh agents accept', () => {
     expect(JSON.parse(result.out.trim())).toMatchObject({ type: 'error' })
     // The operator Agent is still released on this failure path (a rejection
     // from inside accept, for example a reviewer preflight failure).
-    expect(test.calls.operator).toEqual(['flush', 'dispose'])
+    expect(test.calls.operator).toEqual(['flush', 'dispose', 'exit'])
     await test.ctx.fiber.dispose()
   })
 })

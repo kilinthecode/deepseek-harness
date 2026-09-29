@@ -101,7 +101,7 @@ describe('dsh agents run', () => {
     expect(events[3]).toMatchObject({ type: 'outcome', kind: 'merged' })
     expect(test.calls.worktrees.map(call => call.method)).toEqual(['resolveReviewer', 'create', 'attach', 'accept'])
     // The operator Agent is flushed then released once every child has settled.
-    expect(test.calls.operator).toEqual(['flush', 'dispose'])
+    expect(test.calls.operator).toEqual(['flush', 'dispose', 'exit'])
     await test.ctx.fiber.dispose()
   })
 
@@ -168,7 +168,7 @@ describe('dsh agents run', () => {
     expect(aborted).toBe(true)
     expect(test.calls.worktrees.map(call => call.method)).toEqual(['resolveReviewer', 'create', 'attach'])
     // The operator Agent is released even though the child run failed.
-    expect(test.calls.operator).toEqual(['flush', 'dispose'])
+    expect(test.calls.operator).toEqual(['flush', 'dispose', 'exit'])
     await test.ctx.fiber.dispose()
   })
 
@@ -382,7 +382,7 @@ describe('dsh agents run', () => {
     expect(result.err).toContain('worktree "wt-missing" was not found')
     // The operator Agent created before worktree resolution is still released
     // when resolution itself fails.
-    expect(test.calls.operator).toEqual(['flush', 'dispose'])
+    expect(test.calls.operator).toEqual(['flush', 'dispose', 'exit'])
     await test.ctx.fiber.dispose()
   })
 

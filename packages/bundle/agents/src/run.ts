@@ -168,6 +168,7 @@ export async function runVerb(ctx: Context, config: AgentsStartupValues, io: Age
 
   const cwd = await resolveCwd(ctx)
   const handle = await createOperatorAgent(ctx, cwd, operatorRoute)
+  let exitCode: number
   try {
     const operator = handle.agent
     const label = config.name ?? deriveLabel(task)
@@ -199,9 +200,11 @@ export async function runVerb(ctx: Context, config: AgentsStartupValues, io: Age
       await runChildAndAttach(ctx, record.id, operator, `Fix ${label}`, workDir, fixerPrompt, workerRoute, io, config.json)
       cycle = await performAccept(ctx, acceptRequest(), io, config.json)
     }
-
-    io.exit(cycle.exitCode)
+    exitCode = cycle.exitCode
   } finally {
     await releaseOperatorAgent(ctx, handle)
   }
+  // Only after the operator Session is flushed and released: the exit request disposes the whole tree, which
+  // closes that Session's handle under any flush still in flight.
+  io.exit(exitCode)
 }

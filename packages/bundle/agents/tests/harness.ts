@@ -203,6 +203,9 @@ export async function bench(options: BenchOptions = {}): Promise<Bench> {
       const exited = new Promise<number>((resolve) => {
         ctx.provide('appExit', (code: number) => {
           exits.push(code)
+          // In the same log as the operator's flush and dispose, so a test sees whether the exit request, which
+          // disposes the whole tree, came before the operator Session was released.
+          calls.operator.push('exit')
           // Only the first call settles the awaited result; later calls still
           // record into `exits` so a double exit is observable and fails a
           // test asserting `exits` has exactly one entry.
@@ -211,9 +214,9 @@ export async function bench(options: BenchOptions = {}): Promise<Bench> {
       })
       apply(ctx, new Config({ json: false, ...config }))
       const code = await exited
-      // `io.exit()` resolves `exited` before the runner's trailing `finally`
-      // (flush + dispose) completes; wait for it too so a caller observing
-      // `calls.operator` never races the runner's own cleanup.
+      // A verb that fails before creating its operator exits from the outer
+      // error handler; wait for any operator release so `calls.operator` is
+      // complete when the caller reads it.
       if (operatorDisposed !== undefined) await operatorDisposed
       return { code, out, err, exits }
     },
