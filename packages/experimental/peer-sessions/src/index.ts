@@ -77,6 +77,11 @@ import type {
 export { peerRepoKey }
 export { PeerError }
 export type { PeerErrorCode } from './errors.ts'
+// The durable mailbox write and its envelope version are public because a
+// foreign process that shares this home (a test fixture, a host tool) seeds a
+// mailbox with the same shard layout the drain reads back.
+export { enqueueMail, PEER_MAIL_VERSION } from './mailbox.ts'
+export type { PeerMailEnvelope, PeerMailboxLimits } from './mailbox.ts'
 export type {
   NotifyPeerIdleRequest,
   NotifyPeerIdleResult,

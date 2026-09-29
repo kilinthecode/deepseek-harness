@@ -2,13 +2,16 @@ import { mkdir, readdir, stat, symlink, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { withFileLock } from '@deepseek-ai/dsh-atomic-write'
+import { brandString } from '@deepseek-ai/dsh-brand'
 import { createUserMessage } from '@deepseek-ai/dsh-llm'
 import type { UserMessage } from '@deepseek-ai/dsh-llm'
 import { SessionId } from '@deepseek-ai/dsh-session'
 import type { Session } from '@deepseek-ai/dsh-session'
+import * as entry from '../src/index.ts'
 import { framedRelay, readMailShard } from '../src/mailbox.ts'
 import { mailDirectory, mailShardDirectory, watchShardDirectory } from '../src/paths.ts'
 import { readPresence } from '../src/presence.ts'
+import type { PeerMessageId } from '../src/types.ts'
 import { mountPeerHarness, type PeerHarness, textScript } from './harness.ts'
 
 const harnesses: PeerHarness[] = []
@@ -40,6 +43,34 @@ async function repoKeyOf(harness: PeerHarness, id: string): Promise<string> {
 }
 
 describe('peer mailbox', () => {
+  it('commits one envelope into the target shard through the public entry', async () => {
+    const harness = await mountPeerHarness({
+      peer: { maxPendingPerTarget: 8, maxPendingPerSenderPerTarget: 4 },
+    })
+    harnesses.push(harness)
+    const messageId = brandString<PeerMessageId>('peer-msg-1')
+    expect(typeof entry.enqueueMail).toBe('function')
+    expect(entry.PEER_MAIL_VERSION).toBe(1)
+    await entry.enqueueMail(harness.home, {
+      version: entry.PEER_MAIL_VERSION,
+      messageId,
+      targetId: SessionId('peer-absent'),
+      senderSessionId: SessionId('peer-sender'),
+      senderName: 'peer-sender',
+      fromRepo: 'git:/repo',
+      relayDepth: 1,
+      kind: 'peer-message',
+      text: 'PEER_ENTRY_BODY',
+    }, { maxPendingPerTarget: 8, maxPendingPerSenderPerTarget: 4 }, 'peer-absent')
+    expect(await harness.mailFiles('peer-absent')).toHaveLength(1)
+    const shard = await readMailShard(mailShardDirectory(harness.home, 'peer-absent'))
+    expect(shard.entries).toEqual([expect.objectContaining({
+      messageId,
+      kind: 'peer-message',
+      text: 'PEER_ENTRY_BODY',
+    })])
+  })
+
   it('enforces the per-sender and per-target caps', async () => {
     const harness = await mountPeerHarness({
       peer: { peerInbound: 'deferred', maxPendingPerTarget: 2, maxPendingPerSenderPerTarget: 1 },
