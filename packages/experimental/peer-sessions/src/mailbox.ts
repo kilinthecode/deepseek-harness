@@ -134,16 +134,41 @@ export async function readMailShard(directory: string): Promise<PeerMailShard> {
 }
 
 /**
+ * Parse one caller's envelope before any field of it composes a path.
+ *
+ * `enqueueMail` is public for foreign writers that share the home, so the id it
+ * names a file with arrives as caller text: an id carrying a separator or dots
+ * would otherwise commit the envelope outside the target's shard. Parsing here
+ * makes the drain's own schema check the second one an id meets, never the
+ * first.
+ * @param envelope - the envelope a caller wants committed.
+ * @returns the envelope with its ids branded by the schema.
+ * @throws when the envelope fails `envelopeSchema`; the message names every
+ * rejected field and its reason.
+ */
+function requireEnvelope(envelope: PeerMailEnvelope): PeerMailEnvelope {
+  const parsed = envelopeSchema.safeParse(envelope)
+  if (parsed.success) return parsed.data
+  // An issue with an empty path is a whole-envelope failure, such as a key the
+  // schema does not define, so it contributes only its reason.
+  const problems = parsed.error.issues
+    .map(issue => [issue.path.join('.'), issue.message].filter(part => part.length > 0).join(': '))
+    .join('; ')
+  throw new Error(`peer-sessions: enqueueMail envelope is invalid: ${problems}`)
+}
+
+/**
  * Commit one envelope into its target's shard under the shard lock.
  *
  * Both caps are re-read inside the lock, so two senders cannot both claim the
  * last slot. The parent `peers/mail` directory exists before the lock because
  * the lock is a sibling of the shard directory.
  * @param home - resolved Harness home directory.
- * @param envelope - the complete envelope to commit.
+ * @param envelope - the complete envelope to commit; `envelopeSchema` parses it before any path is composed.
  * @param limits - caps enforced for the target.
  * @param targetName - the target's display name, used in the failure text.
  * @returns fulfillment after the envelope is durable.
+ * @throws when the envelope fails `envelopeSchema`; the message names the rejected field, and nothing is created under the home.
  * @throws PeerError `PEER_MAILBOX_FULL` or `PEER_SENDER_QUOTA` at either cap.
  */
 export async function enqueueMail(
@@ -152,18 +177,19 @@ export async function enqueueMail(
   limits: PeerMailboxLimits,
   targetName: string,
 ): Promise<void> {
-  const shard = mailShardDirectory(home, envelope.targetId)
+  const valid = requireEnvelope(envelope)
+  const shard = mailShardDirectory(home, valid.targetId)
   await mkdir(mailDirectory(home), { recursive: true, mode: PEER_DIRECTORY_MODE })
   await withFileLock(shard, async () => {
     const shardState = await readMailShard(shard)
     if (shardState.count >= limits.maxPendingPerTarget) {
       throw peerMailboxFull(targetName, limits.maxPendingPerTarget)
     }
-    const fromSender = shardState.entries.filter(entry => entry.senderSessionId === envelope.senderSessionId).length
+    const fromSender = shardState.entries.filter(entry => entry.senderSessionId === valid.senderSessionId).length
     if (fromSender >= limits.maxPendingPerSenderPerTarget) {
       throw peerSenderQuota(targetName, limits.maxPendingPerSenderPerTarget)
     }
-    await writeRecord(join(shard, `${envelope.messageId}.json`), envelope)
+    await writeRecord(join(shard, `${valid.messageId}.json`), valid)
   })
 }
 

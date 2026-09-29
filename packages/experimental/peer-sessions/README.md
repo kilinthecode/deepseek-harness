@@ -182,6 +182,7 @@ These limits define when peer coordination is a poor fit or needs operational ca
 - **No heartbeat and no stale timeout** — a crashed peer can stay listed until its session id is published again, and on Windows a recycled pid keeps a stale row while its mail stays `queued` with nothing to deliver it.
 - **Nothing locks files or git refs** — coordination is advisory: a peer that never announces can still move a shared ref or write a shared file through Bash, a formatter, or another process, because no write tool consults this service.
 - **Poll latency bounds delivery** — an idle target that a send wakes is steered immediately, but a message left by a process that does not hold the target waits for that process's next `agent/created` or `pollMs` pass, so `queued` means "not yet", not "lost".
+- **Mail for a session no process holds live stays queued in its shard** — the envelope is durable but never delivered and stays bounded by the mailbox caps until some process holds that session as a live agent; that process's drain then delivers it, or drops it when the session is not a top-level peer or is in another repository.
 - **`deferred` is a timing delay, not a review gate** — the receiving user never sees the body before it enters the model context, so a peer can always reach the model of an enabled session.
 - **Relay depth pauses after four hops** — after four relay hops with one peer, that session cannot send that peer another `peer-message` until its user sends a message; one-way volume stays bounded by the per-sender mailbox cap instead.
 

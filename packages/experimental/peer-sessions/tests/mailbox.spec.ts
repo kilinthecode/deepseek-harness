@@ -8,7 +8,7 @@ import type { UserMessage } from '@deepseek-ai/dsh-llm'
 import { SessionId } from '@deepseek-ai/dsh-session'
 import type { Session } from '@deepseek-ai/dsh-session'
 import * as entry from '../src/index.ts'
-import { framedRelay, readMailShard } from '../src/mailbox.ts'
+import { framedRelay, readMailShard, type PeerMailEnvelope } from '../src/mailbox.ts'
 import { mailDirectory, mailShardDirectory, watchShardDirectory } from '../src/paths.ts'
 import { readPresence } from '../src/presence.ts'
 import type { PeerMessageId } from '../src/types.ts'
@@ -69,6 +69,43 @@ describe('peer mailbox', () => {
       kind: 'peer-message',
       text: 'PEER_ENTRY_BODY',
     })])
+  })
+
+  it('rejects an envelope whose id or target could name a path outside the shard', async () => {
+    const harness = await mountPeerHarness({ peer: { peerInbound: 'deferred' } })
+    harnesses.push(harness)
+    // The home exists and starts empty, so a write anywhere below it shows up in
+    // the listing this test ends with.
+    await mkdir(harness.home, { recursive: true })
+    const limits = { maxPendingPerTarget: 8, maxPendingPerSenderPerTarget: 4 }
+    /** The valid envelope each rejected case changes in exactly one field. */
+    const base: PeerMailEnvelope = {
+      version: entry.PEER_MAIL_VERSION,
+      messageId: brandString<PeerMessageId>('peer-msg-1'),
+      targetId: SessionId('peer-absent'),
+      senderSessionId: SessionId('peer-sender'),
+      senderName: 'peer-sender',
+      fromRepo: 'git:/repo',
+      relayDepth: 1,
+      kind: 'peer-message',
+      text: 'PEER_ENTRY_BODY',
+    }
+    // The id names the envelope file, so an id a foreign writer supplies as
+    // caller text must fail before it composes a path: a separator, a parent
+    // hop, and an empty id are each rejected by name.
+    for (const messageId of ['sub/dir', '..', '../../presence/peer-a', '']) {
+      await expect(entry.enqueueMail(
+        harness.home,
+        { ...base, messageId: brandString<PeerMessageId>(messageId) },
+        limits,
+        'peer-absent',
+      )).rejects.toThrow(/enqueueMail envelope is invalid: messageId: /)
+    }
+    await expect(entry.enqueueMail(harness.home, { ...base, targetId: SessionId('') }, limits, 'peer-absent'))
+      .rejects.toThrow(/enqueueMail envelope is invalid: targetId: /)
+    // The rejection precedes every write: not even the shard parent directory
+    // the valid call would create exists below the home.
+    expect(await readdir(harness.home, { recursive: true })).toEqual([])
   })
 
   it('enforces the per-sender and per-target caps', async () => {
