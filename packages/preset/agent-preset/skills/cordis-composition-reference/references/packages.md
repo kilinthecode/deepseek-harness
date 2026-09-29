@@ -442,7 +442,7 @@ Every package below exports a Cordis plugin that a bundle patch can name in a Lo
 | `@deepseek-ai/dsh-subagent-worktree` | yes | Isolated git worktrees for delegated agents (ctx.subagentWorktrees): provisioning, independent review, and merge for the DeepSeek Harness |
 | `@deepseek-ai/dsh-tool-subagent` | yes | Model-facing subagent delegation tool over the ctx.subagents seam |
 | `@deepseek-ai/dsh-tool-subagent-control` | no | Globally named send_message, interrupt_agent, and list_agents tools over ctx.subagents continuations |
-| `@deepseek-ai/dsh-tool-subagent-worktree` | no | Model-facing accept_worktree, discard_worktree, and list_worktrees tools over ctx.subagentWorktrees |
+| `@deepseek-ai/dsh-tool-subagent-worktree` | yes | Model-facing accept_worktree, discard_worktree, and list_worktrees tools over ctx.subagentWorktrees |
 
 ## subprocess
 
