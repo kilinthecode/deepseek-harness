@@ -14,11 +14,10 @@ import { mountAgentLoopTestDependencies } from '@deepseek-ai/dsh-agent-loop-test
 import JsonlSessionPersistence from '@deepseek-ai/dsh-session-persistence-jsonl'
 import SessionProjectionRegistry from '@deepseek-ai/dsh-session-projection'
 import SubagentRuntime from '@deepseek-ai/dsh-subagent'
-import type { SubagentStartRequest } from '@deepseek-ai/dsh-subagent'
+import type { SubagentProvider, SubagentStartRequest } from '@deepseek-ai/dsh-subagent'
 import { brandString } from '@deepseek-ai/dsh-brand'
 import { renderWorkerBrief, SubagentWorktrees } from '@deepseek-ai/dsh-subagent-worktree'
 import type {
-  Config as WorktreesConfig,
   ProvisionedWorktree,
   WorktreeId,
   WorktreeRecord,
@@ -1545,7 +1544,7 @@ describe('subagent tool worktree isolation', () => {
    * resolution, injection typing, and the public contract real while faking only the
    * unimplemented behavior.
    */
-  function installFakeWorktrees(ctx: Context, deployment: Partial<WorktreesConfig> = {}): SubagentWorktrees {
+  function installFakeWorktrees(ctx: Context): SubagentWorktrees {
     const worktrees = new SubagentWorktrees(ctx, {
       branchPrefix: 'test/',
       maxWorktrees: 4,
@@ -1554,7 +1553,6 @@ describe('subagent tool worktree isolation', () => {
       checkTimeoutMs: 900_000,
       reviewDiffMaxBytes: 4096,
       removeOnMerge: true,
-      ...deployment,
     })
     vi.spyOn(worktrees, 'resolveReviewer').mockReturnValue(reviewerRoute)
     vi.spyOn(worktrees, 'create').mockResolvedValue(fakeProvisioned())
@@ -1566,14 +1564,11 @@ describe('subagent tool worktree isolation', () => {
   }
 
   /**
-   * Mount the tool over a request-capturing one-shot provider. By default the provider has the cwd capability
-   * and the row enables isolation. `deployment` mounts the worktree service first, so the tool reads its
-   * isolation switch when it mounts.
+   * A context with a request-capturing one-shot provider named `capture` (cwd capability unless
+   * `cwdCapability` is false) and no delegation tool yet, so a test controls the order in which the worktree
+   * service, an isolation offer, and the tool appear.
    */
-  async function foregroundCaptureSetup(
-    config: Omit<tool.Config, 'provider' | 'worktreeIsolation'> = {},
-    options: { rowIsolation?: boolean; cwdCapability?: boolean; deployment?: Partial<WorktreesConfig> } = {},
-  ) {
+  async function captureContext(options: { cwdCapability?: boolean } = {}) {
     const requests: SubagentStartRequest[] = []
     const disposedRunIds: string[] = []
     const ctx = await projectedContext()
@@ -1581,7 +1576,7 @@ describe('subagent tool worktree isolation', () => {
     await ctx.plugin(ToolRuntime)
     await ctx.plugin(SubagentRuntime)
     let startCount = 0
-    ctx.subagents.registerProvider({
+    const provider: SubagentProvider = {
       name: 'capture',
       capabilities: {
         agentOptions: true, outputSchema: false, depthLimit: false, toolFilter: false, persona: false,
@@ -1599,12 +1594,21 @@ describe('subagent tool worktree isolation', () => {
           dispose: async () => { disposedRunIds.push(id) },
         }
       },
-    })
-    const deployed = options.deployment === undefined ? undefined : installFakeWorktrees(ctx, options.deployment)
+    }
+    const removeProvider = ctx.subagents.registerProvider(provider)
+    return { ctx, requests, disposedRunIds, provider, removeProvider }
+  }
+
+  /** Mount the tool over {@link captureContext}'s provider; the row enables isolation unless `rowIsolation` is false. */
+  async function foregroundCaptureSetup(
+    config: Omit<tool.Config, 'provider' | 'worktreeIsolation'> = {},
+    options: { rowIsolation?: boolean; cwdCapability?: boolean } = {},
+  ) {
+    const { ctx, requests, disposedRunIds } = await captureContext(options)
     await ctx.plugin(tool, {
       provider: 'capture', worktreeIsolation: options.rowIsolation ?? true, maxDepth: 'provider-managed', ...config,
     })
-    return { ctx, requests, disposedRunIds, deployed }
+    return { ctx, requests, disposedRunIds }
   }
 
   const parent = isolationParent('/repo/packages/foo')
@@ -1638,74 +1642,184 @@ describe('subagent tool worktree isolation', () => {
     const ctx = await setup({ provider: 'mock' })
     const result = await callSubagent(ctx, { description: 'd', prompt: 'p', isolation: 'worktree' })
     expect(result.isError).toBe(true)
-    expect(text(result)).toContain('subagent: isolation is not enabled for this tool')
+    expect(text(result)).toContain('subagent: isolation is not offered on this tool')
     await disposeSetupProvider(ctx)
   })
 
-  describe('deployment-wide isolation offer', () => {
+  describe('isolation offer', () => {
     const isolationParameter = (ctx: Context): unknown => {
       const schema = ctx.tools.schemas().find(candidate => candidate.name === 'subagent')
       return (schema?.parameters as { properties: Record<string, unknown> } | undefined)?.properties.isolation
     }
     const isolatedCall = { description: 'd', prompt: 'p', isolation: 'worktree' }
+    const offered = { type: 'string', enum: ['worktree'] }
+    const notOffered = 'subagent: isolation is not offered on this tool'
 
-    /** Mount over a capture provider with the worktree service first, so the tool reads its isolation switch at mount. */
-    async function offerSetup(
-      deployment: Partial<WorktreesConfig>,
-      options: { rowIsolation?: boolean; cwdCapability?: boolean } = {},
-    ) {
-      const { ctx, deployed } = await foregroundCaptureSetup({}, { rowIsolation: false, ...options, deployment })
-      if (deployed === undefined) throw new Error('expected the worktree service to be mounted before the tool')
-      return { ctx, worktrees: deployed, created: vi.spyOn(deployed, 'create') }
+    /** The capture provider and a fake worktree service, with the delegation tool not mounted yet. */
+    async function beforeTool(options: { cwdCapability?: boolean } = {}) {
+      const captured = await captureContext(options)
+      const worktrees = installFakeWorktrees(captured.ctx)
+      return { ...captured, worktrees, created: vi.spyOn(worktrees, 'create') }
     }
 
-    it('offers the isolation parameter from the service switch alone, and honors it at execute time', async () => {
-      const { ctx, created } = await offerSetup({ offerIsolation: true })
+    const mountTool = (ctx: Context, rowIsolation = false) => ctx.plugin(tool, {
+      provider: 'capture', worktreeIsolation: rowIsolation, maxDepth: 'provider-managed',
+    })
 
-      expect(isolationParameter(ctx)).toMatchObject({ type: 'string', enum: ['worktree'] })
+    const subagentRegistrations = (register: { mock: { calls: unknown[][] } }): number =>
+      register.mock.calls.filter(([definition]) => (definition as { name: string }).name === 'subagent').length
+
+    it('offers the isolation parameter when an offer is live as the tool mounts, and honors it at execute time', async () => {
+      const { ctx, worktrees, created } = await beforeTool()
+      worktrees.offerIsolation()
+      await mountTool(ctx)
+
+      expect(isolationParameter(ctx)).toMatchObject(offered)
       const result = await callSubagent(ctx, isolatedCall, { agent: parent })
       expect(result.isError).toBe(false)
       expect(created).toHaveBeenCalledTimes(1)
     })
 
-    it('omits the isolation parameter and rejects the argument when neither the row nor the service offers it', async () => {
-      const { ctx, created } = await offerSetup({})
+    it('omits the isolation parameter and rejects the argument, naming the ways to offer it, when nothing offers it', async () => {
+      const { ctx, created } = await beforeTool()
+      await mountTool(ctx)
 
       expect(isolationParameter(ctx)).toBeUndefined()
       const result = await callSubagent(ctx, isolatedCall, { agent: parent })
       expect(result.isError).toBe(true)
-      expect(text(result)).toContain('subagent: isolation is not enabled for this tool')
+      const message = text(result)
+      expect(message).toContain(notOffered)
+      expect(message).toContain('omit the isolation argument')
+      expect(message).toContain('provider with the cwd capability')
+      expect(message).toContain('Agent Crew bundle')
+      expect(message).toContain('tool-subagent-worktree row')
+      expect(message).toContain('worktreeIsolation: true')
       expect(created).not.toHaveBeenCalled()
     })
 
-    it('offers isolation from the row while the service switch is off', async () => {
-      const { ctx } = await offerSetup({ offerIsolation: false }, { rowIsolation: true })
+    it('offers isolation from the row alone, with no offer on the service', async () => {
+      const { ctx } = await beforeTool()
+      await mountTool(ctx, true)
 
-      expect(isolationParameter(ctx)).toMatchObject({ type: 'string', enum: ['worktree'] })
+      expect(isolationParameter(ctx)).toMatchObject(offered)
     })
 
-    it('does not offer isolation from the service switch on a provider without the cwd capability', async () => {
-      const { ctx, created } = await offerSetup({ offerIsolation: true }, { cwdCapability: false })
+    it('does not offer isolation from an offer on a provider without the cwd capability', async () => {
+      const { ctx, worktrees, created } = await beforeTool({ cwdCapability: false })
+      worktrees.offerIsolation()
+      await mountTool(ctx)
 
       expect(isolationParameter(ctx)).toBeUndefined()
       const result = await callSubagent(ctx, isolatedCall, { agent: parent })
       expect(result.isError).toBe(true)
-      expect(text(result)).toContain('subagent: isolation is not enabled for this tool')
+      expect(text(result)).toContain(notOffered)
       expect(created).not.toHaveBeenCalled()
     })
 
-    it('reads the switch once when the tool mounts, so a later change alters neither the schema nor the executor', async () => {
-      const offered = await offerSetup({ offerIsolation: true })
-      vi.spyOn(offered.worktrees, 'offersIsolation', 'get').mockReturnValue(false)
-      expect(isolationParameter(offered.ctx)).toMatchObject({ enum: ['worktree'] })
-      expect((await callSubagent(offered.ctx, isolatedCall, { agent: parent })).isError).toBe(false)
+    it('mounts again with the parameter when an offer registers after the tool mounted', async () => {
+      const { ctx, worktrees, created } = await beforeTool()
+      await mountTool(ctx)
+      expect(isolationParameter(ctx)).toBeUndefined()
 
-      const withheld = await offerSetup({ offerIsolation: false })
-      vi.spyOn(withheld.worktrees, 'offersIsolation', 'get').mockReturnValue(true)
-      expect(isolationParameter(withheld.ctx)).toBeUndefined()
-      const rejected = await callSubagent(withheld.ctx, isolatedCall, { agent: parent })
+      worktrees.offerIsolation()
+
+      expect(isolationParameter(ctx)).toMatchObject(offered)
+      const result = await callSubagent(ctx, isolatedCall, { agent: parent })
+      expect(result.isError).toBe(false)
+      expect(created).toHaveBeenCalledTimes(1)
+    })
+
+    it('offers isolation when the tool mounted before the worktree service existed and the offer comes later', async () => {
+      const { ctx } = await captureContext()
+      await mountTool(ctx)
+      expect(isolationParameter(ctx)).toBeUndefined()
+
+      const worktrees = installFakeWorktrees(ctx)
+      expect(isolationParameter(ctx)).toBeUndefined()
+      worktrees.offerIsolation()
+
+      expect(isolationParameter(ctx)).toMatchObject(offered)
+      const result = await callSubagent(ctx, isolatedCall, { agent: parent })
+      expect(result.isError).toBe(false)
+    })
+
+    it('mounts again without the parameter when the last offer is withdrawn, and rejects the argument', async () => {
+      const { ctx, worktrees, created } = await beforeTool()
+      const withdraw = worktrees.offerIsolation()
+      await mountTool(ctx)
+      expect(isolationParameter(ctx)).toMatchObject(offered)
+
+      withdraw()
+
+      expect(isolationParameter(ctx)).toBeUndefined()
+      const result = await callSubagent(ctx, isolatedCall, { agent: parent })
+      expect(result.isError).toBe(true)
+      expect(text(result)).toContain(notOffered)
+      expect(created).not.toHaveBeenCalled()
+    })
+
+    it('keeps offering isolation while another offer stands, mounting again only when the offer flips', async () => {
+      const { ctx, worktrees } = await beforeTool()
+      const first = worktrees.offerIsolation()
+      await mountTool(ctx)
+      const register = vi.spyOn(ctx.tools, 'register')
+
+      const second = worktrees.offerIsolation()
+      first()
+      expect(isolationParameter(ctx)).toMatchObject(offered)
+      expect(subagentRegistrations(register)).toBe(0)
+
+      second()
+      expect(isolationParameter(ctx)).toBeUndefined()
+      expect(subagentRegistrations(register)).toBe(1)
+    })
+
+    it.each([
+      { name: 'a row that offers isolation itself', rowIsolation: true, cwdCapability: true, parameter: offered },
+      { name: 'a provider without the cwd capability', rowIsolation: false, cwdCapability: false, parameter: undefined },
+    ])('does not mount again for an offer change that leaves the answer as it was: $name', async (scenario) => {
+      const { ctx, worktrees } = await beforeTool({ cwdCapability: scenario.cwdCapability })
+      await mountTool(ctx, scenario.rowIsolation)
+      const register = vi.spyOn(ctx.tools, 'register')
+
+      worktrees.offerIsolation()()
+
+      expect(subagentRegistrations(register)).toBe(0)
+      if (scenario.parameter === undefined) expect(isolationParameter(ctx)).toBeUndefined()
+      else expect(isolationParameter(ctx)).toMatchObject(scenario.parameter)
+    })
+
+    it('gives the schema and the executor one answer for the life of a mount, whatever the service reads later', async () => {
+      const offering = await beforeTool()
+      offering.worktrees.offerIsolation()
+      await mountTool(offering.ctx)
+      // The getter changes without an offer-changed event, as a hand-written service double could.
+      vi.spyOn(offering.worktrees, 'offersIsolation', 'get').mockReturnValue(false)
+      expect(isolationParameter(offering.ctx)).toMatchObject(offered)
+      expect((await callSubagent(offering.ctx, isolatedCall, { agent: parent })).isError).toBe(false)
+
+      const withholding = await beforeTool()
+      await mountTool(withholding.ctx)
+      vi.spyOn(withholding.worktrees, 'offersIsolation', 'get').mockReturnValue(true)
+      expect(isolationParameter(withholding.ctx)).toBeUndefined()
+      const rejected = await callSubagent(withholding.ctx, isolatedCall, { agent: parent })
       expect(rejected.isError).toBe(true)
-      expect(text(rejected)).toContain('subagent: isolation is not enabled for this tool')
+      expect(text(rejected)).toContain(notOffered)
+    })
+
+    it('picks up an offer change made while its provider was absent when the provider returns', async () => {
+      const { ctx, worktrees, provider, removeProvider } = await beforeTool()
+      await mountTool(ctx)
+      const warn = vi.spyOn(ctx.logger, 'warn')
+      removeProvider()
+      expect(ctx.tools.schemas().some(schema => schema.name === 'subagent')).toBe(false)
+
+      worktrees.offerIsolation()
+      expect(ctx.tools.schemas().some(schema => schema.name === 'subagent')).toBe(false)
+      ctx.subagents.registerProvider(provider)
+
+      expect(isolationParameter(ctx)).toMatchObject(offered)
+      expect(warn).not.toHaveBeenCalled()
     })
   })
 

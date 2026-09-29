@@ -237,6 +237,7 @@ export const EVENT_SCOPE_PAGE: Record<string, string> = {
   'settings': 'settings.md',
   'skills': 'skills.md',
   'subagent': 'subagent.md',
+  'subagent-worktree': 'subagent.md',
   'system-prompt': 'system-prompt.md',
   'session-telemetry': 'session-telemetry.md',
   'feedback': 'feedback.md',

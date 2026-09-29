@@ -698,6 +698,15 @@ The `ctx.subagentWorktrees` service. Git runs through `ctx.subprocess` with argv
 
 ```ts cordis-catalog
 /**
+ * Offer worktree isolation on delegation tools until the returned disposer runs. Offers are counted: the
+ * offer stands while at least one registration is live, so two consumers can offer independently.
+ * `subagent-worktree/offer-changed` fires when this registration is the first live offer, and when
+ * withdrawing it leaves none.
+ * @returns a disposer that withdraws this offer; calling it again has no effect.
+ */
+offerIsolation(): () => void
+
+/**
  * Create one linked worktree on a new branch from the base checkout's `HEAD`.
  * @param request - owner, base directory, label, task, worker route, and cancellation.
  * @returns the committed `open` record, the worker directory, and any uncommitted base changes left out.
@@ -838,4 +847,28 @@ A provider established a published child. For in-process providers, `ctx.agents.
 Types: [Scoped](scope.md)
 
 Source: [`packages/subagent/subagent/src/index.ts`](../../packages/subagent/subagent/src/index.ts)
+
+<a id="subagent-worktree-events"></a>
+
+### `subagent-worktree/*` events
+
+<a id="subagent-worktreeoffer-changed--emit"></a>
+
+#### `subagent-worktree/offer-changed` — emit
+
+Whether worktree isolation is offered on delegation tools changed: the first live offer was registered, or the last one was withdrawn. It does not fire while offers are added or withdrawn with at least one other still live. Delegation tools listen and mount again; a listener failure is logged and does not stop the other listeners or the offer that triggered it.
+
+```ts cordis-catalog
+/**
+ * Whether worktree isolation is offered on delegation tools changed: the first live offer was
+ * registered, or the last one was withdrawn. It does not fire while offers are added or withdrawn
+ * with at least one other still live. Delegation tools listen and mount again; a listener failure is
+ * logged and does not stop the other listeners or the offer that triggered it.
+ * @param offered - the new value of {@link SubagentWorktrees.offersIsolation}.
+ * @mode emit
+ */
+'subagent-worktree/offer-changed'(offered: boolean): void
+```
+
+Source: [`packages/subagent/subagent-worktree/src/index.ts`](../../packages/subagent/subagent-worktree/src/index.ts)
 <!-- END GENERATED cordis-surface -->

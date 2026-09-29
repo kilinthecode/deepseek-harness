@@ -576,12 +576,12 @@ const TOOL_PACKAGES: ToolPackage[] = [
     requires: ['ctx.tools', 'ctx.subagentWorktrees'],
     writes: ['tool/call', 'tool/result'],
     async mount(ctx) {
-      // Schema harvest never executes accept/discard/list.
+      // Schema harvest never executes accept/discard/list, and the isolation offer changes no schema here.
       ctx.provide('subagentWorktrees', {} as SubagentWorktrees)
-      await ctx.plugin(ToolSubagentWorktree)
+      await ctx.plugin(ToolSubagentWorktree, { offerIsolation: false })
     },
     note:
-      '`accept_worktree`, `discard_worktree`, and `list_worktrees` land, discard, and list the isolated git worktrees `ctx.subagentWorktrees` provisions for `subagent` calls made with `isolation: "worktree"`; every call scopes its request to the calling Session as owner.',
+      '`accept_worktree`, `discard_worktree`, and `list_worktrees` land, discard, and list the isolated git worktrees `ctx.subagentWorktrees` provisions for `subagent` calls made with `isolation: "worktree"`; every call scopes its request to the calling Session as owner. While this row is mounted with its default `offerIsolation: true`, every `subagent` delegation tool whose provider has the `cwd` capability offers that parameter.',
   },
   {
     pkg: '@deepseek-ai/dsh-tool-jobs',

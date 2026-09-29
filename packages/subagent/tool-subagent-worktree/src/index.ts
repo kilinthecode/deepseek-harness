@@ -8,6 +8,7 @@
  */
 
 import type { Context } from '@deepseek-ai/cordis'
+import z from '@deepseek-ai/schemastery'
 import type { Agent } from '@deepseek-ai/dsh-agent'
 import { assertWorktreeId } from '@deepseek-ai/dsh-subagent-worktree'
 import type { WorktreeId } from '@deepseek-ai/dsh-subagent-worktree'
@@ -28,6 +29,24 @@ import {
 export const name = 'tool-subagent-worktree'
 /** Services required by the worktree tool plugin. */
 export const inject = ['tools', 'subagentWorktrees']
+
+/** Configuration of the worktree tools. */
+export interface Config {
+  /**
+   * Offer the `isolation: "worktree"` parameter on every delegation tool whose provider has the `cwd`
+   * capability while these tools are mounted, including tools that agent presets mount. `false` leaves
+   * isolation to each `tool-subagent` row's own `worktreeIsolation` setting.
+   */
+  offerIsolation: boolean
+}
+
+/** Schemastery validation for {@link Config}. */
+export const Config: z<Config> = z.object({
+  offerIsolation: z.boolean().default(true).description(
+    'Offer the isolation: "worktree" parameter on every subagent delegation tool whose provider has the cwd capability '
+    + 'while these tools are mounted, including tools mounted inside agent presets.',
+  ),
+})
 
 /** Recover the exact caller these tools act on behalf of. */
 function callingAgent(agent: Agent | undefined, toolName: string): Agent {
@@ -54,8 +73,14 @@ function requireCwd(agent: Agent): string {
   return cwd
 }
 
-/** Register the `accept_worktree`, `discard_worktree`, and `list_worktrees` tools. */
-export function apply(ctx: Context): void {
+/**
+ * Register the `accept_worktree`, `discard_worktree`, and `list_worktrees` tools and, unless configured off,
+ * an offer of worktree isolation that lasts as long as this plugin: the tools that land, discard, and list
+ * worktrees and the parameter that creates them come and go together.
+ * @param ctx - context carrying the tool registry and the worktree service.
+ * @param config - whether to offer isolation on delegation tools; omitted offers it.
+ */
+export function apply(ctx: Context, config: Config): void {
   ctx.tools.register(defineTool({
     name: 'accept_worktree',
     description:
@@ -129,4 +154,6 @@ export function apply(ctx: Context): void {
       return toListToolValue(records)
     },
   }))
+
+  if (config.offerIsolation !== false) ctx.effect(() => ctx.subagentWorktrees.offerIsolation())
 }

@@ -9,8 +9,7 @@ import { readFileSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
 import * as yaml from 'js-yaml'
 import { entryListSchema } from '@deepseek-ai/cordis-plugin-include'
-import SubagentWorktrees from '@deepseek-ai/dsh-subagent-worktree'
-import type { Config as WorktreesConfig } from '@deepseek-ai/dsh-subagent-worktree'
+import type { PatchOptions } from '@deepseek-ai/cordis-plugin-include'
 import type * as ToolSubagent from '@deepseek-ai/dsh-tool-subagent'
 
 const PATCH_FILES = {
@@ -38,16 +37,24 @@ function search(node: unknown, id: string): PatchRow | undefined {
 }
 
 /**
+ * Parse one shipped patch file, with the loader's `!!js` tags accepted.
+ * @param file - which patch file to read.
+ * @returns the patch list exactly as written in the YAML.
+ */
+export function loadPatches(file: keyof typeof PATCH_FILES): PatchOptions[] {
+  return yaml.load(readFileSync(fileURLToPath(new URL(PATCH_FILES[file], import.meta.url)), 'utf8'), {
+    schema: entryListSchema,
+  }) as PatchOptions[]
+}
+
+/**
  * Read one row from a shipped patch file.
  * @param file - which patch file to read.
  * @param id - the row id to find.
  * @returns the row, with its config exactly as written in the YAML.
  */
 function patchRow(file: keyof typeof PATCH_FILES, id: string): PatchRow {
-  const parsed = yaml.load(readFileSync(fileURLToPath(new URL(PATCH_FILES[file], import.meta.url)), 'utf8'), {
-    schema: entryListSchema,
-  })
-  const row = search(parsed, id)
+  const row = search(loadPatches(file), id)
   if (row === undefined) throw new Error(`the ${file} patch file has no "${id}" row`)
   return row
 }
@@ -60,20 +67,4 @@ export function hostToolSubagentConfig(): ToolSubagent.Config {
 /** The `tool-subagent` config the `standard` Web preset mounts inside each agent's scope. */
 export function presetToolSubagentConfig(): ToolSubagent.Config {
   return patchRow('standardPreset', 'tool-subagent').config as ToolSubagent.Config
-}
-
-/**
- * The `subagent-worktree` service config the agent-crew patch sets, completed by the schema's defaults as the
- * Loader completes it.
- * @param overrides - fields a test replaces, such as a temporary `root`.
- * @returns the complete service config.
- */
-export function crewWorktreesConfig(overrides: Partial<WorktreesConfig> = {}): WorktreesConfig {
-  const patched = patchRow('agentCrew', 'subagent-worktree').config as Partial<WorktreesConfig>
-  return SubagentWorktrees.Config({ ...patched, ...overrides } as WorktreesConfig)
-}
-
-/** The `subagent-worktree` service config of a profile without the bundle: the base row carries none, so every default. */
-export function shippedWorktreesConfig(): WorktreesConfig {
-  return SubagentWorktrees.Config()
 }

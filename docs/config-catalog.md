@@ -3357,7 +3357,7 @@ export interface Config {
 ## `@deepseek-ai/dsh-subagent-worktree`
 
 - `inject`: `subprocess` · `subagents` · `agents`
-- `source`: [`packages/subagent/subagent-worktree/src/index.ts:66`](../packages/subagent/subagent-worktree/src/index.ts)
+- `source`: [`packages/subagent/subagent-worktree/src/index.ts:78`](../packages/subagent/subagent-worktree/src/index.ts)
 
 ```ts config-catalog
 /**
@@ -3399,12 +3399,6 @@ export interface Config {
   commitAuthorName?: string
   /** Author email for harness commits; set together with {@link commitAuthorName}. */
   commitAuthorEmail?: string
-  /**
-   * Offer the `isolation: "worktree"` parameter on every subagent delegation tool, including tools mounted
-   * inside agent presets, whose nested rows a bundle patch cannot reach. Omitted or `false` leaves each tool to
-   * its own `worktreeIsolation` setting; read through {@link SubagentWorktrees.offersIsolation}.
-   */
-  offerIsolation?: boolean
 }
 ```
 <!-- END GENERATED config-catalog:@deepseek-ai/dsh-subagent-worktree -->
@@ -3960,15 +3954,38 @@ export interface Config {
    * `isolation: "worktree"`. Requires `ctx.subagentWorktrees`
    * (`@deepseek-ai/dsh-subagent-worktree`) and a provider with the `cwd`
    * capability — the seam's own capability check rejects a provider without
-   * it. Defaults to `false`: unless the service offers isolation on every
-   * delegation tool (`ctx.subagentWorktrees.offersIsolation`, read when the
-   * tool mounts, and only for a provider with the `cwd` capability), the
-   * schema omits the `isolation` parameter and the executor rejects it.
+   * it. Defaults to `false`: unless the worktree service holds a live
+   * isolation offer (`ctx.subagentWorktrees.offersIsolation`, registered by a
+   * mounted `@deepseek-ai/dsh-tool-subagent-worktree` row, and only for a
+   * provider with the `cwd` capability), the schema omits the `isolation`
+   * parameter and the executor rejects it. The tool mounts again when that
+   * offer appears or lapses.
    */
   worktreeIsolation?: boolean
 }
 ```
 <!-- END GENERATED config-catalog:@deepseek-ai/dsh-tool-subagent -->
+
+<!-- BEGIN GENERATED config-catalog:@deepseek-ai/dsh-tool-subagent-worktree -->
+<a id="deepseek-aidsh-tool-subagent-worktree"></a>
+
+## `@deepseek-ai/dsh-tool-subagent-worktree`
+
+- `inject`: `tools` · `subagentWorktrees`
+- `source`: [`packages/subagent/tool-subagent-worktree/src/index.ts:34`](../packages/subagent/tool-subagent-worktree/src/index.ts)
+
+```ts config-catalog
+/** Configuration of the worktree tools. */
+export interface Config {
+  /**
+   * Offer the `isolation: "worktree"` parameter on every delegation tool whose provider has the `cwd`
+   * capability while these tools are mounted, including tools that agent presets mount. `false` leaves
+   * isolation to each `tool-subagent` row's own `worktreeIsolation` setting.
+   */
+  offerIsolation: boolean
+}
+```
+<!-- END GENERATED config-catalog:@deepseek-ai/dsh-tool-subagent-worktree -->
 
 <!-- BEGIN GENERATED config-catalog:@deepseek-ai/dsh-tool-terminal -->
 <a id="deepseek-aidsh-tool-terminal"></a>
@@ -4512,7 +4529,6 @@ These load from a `cordis.yml` entry with no `config:` block; they declare no co
 | `@deepseek-ai/dsh-tool-call-timeout-policy` | `tools` | [`packages/guard/timeout-policy/src/index.ts`](../packages/guard/timeout-policy/src/index.ts) |
 | `@deepseek-ai/dsh-tool-cordis` | `tools` · `cordisInspect` | [`packages/extensions/tool-cordis/src/index.ts`](../packages/extensions/tool-cordis/src/index.ts) |
 | `@deepseek-ai/dsh-tool-subagent-control` | `tools` · `subagents` | [`packages/subagent/tool-subagent-control/src/index.ts`](../packages/subagent/tool-subagent-control/src/index.ts) |
-| `@deepseek-ai/dsh-tool-subagent-worktree` | `tools` · `subagentWorktrees` | [`packages/subagent/tool-subagent-worktree/src/index.ts`](../packages/subagent/tool-subagent-worktree/src/index.ts) |
 | `@deepseek-ai/dsh-user-questions` | — | [`packages/interaction/user-questions/src/index.ts`](../packages/interaction/user-questions/src/index.ts) |
 | `@deepseek-ai/dsh-webhook` | `agents` · `agentDefaultModel` · `agentPresets` · `permissionPresets` · `sessionTitle` · `workspaceRegistry` | [`packages/webhook/webhook/src/index.ts`](../packages/webhook/webhook/src/index.ts) |
 | `@deepseek-ai/dsh-workspace` | `storageDomain` · `sessionPersistence` | [`packages/workspace/workspace/src/index.ts`](../packages/workspace/workspace/src/index.ts) |

@@ -1,15 +1,12 @@
-# Optional agent-crew bundle: offers worktree isolation on every subagent
-# delegation tool and adds the tools and skill that land, discard, and list
-# those worktrees. The switch is the shared subagent-worktree row's
-# offerIsolation setting, not a tool-subagent row's worktreeIsolation: agent
-# presets mount their own tool-subagent rows, which an id-targeted patch cannot
-# reach, while every tool reads this service when it mounts. The base row
-# carries no config, so this patch replaces nothing. A later patch on the row
-# replaces this whole config and must restate offerIsolation.
-
-- id: subagent-worktree
-  config:
-    offerIsolation: true
+# Optional agent-crew bundle: adds the tools and skill that land, discard, and
+# list worktree-isolated children. The tool-subagent-worktree row registers the
+# isolation offer on the shared subagent-worktree service for as long as it is
+# mounted, and every delegation tool whose provider has the cwd capability
+# offers isolation while an offer is live. The bundle patches no service or
+# tool-subagent row: agent presets mount their own tool-subagent rows, which an
+# id-targeted patch cannot reach, and a later patch that replaces the
+# subagent-worktree row's config, such as one pinning a reviewer route, cannot
+# switch the offer off.
 
 - insert:
     - id: tool-subagent-worktree

@@ -1,4 +1,4 @@
-/** The optional agent-crew bundle offers worktree isolation on every delegation tool and adds its tools and skill. */
+/** The optional agent-crew bundle adds the worktree tools, whose row offers isolation on every delegation tool, and the skill. */
 
 import { readFileSync } from 'node:fs'
 import { resolve } from 'node:path'
@@ -44,17 +44,16 @@ describe('agent-crew bundle', () => {
     }
   })
 
-  it('offers isolation through the shared subagent-worktree row and restates no tool-subagent row', () => {
+  it('only inserts the worktree tools and the skill, patching no service row and no tool-subagent row', () => {
     const parsed = yaml.load(readFileSync(resolve(root, 'cordis.patch.yml'), 'utf8'), { schema: entryListSchema })
     if (!Array.isArray(parsed)) throw new TypeError('agent-crew patch must parse to a patch list')
     const rows = parsed as { id?: string; config?: Record<string, unknown>; insert?: { id?: string; name?: string }[] }[]
-    // The service row reaches every delegation tool, including the ones agent presets mount, and the base row
-    // carries no config, so this replaces nothing. A restated tool-subagent row would replace the base row's
-    // whole config and could not reach the preset rows.
-    expect(rows.flatMap(row => row.id === undefined ? [] : [row])).toEqual([
-      { id: 'subagent-worktree', config: { offerIsolation: true } },
-    ])
+    // The offer is registered by the inserted tool-subagent-worktree row, so nothing here patches the
+    // subagent-worktree row (a later patch replaces a row's whole config and would drop a setting made there)
+    // or a tool-subagent row (which could not reach the rows agent presets mount).
+    expect(rows.flatMap(row => row.id === undefined ? [] : [row])).toEqual([])
     const inserted = rows.flatMap(row => row.insert ?? [])
+    // No config on either row: the worktree tools mount with their default, which registers the offer.
     expect(inserted).toEqual([
       { id: 'tool-subagent-worktree', name: '@deepseek-ai/dsh-tool-subagent-worktree' },
       { id: 'skill-agent-crew', name: '@deepseek-ai/dsh-skill-agent-crew' },
