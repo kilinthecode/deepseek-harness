@@ -185,7 +185,7 @@ describe('session snapshot identity redaction', () => {
       JSON.stringify({
         type: 'tool/result',
         data: {
-          reviewDir: `/tmp/work/.dsh/worktrees/${repoKeyB}/reviews/${worktreeId}-1`,
+          recordPath: `/tmp/work/.dsh/worktrees/${repoKeyB}/records/${worktreeId}.json`,
         },
       }),
       '',
@@ -193,10 +193,93 @@ describe('session snapshot identity redaction', () => {
 
     const [redacted] = redactSessionSnapshotIds([source])
     expect(redacted).toContain('/worktrees/{{repoKey:1}}/{{worktree:1}}')
-    expect(redacted).toContain('/worktrees/{{repoKey:2}}/reviews/{{worktree:1}}-1')
+    expect(redacted).toContain('/worktrees/{{repoKey:2}}/records/{{worktree:1}}.json')
     expect(redacted).not.toContain(repoKeyA)
     expect(redacted).not.toContain(repoKeyB)
     expect(redactSessionSnapshotIds([redacted!])).toEqual([redacted])
+  })
+
+  it('keeps a content digest that has the shape of a commit id while tokenizing a commit id in prose', () => {
+    const digest = '2e18766c26603608f321508caae00ea8f4434d59'
+    const source = [
+      JSON.stringify({
+        type: 'user/message',
+        data: {
+          role: 'user',
+          content: [{ type: 'text', text: `Merged as ${commitId}.` }],
+          source: { kind: 'workspace-instructions', sources: [{ path: 'AGENTS.md', digest }] },
+        },
+      }),
+      '',
+    ].join('\n')
+
+    const [redacted] = redactSessionSnapshotIds([source])
+    expect(redacted).toContain('Merged as {{commit:1}}.')
+    expect(redacted).toContain(`"digest":"${digest}"`)
+    expect(redacted).not.toContain(commitId)
+    expect(redactSessionSnapshotIds([redacted!])).toEqual([redacted])
+  })
+
+  it('mints one reviewCheckout token per review checkout name and keeps the bare worktree id on its own token', () => {
+    const repoKey = 'harness-1a2b3c4d5e6f'
+    const firstReview = `${worktreeId}-1790000000000`
+    const secondReview = `${worktreeId}-1790000000042`
+    const otherReview = `${otherWorktreeId}-1790000000000`
+    const reviews = `/tmp/work/.dsh/worktrees/${repoKey}/reviews`
+    const source = [
+      JSON.stringify({ type: 'session', id: parentId, cwd: `${reviews}/${firstReview}` }),
+      JSON.stringify({
+        type: 'user/message',
+        data: {
+          role: 'user',
+          content: [{
+            type: 'text',
+            text: `This checkout at ${reviews}/${firstReview} holds ${commitId}; branch dsh/worktree/${worktreeId}.`,
+          }],
+          source: { kind: 'user' },
+        },
+      }),
+      JSON.stringify({
+        type: 'tool/result',
+        data: {
+          again: `${reviews}/${firstReview}/app.txt`,
+          retry: `${reviews}/${secondReview}`,
+          other: `${reviews}/${otherReview}`,
+        },
+      }),
+      '',
+    ].join('\n')
+
+    const [redacted] = redactSessionSnapshotIds([source])
+    expect(redacted).toContain('"cwd":"/tmp/work/.dsh/worktrees/{{repoKey:1}}/reviews/{{reviewCheckout:1}}"')
+    expect(redacted).toContain('This checkout at /tmp/work/.dsh/worktrees/{{repoKey:1}}/reviews/{{reviewCheckout:1}} holds {{commit:1}}; branch dsh/worktree/{{worktree:1}}.')
+    expect(redacted).toContain('"again":"/tmp/work/.dsh/worktrees/{{repoKey:1}}/reviews/{{reviewCheckout:1}}/app.txt"')
+    expect(redacted).toContain('"retry":"/tmp/work/.dsh/worktrees/{{repoKey:1}}/reviews/{{reviewCheckout:2}}"')
+    expect(redacted).toContain('"other":"/tmp/work/.dsh/worktrees/{{repoKey:1}}/reviews/{{reviewCheckout:3}}"')
+    for (const volatile of [firstReview, secondReview, otherReview, '1790000000000', '1790000000042', worktreeId, otherWorktreeId]) {
+      expect(redacted).not.toContain(volatile)
+    }
+    expect(redactSessionSnapshotIds([redacted!])).toEqual([redacted])
+  })
+
+  it('keeps digits after a worktree id outside a reviews directory and after a longer name', () => {
+    const source = [
+      JSON.stringify({
+        type: 'example',
+        data: {
+          branchStamp: `dsh/worktree/${worktreeId}-1790000000000`,
+          notAReviews: `/tmp/work/${worktreeId}-1790000000000`,
+          longerName: `/tmp/work/.dsh/worktrees/harness-1a2b3c4d5e6f/reviews/${worktreeId}-1790000000000-copy`,
+        },
+      }),
+      '',
+    ].join('\n')
+
+    const [redacted] = redactSessionSnapshotIds([source])
+    expect(redacted).toContain('"branchStamp":"dsh/worktree/{{worktree:1}}-1790000000000"')
+    expect(redacted).toContain('"notAReviews":"/tmp/work/{{worktree:1}}-1790000000000"')
+    expect(redacted).toContain('/reviews/{{worktree:1}}-1790000000000-copy')
+    expect(redacted).not.toContain('reviewCheckout')
   })
 
   it('leaves a bare repository-like segment outside a worktrees directory untouched', () => {

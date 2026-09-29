@@ -2,14 +2,21 @@
 
 const UUID_FRAGMENT_RE = /[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/i
 const LEGACY_TOKEN_RE = /^\{\{(?:sessionId|messageId)\}\}$/
-const CANONICAL_TOKEN_RE = /^\{\{(session|message|approval|workflow|command|rpc|retry|id|worktree|commit|repoKey):([1-9]\d*)\}\}$/
+const IDENTITY_KINDS = [
+  'session', 'message', 'approval', 'workflow', 'command', 'rpc', 'retry', 'id',
+  'worktree', 'commit', 'repoKey', 'reviewCheckout',
+] as const
+const CANONICAL_TOKEN_RE = new RegExp(String.raw`^\{\{(${IDENTITY_KINDS.join('|')}):([1-9]\d*)\}\}$`)
 const ID_KEY_RE = /(?:^id$|Id$|Ids$)/
 // A value that IS one of these ids owns that kind even when a generic id-shaped
 // key discovers it first, so one relationship never splits across two kinds.
 const WORKTREE_ID_RE = /^wt-[0-9a-f]{8}$/
 const COMMIT_ID_RE = /^[0-9a-f]{40}$/
+// A field that holds a content hash, such as the SHA-1 `digest` of an instruction file. It is a fixed
+// function of committed text and has the shape of a commit id, so it keeps its literal value.
+const CONTENT_HASH_KEYS: ReadonlySet<string> = new Set(['digest'])
 
-type IdentityKind = 'session' | 'message' | 'approval' | 'workflow' | 'command' | 'rpc' | 'retry' | 'id' | 'worktree' | 'commit' | 'repoKey'
+type IdentityKind = typeof IDENTITY_KINDS[number]
 
 interface ParsedLog {
   readonly records: Record<string, unknown>[]
@@ -84,14 +91,16 @@ export function redactSessionSnapshotIds(logs: readonly string[]): string[] {
     if (header?.type === 'session') claim(header.id, 'session', true)
   }
 
-  const collect = (value: unknown, recordType?: unknown): void => {
+  const collect = (value: unknown, recordType?: unknown, key = ''): void => {
     if (typeof value === 'string') {
       for (const match of value.matchAll(/\bas message ([0-9a-f-]{36})\b/gi)) claim(match[1], 'message')
       for (const match of value.matchAll(/\bAnonymous user: ([0-9a-f-]{36})\b/gi)) claim(match[1], 'id')
       // Word-bounded so a longer id never yields a fragment, and hex-neighbour-bounded
       // so a 40-character window inside a longer digest is not a commit.
       for (const match of value.matchAll(/\bwt-[0-9a-f]{8}\b/g)) claim(match[0], 'worktree')
-      for (const match of value.matchAll(/(?<![0-9a-fA-F])[0-9a-f]{40}(?![0-9a-fA-F])/g)) claim(match[0], 'commit')
+      if (!CONTENT_HASH_KEYS.has(key)) {
+        for (const match of value.matchAll(/(?<![0-9a-fA-F])[0-9a-f]{40}(?![0-9a-fA-F])/g)) claim(match[0], 'commit')
+      }
       // The worktree service's per-repository directory name — a sanitized repo
       // basename plus a 12-hex digest of its canonical path (`repoKeyFor` in
       // dsh-subagent-worktree) — changes with the checkout path, so the segment
@@ -100,10 +109,17 @@ export function redactSessionSnapshotIds(logs: readonly string[]): string[] {
       // Anchored on that literal directory name, so `always` bypasses the
       // generic shape check the same way a `commandId`/`rpcId` field does.
       for (const match of value.matchAll(/\/worktrees\/([A-Za-z0-9._-]+-[0-9a-f]{12})(?=\/)/g)) claim(match[1], 'repoKey', true)
+      // A review checkout directory is the worktree id plus the millisecond clock the
+      // service read when the review started (`reviewCheckoutPathFor` in
+      // dsh-subagent-worktree), so its whole name changes on every run. Claiming the
+      // complete name lets the longer replacement win over the bare worktree id it
+      // contains, and anchoring on the literal `reviews` directory keeps any other
+      // `wt-` id followed by digits untouched.
+      for (const match of value.matchAll(/\/reviews\/(wt-[0-9a-f]{8}-\d+)(?![0-9A-Za-z_-])/g)) claim(match[1], 'reviewCheckout', true)
       return
     }
     if (Array.isArray(value)) {
-      for (const item of value) collect(item, recordType)
+      for (const item of value) collect(item, recordType, key)
       return
     }
     if (!isRecord(value)) return
@@ -124,7 +140,7 @@ export function redactSessionSnapshotIds(logs: readonly string[]): string[] {
       } else if (ID_KEY_RE.test(childKey)) {
         claim(item, 'id')
       }
-      collect(item, recordType)
+      collect(item, recordType, childKey)
     }
   }
   for (const log of parsed) {
