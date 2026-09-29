@@ -1,4 +1,4 @@
-import { chmod, mkdir, mkdtemp, readdir, realpath, writeFile } from 'node:fs/promises'
+import { chmod, mkdir, mkdtemp, readdir, realpath, symlink, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, describe, expect, it, vi } from 'vitest'
@@ -138,6 +138,38 @@ describe('createWorktree', () => {
     const provisioned = await createWorktree(await runner(), root, 'dsh/worktree/', 16, request(dir))
     expect(provisioned.baseDirty?.total).toBe(BASE_DIRTY_MAX_ENTRIES)
     expect(provisioned.baseDirty?.entries).toHaveLength(BASE_DIRTY_MAX_ENTRIES)
+  }, GIT_TEST_TIMEOUT_MS)
+
+  it('reports baseDirty when the config hides the base checkout\'s untracked files from git status', async () => {
+    const dir = await initFixtureRepo('dsh-create-dirty-hidden-')
+    cleanups.push(() => removeFixture(dir))
+    git(dir, 'commit', '--allow-empty', '-q', '-m', 'base')
+    git(dir, 'config', 'status.showUntrackedFiles', 'no')
+    await writeFile(join(dir, 'untracked.txt'), 'x')
+    const root = await scratchRoot()
+
+    // The status read asks for untracked files explicitly, so a config that hides them cannot make the base
+    // checkout look clean: the worktree would not contain that file, so the worker's checks would run without it.
+    const provisioned = await createWorktree(await runner(), root, 'dsh/worktree/', 16, request(dir))
+
+    expect(provisioned.baseDirty?.entries).toEqual(['?? untracked.txt'])
+  }, GIT_TEST_TIMEOUT_MS)
+
+  it('scopes workDir inside the worktree when baseDir is reached through a symlinked directory prefix', async () => {
+    const dir = await initFixtureRepo('dsh-create-symlinked-')
+    cleanups.push(() => removeFixture(dir))
+    git(dir, 'commit', '--allow-empty', '-q', '-m', 'base')
+    const sub = join(dir, 'packages', 'foo')
+    await mkdir(sub, { recursive: true })
+    const link = join(await scratchRoot(), 'linked-repo')
+    await symlink(await realpath(dir), link, 'dir')
+    const root = await scratchRoot()
+
+    // `git` reports the canonical repository root, so the symlinked base dir has to be canonicalized too: without
+    // that, `workDir` resolves through the symlink to somewhere outside the worktree it was derived from.
+    const provisioned = await createWorktree(await runner(), root, 'dsh/worktree/', 16, request(join(link, 'packages', 'foo')))
+
+    expect(provisioned.workDir).toBe(join(provisioned.record.path, 'packages', 'foo'))
   }, GIT_TEST_TIMEOUT_MS)
 })
 

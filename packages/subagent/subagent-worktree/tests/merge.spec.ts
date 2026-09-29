@@ -6,7 +6,7 @@ import LocalSubprocessRuntime from '@deepseek-ai/dsh-subprocess-local'
 import { GitRunner } from '../src/git.ts'
 import type * as Git from '../src/git.ts'
 import type { GitCommandResult, GitRunOptions } from '../src/git.ts'
-import { attemptMerge } from '../src/merge.ts'
+import { attemptMerge, landedCommitOf } from '../src/merge.ts'
 import type { MergeAttemptHooks } from '../src/merge.ts'
 import { expireSignal } from './cleanup-signals.ts'
 import { git, initFixtureRepo, removeFixture } from './harness.ts'
@@ -18,6 +18,7 @@ vi.mock('../src/git.ts', async importOriginal => (
 
 const cleanups: Array<() => Promise<unknown>> = []
 afterEach(async () => {
+  vi.unstubAllEnvs()
   for (const cleanup of cleanups.reverse()) await cleanup()
   cleanups.length = 0
 })
@@ -152,6 +153,33 @@ async function repoWithConflictingSideBranch(prefix: string): Promise<{ dir: str
   return { dir, sideCommit, baseHead: git(dir, 'rev-parse', 'HEAD').trim() }
 }
 
+/** Add a clean `foreign` branch to a fixture repository and return the commit `main` would merge from it. */
+async function addForeignBranch(dir: string): Promise<string> {
+  git(dir, 'checkout', '-q', '-b', 'foreign')
+  await writeFile(join(dir, 'foreign.txt'), 'foreign\n')
+  git(dir, 'add', '-A'); git(dir, 'commit', '-q', '-m', 'foreign change')
+  const foreignCommit = git(dir, 'rev-parse', 'HEAD').trim()
+  git(dir, 'checkout', '-q', 'main')
+  return foreignCommit
+}
+
+/** A second clean branch on {@link repoWithSideBranch}'s repository, so a foreign merge names another commit. */
+async function withForeignCommit(prefix: string): Promise<{ dir: string; sideCommit: string; foreignCommit: string; baseHead: string }> {
+  const { dir, sideCommit, baseHead } = await repoWithSideBranch(prefix)
+  return { dir, sideCommit, baseHead, foreignCommit: await addForeignBranch(dir) }
+}
+
+/**
+ * {@link repoWithConflictingSideBranch}'s repository plus a clean `foreign` branch `main` can merge, for a scenario
+ * where this call's conflicting merge is aborted and another operation starts its own merge right afterwards.
+ */
+async function repoWithConflictAndForeignBranch(
+  prefix: string,
+): Promise<{ dir: string; sideCommit: string; foreignCommit: string; baseHead: string }> {
+  const { dir, sideCommit, baseHead } = await repoWithConflictingSideBranch(prefix)
+  return { dir, sideCommit, baseHead, foreignCommit: await addForeignBranch(dir) }
+}
+
 /** What a scripted runner replaces or observes; every command it does not mention runs as real git. */
 interface Script {
   /** Replaces `git merge`: runs `alongside` for real first (leaving whatever merge state it leaves), then returns `result`. */
@@ -170,6 +198,8 @@ interface Script {
   readonly mergeAbortTimesOut?: boolean
   /** Fails the first this many `git rev-list` calls, which read the landing commit after a successful merge, with a nonzero exit. */
   readonly failLandingCommitRead?: number
+  /** Replaces every `git rev-list`, the landing-commit listing, with this result; real git does not run. */
+  readonly revList?: GitCommandResult
 }
 
 /** Real git with scripted exceptions, recording every command it is asked to run. */
@@ -206,6 +236,7 @@ class ScriptedGit extends GitRunner {
       if (script.mergeHeadProbe !== undefined) return script.mergeHeadProbe
     }
     if (args[0] === 'diff' && args.includes('--diff-filter=U') && script.unmergedScan !== undefined) return script.unmergedScan
+    if (args[0] === 'rev-list' && script.revList !== undefined) return script.revList
     if (args[0] === 'rev-list' && this.landingCommitReadFailures < (script.failLandingCommitRead ?? 0)) {
       this.landingCommitReadFailures += 1
       return { exitCode: 128, stdout: '', stderr: 'fatal: scripted rev-list failure\n', stdoutLossy: false }
@@ -218,8 +249,36 @@ async function scripted(script: Script): Promise<ScriptedGit> {
   return new ScriptedGit(await subprocess(), script)
 }
 
+/** Real git, logging every command with the signal it ran on. */
+class SignalRecordingGit extends GitRunner {
+  readonly started: Array<{ args: readonly string[]; signal: AbortSignal | undefined }> = []
+
+  override async run(args: readonly string[], options: GitRunOptions): Promise<GitCommandResult> {
+    this.started.push({ args, signal: options.signal })
+    return super.run(args, options)
+  }
+}
+
+/** Real git, with a smaller stdout cap on `git rev-list`, so a listing longer than the cap is really truncated. */
+class CappedRevListGit extends GitRunner {
+  readonly revListResults: GitCommandResult[] = []
+
+  constructor(subprocessRuntime: ConstructorParameters<typeof GitRunner>[0], private readonly revListMaxBytes: number) {
+    super(subprocessRuntime)
+  }
+
+  override async run(args: readonly string[], options: GitRunOptions): Promise<GitCommandResult> {
+    if (args[0] !== 'rev-list') return super.run(args, options)
+    const result = await super.run(args, { ...options, maxBytes: this.revListMaxBytes })
+    this.revListResults.push(result)
+    return result
+  }
+}
+
 const KILLED: GitCommandResult = { exitCode: null, stdout: '', stderr: '', stdoutLossy: false }
 const FAILED_128: GitCommandResult = { exitCode: 128, stdout: '', stderr: 'fatal: scripted failure\n', stdoutLossy: false }
+/** A merge that failed after starting with an exit code that is neither the conflict code nor a `die()`. */
+const FAILED_OTHER: GitCommandResult = { exitCode: 2, stdout: '', stderr: 'fatal: something went wrong mid-merge\n', stdoutLossy: false }
 
 describe('attemptMerge: the last check before merging', () => {
   it('runs beforeMerge after the pre-merge probes and immediately before git merge starts', async () => {
@@ -340,13 +399,10 @@ describe('attemptMerge: a merge that dies or fails after starting', () => {
     expect(git(dir, 'rev-parse', 'HEAD').trim()).toBe(baseHead)
   }, GIT_TEST_TIMEOUT_MS)
 
-  it('aborts a merge that failed fatally after starting, then throws with git\'s message', async () => {
+  it('aborts a merge that failed after starting with a non-conflict exit, then throws with git\'s message', async () => {
     const { dir, sideCommit, baseHead } = await repoWithSideBranch('dsh-merge-fatal-')
     const command = await scripted({
-      merge: {
-        alongside: ['merge', '--no-ff', '--no-commit', sideCommit],
-        result: { exitCode: 128, stdout: '', stderr: 'fatal: something went wrong mid-merge\n', stdoutLossy: false },
-      },
+      merge: { alongside: ['merge', '--no-ff', '--no-commit', sideCommit], result: FAILED_OTHER },
     })
 
     await expect(attemptMerge(command, dir, 'wt-00000008', 'do the thing', sideCommit, signal, recordingHooks()))
@@ -358,24 +414,24 @@ describe('attemptMerge: a merge that dies or fails after starting', () => {
     expect(git(dir, 'rev-parse', 'HEAD').trim()).toBe(baseHead)
   }, GIT_TEST_TIMEOUT_MS)
 
-  it('does not call a merge that failed with a fatal exit a conflict, even when it left unmerged paths: it aborts and throws', async () => {
+  it('does not call a merge that failed with a non-conflict exit a conflict, even when it left unmerged paths: it aborts and throws', async () => {
     const { dir, sideCommit, baseHead } = await repoWithConflictingSideBranch('dsh-merge-fatal-with-conflicts-')
     const command = await scripted({
-      merge: { alongside: ['merge', '--no-ff', '--no-edit', sideCommit], result: FAILED_128 },
+      merge: { alongside: ['merge', '--no-ff', '--no-edit', sideCommit], result: FAILED_OTHER },
     })
 
     await expect(attemptMerge(command, dir, 'wt-00000021', 'do the thing', sideCommit, signal, recordingHooks()))
-      .rejects.toThrow('merge of worktree wt-00000021 failed unexpectedly after starting: fatal: scripted failure')
+      .rejects.toThrow('merge of worktree wt-00000021 failed unexpectedly after starting: fatal: something went wrong mid-merge')
 
     expect(() => git(dir, 'rev-parse', '-q', '--verify', 'MERGE_HEAD')).toThrow()
     expect(git(dir, 'status', '--porcelain').trim()).toBe('')
     expect(git(dir, 'rev-parse', 'HEAD').trim()).toBe(baseHead)
   }, GIT_TEST_TIMEOUT_MS)
 
-  it('aborts a merge that failed with a fatal exit right after establishing it is its own, before any other probe', async () => {
+  it('aborts a merge that failed with a non-conflict exit right after establishing it is its own, before any other probe', async () => {
     const { dir, sideCommit } = await repoWithConflictingSideBranch('dsh-merge-abort-first-')
     const command = await scripted({
-      merge: { alongside: ['merge', '--no-ff', '--no-edit', sideCommit], result: FAILED_128 },
+      merge: { alongside: ['merge', '--no-ff', '--no-edit', sideCommit], result: FAILED_OTHER },
     })
 
     await expect(attemptMerge(command, dir, 'wt-00000025', 'do the thing', sideCommit, signal, recordingHooks()))
@@ -468,10 +524,10 @@ describe('attemptMerge: a merge that dies or fails after starting', () => {
     expect(git(dir, 'rev-parse', '-q', '--verify', 'MERGE_HEAD').trim()).toBe(sideCommit)
   }, GIT_TEST_TIMEOUT_MS)
 
-  it('reports blocked, not an error, for a refusal that started no merge', async () => {
+  it.each([1, 128])('reports blocked, not an error, for a refusal that started no merge (exit %i)', async (exitCode) => {
     const { dir, sideCommit } = await repoWithSideBranch('dsh-merge-refused-')
     const command = await scripted({
-      merge: { result: { exitCode: 1, stdout: '', stderr: 'error: Your local changes would be overwritten by merge.\n', stdoutLossy: false } },
+      merge: { result: { exitCode, stdout: '', stderr: 'error: Your local changes would be overwritten by merge.\n', stdoutLossy: false } },
     })
 
     const result = await attemptMerge(command, dir, 'wt-00000009', 'do the thing', sideCommit, signal, recordingHooks())
@@ -523,7 +579,7 @@ describe('attemptMerge: a merge that dies or fails after starting', () => {
 
   it.each([
     ['stopped on conflicts', undefined],
-    ['failed with a fatal exit after starting', FAILED_128],
+    ['failed with a non-conflict exit after starting', FAILED_OTHER],
   ])('throws that the base checkout is left mid-merge, instead of returning an outcome, when the abort does not clear a merge that %s', async (_label, exit) => {
     const { dir, sideCommit } = await repoWithConflictingSideBranch('dsh-merge-stuck-outcome-')
     const hooks = recordingHooks()
@@ -543,18 +599,57 @@ describe('attemptMerge: a merge that dies or fails after starting', () => {
   }, GIT_TEST_TIMEOUT_MS)
 })
 
-describe('attemptMerge: a merge state this call did not create', () => {
-  /** A second clean branch, so a foreign merge in progress names a commit other than the one being merged. */
-  async function withForeignCommit(prefix: string): Promise<{ dir: string; sideCommit: string; foreignCommit: string; baseHead: string }> {
-    const { dir, sideCommit, baseHead } = await repoWithSideBranch(prefix)
-    git(dir, 'checkout', '-q', '-b', 'foreign')
-    await writeFile(join(dir, 'foreign.txt'), 'foreign\n')
-    git(dir, 'add', '-A'); git(dir, 'commit', '-q', '-m', 'foreign change')
-    const foreignCommit = git(dir, 'rev-parse', 'HEAD').trim()
-    git(dir, 'checkout', '-q', 'main')
-    return { dir, sideCommit, foreignCommit, baseHead }
-  }
+describe('attemptMerge: git refused the merge before starting', () => {
+  it('throws, and leaves the merge in place, when exit 128 left a merge of the very commit this call was merging', async () => {
+    const { dir, sideCommit, baseHead } = await repoWithSideBranch('dsh-merge-refused-same-commit-')
+    const hooks = recordingHooks()
+    // Either a user started their own merge of that same commit after the pre-merge probes, so this call's `git merge`
+    // died with git's "You have not concluded your merge (MERGE_HEAD exists).", or this call's own merge died after
+    // writing MERGE_HEAD. Both leave that state and that exit code, and nothing can tell them apart, so the merge is
+    // left exactly as it is: aborting it would destroy a merge this call never started.
+    const command = await scripted({
+      merge: { alongside: ['merge', '--no-ff', '--no-commit', sideCommit], result: FAILED_128 },
+    })
 
+    const failure = await attemptMerge(command, dir, 'wt-00000035', 'do the thing', sideCommit, signal, hooks)
+      .catch((error: unknown) => error)
+
+    expect(String(failure)).toContain(
+      'git exited 128 with a merge of worktree wt-00000035\'s commit in progress in the base checkout',
+    )
+    expect(String(failure)).toContain('it cannot be told apart from a merge another operation started')
+    expect(String(failure)).toContain('must be finished or aborted there with "git merge --abort"')
+    expect(String(failure)).not.toContain(dir)
+    expect(command.commands).not.toContainEqual(['merge', '--abort'])
+    // The merge is exactly as it was left, and this call changed nothing.
+    expect(git(dir, 'rev-parse', '-q', '--verify', 'MERGE_HEAD').trim()).toBe(sideCommit)
+    expect(git(dir, 'rev-parse', 'HEAD').trim()).toBe(baseHead)
+    // The absolute path goes to the host log, where an operator can act on it.
+    expect(hooks.reports).toEqual([
+      `subagent-worktree: git merge of ${sideCommit} in "${dir}" exited 128 with a merge of that same commit in `
+      + 'progress; it was left in place, because it cannot be told apart from a merge another operation started',
+    ])
+  }, GIT_TEST_TIMEOUT_MS)
+
+  it('reports blocked, and aborts nothing, when the merge in progress is of another commit', async () => {
+    const { dir, sideCommit, foreignCommit } = await withForeignCommit('dsh-merge-refused-foreign-')
+    const command = await scripted({
+      merge: { alongside: ['merge', '--no-ff', '--no-commit', foreignCommit], result: FAILED_128 },
+    })
+
+    const result = await attemptMerge(command, dir, 'wt-00000036', 'do the thing', sideCommit, signal, recordingHooks())
+
+    expect(result).toEqual({
+      kind: 'blocked',
+      reason: 'the base checkout has a merge in progress (MERGE_HEAD exists), and git refused this merge before starting it',
+    })
+    expect(command.commands).not.toContainEqual(['merge', '--abort'])
+    expect(git(dir, 'rev-parse', '-q', '--verify', 'MERGE_HEAD').trim()).toBe(foreignCommit)
+    expect(git(dir, 'diff', '--cached', '--name-only').trim()).toBe('foreign.txt')
+  }, GIT_TEST_TIMEOUT_MS)
+})
+
+describe('attemptMerge: a merge state this call did not create', () => {
   it('never aborts a MERGE_HEAD that names another commit, and reports the checkout blocked', async () => {
     const { dir, sideCommit, foreignCommit } = await withForeignCommit('dsh-merge-foreign-')
     // Another tool starts its own merge between the pre-merge probes and this call's `git merge`, which then fails.
@@ -609,6 +704,43 @@ describe('attemptMerge: a merge state this call did not create', () => {
     expect(result).toEqual({ kind: 'blocked', reason: 'the base checkout has conflicts this accept did not create' })
     expect(git(dir, 'status', '--porcelain')).toBe(before)
     expect(git(dir, 'rev-parse', '-q', '--verify', 'CHERRY_PICK_HEAD').trim()).toBe(otherCommit)
+  }, GIT_TEST_TIMEOUT_MS)
+
+  it('throws that this merge was aborted while another merge is now in progress, without aborting that one too', async () => {
+    const { dir, sideCommit, foreignCommit } = await repoWithConflictAndForeignBranch('dsh-merge-abort-then-foreign-')
+    /** Real git, starting another operation's merge as soon as this call's abort frees the base checkout. */
+    class AbortThenForeignMergeGit extends GitRunner {
+      /** Every command this runner ran, so the test can count the aborts. */
+      readonly commands: string[][] = []
+
+      override async run(args: readonly string[], options: GitRunOptions): Promise<GitCommandResult> {
+        this.commands.push([...args])
+        const result = await super.run(args, options)
+        if (args[0] === 'merge' && args[1] === '--abort') {
+          await super.run(['merge', '--no-commit', '--no-ff', foreignCommit], options)
+        }
+        return result
+      }
+    }
+    const hooks = recordingHooks()
+    const command = new AbortThenForeignMergeGit(await subprocess())
+
+    const failure = await attemptMerge(command, dir, 'wt-00000037', 'do the thing', sideCommit, signal, hooks)
+      .catch((error: unknown) => error)
+
+    // This call's merge was aborted, and the checkout is busy with a merge this call must leave alone.
+    expect(String(failure)).toContain(
+      'the merge of worktree wt-00000037 was aborted, but another merge is now in progress in the base checkout;',
+    )
+    expect(String(failure)).not.toContain(dir)
+    expect(hooks.reports).toEqual([
+      `subagent-worktree: the merge of ${sideCommit} in "${dir}" was aborted, and a merge of ${foreignCommit} is now `
+      + 'in progress there; leave that one to whoever started it',
+    ])
+    // Exactly one abort ran, so the merge that took its place is still there, staged and uncommitted.
+    expect(command.commands.filter(args => args[0] === 'merge' && args[1] === '--abort')).toHaveLength(1)
+    expect(git(dir, 'rev-parse', '-q', '--verify', 'MERGE_HEAD').trim()).toBe(foreignCommit)
+    expect(git(dir, 'diff', '--cached', '--name-only').trim()).toBe('foreign.txt')
   }, GIT_TEST_TIMEOUT_MS)
 })
 
@@ -699,5 +831,127 @@ describe('attemptMerge: which commit stands for the merge', () => {
 
     expect(result).toEqual({ kind: 'merged', mergeCommit: sideCommit })
     expect(git(dir, 'rev-list', '--count', '--merges', 'HEAD').trim()).toBe('1')
+  }, GIT_TEST_TIMEOUT_MS)
+
+  it('names the earlier landing merge in DAG order, not the one date order lists last, when a re-landing is backdated', async () => {
+    const { dir, sideCommit, baseHead } = await repoWithSideBranch('dsh-merge-topo-order-')
+    const tree = `${baseHead}^{tree}`
+    // The first merge that lists the reviewed commit, dated 2021.
+    vi.stubEnv('GIT_COMMITTER_DATE', '2021-01-01T00:00:00Z')
+    const firstLanding = git(dir, 'commit-tree', tree, '-p', baseHead, '-p', sideCommit, '-m', 'first landing').trim()
+    // An ordinary commit on top of it, dated 2022, which gives the listing a second way down to the first landing.
+    vi.stubEnv('GIT_COMMITTER_DATE', '2022-01-01T00:00:00Z')
+    const laterWork = git(dir, 'commit-tree', tree, '-p', firstLanding, '-m', 'later work').trim()
+    // A second merge that lists the reviewed commit again, a descendant of the first landing, dated 2020: date order
+    // lists it after its own ancestor, as the last line that lists the reviewed commit, while topological order
+    // cannot list it before the ancestor, because a parent follows all of its children. Porcelain git cannot build
+    // this pair at all — it refuses to merge a commit an ancestor already contains — so it is committed directly.
+    vi.stubEnv('GIT_COMMITTER_DATE', '2020-01-01T00:00:00Z')
+    const secondLanding = git(dir, 'commit-tree', tree, '-p', firstLanding, '-p', sideCommit, '-m', 'land it again').trim()
+    vi.stubEnv('GIT_COMMITTER_DATE', '2023-01-01T00:00:00Z')
+    const head = git(dir, 'commit-tree', tree, '-p', laterWork, '-p', secondLanding, '-m', 'merge the branch back').trim()
+    git(dir, 'reset', '--hard', head)
+
+    // The fixture really holds two merges that list the reviewed commit, the second one a backdated descendant of the
+    // first: that is what makes the listing order decide the answer.
+    expect(git(dir, 'rev-list', '-1', '--parents', firstLanding).trim().split(' ')).toEqual([firstLanding, baseHead, sideCommit])
+    expect(git(dir, 'rev-list', '-1', '--parents', secondLanding).trim().split(' ')).toEqual([secondLanding, firstLanding, sideCommit])
+    expect(git(dir, 'merge-base', '--is-ancestor', firstLanding, secondLanding)).toBe('')
+    const dates = [secondLanding, firstLanding].map(commit => Number(git(dir, 'log', '-1', '--format=%ct', commit).trim()))
+    expect(dates[0]).toBeLessThan(dates[1] ?? 0)
+
+    expect(await landedCommitOf(await runner(), dir, sideCommit, signal)).toBe(firstLanding)
+  }, GIT_TEST_TIMEOUT_MS)
+
+  it('finds the landing merge in a listing that lost its head to the output cap, instead of failing on a long history', async () => {
+    const { dir, sideCommit } = await repoWithSideBranch('dsh-merge-long-history-')
+    const landed = await attemptMerge(await runner(), dir, 'wt-00000038', 'do the thing', sideCommit, signal, recordingHooks())
+    if (landed.kind !== 'merged') throw new Error(`expected a landed merge, got ${landed.kind}`)
+    // Every merge after the landing merge is a descendant of the reviewed commit, so the listing this read produces
+    // grows with each one: this history is longer than the byte cap the read is given, and only its tail survives.
+    for (let index = 0; index < 10; index += 1) {
+      git(dir, 'checkout', '-q', '-b', `later-${index}`)
+      await writeFile(join(dir, `later-${index}.txt`), 'later\n')
+      git(dir, 'add', '-A'); git(dir, 'commit', '-q', '-m', `later ${index}`)
+      git(dir, 'checkout', '-q', 'main')
+      git(dir, 'merge', '--no-ff', '--no-edit', `later-${index}`)
+    }
+    // Each merge line is a commit id plus two parent ids: 11 of them are far more than this cap keeps.
+    const command = new CappedRevListGit(await subprocess(), 256)
+
+    expect(await landedCommitOf(command, dir, sideCommit, signal)).toBe(landed.mergeCommit)
+
+    // The read really was truncated: the landing merge came back anyway, from the tail that survived the cut.
+    expect(command.revListResults).toHaveLength(1)
+    expect(command.revListResults[0]?.stdoutLossy).toBe(true)
+  }, GIT_TEST_TIMEOUT_MS)
+
+  it('refuses a truncated listing whose only line lost its head, instead of naming the reviewed commit from a fragment', async () => {
+    const { dir, sideCommit, baseHead } = await repoWithSideBranch('dsh-merge-partial-line-')
+    git(dir, 'merge', '--no-ff', '--no-edit', 'side')
+    const landingMerge = git(dir, 'rev-parse', 'HEAD').trim()
+    // A cap this small leaves only the tail of that one merge line, which begins inside the merge commit's own id: the
+    // first line is a fragment, so nothing in it can answer, and the merge that lists the reviewed commit may be
+    // exactly what the cut dropped — the reviewed commit must not stand in for it.
+    const line = `${landingMerge} ${baseHead} ${sideCommit}\n`
+    const command = new CappedRevListGit(await subprocess(), 100)
+
+    expect(line.length).toBeGreaterThan(100)
+    await expect(landedCommitOf(command, dir, sideCommit, signal))
+      .rejects.toThrow('no merge in the part that was read lists the reviewed commit')
+    expect(command.revListResults[0]?.stdoutLossy).toBe(true)
+  }, GIT_TEST_TIMEOUT_MS)
+
+  it('refuses a truncated listing whose retained lines list only other parents', async () => {
+    const { dir, sideCommit } = await repoWithSideBranch('dsh-merge-lossy-no-answer-')
+    git(dir, 'merge', '--no-ff', '--no-edit', 'side')
+    // The lines the cap kept are whole merge lines, but none of them lists the reviewed commit: the cut may have
+    // dropped the landing merge itself, so this cannot answer "the reviewed commit landed on its own".
+    const command = await scripted({
+      revList: {
+        exitCode: 0,
+        stdout: `${'a'.repeat(40)} ${'b'.repeat(40)} ${'c'.repeat(40)}\n${'d'.repeat(40)} ${'e'.repeat(40)} ${'f'.repeat(40)}\n`,
+        stdoutLossy: true,
+        stderr: '',
+      },
+    })
+
+    const failure = await landedCommitOf(command, dir, sideCommit, signal).catch((error: unknown) => error)
+
+    expect(String(failure)).toContain('no merge in the part that was read lists the reviewed commit')
+    expect(String(failure)).toContain('the commit that landed it cannot be named')
+    expect(String(failure)).not.toContain(dir)
+  }, GIT_TEST_TIMEOUT_MS)
+})
+
+describe('attemptMerge: which signal runs what', () => {
+  it('runs the pre-merge probes, git merge, and the landing commit read on the caller signal', async () => {
+    const { dir, sideCommit } = await repoWithSideBranch('dsh-merge-signal-caller-')
+    const command = new SignalRecordingGit(await subprocess())
+
+    const result = await attemptMerge(command, dir, 'wt-00000039', 'do the thing', sideCommit, signal, recordingHooks())
+
+    expect(result.kind).toBe('merged')
+    expect(command.started.map(started => started.args[0])).toEqual(['rev-parse', 'symbolic-ref', 'merge', 'rev-list'])
+    expect(command.started.map(started => started.signal)).toEqual([signal, signal, signal, signal])
+  }, GIT_TEST_TIMEOUT_MS)
+
+  it('runs the unmerged-path scan, the abort, and the check that it worked on fresh cleanup signals, never the caller signal', async () => {
+    const { dir, sideCommit } = await repoWithConflictingSideBranch('dsh-merge-signal-cleanup-')
+    const command = new SignalRecordingGit(await subprocess())
+
+    const result = await attemptMerge(command, dir, 'wt-00000040', 'do the thing', sideCommit, signal, recordingHooks())
+
+    expect(result).toEqual({ kind: 'conflict', files: ['f.txt'] })
+    expect(command.started.map(started => started.args[0]))
+      .toEqual(['rev-parse', 'symbolic-ref', 'merge', 'rev-parse', 'diff', 'merge', 'rev-parse'])
+    // The MERGE_HEAD probe, the HEAD probe, and the merge itself run on the caller's signal...
+    expect(command.started.slice(0, 3).map(started => started.signal)).toEqual([signal, signal, signal])
+    // ...and the failure's cleanup — the probe after it, the unmerged-path scan, the abort, and the probe that checks
+    // the abort worked — runs on signals of its own, so a cancelled caller signal never stops any of them.
+    const cleanups = command.started.slice(3).map(started => started.signal)
+    expect(cleanups.every(cleanupSignal => cleanupSignal !== signal)).toBe(true)
+    // Fresh for each command: a cleanup signal that ran out does not reach the command after it.
+    expect(new Set(cleanups).size).toBe(cleanups.length)
   }, GIT_TEST_TIMEOUT_MS)
 })

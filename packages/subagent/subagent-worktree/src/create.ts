@@ -96,7 +96,14 @@ export async function createWorktree(
     const relativeBaseDir = relative(repoRoot, canonicalBaseDir)
     const workDir = relativeBaseDir === '' ? worktreePath : join(worktreePath, relativeBaseDir)
 
-    const status = await git.expectComplete(['status', '--porcelain'], 'git status', { cwd: repoRoot, signal: request.signal })
+    // Asked for what `git add -A` would stage — every untracked file, and submodule changes whatever
+    // `status.showUntrackedFiles`, `status.ignoreSubmodules`, or `submodule.<name>.ignore` say — so the user's git
+    // config cannot hide base changes this worktree does not contain.
+    const status = await git.expectComplete(
+      ['status', '--porcelain', '--untracked-files=all', '--ignore-submodules=none'],
+      'git status',
+      { cwd: repoRoot, signal: request.signal },
+    )
     const { entries, total } = boundedLines(status.stdout, BASE_DIRTY_MAX_ENTRIES)
 
     const record: StoredWorktreeRecord = {

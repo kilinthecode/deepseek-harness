@@ -30,9 +30,12 @@ const GIT_TEST_TIMEOUT_MS = 20_000
 const KILLED: GitCommandResult = { exitCode: null, stdout: '', stderr: '', stdoutLossy: false }
 const FAILED_128: GitCommandResult = { exitCode: 128, stdout: '', stderr: 'fatal: scripted failure\n', stdoutLossy: false }
 
+/** The host-log sink of the recovery calls whose log output a test does not assert on. */
+const ignoreLog = (): void => {}
+
 /**
- * Real git with scripted exceptions: the ancestry check, the worktree's `HEAD` read, and its status read can each
- * be replaced by a result, and reading merges can run a side effect.
+ * Real git with scripted exceptions: the ancestry check, the worktree's `HEAD` read, its status read, and the
+ * landing-commit listing can each be replaced by a result, and reading merges can run a side effect.
  */
 class ScriptedGit extends GitRunner {
   constructor(
@@ -41,6 +44,7 @@ class ScriptedGit extends GitRunner {
       readonly ancestryCheck?: GitCommandResult
       readonly headRead?: GitCommandResult
       readonly statusRead?: GitCommandResult
+      readonly revList?: GitCommandResult
       readonly beforeRevList?: () => void
     },
   ) {
@@ -51,6 +55,7 @@ class ScriptedGit extends GitRunner {
     if (args[0] === 'merge-base' && this.script.ancestryCheck !== undefined) return this.script.ancestryCheck
     if (args[0] === 'rev-parse' && args[1] === 'HEAD' && this.script.headRead !== undefined) return this.script.headRead
     if (args[0] === 'status' && this.script.statusRead !== undefined) return this.script.statusRead
+    if (args[0] === 'rev-list' && this.script.revList !== undefined) return this.script.revList
     if (args[0] === 'rev-list') this.script.beforeRevList?.()
     return super.run(args, options)
   }
@@ -96,23 +101,55 @@ async function fixture(): Promise<{
 }
 
 describe('recoverLandedMerge', () => {
-  it('leaves a stale record alone when its reviewed commit no longer exists (it cannot have landed)', async () => {
-    const f = await fixture()
-    const stale = await f.makeStale('f'.repeat(40))
-    const { layout } = await requireRecordLocation(f.root, f.record.id)
-
-    expect(await recoverLandedMerge(f.runner, layout, stale, signal)).toBeUndefined()
-    expect((await requireRecordLocation(f.root, f.record.id)).record.state).toBe('reviewing')
-  }, GIT_TEST_TIMEOUT_MS)
-
   it('throws when the ancestry check was cancelled, because it has no answer', async () => {
     const f = await fixture()
     const stale = await f.makeStale(f.commit)
     const { layout } = await requireRecordLocation(f.root, f.record.id)
     const command = new ScriptedGit(f.ctx.subprocess, { ancestryCheck: KILLED })
 
-    await expect(recoverLandedMerge(command, layout, stale, signal))
+    await expect(recoverLandedMerge(command, layout, stale, signal, ignoreLog))
       .rejects.toThrow(`could not check whether worktree ${f.record.id} already merged (git merge-base was cancelled)`)
+  }, GIT_TEST_TIMEOUT_MS)
+
+  it('throws when the ancestry check exited 128, which is not one of its answers, and leaves the record untouched', async () => {
+    const f = await fixture()
+    const stale = await f.makeStale(f.commit)
+    const { layout } = await requireRecordLocation(f.root, f.record.id)
+    const command = new ScriptedGit(f.ctx.subprocess, { ancestryCheck: FAILED_128 })
+
+    await expect(recoverLandedMerge(command, layout, stale, signal, ignoreLog))
+      .rejects.toThrow(`could not check whether worktree ${f.record.id} already merged (git merge-base exited 128)`)
+
+    // The record is exactly as it was: nothing was recorded, and no claim was taken on it, so a later accept or
+    // discard sees the same unknown state and fails the same way instead of reading it as "not merged".
+    expect((await requireRecordLocation(f.root, f.record.id)).record).toEqual(stale)
+  }, GIT_TEST_TIMEOUT_MS)
+
+  it('does not recover when the worktree is clean and the reviewed commit never landed', async () => {
+    const f = await fixture()
+    const stale = await f.makeStale(f.commit)
+    const { layout } = await requireRecordLocation(f.root, f.record.id)
+
+    // The worktree's own `HEAD` is the reviewed commit, so an ancestry check run in the worktree directory would
+    // always answer yes; only the base checkout's history can say whether the commit landed.
+    expect(await recoverLandedMerge(f.runner, layout, stale, signal, ignoreLog)).toBeUndefined()
+
+    const { record } = await requireRecordLocation(f.root, f.record.id)
+    expect(record.state).toBe('reviewing')
+    expect(await pathExists(f.record.path)).toBe(true)
+    expect(git(f.dir, 'branch', '--list', f.record.branch).trim()).not.toBe('')
+  }, GIT_TEST_TIMEOUT_MS)
+
+  it('throws, instead of reading "not merged" as an answer, when its reviewed commit no longer exists', async () => {
+    const f = await fixture()
+    const stale = await f.makeStale('f'.repeat(40))
+    const { layout } = await requireRecordLocation(f.root, f.record.id)
+
+    // git exits 128 for an unresolvable commit, which is neither "yes" nor "no": the state is unknown, so both a
+    // later accept and a later discard fail loud rather than risk treating the worktree as never merged.
+    await expect(recoverLandedMerge(f.runner, layout, stale, signal, ignoreLog))
+      .rejects.toThrow(`could not check whether worktree ${f.record.id} already merged (git merge-base exited 128)`)
+    expect((await requireRecordLocation(f.root, f.record.id)).record).toEqual(stale)
   }, GIT_TEST_TIMEOUT_MS)
 
   it('records the reviewed commit itself as the merge commit when it landed by fast-forward, so no merge commit lists it', async () => {
@@ -123,7 +160,7 @@ describe('recoverLandedMerge', () => {
     git(f.dir, 'merge', '--ff-only', f.record.branch)
     git(f.dir, 'commit', '--allow-empty', '-q', '-m', 'later work')
 
-    const recovery = await recoverLandedMerge(f.runner, layout, stale, signal)
+    const recovery = await recoverLandedMerge(f.runner, layout, stale, signal, ignoreLog)
 
     expect(recovery?.record).toMatchObject({ state: 'merged', mergedCommit: f.commit })
     expect(recovery?.mergeCommit).toBe(f.commit)
@@ -139,7 +176,7 @@ describe('recoverLandedMerge', () => {
     git(f.dir, 'merge', '--no-ff', '--no-edit', f.record.branch)
     const mergeCommit = git(f.dir, 'rev-parse', 'HEAD').trim()
 
-    const recovery = await recoverLandedMerge(f.runner, layout, stale, signal)
+    const recovery = await recoverLandedMerge(f.runner, layout, stale, signal, ignoreLog)
 
     expect(recovery?.record).toMatchObject({ state: 'merged', mergedCommit: mergeCommit })
     expect(recovery?.mergeCommit).toBe(mergeCommit)
@@ -160,7 +197,7 @@ describe('recoverLandedMerge', () => {
     git(f.dir, 'merge', '--no-ff', '--no-edit', 'unrelated')
     expect(git(f.dir, 'rev-parse', 'HEAD').trim()).not.toBe(mergeCommit)
 
-    const recovery = await recoverLandedMerge(f.runner, layout, stale, signal)
+    const recovery = await recoverLandedMerge(f.runner, layout, stale, signal, ignoreLog)
 
     expect(recovery?.record).toMatchObject({ state: 'merged', mergedCommit: mergeCommit })
   }, GIT_TEST_TIMEOUT_MS)
@@ -182,7 +219,7 @@ describe('recoverLandedMerge', () => {
     vi.stubEnv('GIT_COMMITTER_DATE', '2022-01-01T00:00:00Z')
     git(f.dir, 'merge', '--no-ff', '--no-edit', 'other')
 
-    const recovery = await recoverLandedMerge(f.runner, layout, stale, signal)
+    const recovery = await recoverLandedMerge(f.runner, layout, stale, signal, ignoreLog)
 
     expect(recovery?.record).toMatchObject({ state: 'merged', mergedCommit: earliest })
   }, GIT_TEST_TIMEOUT_MS)
@@ -199,9 +236,46 @@ describe('recoverLandedMerge', () => {
     git(f.dir, 'checkout', '-q', 'main')
     git(f.dir, 'merge', '--no-ff', '--no-edit', 'mid')
 
-    const recovery = await recoverLandedMerge(f.runner, layout, stale, signal)
+    const recovery = await recoverLandedMerge(f.runner, layout, stale, signal, ignoreLog)
 
     expect(recovery?.record).toMatchObject({ state: 'merged', mergedCommit: f.commit })
+  }, GIT_TEST_TIMEOUT_MS)
+
+  it('records merged without a merge commit, and logs the read failure, when a truncated listing cannot name it', async () => {
+    const f = await landedFixture()
+    const stale = await f.makeStale(f.commit)
+    const log = vi.fn<(message: string) => void>()
+    // The listing came back truncated with no line that lists the reviewed commit: the cut may have dropped the merge
+    // that landed it. The record is still closed as `merged`, because leaving it `reviewing` would fail every later
+    // accept on a read that may never succeed, and the merge already happened.
+    const command = new ScriptedGit(f.ctx.subprocess, {
+      revList: {
+        exitCode: 0,
+        stdout: `${'a'.repeat(40)} ${'b'.repeat(40)} ${'c'.repeat(40)}\n${'d'.repeat(40)} ${'e'.repeat(40)} ${'f'.repeat(40)}\n`,
+        stdoutLossy: true,
+        stderr: '',
+      },
+    })
+
+    const recovery = await recoverLandedMerge(command, f.layout, stale, signal, log)
+
+    expect(recovery?.record).toMatchObject({ state: 'merged' })
+    expect(recovery?.record).not.toHaveProperty('mergedCommit')
+    expect(recovery?.mergeCommit).toBeUndefined()
+    expect(recovery?.verdict.commit).toBe(f.commit)
+    // The record is closed, so no later accept fails the same way, and the worktree's leftovers are still there for
+    // discard to sweep.
+    const { record } = await requireRecordLocation(f.root, f.record.id)
+    expect(record).toMatchObject({ state: 'merged' })
+    expect(record).not.toHaveProperty('reviewingPid')
+    expect(await pathExists(f.record.path)).toBe(true)
+    // The failure names the absolute path and the commit in the host log, where an operator can act on them.
+    expect(log).toHaveBeenCalledWith(
+      expect.stringContaining(`worktree ${f.record.id} already landed in "${f.record.repoRoot}" (commit ${f.commit})`),
+    )
+    expect(log).toHaveBeenCalledWith(
+      expect.stringContaining('the commit that landed it could not be read'),
+    )
   }, GIT_TEST_TIMEOUT_MS)
 
   /** The worktree's branch has landed by fast-forward, as after an accept whose merge landed and whose record write did not. */
@@ -220,7 +294,7 @@ describe('recoverLandedMerge', () => {
     git(f.record.path, 'add', '-A')
     git(f.record.path, 'commit', '-q', '-m', 'newer work')
 
-    expect(await recoverLandedMerge(f.runner, f.layout, stale, signal)).toBeUndefined()
+    expect(await recoverLandedMerge(f.runner, f.layout, stale, signal, ignoreLog)).toBeUndefined()
 
     expect((await requireRecordLocation(f.root, f.record.id)).record.state).toBe('reviewing')
     expect(await pathExists(f.record.path)).toBe(true)
@@ -239,7 +313,7 @@ describe('recoverLandedMerge', () => {
     const stale = await f.makeStale(f.commit)
     await dirty(f.record.path)
 
-    expect(await recoverLandedMerge(f.runner, f.layout, stale, signal)).toBeUndefined()
+    expect(await recoverLandedMerge(f.runner, f.layout, stale, signal, ignoreLog)).toBeUndefined()
 
     expect((await requireRecordLocation(f.root, f.record.id)).record.state).toBe('reviewing')
     expect(await pathExists(f.record.path)).toBe(true)
@@ -250,7 +324,7 @@ describe('recoverLandedMerge', () => {
     const f = await landedFixture()
     const stale = await f.makeStale(f.commit, 'fail')
 
-    expect(await recoverLandedMerge(f.runner, f.layout, stale, signal)).toBeUndefined()
+    expect(await recoverLandedMerge(f.runner, f.layout, stale, signal, ignoreLog)).toBeUndefined()
     expect((await requireRecordLocation(f.root, f.record.id)).record.state).toBe('reviewing')
   }, GIT_TEST_TIMEOUT_MS)
 
@@ -259,19 +333,32 @@ describe('recoverLandedMerge', () => {
     const stale = await f.makeStale(f.commit)
     await rm(f.record.path, { recursive: true, force: true })
 
-    expect(await recoverLandedMerge(f.runner, f.layout, stale, signal)).toBeUndefined()
+    expect(await recoverLandedMerge(f.runner, f.layout, stale, signal, ignoreLog)).toBeUndefined()
     expect((await requireRecordLocation(f.root, f.record.id)).record.state).toBe('reviewing')
   }, GIT_TEST_TIMEOUT_MS)
 
   it.each([
-    ['its HEAD cannot be read', { headRead: FAILED_128 }],
-    ['its status cannot be read', { statusRead: FAILED_128 }],
-  ])('does not recover when the worktree\'s state is unknown because %s', async (_label, script) => {
+    ['HEAD read', 'rev-parse', { headRead: FAILED_128 }],
+    ['status read', 'status', { statusRead: FAILED_128 }],
+  ])('throws when the worktree %s failed with an exit code outside its answers, so its state is unknown', async (_label, subcommand, script) => {
     const f = await landedFixture()
     const stale = await f.makeStale(f.commit)
 
-    expect(await recoverLandedMerge(new ScriptedGit(f.ctx.subprocess, script), f.layout, stale, signal)).toBeUndefined()
+    await expect(recoverLandedMerge(new ScriptedGit(f.ctx.subprocess, script), f.layout, stale, signal, ignoreLog))
+      .rejects.toThrow(`could not check whether worktree ${f.record.id} already merged (git ${subcommand} exited 128)`)
     expect((await requireRecordLocation(f.root, f.record.id)).record.state).toBe('reviewing')
+  }, GIT_TEST_TIMEOUT_MS)
+
+  it('does not recover when the config would hide the worktree\'s untracked file from its status read', async () => {
+    const f = await landedFixture()
+    git(f.dir, 'config', 'status.showUntrackedFiles', 'no')
+    const stale = await f.makeStale(f.commit)
+    await writeFile(join(f.record.path, 'untracked.txt'), 'new')
+
+    // The status read asks for untracked files explicitly, so the config cannot make unreviewed work look clean.
+    expect(await recoverLandedMerge(f.runner, f.layout, stale, signal, ignoreLog)).toBeUndefined()
+    expect((await requireRecordLocation(f.root, f.record.id)).record.state).toBe('reviewing')
+    expect(await pathExists(f.record.path)).toBe(true)
   }, GIT_TEST_TIMEOUT_MS)
 
   it.each([
@@ -281,7 +368,7 @@ describe('recoverLandedMerge', () => {
     const f = await landedFixture()
     const stale = await f.makeStale(f.commit)
 
-    await expect(recoverLandedMerge(new ScriptedGit(f.ctx.subprocess, script), f.layout, stale, signal))
+    await expect(recoverLandedMerge(new ScriptedGit(f.ctx.subprocess, script), f.layout, stale, signal, ignoreLog))
       .rejects.toThrow(`could not check whether worktree ${f.record.id} already merged (git ${subcommand} was cancelled)`)
   }, GIT_TEST_TIMEOUT_MS)
 
@@ -298,7 +385,7 @@ describe('recoverLandedMerge', () => {
       },
     })
 
-    expect(await recoverLandedMerge(command, layout, stale, signal)).toBeUndefined()
+    expect(await recoverLandedMerge(command, layout, stale, signal, ignoreLog)).toBeUndefined()
     expect((await requireRecordLocation(f.root, f.record.id)).record.state).toBe('open')
   }, GIT_TEST_TIMEOUT_MS)
 })

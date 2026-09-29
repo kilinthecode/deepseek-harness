@@ -34,5 +34,12 @@ export function expireSignal(signal: AbortSignal | undefined): void {
   if (signal !== undefined) issued.get(signal)?.abort()
 }
 
-/** What a command reports when its signal was already aborted at the start or ran out while it was running. */
+/**
+ * What a command reports when its signal ran out while it was running: the real subprocess runtime kills the command
+ * and settles it with no exit code, and production code reads that as "cancelled". A command whose signal had
+ * already run out before it started never runs either, but the real runtime refuses to spawn it (rejecting with
+ * `aborted before spawn`) instead of settling like this; every command this package starts after a point of no
+ * return runs on a fresh cleanup signal, so no caller reads a settlement there.
+ * @see tests/git.spec.ts, which pins both settlements against the real runtime.
+ */
 export const KILLED_RESULT: Git.GitCommandResult = { exitCode: null, stdout: '', stderr: '', stdoutLossy: false }

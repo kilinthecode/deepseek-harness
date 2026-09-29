@@ -1,8 +1,12 @@
+import { mkdir, writeFile } from 'node:fs/promises'
+import { join } from 'node:path'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { Context } from '@deepseek-ai/cordis'
 import LocalSubprocessRuntime from '@deepseek-ai/dsh-subprocess-local'
 import { cleanupSignal, GitCommandError, GitRunner } from '../src/git.ts'
-import { initFixtureRepo, removeFixture } from './harness.ts'
+import { git, initFixtureRepo, removeFixture } from './harness.ts'
+
+const GIT_TEST_TIMEOUT_MS = 20_000
 
 const cleanups: Array<() => Promise<unknown>> = []
 afterEach(async () => {
@@ -84,6 +88,34 @@ describe('GitRunner.run', () => {
     expect(cached.exitCode).toBe(0)
     // One failed lookup, one fulfilled lookup that every later command reuses.
     expect(lookups).toHaveBeenCalledTimes(2)
+  })
+
+  it('settles with no exit code when the signal runs out while the command is still running', async () => {
+    const dir = await initFixtureRepo('dsh-git-runner-killed-')
+    cleanups.push(() => removeFixture(dir))
+    // A `pre-commit` hook that outlives the signal keeps git running until the runtime kills it, which is exactly
+    // what the scripted cleanup-signal fakes model as a killed command: production reads it as "was cancelled".
+    const hooks = join(dir, 'hooks')
+    await mkdir(hooks, { recursive: true })
+    await writeFile(join(hooks, 'pre-commit'), '#!/bin/sh\nsleep 30\n', { mode: 0o755 })
+    git(dir, 'config', 'core.hooksPath', hooks)
+    const command = await runner()
+
+    const result = await command.run(['commit', '--allow-empty', '-m', 'blocked'], { cwd: dir, signal: AbortSignal.timeout(500) })
+
+    expect(result.exitCode).toBeNull()
+  }, GIT_TEST_TIMEOUT_MS)
+
+  it('refuses to start a command whose signal had already run out, instead of settling it as killed', async () => {
+    const dir = await initFixtureRepo('dsh-git-runner-aborted-')
+    cleanups.push(() => removeFixture(dir))
+    const command = await runner()
+    await command.run(['rev-parse', '--is-bare-repository'], { cwd: dir, signal })
+
+    // The real runtime rejects here, unlike the scripted runners, which settle such a command as killed: nothing
+    // in this package starts a cleanup command on an aborted signal, so no caller reads a result either way.
+    await expect(command.run(['rev-parse', '--is-bare-repository'], { cwd: dir, signal: AbortSignal.abort() }))
+      .rejects.toThrow('aborted before spawn')
   })
 })
 

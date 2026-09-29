@@ -19,7 +19,7 @@ import { acceptWorktree } from './accept.ts'
 import { resolveConfiguredCommitAuthor, resolveConfiguredReviewer } from './config.ts'
 import type { CommitAuthor } from './config.ts'
 import { createWorktree } from './create.ts'
-import { GitRunner } from './git.ts'
+import { cleanupSignal, GitRunner } from './git.ts'
 import { recoverLandedMerge, sweepWorktree } from './landed.ts'
 import {
   assertOpen, assertOpenOrRecoverable, assertOwnerAuthority, layoutForRepo, listRecords, requireRecordLocation,
@@ -307,6 +307,11 @@ export class SubagentWorktrees extends Service {
    * changed: `discard` only removes a worktree directory or branch that a crash
    * between the merge and its cleanup, or a failed earlier `discard`, left behind,
    * so a retry after a failure finishes the cleanup.
+   *
+   * A stale `reviewing` record whose reviewed commit already landed is recorded
+   * `merged` first, as `accept` does. A recovery check that fails is logged and
+   * does not stop the removal: `discard` is how a worktree that no probe can
+   * read gets removed, and a merge that did land stays in the base checkout.
    * @param request - worktree id, owner, and cancellation.
    * @returns the `discarded` record, or the unchanged `merged` or `discarded` record after cleaning up its leftovers.
    * @throws when the id is malformed, no such worktree exists, the owner does not own it, an attached worker is
@@ -318,8 +323,17 @@ export class SubagentWorktrees extends Service {
     assertOwnerAuthority(located.record, request.owner, request.id)
 
     // A stale `reviewing` record whose reviewed commit already landed (an earlier accept crashed before
-    // recording it) is recorded `merged`, and then only its leftovers are swept.
-    const recovery = await recoverLandedMerge(this.git, located.layout, located.record, request.signal)
+    // recording it) is recorded `merged`, and then only its leftovers are swept. A check that cannot answer —
+    // a cancelled or failing probe, for example in a corrupted worktree — must not make the worktree
+    // impossible to remove: the failure is logged and the record is discarded as usual.
+    const recovery = await recoverLandedMerge(this.git, located.layout, located.record, request.signal, (message) => {
+      this.ctx.logger.warn(message)
+    }).catch((error: unknown) => {
+      this.ctx.logger.warn(
+        `subagent-worktree: could not check whether worktree ${request.id} already landed before discarding it: ${String(error)}`,
+      )
+      return undefined
+    })
     const claimed = recovery?.record ?? await updateExistingRecordAt(located.layout, request.id, (current) => {
       if (current.state === 'merged' || current.state === 'discarded') return current
       assertOpenOrRecoverable(current, request.id)
@@ -329,7 +343,10 @@ export class SubagentWorktrees extends Service {
 
     // Each removal tolerates the thing it removes already being gone, so a
     // discard that was interrupted after the claim can be finished by hand.
-    await sweepWorktree(this.git, claimed, () => request.signal)
+    // The claim is the point of no return: every command after it runs on a
+    // fresh bounded cleanup signal, so a caller that cancelled while the record
+    // was being written still gets its directory and branch removed.
+    await sweepWorktree(this.git, claimed, cleanupSignal)
     return toPublicRecord(claimed)
   }
 
