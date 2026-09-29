@@ -12,10 +12,13 @@
       "path": "../../../vendor/cordis"
     },
     {
-      "path": "../ui-renderer"
+      "path": "../locale"
     },
     {
-      "path": "../ui-primitives"
+      "path": "../ui-conversation"
+    },
+    {
+      "path": "../ui-renderer"
     },
     {
       "path": "../ui-sidebar"
