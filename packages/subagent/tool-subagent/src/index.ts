@@ -602,14 +602,18 @@ export function apply(ctx: Context, config: Config, session?: Session): void {
                 properties: {
                   kind: { type: 'string', required: true, const: 'continuable' },
                   subagentId: { type: 'string', required: true },
-                  worktree: WORKTREE_RESULT_SCHEMA,
-                  baseDirty: {
-                    type: 'object',
-                    additionalProperties: false,
-                    properties: {
-                      total: { type: 'number', required: true },
+                  // Declared only where a call can create a worktree, so a composition without the offer keeps the
+                  // result type, and every prompt that declares it, unchanged.
+                  ...worktreeIsolationOffered ? {
+                    worktree: WORKTREE_RESULT_SCHEMA,
+                    baseDirty: {
+                      type: 'object',
+                      additionalProperties: false,
+                      properties: {
+                        total: { type: 'number', required: true },
+                      },
                     },
-                  },
+                  } as const : {},
                 },
               },
               {
@@ -619,7 +623,7 @@ export function apply(ctx: Context, config: Config, session?: Session): void {
                   kind: { type: 'string', required: true, const: 'foreground' },
                   runId: { type: 'string', required: true },
                   output: { type: 'array', required: true, items: { type: 'json' } },
-                  worktree: WORKTREE_RESULT_SCHEMA,
+                  ...worktreeIsolationOffered ? { worktree: WORKTREE_RESULT_SCHEMA } as const : {},
                 },
               },
             ],

@@ -1638,6 +1638,24 @@ describe('subagent tool worktree isolation', () => {
     await disposeSetupProvider(ctx)
   })
 
+  it('declares the worktree result fields only on a tool that offers isolation', async () => {
+    // PTC prompts declare this result type, so a composition without the offer must not pay for the fields.
+    const resultArms = (ctx: Context): string[][] => {
+      const schema = ctx.tools.get('subagent', parent)!.output.schema as { oneOf: Array<{ properties: Record<string, unknown> }> }
+      return schema.oneOf.map(arm => Object.keys(arm.properties))
+    }
+    const plain = await setup({ provider: 'mock' })
+    expect(resultArms(plain).flat().filter(field => field === 'worktree' || field === 'baseDirty')).toEqual([])
+    await disposeSetupProvider(plain)
+    const isolated = await setup({ provider: 'mock', worktreeIsolation: true })
+    expect(resultArms(isolated)).toEqual([
+      ['kind', 'jobId'],
+      ['kind', 'subagentId', 'worktree', 'baseDirty'],
+      ['kind', 'runId', 'output', 'worktree'],
+    ])
+    await disposeSetupProvider(isolated)
+  })
+
   it('rejects the isolation argument at execute time when worktreeIsolation is disabled', async () => {
     const ctx = await setup({ provider: 'mock' })
     const result = await callSubagent(ctx, { description: 'd', prompt: 'p', isolation: 'worktree' })
