@@ -36,6 +36,12 @@ kind: "package-reference"
 | `notifyIdle(agent, request)` | 工具包 | 对端下一次进入空闲后的一条通知 |
 | `peerRepoKey(canonicalCwd)` | 宿主代码 | 用于对等分组的仓库键 |
 | `PeerError` | 工具包 | 稳定的 `code` 与精确的模型可见消息 |
+| `enqueueMail(home, envelope, limits, targetName)` | 共享该 home 的宿主代码 | 在分片锁下把一个信封提交进目标的分片 |
+| `PEER_MAIL_VERSION` | 共享该 home 的宿主代码 | 每个已提交信封携带的版本 |
+| `PeerMailEnvelope` | 共享该 home 的宿主代码 | 排空读回的完整持久信封 |
+| `PeerMailboxLimits` | 共享该 home 的宿主代码 | 该写入方执行的目标上限与单发送方上限 |
+
+共享同一 Harness home 的进程（测试夹具或宿主工具）通过 `enqueueMail` 提交邮件，信封用 `PEER_MAIL_VERSION` 标记，因此其文件会落在排空读回的同一分片布局中；`PeerMailboxLimits` 给出该写入方执行的上限。
 
 ### 仓库身份
 
@@ -66,7 +72,7 @@ kind: "package-reference"
 
 对等会话是运行时根，其头部来源不是 `subagent` 且委托深度为零。`agent/created`、`agent/status` 与 `agent/disposed` 会写入、重写或删除 `$DSH_HOME/peers/presence/<sha256(sessionId)>.json`，另有一个 `session/event` 监听器在标题或审批变化时重写该记录。`awaiting-user` 是存在记录字段，而不是新的智能体状态：它表示某个正在运行的轮次有未决询问或正在进行中的 `user-questions/request`。读取方只会在其 pid 的 `ESRCH` 探测失败时删除记录，因此只要进程存活，文件再旧也会留在列表中。
 
-投递使用 `$DSH_HOME/peers/mail/` 下的文件信箱，由持有活跃目标智能体的进程负责排空。信封携带发送方的仓库键而不是工作目录，投递在 steer 之前会重新应用对等判定与仓库检查，因此被植入的文件或来自其他仓库的消息会被丢弃而不是投递。写入锁只覆盖配额检查与写入；`steer` 与持久化刷新都在锁外进行。
+投递使用 `$DSH_HOME/peers/mail/` 下的文件信箱，由持有活跃目标智能体的进程负责排空。信封携带发送方的仓库键而不是工作目录，投递在 steer 之前会重新应用对等判定与仓库检查，因此被植入的文件或来自其他仓库的消息会被丢弃而不是投递。每次丢弃都会记一条警告，写明信封与其原因——模式校验失败、目标不是顶层对等会话、发往另一个会话、来自另一个仓库——且绝不引用正文。写入锁只覆盖配额检查与写入；`steer` 与持久化刷新都在锁外进行。
 
 投递身份是已记入日志的 `user/message` 上的 `source.messageId`，而不是循环生成的 message id，因此只有宿主侧的 `peerDelivery` 投影才能证明投递成功。进行中集合会阻止第二次排空去 steer 一个仅处于待处理状态的拼接消息，并且只有该投递被应用之后才会删除文件。三次空闲结算都没有对应的 `user/message` 时会删除信封并记录警告，因此每个进程内拒绝每次步骤的目标最多被唤醒三次。中继深度是整份日志中按对端取的最大值，下一次发送在此基础上加一，上限为四跳。
 

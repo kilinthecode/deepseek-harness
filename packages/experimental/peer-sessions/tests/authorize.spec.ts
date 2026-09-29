@@ -115,6 +115,7 @@ describe('peer authorization', () => {
     const harness = await mountPeerHarness({ peer: { pollMs: 10 } })
     harnesses.push(harness)
     const target = await harness.create('peer-b')
+    const warn = vi.spyOn(harness.ctx.logger, 'warn')
     await plantEnvelope(harness, 'peer-b', {
       version: 1,
       messageId: 'peer-message-foreign',
@@ -131,6 +132,8 @@ describe('peer authorization', () => {
     await vi.waitFor(async () => { expect(await harness.mailFiles('peer-b')).toEqual([]) }, { timeout: 2_000 })
     await target.whenIdle()
     expect(harness.userMessages(target)).toEqual([])
+    expect(warn.mock.calls.map(call => String(call[0])))
+      .toContain('peer-sessions: dropped envelope "peer-message-foreign" for peer "peer-b": it came from another repository')
   })
 
   it('drops and deletes an envelope planted for a subagent this process holds', async () => {
@@ -149,11 +152,14 @@ describe('peer authorization', () => {
       kind: 'peer-message',
       text: 'do the work',
     })
+    const warn = vi.spyOn(harness.ctx.logger, 'warn')
     const subagent = await harness.create('peer-sub', { meta: { origin: 'subagent' } })
     // The creation drain drops the envelope before it steers anything, so wait
     // for that deletion instead of for a fixed number of poll ticks.
     await vi.waitFor(async () => { expect(await harness.mailFiles('peer-sub')).toEqual([]) })
     expect(harness.userMessages(subagent)).toEqual([])
+    expect(warn.mock.calls.map(call => String(call[0])))
+      .toContain('peer-sessions: dropped envelope "peer-message-subagent" for peer "peer-sub": the target session is not a top-level peer')
   })
 
   it('keeps resolving peers for a session whose publisher state this process retired', async () => {

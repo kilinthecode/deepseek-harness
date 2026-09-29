@@ -17,7 +17,7 @@
 
 import { randomUUID } from 'node:crypto'
 import { readdir } from 'node:fs/promises'
-import { join } from 'node:path'
+import { basename, join } from 'node:path'
 import { inspect } from 'node:util'
 import { Context, Service } from '@deepseek-ai/cordis'
 import { brandString } from '@deepseek-ai/dsh-brand'
@@ -861,9 +861,10 @@ export default class PeerService extends Service {
   /**
    * One drain pass over one live target's mailbox.
    *
-   * Invalid files and envelopes that fail the repo or peer check are deleted;
-   * an envelope this process already steered is left alone until its delivery
-   * or its failure is settled.
+   * Invalid files and envelopes that fail the repo or peer check are deleted
+   * with one warning each, naming the envelope id and the reason; an envelope
+   * this process already steered is left alone until its delivery or its
+   * failure is settled.
    * @param agent - the live target.
    * @param state - that agent's peer state.
    * @returns every envelope this pass steered into the target.
@@ -875,6 +876,11 @@ export default class PeerService extends Service {
     const delivered = new Set(this.deliveryOf(agent.session).delivered)
     const topLevel = this.isTopLevel(agent)
     const drop: string[] = [...read.invalid]
+    for (const filename of read.invalid) {
+      // An envelope file is named `<messageId>.json`, so its name is the id this
+      // drop can be reported by; the body failed validation and stays unlogged.
+      this.warnDrop(agent, basename(filename, '.json'), 'it does not satisfy the envelope schema')
+    }
     const steer: PeerMailEnvelope[] = []
     for (const envelope of read.entries) {
       const filename = join(shard, `${envelope.messageId}.json`)
@@ -884,7 +890,18 @@ export default class PeerService extends Service {
         drop.push(filename)
         continue
       }
-      if (!topLevel || envelope.targetId !== agent.id || envelope.fromRepo !== state.location?.repoKey) {
+      if (!topLevel) {
+        this.warnDrop(agent, envelope.messageId, 'the target session is not a top-level peer')
+        drop.push(filename)
+        continue
+      }
+      if (envelope.targetId !== agent.id) {
+        this.warnDrop(agent, envelope.messageId, 'it names another session as its target')
+        drop.push(filename)
+        continue
+      }
+      if (envelope.fromRepo !== state.location?.repoKey) {
+        this.warnDrop(agent, envelope.messageId, 'it came from another repository')
         drop.push(filename)
         continue
       }
@@ -969,6 +986,19 @@ export default class PeerService extends Service {
     await withFileLock(shard, async () => {
       for (const filename of filenames) await deleteMailFile(filename)
     })
+  }
+
+  /**
+   * Report one envelope a drain pass deletes instead of steering.
+   *
+   * The id and the reason are the whole line: an envelope body is text a peer
+   * chose, so it never reaches the log.
+   * @param agent - the live target whose shard held the envelope.
+   * @param messageId - the envelope identity the drop could read: the envelope's own id, or the id its file name carries.
+   * @param reason - why this pass deletes the envelope rather than steering it.
+   */
+  private warnDrop(agent: Agent, messageId: string, reason: string): void {
+    this.ctx.logger.warn(`peer-sessions: dropped envelope "${messageId}" for peer "${agent.id}": ${reason}`)
   }
 
   /**

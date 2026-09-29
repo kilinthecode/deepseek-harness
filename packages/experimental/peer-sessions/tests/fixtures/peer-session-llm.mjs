@@ -105,5 +105,6 @@ export const inject = ['llm']
 
 /** Register the keyless adapter on the shipped default provider route. */
 export function apply(ctx, config) {
-  ctx.llm.registerAdapter(['deepseek-official'], new PeerSessionFixtureAdapter(config))
+  // Registrations are effects: the fiber owns the disposer registerAdapter returns.
+  ctx.effect(() => ctx.llm.registerAdapter(['deepseek-official'], new PeerSessionFixtureAdapter(config)))
 }

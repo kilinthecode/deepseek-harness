@@ -36,6 +36,12 @@ Mount this service as `ctx.peers` in a profile that should offer peer coordinati
 | `notifyIdle(agent, request)` | the tool package | one notice after the peer's next idle transition |
 | `peerRepoKey(canonicalCwd)` | host code | the repository key that groups peers |
 | `PeerError` | the tool package | a stable `code` beside the exact model-visible message |
+| `enqueueMail(home, envelope, limits, targetName)` | host code sharing the home | commits one envelope into the target's shard under the shard lock |
+| `PEER_MAIL_VERSION` | host code sharing the home | the version every committed envelope carries |
+| `PeerMailEnvelope` | host code sharing the home | the complete durable envelope the drain reads back |
+| `PeerMailboxLimits` | host code sharing the home | the target and per-sender caps the writer enforces |
+
+A process that shares this Harness home — a test fixture or a host tool — commits mail through `enqueueMail` with an envelope stamped `PEER_MAIL_VERSION`, so its files land in the same shard layout the drain reads back; `PeerMailboxLimits` states the caps the writer enforces.
 
 ### Repository identity
 
@@ -66,7 +72,7 @@ Peers group by repository, not by exact directory, because one shared git ref is
 
 A peer is a runtime root whose header origin is not `subagent` and whose delegation depth is zero. `agent/created`, `agent/status`, and `agent/disposed` write, rewrite, or unlink `$DSH_HOME/peers/presence/<sha256(sessionId)>.json`, and one `session/event` listener rewrites that row for a title or approval change. `awaiting-user` is a presence field, not a new agent status: it means a running turn has an open ask or an in-flight `user-questions/request`. A reader unlinks a row only when its pid fails a `ESRCH` probe, so a live process stays listed however old its file is.
 
-Delivery is a file mailbox under `$DSH_HOME/peers/mail/`, drained by the process that holds a live target agent. An envelope carries the sender's repository key instead of its working directory, and delivery re-applies the peer predicate and the repository check before it steers, so a planted file or a message from another repository is dropped rather than delivered. The writer lock covers only the cap check and the write; `steer` and the durability flush happen outside it.
+Delivery is a file mailbox under `$DSH_HOME/peers/mail/`, drained by the process that holds a live target agent. An envelope carries the sender's repository key instead of its working directory, and delivery re-applies the peer predicate and the repository check before it steers, so a planted file or a message from another repository is dropped rather than delivered. Every drop is reported by one warning that names the envelope and the reason — a schema failure, a target that is not a top-level peer, another session, another repository — and never quotes the body. The writer lock covers only the cap check and the write; `steer` and the durability flush happen outside it.
 
 Delivery identity is `source.messageId` on the logged `user/message`, not the message id the loop mints, so the host-only `peerDelivery` projection is what proves a delivery. An in-flight set stops a second drain from steering an envelope whose splice is only pending, and the file is deleted only once that delivery is applied. Three idle settlements without that `user/message` delete the envelope and log a warning, so a target that rejects every step wakes at most three times per process. Relay depth is the whole log's maximum per peer, one plus that mark on the next send, capped at four hops.
 

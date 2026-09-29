@@ -448,6 +448,36 @@ describe('peer mailbox', () => {
     expect(await harness.mailFiles('peer-t')).toContain(foreign)
   })
 
+  it('warns with the envelope id and the schema reason when it deletes an invalid file', async () => {
+    const harness = await mountPeerHarness({ peer: { pollMs: 60_000 } })
+    harnesses.push(harness)
+    const sender = await harness.create('peer-a')
+    const target = await harness.create('peer-t')
+    const warn = vi.spyOn(harness.ctx.logger, 'warn')
+    // Valid JSON that fails the envelope schema: the drop is reported by the id
+    // its file name carries, and the body a peer wrote is never quoted.
+    const stale = await harness.plantMail('peer-t', 'peer-message-stale.json', `${JSON.stringify({
+      version: 2,
+      messageId: 'peer-message-stale',
+      targetId: 'peer-t',
+      senderSessionId: 'peer-a',
+      senderName: 'peer-a',
+      fromRepo: 'git:/repo',
+      relayDepth: 1,
+      kind: 'peer-message',
+      text: 'the only copy of this body',
+    })}\n`)
+    const result = await harness.ctx.peers.send(sender, { to: 'peer-t', message: 'the readable one' })
+    await vi.waitFor(() => { expect(harness.userMessages(target)).toHaveLength(1) })
+    const [message] = harness.userMessages(target)
+    expect(message?.source.kind === 'peer-message' && message.source.messageId).toBe(result.messageId)
+    expect(await harness.mailFiles('peer-t')).not.toContain(stale)
+    const lines = warn.mock.calls.map(call => String(call[0]))
+    expect(lines.filter(line => line.includes('peer-message-stale')))
+      .toEqual(['peer-sessions: dropped envelope "peer-message-stale" for peer "peer-t": it does not satisfy the envelope schema'])
+    expect(lines.filter(line => line.includes('the only copy of this body'))).toEqual([])
+  })
+
   it('skips a mailbox entry that vanished between the listing and the read', async () => {
     const harness = await mountPeerHarness({ peer: { pollMs: 60_000 } })
     harnesses.push(harness)
@@ -474,6 +504,7 @@ describe('peer mailbox', () => {
     const sender = await harness.create('peer-a')
     const target = await harness.create('peer-t')
     const repoKey = await repoKeyOf(harness, 'peer-t')
+    const warn = vi.spyOn(harness.ctx.logger, 'warn')
     const misaddressed = await harness.plantMail(
       'peer-t',
       'peer-message-misaddressed.json',
@@ -484,6 +515,8 @@ describe('peer mailbox', () => {
     const [message] = harness.userMessages(target)
     expect(message?.source.kind === 'peer-message' && message.source.messageId).toBe(result.messageId)
     await vi.waitFor(async () => { expect(await harness.mailFiles('peer-t')).not.toContain(misaddressed) })
+    expect(warn.mock.calls.map(call => String(call[0])))
+      .toContain('peer-sessions: dropped envelope "peer-message-misaddressed" for peer "peer-t": it names another session as its target')
   })
 
   it('does not count a still-pending splice as a failed delivery attempt', async () => {
