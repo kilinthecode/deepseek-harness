@@ -49,6 +49,12 @@ importers:
       '@deepseek-ai/dsh-experimental-computer-use-cua-driver-native':
         specifier: workspace:*
         version: link:packages/experimental/computer-use-cua-driver-native
+      '@deepseek-ai/dsh-experimental-peer-sessions':
+        specifier: workspace:*
+        version: link:packages/experimental/peer-sessions
+      '@deepseek-ai/dsh-home-paths':
+        specifier: workspace:*
+        version: link:packages/util/home-paths
       '@deepseek-ai/dsh-llm-replay':
         specifier: workspace:*
         version: link:packages/test-support/llm-replay
@@ -67,6 +73,9 @@ importers:
       '@deepseek-ai/dsh-web-fetch-http':
         specifier: workspace:*
         version: link:packages/web/web-fetch-http
+      '@deepseek-ai/dsh-workspace':
+        specifier: workspace:*
+        version: link:packages/workspace/workspace
       '@stylistic/eslint-plugin':
         specifier: ^5.10.0
         version: 5.10.0(eslint@10.5.0(jiti@2.7.0))
