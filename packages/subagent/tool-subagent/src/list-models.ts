@@ -27,9 +27,19 @@ function registeredProvider(
   throw new Error(`LLM provider "${providerId}" is not registered; available providers: ${available}`)
 }
 
-/** Render one advertised or resolved model. */
-function modelLine(provider: string, model: { id: string; name: string; description?: string }): string {
-  return `${provider}/${model.id} — ${model.name}${model.description === undefined ? '' : `: ${model.description}`}`
+/** Render one advertised or resolved model, marking the Session policy's default route. */
+function modelLine(
+  provider: string,
+  model: { id: string; name: string; description?: string },
+  isDefault: boolean,
+): string {
+  return `${provider}/${model.id}${isDefault ? ' (default)' : ''} — ${model.name}`
+    + (model.description === undefined ? '' : `: ${model.description}`)
+}
+
+/** Whether a route is the Session policy's recorded default child route. */
+function isDefaultRoute(policy: ModelSelectionPolicy, provider: string, model: string): boolean {
+  return policy.defaultRoute?.provider === provider && policy.defaultRoute.model === model
 }
 
 /** Read the requested provider, advertised models, or exact-model efforts. */
@@ -64,7 +74,7 @@ async function listSubagentModels(
       .filter(model => allowedRoutes.some(route => route.model === model.id))
     return models.length === 0
       ? `(no advertised models for ${provider.id})`
-      : models.map(model => modelLine(provider.id, model)).join('\n')
+      : models.map(model => modelLine(provider.id, model, isDefaultRoute(policy, provider.id, model.id))).join('\n')
   }
   if (request.model.length === 0) throw new Error('`model` must be non-empty')
   if (!allowedRoutes.some(route => route.model === request.model)) {
@@ -75,7 +85,7 @@ async function listSubagentModels(
     `${effort.id}${model.reasoning?.defaultEffort === effort.id ? ' (default)' : ''} — ${effort.name}`
     + (effort.description === undefined ? '' : `: ${effort.description}`)
   )).join('\n') || '(no advertised reasoning efforts)'
-  return `${modelLine(provider.id, model)}\nReasoning efforts:\n${efforts}`
+  return `${modelLine(provider.id, model, isDefaultRoute(policy, provider.id, model.id))}\nReasoning efforts:\n${efforts}`
 }
 
 /**

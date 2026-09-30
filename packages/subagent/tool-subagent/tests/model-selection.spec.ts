@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest'
 import { Context } from '@deepseek-ai/cordis'
-import { ReasoningEffortId } from '@deepseek-ai/dsh-llm'
+import { ReasoningEffortId, ToolCallId } from '@deepseek-ai/dsh-llm'
 import SystemPrompt from '@deepseek-ai/dsh-system-prompt'
 import ToolRuntime from '@deepseek-ai/dsh-tools'
 import type { Agent } from '@deepseek-ai/dsh-agent'
@@ -14,9 +14,13 @@ import * as tool from '../src/index.ts'
 import {
   assertAllowedModelRoutes,
   assertAllowedModelSelection,
+  assertValidDefaultChildRoute,
+  defaultChildRouteAllowed,
   preflightChildLlmRoute,
+  requestedAgentOptions,
 } from '../src/model-selection.ts'
-import { callSubagent, modelSelectionSetupAgent, setup, text } from './harness.ts'
+import type { DefaultChildRoute } from '../src/model-selection.ts'
+import { callSubagent, modelSelectionSetupAgent, setup, testToolSignal, text } from './harness.ts'
 
 const REASONING = {
   efforts: [
@@ -47,6 +51,25 @@ describe('dsh-tool-subagent model selection', () => {
       .toThrow('requires an array of routes')
     expect(() => { assertAllowedModelRoutes([{ provider: 1, model: 'model' }]) })
       .toThrow('requires non-empty provider and model ids')
+  })
+
+  it('validates a default child route\'s shape and its membership in the allowed routes', () => {
+    expect(() => { assertValidDefaultChildRoute(null) }).not.toThrow()
+    expect(() => { assertValidDefaultChildRoute({ provider: 'alpha', model: 'fast-model' }) }).not.toThrow()
+    expect(() => { assertValidDefaultChildRoute({ provider: '', model: 'fast-model' }) })
+      .toThrow('requires non-empty provider and model ids')
+    expect(() => { assertValidDefaultChildRoute({ provider: 'alpha', model: '' }) })
+      .toThrow('requires non-empty provider and model ids')
+    expect(() => { assertValidDefaultChildRoute({ provider: 'alpha', model: 'fast-model', reasoningEffort: '' }) })
+      .toThrow('requires a non-empty reasoning effort when set')
+    expect(() => { assertValidDefaultChildRoute({ provider: 'alpha', model: 'fast-model', reasoningEffort: 'max' }) })
+      .not.toThrow()
+    expect(() => { assertValidDefaultChildRoute('alpha/fast-model') })
+      .toThrow('requires non-empty provider and model ids')
+
+    const allowed = [{ provider: 'alpha', model: 'fast-model' }, { provider: 'beta', model: 'other-model' }]
+    expect(defaultChildRouteAllowed({ provider: 'alpha', model: 'fast-model' }, allowed)).toBe(true)
+    expect(defaultChildRouteAllowed({ provider: 'alpha', model: 'other-model' }, allowed)).toBe(false)
   })
 
   it('allows pure inheritance but rejects explicit values outside a Session allowlist', () => {
@@ -447,5 +470,334 @@ describe('dsh-tool-subagent model selection', () => {
     expect(result.isError).toBe(true)
     expect(text(result)).toContain('selected route unavailable')
     expect(starts).toBe(0)
+  })
+})
+
+describe('dsh-tool-subagent default child route', () => {
+  const PARENT_OPTIONS = {
+    provider: 'parent-provider',
+    model: 'parent-model',
+    reasoningEffort: ReasoningEffortId('parent-effort'),
+  }
+  const SAME_ROUTE: DefaultChildRoute = { provider: 'parent-provider', model: 'parent-model' }
+  const SAME_ROUTE_WITH_EFFORT: DefaultChildRoute = {
+    provider: 'parent-provider', model: 'parent-model', reasoningEffort: ReasoningEffortId('default-effort'),
+  }
+  const OTHER_ROUTE: DefaultChildRoute = { provider: 'default-provider', model: 'default-model' }
+  const OTHER_ROUTE_WITH_EFFORT: DefaultChildRoute = {
+    provider: 'default-provider', model: 'default-model', reasoningEffort: ReasoningEffortId('default-effort'),
+  }
+  const CONFIGURED_EFFORT_ONLY = { reasoningEffort: ReasoningEffortId('configured-effort') }
+
+  describe('requestedAgentOptions precedence', () => {
+    it('leaves pure inheritance untouched without a recorded default', () => {
+      expect(requestedAgentOptions(PARENT_OPTIONS, undefined, {}, false)).toBeUndefined()
+    })
+
+    it('applies a route-changing default without an effort when nothing else selects a route', () => {
+      expect(requestedAgentOptions(PARENT_OPTIONS, undefined, {}, true, OTHER_ROUTE)).toEqual({
+        provider: 'default-provider', model: 'default-model',
+      })
+    })
+
+    it('applies a route-changing default with its own effort', () => {
+      expect(requestedAgentOptions(PARENT_OPTIONS, undefined, {}, true, OTHER_ROUTE_WITH_EFFORT)).toEqual({
+        provider: 'default-provider', model: 'default-model', reasoningEffort: 'default-effort',
+      })
+    })
+
+    it('names the parent route explicitly when the default matches it, so preflight still validates it', () => {
+      expect(requestedAgentOptions(PARENT_OPTIONS, undefined, {}, true, SAME_ROUTE)).toEqual({
+        provider: 'parent-provider', model: 'parent-model',
+      })
+    })
+
+    it('drops a route-agnostic configured effort exactly when the default changes the route', () => {
+      expect(requestedAgentOptions(PARENT_OPTIONS, CONFIGURED_EFFORT_ONLY, {}, true, OTHER_ROUTE)).toEqual({
+        provider: 'default-provider', model: 'default-model',
+      })
+    })
+
+    it('preserves a route-agnostic configured effort when the default route matches the parent', () => {
+      expect(requestedAgentOptions(PARENT_OPTIONS, CONFIGURED_EFFORT_ONLY, {}, true, SAME_ROUTE)).toEqual({
+        provider: 'parent-provider', model: 'parent-model', reasoningEffort: 'configured-effort',
+      })
+    })
+
+    it('lets the default\'s own effort win over a route-agnostic configured effort even when the route is unchanged', () => {
+      expect(requestedAgentOptions(PARENT_OPTIONS, CONFIGURED_EFFORT_ONLY, {}, true, SAME_ROUTE_WITH_EFFORT)).toEqual({
+        provider: 'parent-provider', model: 'parent-model', reasoningEffort: 'default-effort',
+      })
+    })
+
+    it('lets the default\'s own effort win over a route-agnostic configured effort when the route also changes', () => {
+      expect(requestedAgentOptions(PARENT_OPTIONS, CONFIGURED_EFFORT_ONLY, {}, true, OTHER_ROUTE_WITH_EFFORT)).toEqual({
+        provider: 'default-provider', model: 'default-model', reasoningEffort: 'default-effort',
+      })
+    })
+
+    it('lets a configured route win outright over the default, contributing nothing', () => {
+      expect(requestedAgentOptions(
+        PARENT_OPTIONS,
+        { provider: 'configured-provider', model: 'configured-model' },
+        {},
+        true,
+        OTHER_ROUTE_WITH_EFFORT,
+      )).toEqual({ provider: 'configured-provider', model: 'configured-model' })
+    })
+
+    it('lets an explicit model request override the default route and clear its effort on the new route', () => {
+      expect(requestedAgentOptions(
+        PARENT_OPTIONS,
+        undefined,
+        { provider: 'requested-provider', model: 'requested-model' },
+        true,
+        OTHER_ROUTE_WITH_EFFORT,
+      )).toEqual({ provider: 'requested-provider', model: 'requested-model' })
+    })
+
+    it('applies an effort-only model request on top of the default route', () => {
+      expect(requestedAgentOptions(
+        PARENT_OPTIONS,
+        undefined,
+        { reasoning_effort: 'requested-effort' },
+        true,
+        OTHER_ROUTE_WITH_EFFORT,
+      )).toEqual({ provider: 'default-provider', model: 'default-model', reasoningEffort: 'requested-effort' })
+    })
+  })
+
+  describe('wired through the delegation tool', () => {
+    it('reaches the recorded default route and effort when a call omits provider and model', async () => {
+      const requests: SubagentStartRequest[] = []
+      const ctx = await setup({
+        provider: 'mock',
+        withModelSelection: true,
+        modelSelectionDefault: { provider: 'alpha', model: 'fast-model', reasoningEffort: ReasoningEffortId('high') },
+      }, { onStart: (request) => { requests.push(request) } })
+      ctx.llm.registerAdapter(['alpha'], new MockAdapter([], REASONING))
+      const parent = modelSelectionSetupAgent(ctx)
+      ;(parent as { options: Agent['options'] }).options = parentWithRoute().options
+
+      const result = await callSubagent(ctx, { description: 'default work', prompt: 'do it' })
+
+      expect(result.isError).toBe(false)
+      expect(requests[0]?.agentOptions).toEqual({ provider: 'alpha', model: 'fast-model', reasoningEffort: 'high' })
+    })
+
+    it('names the default in the tool description and param text, and marks it in list_subagent_models', async () => {
+      const ctx = await setup({
+        provider: 'mock',
+        withModelSelection: true,
+        modelSelectionDefault: { provider: 'alpha', model: 'fast-model', reasoningEffort: ReasoningEffortId('high') },
+      })
+      const agent = modelSelectionSetupAgent(ctx)
+      const schema = ctx.tools.schemas(agent).find(entry => entry.name === 'subagent')!
+      expect(schema.description).toBe(
+        'Delegate a self-contained task to a subagent (a separate agent that works in its own context) '
+        + 'to offload focused, independent work — research, a scoped '
+        + 'implementation, an analysis — so it does not consume this conversation\'s context. The subagent '
+        + 'returns its result, not its intermediate steps. This call waits for the result by default. '
+        + 'Child LLM selection is optional. Omit `provider` and `model` to run the child on `alpha/fast-model` '
+        + 'at reasoning effort `high`. Supply `provider` and `model` together after using `list_subagent_models` '
+        + 'to inspect advertised routes and efforts. Changing the effective route without naming an effort uses '
+        + 'the selected model\'s default effort.',
+      )
+      const props = (schema.parameters as { properties: Record<string, { description: string }> }).properties
+      expect(props['provider']?.description).toBe(
+        'LLM provider route for the child. Supply together with model; omit both to run the child on `alpha/fast-model`.',
+      )
+      expect(props['model']?.description).toBe(
+        'Model id interpreted by provider. Supply together with provider; omit both to run the child on `alpha/fast-model`.',
+      )
+      expect(props['reasoning_effort']?.description).toBe(
+        'Adapter-owned reasoning effort for the effective child route. Omit to use `high` on the default route; '
+        + 'on another route, omitting it inherits a compatible configured/parent effort or uses that model\'s default.',
+      )
+
+      ctx.llm.registerAdapter(['alpha'], new MockAdapter([], REASONING))
+      const inspected = await ctx.tools.execute({
+        signal: testToolSignal,
+        callId: ToolCallId('default-route-inspect-model'),
+        name: 'list_subagent_models',
+        arguments: { provider: 'alpha', model: 'fast-model' },
+        agent,
+      })
+      expect(text(inspected)).toContain('alpha/fast-model (default) — fast-model')
+      const other = await ctx.tools.execute({
+        signal: testToolSignal,
+        callId: ToolCallId('default-route-inspect-other-model'),
+        name: 'list_subagent_models',
+        arguments: { provider: 'alpha', model: 'other-model' },
+        agent,
+      })
+      expect(text(other)).toContain('alpha/other-model — other-model')
+      // The model route is unmarked; "high (default)" still names the reasoning effort default.
+      expect(text(other)).not.toContain('alpha/other-model (default)')
+    })
+
+    it('keeps the description and param text byte-identical to the no-default wording when no default is recorded', async () => {
+      const ctx = await setup({ provider: 'mock', withModelSelection: true })
+      const agent = modelSelectionSetupAgent(ctx)
+      const schema = ctx.tools.schemas(agent).find(entry => entry.name === 'subagent')!
+      expect(schema.description).toBe(
+        'Delegate a self-contained task to a subagent (a separate agent that works in its own context) '
+        + 'to offload focused, independent work — research, a scoped '
+        + 'implementation, an analysis — so it does not consume this conversation\'s context. The subagent '
+        + 'returns its result, not its intermediate steps. This call waits for the result by default. '
+        + 'Child LLM selection is optional. Omit `provider`, `model`, and `reasoning_effort` to use configured '
+        + 'child defaults and inherit compatible missing values from the parent Agent. Supply `provider` and '
+        + '`model` together after using `list_subagent_models` to inspect advertised routes and efforts. '
+        + 'Changing the effective route without naming an effort uses the selected model\'s default effort.',
+      )
+      const props = (schema.parameters as { properties: Record<string, { description: string }> }).properties
+      expect(props['provider']?.description).toBe(
+        'LLM provider route for the child. Supply together with model; omit both to use configured child defaults or inherit the parent route.',
+      )
+      expect(props['model']?.description).toBe(
+        'Model id interpreted by provider. Supply together with provider; omit both to use configured child defaults or inherit the parent route.',
+      )
+      expect(props['reasoning_effort']?.description).toBe(
+        'Adapter-owned reasoning effort for the effective child route. Omit to inherit a compatible '
+        + 'configured/parent effort or use a newly selected model\'s default.',
+      )
+    })
+
+    it('runs LLM preflight for the recorded default even without any request or configured options', async () => {
+      const ctx = await setup({
+        provider: 'mock',
+        withModelSelection: true,
+        modelSelectionDefault: { provider: 'alpha', model: 'fast-model' },
+      })
+      // No adapter registered for "alpha": preflight must reject before the child is created.
+      const result = await callSubagent(ctx, { description: 'default work', prompt: 'do it' })
+      expect(result.isError).toBe(true)
+      expect(text(result)).toContain('no adapter registered for provider "alpha"')
+    })
+
+    it('lets a recorded default win over a provider\'s own route defaults', async () => {
+      const requests: SubagentStartRequest[] = []
+      const ctx = await setup({
+        provider: 'mock',
+        withModelSelection: true,
+        modelSelectionDefault: { provider: 'alpha', model: 'fast-model', reasoningEffort: ReasoningEffortId('high') },
+      }, {
+        agentRouteDefaults: { provider: 'alpha', model: 'other-model' },
+        onStart: (request) => { requests.push(request) },
+      })
+      ctx.llm.registerAdapter(['alpha'], new MockAdapter([], REASONING))
+      const agent = modelSelectionSetupAgent(ctx)
+      const schema = ctx.tools.schemas(agent).find(entry => entry.name === 'subagent')!
+      expect(schema.description).toContain(
+        'Omit `provider` and `model` to run the child on `alpha/fast-model` at reasoning effort `high`.',
+      )
+      const props = (schema.parameters as { properties: Record<string, { description: string }> }).properties
+      // The provider's own agentRouteDefaults must not water this down: the
+      // recorded default's effort text stays true regardless of it.
+      expect(props['reasoning_effort']?.description).toBe(
+        'Adapter-owned reasoning effort for the effective child route. Omit to use `high` on the default route; '
+        + 'on another route, omitting it inherits a compatible configured/parent effort or uses that model\'s default.',
+      )
+
+      const result = await callSubagent(ctx, { description: 'default over provider', prompt: 'do it' })
+      expect(result.isError).toBe(false)
+      expect(requests[0]?.agentOptions).toEqual({ provider: 'alpha', model: 'fast-model', reasoningEffort: 'high' })
+
+      const inspected = await ctx.tools.execute({
+        signal: testToolSignal,
+        callId: ToolCallId('default-over-provider-inspect'),
+        name: 'list_subagent_models',
+        arguments: { provider: 'alpha', model: 'fast-model' },
+        agent,
+      })
+      expect(text(inspected)).toContain('alpha/fast-model (default) — ')
+    })
+
+    it('lets a configured tool route win over a recorded default, keeping today\'s no-default wording', async () => {
+      const requests: SubagentStartRequest[] = []
+      const ctx = await setup({
+        provider: 'mock',
+        withModelSelection: true,
+        agentOptions: { provider: 'alpha', model: 'configured-model' },
+        modelSelectionDefault: { provider: 'alpha', model: 'fast-model', reasoningEffort: ReasoningEffortId('high') },
+      }, { onStart: (request) => { requests.push(request) } })
+      ctx.llm.registerAdapter(['alpha'], new MockAdapter([], REASONING))
+      const agent = modelSelectionSetupAgent(ctx)
+      const schema = ctx.tools.schemas(agent).find(entry => entry.name === 'subagent')!
+      expect(schema.description).toContain(
+        'Omit `provider`, `model`, and `reasoning_effort` to use configured child defaults and inherit '
+        + 'compatible missing values from the parent Agent.',
+      )
+      expect(schema.description).not.toContain('run the child on')
+
+      const result = await callSubagent(ctx, { description: 'tool route wins', prompt: 'do it' })
+      expect(result.isError).toBe(false)
+      expect(requests[0]?.agentOptions).toEqual({ provider: 'alpha', model: 'configured-model' })
+
+      const inspected = await ctx.tools.execute({
+        signal: testToolSignal,
+        callId: ToolCallId('tool-route-wins-inspect'),
+        name: 'list_subagent_models',
+        arguments: { provider: 'alpha', model: 'fast-model' },
+        agent,
+      })
+      // The model route is unmarked; "high (default)" still names the reasoning effort default.
+      expect(text(inspected)).not.toContain('alpha/fast-model (default)')
+    })
+
+    it('drops the effort when a recorded default with none of its own changes the route, reaching the adapter\'s own default', async () => {
+      const requests: SubagentStartRequest[] = []
+      const ctx = await setup({
+        provider: 'mock',
+        withModelSelection: true,
+        modelSelectionDefault: { provider: 'alpha', model: 'fast-model' },
+      }, { onStart: (request) => { requests.push(request) } })
+      ctx.llm.registerAdapter(['alpha'], new MockAdapter([], REASONING))
+      const parent = modelSelectionSetupAgent(ctx)
+      const schema = ctx.tools.schemas(parent).find(entry => entry.name === 'subagent')!
+      const props = (schema.parameters as { properties: Record<string, { description: string }> }).properties
+      expect(props['reasoning_effort']?.description).toBe(
+        'Adapter-owned reasoning effort for the effective child route. Omit to inherit a compatible '
+        + 'configured/parent effort or use a newly selected model\'s default.',
+      )
+      // Parent runs alpha/parent-model at effort high; the default names a
+      // DIFFERENT model on the same provider, so the route changes and the
+      // parent's effort must not carry over.
+      ;(parent as { options: Agent['options'] }).options = parentWithRoute().options
+
+      const result = await callSubagent(ctx, { description: 'effort-less default', prompt: 'do it' })
+
+      expect(result.isError).toBe(false)
+      expect(requests[0]?.agentOptions).toEqual({ provider: 'alpha', model: 'fast-model' })
+    })
+
+    it('lets a configured route-agnostic effort survive an effort-less default matching the parent route', async () => {
+      const requests: SubagentStartRequest[] = []
+      const ctx = await setup({
+        provider: 'mock',
+        withModelSelection: true,
+        agentOptions: { reasoningEffort: ReasoningEffortId('high') },
+        modelSelectionDefault: { provider: 'alpha', model: 'fast-model' },
+        parentAgentOptions: { provider: 'alpha', model: 'fast-model', reasoningEffort: ReasoningEffortId('low') },
+      }, { onStart: (request) => { requests.push(request) } })
+      ctx.llm.registerAdapter(['alpha'], new MockAdapter([], REASONING))
+      const agent = modelSelectionSetupAgent(ctx)
+      const schema = ctx.tools.schemas(agent).find(entry => entry.name === 'subagent')!
+      const props = (schema.parameters as { properties: Record<string, { description: string }> }).properties
+      expect(props['reasoning_effort']?.description).toBe(
+        'Adapter-owned reasoning effort for the effective child route. Omit to inherit a compatible '
+        + 'configured/parent effort or use a newly selected model\'s default.',
+      )
+
+      // The default names the parent's own route (alpha/fast-model), so
+      // applyDefaultRoute preserves the configured route-agnostic effort
+      // ('high') instead of clearing it; the parent's own effort ('low') must
+      // not leak through instead. The pinned text says "configured/parent"
+      // rather than naming one because either can be the one that survives.
+      const result = await callSubagent(ctx, { description: 'configured effort survives', prompt: 'do it' })
+
+      expect(result.isError).toBe(false)
+      expect(requests[0]?.agentOptions).toEqual({ provider: 'alpha', model: 'fast-model', reasoningEffort: 'high' })
+    })
   })
 })

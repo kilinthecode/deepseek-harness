@@ -489,7 +489,11 @@ Singleton settings owner read when delegation tools are composed for a Session.
 ```ts cordis-catalog
 /**
  * Read a detached selection preference for the next eligible Session composition.
- * @returns the enabled state and exact allowed routes.
+ * @returns the enabled state, exact allowed routes, and, while enabled, a
+ *   default child route when one is set.
+ * @throws when the allowed routes are malformed or duplicated, or the
+ *   default route is malformed; while enabled, also throws when the
+ *   default's provider/model pair is not one of the allowed routes.
  */
 current(): SubagentModelSelectionSettings
 ```

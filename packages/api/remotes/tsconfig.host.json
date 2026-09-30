@@ -88,6 +88,12 @@
     },
     {
       "path": "../../credentials/deepseek-account"
+    },
+    {
+      "path": "../authorization-controller"
+    },
+    {
+      "path": "../../credentials/authorization"
     }
   ]
 }

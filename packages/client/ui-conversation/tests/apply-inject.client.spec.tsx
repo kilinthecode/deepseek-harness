@@ -509,6 +509,22 @@ describe('Conversation inject API', () => {
     await b.runtime.dispose()
   })
 
+  it('hands the resident composer the route-image advisory published for its Session', async () => {
+    const b = await bench()
+    onTestFinished(() => b.runtime.dispose())
+    const routeImage = b.residentApi(ROOT).hooks.routeImage
+    expect(routeImage.getSnapshot()).toBeNull()
+    const changed = vi.fn()
+    const unsubscribe = routeImage.subscribe(changed)
+    onTestFinished(unsubscribe)
+
+    b.runtime.ctx.conversation.routeImage.set(ROOT, false)
+    expect(changed).toHaveBeenCalledOnce()
+    expect(b.residentApi(ROOT).hooks.routeImage.getSnapshot()).toBe(false)
+    // A Session-less composer has no route to advise on.
+    expect(b.residentApi(undefined).hooks.routeImage.getSnapshot()).toBeNull()
+  })
+
   it('moves a draft only when Workspace navigation changes Session', async () => {
     const b = await bench()
     const resident = b.residentApi(ROOT)

@@ -1,0 +1,25 @@
+# Test-only patch over the shipped headless profile. The real base bundle
+# supplies the storage stack, the memory store, and the memory tools; the
+# model is the keyless fixture adapter beside this file.
+- id: headless-startup
+  disabled: true
+
+- id: headless-runner
+  disabled: true
+
+- id: agent-loop
+  config:
+    agents:
+      - id: main
+        provider: cli-mock
+        model: cli-mock
+        cwd: !!js process.cwd()
+
+- id: session-persistence-jsonl
+  config:
+    root: './.sessions'
+    compression: none
+
+- insert:
+    - id: memory-mock-llm
+      name: './memory-mock-llm.ts'

@@ -69,6 +69,17 @@ interface ControlBaseline {
   }
 }
 
+/** The catalog rows a case may retarget; every other catalog field passes through unchanged. */
+interface ModelCatalogFixture {
+  readonly ok: true
+  readonly value: {
+    readonly groups: readonly {
+      readonly id: string
+      readonly models: readonly { readonly id: string; readonly inputModalities?: readonly string[] }[]
+    }[]
+  }
+}
+
 interface CapturedFixture {
   readonly sessionList: { readonly ok: true; readonly value: { readonly items: readonly SessionSummary[] } }
   readonly settingsDescribe: {
@@ -80,7 +91,7 @@ interface CapturedFixture {
     }
   }
   readonly credentialsDescribe: unknown
-  readonly modelCatalog: unknown
+  readonly modelCatalog: ModelCatalogFixture
   readonly agentPresets: unknown
   readonly commands: unknown
   readonly workspace: {
@@ -106,6 +117,15 @@ export interface AssembledRemoteOptions {
 
 export interface AssembledRemote {
   readonly mock: RemoteMock
+  /**
+   * Replace one catalog row's accepted input modalities and announce
+   * `llm/adapters-updated`, as a Host capability change does; the Client
+   * reloads the catalog on that event.
+   * @param provider - catalog group id.
+   * @param model - model row id inside that group.
+   * @param inputModalities - the row's new accepted modalities.
+   */
+  setInputModalities(provider: string, model: string, inputModalities: readonly string[]): void
 }
 
 const fixtureSource = readFileSync(
@@ -137,6 +157,7 @@ export function createAssembledRemote(options: AssembledRemoteOptions = {}): Ass
     throw new Error('assembled fixture: blank Session projections missing')
   }
   let nextSession = 1
+  let modelCatalog = structuredClone(fixture.modelCatalog)
 
   const mock = RemoteMock.create().load(remoteDefaultResponses)
   mock.load({
@@ -150,7 +171,6 @@ export function createAssembledRemote(options: AssembledRemoteOptions = {}): Ass
         }],
       }),
       'credentials/describe': structuredClone(fixture.credentialsDescribe),
-      'session/modelCatalog': structuredClone(fixture.modelCatalog),
       'agentPresets/list': structuredClone(fixture.agentPresets),
       'commands/list': structuredClone(fixture.commands),
       'settings/openSettingsDocument': ok({ opened: true }),
@@ -217,6 +237,7 @@ export function createAssembledRemote(options: AssembledRemoteOptions = {}): Ass
     })
   })
 
+  mock.unary('session/modelCatalog', () => structuredClone(modelCatalog))
   mock.unary('$events/result', (result: unknown) => {
     const eventId = recordString(result, 'eventId')
     mock.streams.push('$events', { type: 'cancel', eventId })
@@ -364,7 +385,22 @@ export function createAssembledRemote(options: AssembledRemoteOptions = {}): Ass
     })
   })
 
-  return { mock }
+  return {
+    mock,
+    setInputModalities: (provider, model, inputModalities) => {
+      modelCatalog = {
+        ...modelCatalog,
+        value: {
+          ...modelCatalog.value,
+          groups: modelCatalog.value.groups.map(group => group.id !== provider ? group : {
+            ...group,
+            models: group.models.map(row => row.id !== model ? row : { ...row, inputModalities: [...inputModalities] }),
+          }),
+        },
+      }
+      mock.streams.push('$events', { type: 'emit', event: 'llm/adapters-updated', args: [] })
+    },
+  }
 }
 
 function eventOf(

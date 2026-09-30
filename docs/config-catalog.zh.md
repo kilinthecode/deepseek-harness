@@ -659,7 +659,7 @@ export type ThemePreference = typeof THEME_PREFERENCES[number]
 ## `@deepseek-ai/dsh-compaction-basic`
 
 - `inject`: `llm` · `tokenMeter` · `sessions`
-- `source`: [`packages/compaction/compaction-basic/src/types.ts:40`](../packages/compaction/compaction-basic/src/types.ts)
+- `source`: [`packages/compaction/compaction-basic/src/types.ts:52`](../packages/compaction/compaction-basic/src/types.ts)
 
 ```ts config-catalog
 /** Basic compaction configuration with an optional exact-target policy table. */
@@ -690,6 +690,18 @@ export interface CompactionPolicyConfig {
   compactionRetries?: number
   /** Maximum retries after canonical context overflow; `0` disables recovery. Defaults to `1`. */
   maxOverflowRetries?: number
+  /**
+   * Fraction of the pressure threshold that a prune-only pass must leave
+   * free below the threshold to land alone with no summary. A landed prune
+   * that falls short instead leaves compaction to run on that already-pruned
+   * surface; a preview that does not qualify at all leaves compaction to run
+   * first on the unpruned surface, with a prune of what survives after each
+   * compaction — including when no compactable range remains at all. Valid
+   * range `[0, 1)`. `0` only restores skipping summarization when the prune
+   * alone reaches the threshold — it does not restore the former
+   * prune-before-compaction order. Defaults to `0.2`.
+   */
+  pruneHeadroomRatio?: number
 }
 
 /** Exact provider/model override merged over the default compaction policy. */
@@ -1164,7 +1176,7 @@ export interface Config {
 ## `@deepseek-ai/dsh-experimental-tool-agent-team`
 
 - `inject`: `agents` · `agentTeams` · `tools` · `systemPrompt`
-- `source`: [`packages/experimental/tool-agent-team/src/index.ts:17`](../packages/experimental/tool-agent-team/src/index.ts)
+- `source`: [`packages/experimental/tool-agent-team/src/index.ts:18`](../packages/experimental/tool-agent-team/src/index.ts)
 
 ```ts config-catalog
 /** Tool routing configuration. */
@@ -2066,6 +2078,65 @@ export interface ReconnectConfig {
 }
 ```
 <!-- END GENERATED config-catalog:@deepseek-ai/dsh-mcp-client -->
+
+<!-- BEGIN GENERATED config-catalog:@deepseek-ai/dsh-memory -->
+<a id="deepseek-aidsh-memory"></a>
+
+## `@deepseek-ai/dsh-memory`
+
+- `inject`: `storageDomain`
+- `source`: [`packages/memory/memory/src/index.ts:50`](../packages/memory/memory/src/index.ts)
+
+```ts config-catalog
+/** Store configuration. Invalid values fail plugin load. */
+export interface Config {
+  /**
+   * Cap on records in the global scope and, separately, in each project. A
+   * write that would exceed it fails so the agent curates with `forget`. The
+   * count covers the records this process has loaded or written.
+   */
+  maxRecords: number
+  /**
+   * UTF-8 byte cap on one record's `content`, checked on every write and on
+   * every stored record when the store opens; a stored record over the cap is
+   * backed up and skipped.
+   */
+  maxRecordBytes: number
+  /**
+   * Directory entries that identify a project root while walking upward from
+   * the session working directory. Mirrors the `agent-instructions` default so
+   * both plugins agree on what the project is. Omitted in a composition, the
+   * schemastery field default is `['.git']`; an explicit empty list stays empty.
+   */
+  projectRootMarkers?: string[]
+}
+```
+<!-- END GENERATED config-catalog:@deepseek-ai/dsh-memory -->
+
+<!-- BEGIN GENERATED config-catalog:@deepseek-ai/dsh-memory-review -->
+<a id="deepseek-aidsh-memory-review"></a>
+
+## `@deepseek-ai/dsh-memory-review`
+
+- `inject`: `memory` · `tools` · `subagents` · `sessionProjections` · `agents`
+- `source`: [`packages/memory/memory-review/src/index.ts:33`](../packages/memory/memory-review/src/index.ts)
+
+```ts config-catalog
+/** Review-interval configuration. Invalid values fail plugin load. */
+export interface Config {
+  /**
+   * User-kind parent messages between reviews. `0` disables reviews while the
+   * plugin stays mounted; a negative value fails load.
+   */
+  reviewEveryUserTurns: number
+  /**
+   * Inclusive cap on the review child's `agent/pre-step` `step`. Step
+   * `maxReviewSteps + 1` is rejected. Values below `1` fail load.
+   */
+  maxReviewSteps: number
+}
+```
+<!-- END GENERATED config-catalog:@deepseek-ai/dsh-memory-review -->
 
 <!-- BEGIN GENERATED config-catalog:@deepseek-ai/dsh-message-feedback -->
 <a id="deepseek-aidsh-message-feedback"></a>
@@ -3298,7 +3369,7 @@ export interface Config {
 
 ## `@deepseek-ai/dsh-system-prompt`
 
-- `source`: [`packages/core/system-prompt/src/index.ts:247`](../packages/core/system-prompt/src/index.ts)
+- `source`: [`packages/core/system-prompt/src/index.ts:248`](../packages/core/system-prompt/src/index.ts)
 
 ```ts config-catalog
 /** Plugin config: the deployment-authored fragment of the system prompt (see {@link Config.personaPrefix} for its contract). */
@@ -3614,6 +3685,30 @@ export interface Config {
 }
 ```
 <!-- END GENERATED config-catalog:@deepseek-ai/dsh-tool-lsp -->
+
+<!-- BEGIN GENERATED config-catalog:@deepseek-ai/dsh-tool-memory -->
+<a id="deepseek-aidsh-tool-memory"></a>
+
+## `@deepseek-ai/dsh-tool-memory`
+
+- `inject`: `memory` · `tools` · `sessionProjections` · `systemPrompt`
+- `source`: [`packages/memory/tool-memory/src/index.ts:33`](../packages/memory/tool-memory/src/index.ts)
+
+```ts config-catalog
+/** Model-facing memory configuration. Invalid values fail plugin load. */
+export interface Config {
+  /**
+   * UTF-8 byte budget of the injected snapshot. `0` disables injection while
+   * the tools stay available; a positive budget below {@link SNAPSHOT_MIN_BYTES}
+   * fails load; a budget that cuts entries adds a line
+   * saying how many were omitted.
+   */
+  injectMaxBytes: number
+  /** Most records one `memory_recall` call returns. */
+  maxRecallResults: number
+}
+```
+<!-- END GENERATED config-catalog:@deepseek-ai/dsh-tool-memory -->
 
 <!-- BEGIN GENERATED config-catalog:@deepseek-ai/dsh-tool-present -->
 <a id="deepseek-aidsh-tool-present"></a>
@@ -4284,6 +4379,7 @@ export interface Config {
 | `@deepseek-ai/dsh-acp-app` | `cmdlineArgs` | [`packages/bundle/acp-app/src/index.ts`](../packages/bundle/acp-app/src/index.ts) |
 | `@deepseek-ai/dsh-agent` | — | [`packages/core/agent/src/index.ts`](../packages/core/agent/src/index.ts) |
 | `@deepseek-ai/dsh-api-account-controller` | `deepseekAccount` · `agents` | [`packages/api/account-controller/src/index.ts`](../packages/api/account-controller/src/index.ts) |
+| `@deepseek-ai/dsh-api-authorization-controller` | `authorization` · `credentials` | [`packages/api/authorization-controller/src/index.ts`](../packages/api/authorization-controller/src/index.ts) |
 | `@deepseek-ai/dsh-api-remotes` | `typertGateway` | [`packages/api/remotes/src/index.ts`](../packages/api/remotes/src/index.ts) |
 | `@deepseek-ai/dsh-authorization` | `credentials` | [`packages/credentials/authorization/src/index.ts`](../packages/credentials/authorization/src/index.ts) |
 | `@deepseek-ai/dsh-browser-use` | — | [`packages/browser-use/browser-use/src/index.ts`](../packages/browser-use/browser-use/src/index.ts) |

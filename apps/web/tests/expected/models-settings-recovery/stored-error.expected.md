@@ -12,11 +12,13 @@
   - list:
     - listitem:
       - text: openrouter
+      - button "登录"
       - button "编辑 openrouter": 编辑
       - button "删除 openrouter": 删除
       - alert: "llm-pi-ai: provider \"openrouter\" model \"111\" needs an api; the installed catalog does not describe it, so set the route's api to the wire protocol its endpoint speaks"
     - listitem:
       - text: zai
+      - button "登录"
       - button "编辑 zai": 编辑
       - button "删除 zai": 删除
     - listitem:

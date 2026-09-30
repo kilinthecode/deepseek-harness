@@ -139,6 +139,14 @@ const homeAndGuide = pairedPages([
     order: 3,
   },
   {
+    source: 'docs/user/guide/memory.md',
+    route: 'guide/memory.md',
+    label: { root: '持久记忆', en: 'Durable memory' },
+    sidebar: { root: 'zh-guide', en: 'en-guide' },
+    section: { root: '入门', en: 'Guide' },
+    order: 4,
+  },
+  {
     source: 'docs/user/guide/python-sdk.md',
     route: 'guide/python-sdk.md',
     label: { root: 'Python', en: 'Python' },
@@ -317,6 +325,7 @@ const subsystemGroups = [
     ['token-meter.md', 'Token 计量', 'Token metering'],
     ['system-prompt.md', '系统提示词', 'System prompts'],
     ['compaction.md', '上下文压缩', 'Compaction'],
+    ['memory.md', '持久记忆', 'Durable memory'],
   ]],
   ['执行与工具', 'Execution and tools', [
     ['tools.md', '工具', 'Tools'],

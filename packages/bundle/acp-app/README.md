@@ -44,7 +44,7 @@ The complete supported method matrix, MCP trust model, update mapping, and stop 
 
 #### What the model sees
 
-The profile supplies `You are a coding agent powered by the {{model}} model.` before first-party guidance and `Your working directory is {{cwd}}.` in a separate persona suffix. The ACP row's route and each `session/new` cwd resolve the placeholders.
+The profile supplies `You are a coding agent.` before first-party guidance and `Your working directory is {{cwd}}.` in a separate persona suffix. The persona names no route, so it renders identically regardless of the ACP row's route; each `session/new` cwd resolves the remaining placeholder.
 
 #### Token effect
 
@@ -52,7 +52,7 @@ One short stable persona plus the data-dependent base prompt sections and select
 
 #### KV Cache effect
 
-Stable for a fixed profile, provider, model, and tool roster. Profile changes take effect on the next process because the shipped ACP profile uses startup-only patches.
+Stable for a fixed profile, provider, model, and tool roster. Profile changes take effect on the next process because the shipped ACP profile uses startup-only patches. A model switch mid-session leaves the persona text unchanged, so it does not by itself force a system-prompt rewrite.
 
 ## Known Limitations and Deferred Work
 

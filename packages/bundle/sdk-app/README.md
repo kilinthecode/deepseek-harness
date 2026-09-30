@@ -44,7 +44,7 @@ The packaged Python runtime enables the [Office runtime query and skills](../../
 
 #### What the model sees
 
-The profile supplies `You are a coding agent powered by the {{model}} model.` before first-party guidance and `Your working directory is {{cwd}}.` in a separate persona suffix. The exact SDK initialization route and session cwd resolve the placeholders. Default file tool schemas include `read`, `write`, and `edit`; they omit `str_replace_editor`.
+The profile supplies `You are a coding agent.` before first-party guidance and `Your working directory is {{cwd}}.` in a separate persona suffix. The persona names no route, so it renders identically regardless of the SDK initialization route; the session cwd resolves the remaining placeholder. Default file tool schemas include `read`, `write`, and `edit`; they omit `str_replace_editor`.
 
 #### Token effect
 
@@ -52,7 +52,7 @@ One short stable persona plus the data-dependent base prompt sections and select
 
 #### KV Cache effect
 
-Stable for a fixed profile, provider, model, and tool roster. Profile changes take effect on the next process because the shipped SDK profile uses startup-only patches.
+Stable for a fixed profile, provider, model, and tool roster. Profile changes take effect on the next process because the shipped SDK profile uses startup-only patches. A model switch mid-session leaves the persona text unchanged, so it does not by itself force a system-prompt rewrite.
 
 ## Known Limitations and Deferred Work
 
