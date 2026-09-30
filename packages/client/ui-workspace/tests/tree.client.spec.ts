@@ -904,4 +904,25 @@ describe('equalTreeList', () => {
     })).toBe(false)
     expect(equalTreeList(before, { ...before, projectionsBySession: { [parent.id]: catalog() } })).toBe(false)
   })
+
+  it('compares every row field the search derivation reads', () => {
+    const row = summary('row', 2, '/projects/alpha')
+    const before = list(row)
+    const changed = (patch: Partial<SessionSummary>): SessionListState => ({
+      ...before, byId: { ...before.byId, [row.id]: { ...row, ...patch } },
+    })
+    // deriveSearchResults reads these through its local match (title, cwd label,
+    // blank, origin), its ordering (updatedAt), its rows (running, retainedBy as
+    // the selected-row bit), and the running-child count (the subagent catalog).
+    expect(equalTreeList(before, changed({ title: 'renamed' }))).toBe(false)
+    expect(equalTreeList(before, changed({ cwd: '/projects/beta' }))).toBe(false)
+    expect(equalTreeList(before, changed({ blank: true }))).toBe(false)
+    expect(equalTreeList(before, changed({ origin: 'subagent' }))).toBe(false)
+    expect(equalTreeList(before, changed({ updatedAt: 5 }))).toBe(false)
+    expect(equalTreeList(before, changed({ running: true }))).toBe(false)
+    expect(equalTreeList(before, changed({ retainedBy: { mainView: 1 } }))).toBe(false)
+    expect(equalTreeList(before, {
+      ...before, projectionsBySession: { [row.id]: catalog('child') },
+    })).toBe(false)
+  })
 })

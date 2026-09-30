@@ -772,7 +772,10 @@ function SearchResults({
   resultLimit: number
 }) {
   const panelActive = usePanelInfo(info => info.activePanelId !== null)
-  const list = useSessions(s => s)
+  // The result rows read a subset of the tree's Session-list fields, so the
+  // tree's equality covers them too: a frame that changed only another
+  // session's values must not re-derive the results or re-render their rows.
+  const list = useSessions(s => s, equalTreeList)
   const statuses = useSessionStatus(s => s)
   const currentRemote = remote.query === query
     ? remote

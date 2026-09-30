@@ -102,6 +102,16 @@ function listSource(initial: SessionListState) {
   }
 }
 
+/** Translate seat that records each dictionary key a render pass asks for. */
+function countingTranslate() {
+  const keys: string[] = []
+  const counting: WorkspaceBrowserProps['t'] = (key, params) => {
+    keys.push(key)
+    return t(key, params)
+  }
+  return { keys, t: counting }
+}
+
 /** jsdom lacks DragEvent — the fireEvent fallback drops clientY, so pin it on the built event. */
 function fireDrag(row: HTMLElement, kind: 'dragOver' | 'drop', clientY: number): void {
   const event = kind === 'dragOver' ? createEvent.dragOver(row) : createEvent.drop(row)
@@ -2060,6 +2070,45 @@ describe('WorkspaceBrowser', () => {
     })
     expect(rowRenders.get('one')).toBe((baseline.get('one') ?? 0) + 1)
     expect(screen.getByText('Renamed')).toBeTruthy()
+  })
+
+  it('keeps the search results when a publication changes no field the results read', () => {
+    const matches = () => sessionState([
+      summary('needle-a', 2, { displayTitle: 'Needle A' }),
+      summary('needle-b', 1, { displayTitle: 'Needle B' }),
+    ])
+    const source = listSource(matches())
+    const { keys, t: counting } = countingTranslate()
+    mount({
+      useSessions: bindSnapshotSelector(source.source),
+      useWorkspaces: hook(workspaceState([])),
+      t: counting,
+    })
+    fireEvent.change(screen.getByPlaceholderText('搜索会话名称'), { target: { value: 'needle' } })
+    // Both rows are ungrouped, so every result render asks for that label.
+    expect(screen.getByText('Needle A')).toBeTruthy()
+    expect(keys.filter(key => key === 'group.ungrouped').length).toBeGreaterThan(0)
+    keys.length = 0
+
+    // Another session's projection frame replaces projection snapshots only:
+    // nothing the results read changed, so no result row re-renders.
+    act(() => {
+      source.publish({
+        ...matches(),
+        projectionsBySession: { [sid('needle-a')]: { values: {}, state: 'idle', error: null } },
+      })
+    })
+    expect(keys).toEqual([])
+
+    // A field the results do read still reaches their rows.
+    act(() => {
+      source.publish(sessionState([
+        summary('needle-a', 2, { displayTitle: 'Needle A renamed' }),
+        summary('needle-b', 1, { displayTitle: 'Needle B' }),
+      ]))
+    })
+    expect(screen.getByText('Needle A renamed')).toBeTruthy()
+    expect(keys.filter(key => key === 'group.ungrouped')).toHaveLength(2)
   })
 
   it('drags a pinned row by moving its position in the complete Session sequence', () => {

@@ -12,6 +12,7 @@
 import { act, cleanup, fireEvent, render, screen, within } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { makeTranslate } from '@deepseek-ai/dsh-client-test-runtime'
+import { bindSnapshotSelector } from '@deepseek-ai/dsh-client-ui-renderer/src/client/bind.ts'
 import type { RemoteResult } from '@deepseek-ai/dsh-api-remotes/client'
 import type { SessionListState } from '@deepseek-ai/dsh-api-session-controller/client'
 import type { WorkspaceSnapshot } from '@deepseek-ai/dsh-api-workspace-controller/client'
@@ -101,11 +102,13 @@ function timeField(): HTMLButtonElement {
  * Render the Tasks page over one catalog snapshot and let a case replace it.
  * @param records - catalog rows the page lists.
  * @param status - initial catalog query state; defaults to a settled read.
+ * @param overrides - props the case replaces, such as the Session-list binding and its translate seat.
  * @returns the update callbacks and the timing-update spy.
  */
 function mount(
   records: readonly ScheduleCatalogEntry[],
   status: 'loading' | 'ready' | 'error' = 'ready',
+  overrides: Partial<TaskManagerPageProps> = {},
 ) {
   let snapshot: CatalogSnapshot<ScheduleCatalogEntry> = {
     records, status, deleting: [], settled: status === 'ready', readRequest: 0, readSettled: 0,
@@ -132,6 +135,7 @@ function mount(
       },
     })),
     t: makeTranslate(en),
+    ...overrides,
   }
   const view = render(<TaskManagerPage {...props} />)
   return {
@@ -152,6 +156,47 @@ function mount(
 /** Select one listed task, opening its detail. */
 function selectTask(name: string): void {
   fireEvent.click(screen.getByRole('button', { name }))
+}
+
+/** Mutable Session-list source: the production selector binding needs a real observable. */
+function listSource(initial: SessionListState) {
+  let value = initial
+  const listeners = new Set<() => void>()
+  return {
+    source: {
+      getSnapshot: () => value,
+      subscribe: (listener: () => void) => {
+        listeners.add(listener)
+        return () => { listeners.delete(listener) }
+      },
+    },
+    publish(next: SessionListState) {
+      value = next
+      for (const listener of [...listeners]) listener()
+    },
+  }
+}
+
+/**
+ * Copy one Session list with a row's catalog title replaced, as a metadata refresh does.
+ * @param state - snapshot to copy.
+ * @param id - Session whose title changes.
+ * @param title - replacement catalog title.
+ * @returns the snapshot with that row's title replaced.
+ */
+function withSessionTitle(state: SessionListState, id: SessionId, title: string): SessionListState {
+  return { ...state, byId: { ...state.byId, [id]: { ...state.byId[id]!, title } } }
+}
+
+/** Translate seat that records each dictionary key a render pass asks for. */
+function countingTranslate() {
+  const keys: string[] = []
+  const base = makeTranslate(en)
+  const counting: TaskManagerPageProps['t'] = (key, params) => {
+    keys.push(key)
+    return base(key, params)
+  }
+  return { keys, t: counting }
 }
 
 /** The Repeat selector of the shown rule's Run time card. */
@@ -997,5 +1042,39 @@ describe('TaskDetail cron rows', () => {
     chooseCronShape('cronForm.weekly')
     expect(screen.queryByLabelText(en['rule.cronLabel'])).toBeNull()
     expect(screen.queryByRole('button', { name: en['rule.save'] })).toBeNull()
+  })
+})
+
+describe('TaskDetail original-Session link selector', () => {
+  it('keeps the detail when a Session-list publication changes no field the link reads', () => {
+    const source = listSource(sessions)
+    const { keys, t: counting } = countingTranslate()
+    mount([at], 'ready', { useSessions: bindSnapshotSelector(source.source), t: counting })
+    selectTask(at.title)
+    // `detail.label` labels the detail panel, so one call per pass counts them.
+    expect(screen.getByRole('region', { name: en['rule.title'] })).toBeDefined()
+    expect(keys).toContain('detail.label')
+    keys.length = 0
+
+    // Another Session's projection frame replaces projection snapshots only:
+    // the link's phase, membership, and title are untouched, so the whole
+    // detail must not render again.
+    act(() => {
+      source.publish({
+        ...sessions,
+        projectionsBySession: { [every.sessionId]: { values: {}, state: 'idle', error: null } },
+      })
+    })
+    expect(keys).toEqual([])
+
+    // A catalog title the link does read still reaches its entry.
+    act(() => { source.publish(withSessionTitle(sessions, at.sessionId, 'Refreshed review')) })
+    expect(screen.getByRole('button', {
+      name: en['detail.openSessionTitle'].replace('{title}', 'Refreshed review'),
+    })).toBeDefined()
+
+    // Membership and phase reach the link as well.
+    act(() => { source.publish({ ...sessions, phase: 'pending' }) })
+    expect(screen.getByText(en['detail.sessionLoading'])).toBeDefined()
   })
 })

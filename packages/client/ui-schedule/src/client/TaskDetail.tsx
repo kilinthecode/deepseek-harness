@@ -10,6 +10,7 @@ import {
 } from '@deepseek-ai/dsh-client-ui-primitives'
 import type { PropsLocale, PropsRuntime } from '@deepseek-ai/dsh-client-ui-slots'
 import type { RemoteResult } from '@deepseek-ai/dsh-api-remotes/client'
+import type { SessionListState } from '@deepseek-ai/dsh-api-session-controller/client'
 import type {
   ScheduleCatalogEntry, ScheduleId, ScheduleRecord, ScheduleTimingChange, ScheduleUpdateContent,
   ScheduleUpdateRequest, ScheduleUpdateResult,
@@ -280,6 +281,26 @@ export function useTaskDetail(
 }
 
 /**
+ * Equality of the Session-list snapshot for the original-Session link: the
+ * Host-list phase, the linked Session's membership, and its catalog title —
+ * every field `sessionLinkState` and `sessionLabel` read from that snapshot.
+ *
+ * The list controller republishes the whole snapshot for any Session's
+ * projection frame or row change, so comparing snapshots by identity would
+ * re-render the whole detail for a publication that moves no link state and no
+ * link label. Sound only while those two helpers are the snapshot's readers: a
+ * later reader of another field must widen this.
+ * @param id - original Session bound to the shown task.
+ * @returns whether two snapshots state the same link availability and label.
+ */
+function equalLinkedSessions(id: SessionId): (left: SessionListState, right: SessionListState) => boolean {
+  return (left, right) => left === right
+    || (left.phase === right.phase
+      && left.ids.includes(id) === right.ids.includes(id)
+      && left.byId[id]?.title === right.byId[id]?.title)
+}
+
+/**
  * Render one task's rule or saved deliveries with confirm-first deletion and its original Session.
  *
  * A deletion this detail confirmed settles with the refreshed catalog: once
@@ -292,7 +313,7 @@ export function TaskDetail({
   task, authoritative, id, status, deleting, onDelete, onRetry, onUpdateTiming, loadHistory, onOpenSession,
   onEditState, tab, onTabChange, confirmId, onConfirm, onDeleted, onClose, withinSession, useSessions, useWorkspaces, t,
 }: TaskDetailProps): ReactNode {
-  const sessions = useSessions(snapshot => snapshot)
+  const sessions = useSessions(snapshot => snapshot, equalLinkedSessions(task.sessionId))
   const workspaces = useWorkspaces(snapshot => snapshot)
   const detailTabsRef = useRef<HTMLDivElement>(null)
   const moreRef = useRef<HTMLButtonElement | null>(null)
