@@ -8,7 +8,8 @@
  * deliver.
  */
 
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
+import { TextRetainer } from '@deepseek-ai/dsh-output-retention'
 import type { JsonValue } from '@deepseek-ai/dsh-util-values'
 import {
   globSearchMeta,
@@ -172,5 +173,35 @@ describe('searchViewFromMeta (defensive narrowing)', () => {
     const base = { shape: 'paths', truncated: false, total: 1 }
     expect(searchViewFromMeta(m({ ...base, paths: 'x' }))).toBeUndefined()
     expect(searchViewFromMeta(m({ ...base, paths: [1] }))).toBeUndefined()
+  })
+})
+
+describe('retainGrepMatches preview work', () => {
+  it('previews only the matches the inline cap keeps', () => {
+    // `previewLine` runs exactly one `TextRetainer.push` per call, so the push
+    // count is the number of previewed lines: a match the retainer drops can
+    // never reach a consumer.
+    const previews = vi.spyOn(TextRetainer.prototype, 'push')
+    try {
+      const matches = Array.from({ length: 1_000 }, (_unused, index) => match('a.ts', index + 1, `line ${index}`))
+
+      const retained = retainGrepMatches(matches, 250, 2000)
+
+      expect(previews).toHaveBeenCalledTimes(250)
+      expect(retained.kept).toBe(250)
+      expect(retained.seen).toBe(1_000)
+      expect(retained.omitted).toEqual({ kind: 'exact', count: 750 })
+      expect(retained.items[0]).toEqual({ path: 'a.ts', lineNumber: 1, line: 'line 0' })
+      expect(retained.items.at(-1)).toEqual({ path: 'a.ts', lineNumber: 250, line: 'line 249' })
+    } finally {
+      previews.mockRestore()
+    }
+  })
+
+  it('keeps the raw matches past the cap out of the retained items', () => {
+    const retained = retainGrepMatches([match('a.ts', 1, 'one'), match('b.ts', 2, 'two'), match('c.ts', 3, 'three')], 2, 2000)
+
+    expect(retained.items).toEqual([match('a.ts', 1, 'one'), match('b.ts', 2, 'two')])
+    expect(retained).toMatchObject({ seen: 3, kept: 2, omitted: { kind: 'exact', count: 1 } })
   })
 })
