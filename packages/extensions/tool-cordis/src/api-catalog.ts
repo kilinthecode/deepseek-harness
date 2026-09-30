@@ -543,6 +543,59 @@ export const SERVICE_API: readonly ServiceApiEntry[] = [
     ],
   },
   {
+    key: 'authorizationController',
+    summary: 'Authorization commands and a reconnect-safe state stream.',
+    description: 'Authorization commands and a reconnect-safe state stream. The controller owns exactly one running attempt at a time: `start` claims the slot for a key, `answer` and `decline` resolve the attempt\'s current prompt, `cancel` withdraws it, and every mutating method returns the complete view as it stands after the command, so a caller never has to separately re-fetch state. `decline` and `cancel` return without waiting for the flow to settle; the terminal phase reaches surfaces through `watch`.',
+    methods: [
+      {
+        signature: '@Remote async getState(): Promise<AuthorizationView>',
+        description: 'Read the current authorization view.',
+        parameters: [],
+        returns: 'every registered flow and the controller-owned attempt, if any.',
+      },
+      {
+        signature: '@Remote start(key: CredentialKey, method?: string): Promise<AuthorizationView>',
+        description: 'Begin an attempt for one registered flow. Refused while a different key\'s attempt is already active; starting the same key\'s attempt again returns its current state instead of starting a second one.',
+        parameters: [{ name: 'key', description: 'the credential record to authorize; a flow must be registered for it.' }, { name: 'method', description: 'which of the flow\'s methods to run; defaults to the flow\'s first.' }],
+        returns: 'state after the attempt starts, or its already-active state.',
+        throws: ['{RemoteError} code `authorization/no-flow` when no flow claims `key`, `authorization/unknown-method` when the flow offers no such method, or `authorization/already-in-flight` when a different key\'s attempt is active.'],
+      },
+      {
+        signature: '@Remote answer(promptId: AuthorizationPromptId, value: string): Promise<AuthorizationView>',
+        description: 'Answer the active attempt\'s current prompt.',
+        parameters: [{ name: 'promptId', description: 'identity of the prompt this answer addresses.' }, { name: 'value', description: 'typed text, or the chosen option\'s id for a `select` prompt.' }],
+        returns: 'state after the answer is delivered to the running flow.',
+        throws: ['{RemoteError} code `authorization/stale-prompt` when no attempt is waiting on `promptId`, or when a `select` prompt offers no such option, because the prompt\'s own options are the only answers it accepts.'],
+      },
+      {
+        signature: '@Remote async decline(promptId: AuthorizationPromptId): Promise<AuthorizationView>',
+        description: 'Decline the active attempt\'s current prompt. The attempt settles `cancelled`, the same outcome as a withdrawn signal, because a human saying no is a refusal, not a breakage.',
+        parameters: [{ name: 'promptId', description: 'identity of the prompt being declined.' }],
+        returns: 'the complete view as it stands after the refusal, taken without waiting for the flow to unwind; the attempt\'s terminal phase follows through `watch`.',
+        throws: ['{RemoteError} code `authorization/stale-prompt` when no attempt is waiting on `promptId`.'],
+      },
+      {
+        signature: '@Remote async cancel(): Promise<AuthorizationView>',
+        description: 'Withdraw the controller-owned attempt, if one is running. A no-op when nothing is active, so a stale Cancel click never fails.',
+        parameters: [],
+        returns: 'the complete view as it stands after the withdrawal, taken without waiting for the flow to unwind; the terminal `cancelled` phase follows through `watch`.',
+      },
+      {
+        signature: '@Remote async signOut(key: CredentialKey): Promise<AuthorizationView>',
+        description: 'Remove the stored credential record a registered flow claims for `key`.',
+        parameters: [{ name: 'key', description: 'the credential record to remove; a flow must be registered for it.' }],
+        returns: 'state after the record is removed.',
+        throws: ['{RemoteError} code `authorization/no-flow` when no flow claims `key`, or `authorization/read-only` when the active provider cannot write that key\'s record.'],
+      },
+      {
+        signature: '@Remote({ mode: \'stream\' }) async *watch(signal: AbortSignal): AsyncIterable<AuthorizationView>',
+        description: 'Stream the complete authorization view.',
+        parameters: [{ name: 'signal', description: 'stream lifetime.' }],
+        returns: 'initial snapshot and subsequent complete views.',
+      },
+    ],
+  },
+  {
     key: 'browserUse',
     summary: 'Owns one optional provider registration in the shared browser-use service.',
     description: 'Owns one optional provider registration in the shared browser-use service.',
@@ -2807,7 +2860,8 @@ export const SERVICE_API: readonly ServiceApiEntry[] = [
         signature: 'current(): SubagentModelSelectionSettings',
         description: 'Read a detached selection preference for the next eligible Session composition.',
         parameters: [],
-        returns: 'the enabled state and exact allowed routes.',
+        returns: 'the enabled state, exact allowed routes, and, while enabled, a default child route when one is set.',
+        throws: ['when the allowed routes are malformed or duplicated, or the default route is malformed; while enabled, also throws when the default\'s provider/model pair is not one of the allowed routes.'],
       },
     ],
   },
@@ -4560,12 +4614,24 @@ export const TYPE_API: readonly TypeApiEntry[] = [
     declaration: 'export type AttachmentId = Branded<\'AttachmentId\'>;',
   },
   {
+    name: 'AuthorizationAttemptPhase',
+    declaration: 'export type AuthorizationAttemptPhase = \'starting\' | \'running\' | \'prompting\' | \'authorized\' | \'cancelled\' | \'failed\';',
+  },
+  {
+    name: 'AuthorizationAttemptView',
+    declaration: 'export interface AuthorizationAttemptView {\n    readonly key: CredentialKey;\n    readonly method: string;\n    readonly phase: AuthorizationAttemptPhase;\n    readonly notice?: AuthorizationNotice;\n    readonly prompt?: AuthorizationPromptView;\n    readonly failure?: string;\n}',
+  },
+  {
     name: 'AuthorizationEntry',
     declaration: 'export interface AuthorizationEntry {\n    key: CredentialKey;\n    label: string;\n    methods: readonly AuthorizationMethod[];\n    inFlight: boolean;\n}',
   },
   {
     name: 'AuthorizationFlow',
     declaration: 'export interface AuthorizationFlow {\n    readonly key: CredentialKey;\n    readonly label: string;\n    readonly methods: readonly [\n        AuthorizationMethod,\n        ...AuthorizationMethod[]\n    ];\n    run(session: AuthorizationSession): Promise<void>;\n}',
+  },
+  {
+    name: 'AuthorizationFlowView',
+    declaration: 'export interface AuthorizationFlowView {\n    readonly key: CredentialKey;\n    readonly label: string;\n    readonly methods: readonly AuthorizationMethod[];\n    readonly inFlight: boolean;\n    readonly configured: boolean;\n    readonly writable: boolean;\n}',
   },
   {
     name: 'AuthorizationInteraction',
@@ -4580,16 +4646,16 @@ export const TYPE_API: readonly TypeApiEntry[] = [
     declaration: 'export interface AuthorizationNotice {\n    message: string;\n    url?: string;\n    code?: string;\n}',
   },
   {
-    name: 'AuthorizationOutcome',
-    declaration: 'export interface AuthorizationOutcome {\n    status: AuthorizationStatus;\n}',
-  },
-  {
     name: 'AuthorizationPrompt',
     declaration: 'export type AuthorizationPrompt = {\n    signal?: AbortSignal;\n} & ({\n    kind: \'text\';\n    message: string;\n    placeholder?: string;\n} | {\n    kind: \'secret\';\n    message: string;\n    placeholder?: string;\n} | {\n    kind: \'select\';\n    message: string;\n    options: readonly AuthorizationPromptOption[];\n});',
   },
   {
-    name: 'AuthorizationPromptOption',
-    declaration: 'export interface AuthorizationPromptOption {\n    id: string;\n    label: string;\n    description?: string;\n}',
+    name: 'AuthorizationPromptId',
+    declaration: 'export type AuthorizationPromptId = Branded<\'AuthorizationPromptId\'>;',
+  },
+  {
+    name: 'AuthorizationPromptView',
+    declaration: 'export interface AuthorizationPromptView {\n    readonly id: AuthorizationPromptId;\n    readonly kind: \'text\' | \'secret\' | \'select\';\n    readonly message: string;\n    readonly placeholder?: string;\n    readonly options?: readonly AuthorizationPromptOption[];\n}',
   },
   {
     name: 'AuthorizationRequest',
@@ -4606,6 +4672,10 @@ export const TYPE_API: readonly TypeApiEntry[] = [
   {
     name: 'AuthorizationStatus',
     declaration: 'export type AuthorizationStatus = \'authorized\' | \'cancelled\';',
+  },
+  {
+    name: 'AuthorizationView',
+    declaration: 'export interface AuthorizationView {\n    readonly flows: readonly AuthorizationFlowView[];\n    readonly attempt: AuthorizationAttemptView | null;\n}',
   },
   {
     name: 'BackendRegistry',
@@ -5513,7 +5583,7 @@ export const TYPE_API: readonly TypeApiEntry[] = [
   },
   {
     name: 'LlmConfigurableProvider',
-    declaration: 'export interface LlmConfigurableProvider {\n    provider: string;\n    displayName: string;\n    settingsNs: string;\n    settingsPath: readonly string[];\n    declared?: boolean;\n    error?: string;\n}',
+    declaration: 'export interface LlmConfigurableProvider {\n    provider: string;\n    displayName: string;\n    settingsNs: string;\n    settingsPath: readonly string[];\n    declared?: boolean;\n    readonly authorization?: {\n        readonly key: CredentialKey;\n        readonly required: boolean;\n    };\n    error?: string;\n}',
   },
   {
     name: 'LlmDiscoveredModel',
@@ -5729,7 +5799,7 @@ export const TYPE_API: readonly TypeApiEntry[] = [
   },
   {
     name: 'ModelCatalogModel',
-    declaration: 'export interface ModelCatalogModel {\n    readonly id: string;\n    readonly name: string;\n    readonly description?: string;\n    readonly reasoning?: ModelReasoning;\n}',
+    declaration: 'export interface ModelCatalogModel {\n    readonly id: string;\n    readonly name: string;\n    readonly description?: string;\n    readonly reasoning?: ModelReasoning;\n    readonly inputModalities?: readonly ModelModality[];\n}',
   },
   {
     name: 'ModelMessageSource',

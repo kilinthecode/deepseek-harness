@@ -6,7 +6,7 @@ import { SessionInputShell } from '../src/client/input/facade.ts'
 
 function shell(): SessionInputShell {
   return new SessionInputShell({ actx: new Context(), defaultSink: vi.fn(), commandAttachments: {
-    serialize: async () => [], release: () => {}, unsupportedNotice: () => '',
+    serialize: async () => [], release: () => {}, unsupportedNotice: () => '', imageRefusal: () => undefined,
   } })
 }
 

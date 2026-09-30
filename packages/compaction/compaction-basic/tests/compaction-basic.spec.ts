@@ -13,12 +13,13 @@ import {
   resolveTargetPolicy,
 } from '@deepseek-ai/dsh-compaction-basic/src/config.ts'
 import type { CompactionResult } from '@deepseek-ai/dsh-compaction'
-import LlmRuntime, { createUserMessage, ToolCallId, CONTEXT_WINDOW_EXCEEDED_CODE, createSystemMessage, createToolResultMessage, LlmAdapter , createMessage } from '@deepseek-ai/dsh-llm'
+import LlmRuntime, { createUserMessage, ToolCallId, CONTEXT_WINDOW_EXCEEDED_CODE, createSystemMessage, createToolResultMessage, LlmAdapter , createMessage, ReasoningEffortId } from '@deepseek-ai/dsh-llm'
 import type { ContextFormed } from '@deepseek-ai/dsh-llm'
 import type {
   ContentBlock,
   GenerateOptions,
   LlmFailure,
+  LlmModelReasoningInfo,
   LlmResolvedModelInfo,
   Message,
   StreamChunk,
@@ -38,6 +39,14 @@ declare module '@deepseek-ai/dsh-llm' {
 
 const SIGNAL = new AbortController().signal
 const MODEL = 'test-model'
+
+/** Declares 'low' and 'max' as the route's selectable reasoning efforts. */
+const REASONING_EFFORTS: LlmModelReasoningInfo = {
+  efforts: [
+    { id: ReasoningEffortId('low'), name: 'Low' },
+    { id: ReasoningEffortId('max'), name: 'Max' },
+  ],
+}
 
 class ContextAdapter extends LlmAdapter {
   constructor(private readonly contextWindow: number) {
@@ -1680,8 +1689,18 @@ class ScriptedAdapter extends LlmAdapter {
   constructor(
     private readonly blocks: readonly ContentBlock[],
     private readonly finish: (StreamChunk & { type: 'finish' })['reason'] = { kind: 'stop' },
+    private readonly reasoning?: LlmModelReasoningInfo,
   ) {
     super()
+  }
+
+  override resolveModel(provider: string, model: string): Promise<LlmResolvedModelInfo> {
+    return Promise.resolve({
+      provider,
+      id: model,
+      name: model,
+      ...this.reasoning === undefined ? {} : { reasoning: this.reasoning },
+    })
   }
 
   override async * stream(options: GenerateOptions): AsyncIterable<StreamChunk> {
@@ -1723,12 +1742,13 @@ async function summarizerHarness(
   finish?: (StreamChunk & { type: 'finish' })['reason'],
   model = MODEL,
   config: BasicCompactionConfig = { auto: false },
+  reasoning?: LlmModelReasoningInfo,
 ): Promise<{ ctx: Context; adapter: ScriptedAdapter; compact: ExposedCompactionEngine }> {
   const ctx = new Context()
   await ctx.plugin(LlmRuntime)
   await ctx.plugin(SessionProjectionRegistry)
   void new TokenMeter(ctx)
-  const adapter = new ScriptedAdapter(blocks, finish)
+  const adapter = new ScriptedAdapter(blocks, finish, reasoning)
   ctx.llm.registerAdapter([model], adapter)
   const compact = new ExposedCompactionEngine(ctx, config)
   return { ctx, adapter, compact }
@@ -1904,6 +1924,68 @@ describe('default one-shot summarizer', () => {
     expect(adapter.lastOptions?.model).toBe('routed')
   })
 
+  it('carries the latest routed header effort when the target route matches, regardless of the adapter-filled marker', async () => {
+    const { adapter, compact } = await summarizerHarness(
+      [{ type: 'text', text: 'summary' }], undefined, MODEL, { auto: false }, REASONING_EFFORTS,
+    )
+    const session = conversation(1)
+    session.append('request/header', {
+      header: {
+        config: { provider: MODEL, model: MODEL, reasoningEffort: ReasoningEffortId('max') },
+        adapterDefaults: { reasoningEffort: true },
+      },
+      reason: 'change',
+    })
+
+    await compact.runSummarize(promptInput('history'), agent(session, MODEL))
+
+    expect(adapter.lastOptions?.reasoningEffort).toBe(ReasoningEffortId('max'))
+  })
+
+  it('omits reasoning effort for a configured summarization route whose model differs from the latest route', async () => {
+    const { adapter, compact } = await summarizerHarness([{ type: 'text', text: 'summary' }], undefined, MODEL, {
+      auto: false,
+      summarizationProvider: MODEL,
+      summarizationModel: 'summary-model',
+    })
+    const session = conversation(1)
+    session.append('request/header', {
+      header: { config: { provider: MODEL, model: MODEL, reasoningEffort: ReasoningEffortId('max') } },
+      reason: 'change',
+    })
+
+    await compact.runSummarize(promptInput('history'), agent(session, MODEL))
+
+    expect(adapter.lastOptions?.model).toBe('summary-model')
+    expect(adapter.lastOptions).not.toHaveProperty('reasoningEffort')
+  })
+
+  it('carries the header effort for a configured summarization route equal to the latest route', async () => {
+    const { adapter, compact } = await summarizerHarness([{ type: 'text', text: 'summary' }], undefined, MODEL, {
+      auto: false,
+      summarizationProvider: MODEL,
+      summarizationModel: MODEL,
+    }, REASONING_EFFORTS)
+    const session = conversation(1)
+    session.append('request/header', {
+      header: { config: { provider: MODEL, model: MODEL, reasoningEffort: ReasoningEffortId('low') } },
+      reason: 'change',
+    })
+
+    await compact.runSummarize(promptInput('history'), agent(session, MODEL))
+
+    expect(adapter.lastOptions?.reasoningEffort).toBe(ReasoningEffortId('low'))
+  })
+
+  it('omits reasoning effort when the latest routed header carries none', async () => {
+    const { adapter, compact } = await summarizerHarness([{ type: 'text', text: 'summary' }])
+    const session = conversation(1)
+
+    await compact.runSummarize(promptInput('history'), agent(session, MODEL))
+
+    expect(adapter.lastOptions).not.toHaveProperty('reasoningEffort')
+  })
+
   it('records the model actually dispatched after one-shot stream routing', async () => {
     const { ctx, compact } = await summarizerHarness([{ type: 'text', text: 'unused' }])
     const routedAdapter = new ScriptedAdapter([{ type: 'text', text: 'routed summary' }])
@@ -1946,6 +2028,18 @@ describe('default one-shot summarizer', () => {
       model: MODEL,
     })
     expect(adapter.lastOptions).toMatchObject({ provider: MODEL, model: MODEL })
+  })
+
+  it('omits reasoning effort for the AgentOptions fallback target even when agent.options sets one', async () => {
+    const { adapter, compact } = await summarizerHarness([{ type: 'text', text: 'summary' }])
+    const owner = {
+      session: Session.create(SessionId('agent-options-effort-fallback')),
+      options: { provider: MODEL, model: MODEL, reasoningEffort: ReasoningEffortId('low') },
+    } as Agent
+
+    await compact.runSummarize(promptInput('history'), owner)
+
+    expect(adapter.lastOptions).not.toHaveProperty('reasoningEffort')
   })
 
   it.each([
