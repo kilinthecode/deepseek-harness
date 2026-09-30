@@ -5,12 +5,13 @@
  *
  * Peers group by repository ({@link peerRepoKey}), not by exact directory: two
  * worktrees of one repository see each other, while a session in the same
- * directory of another checkout does not. Presence, mailbox envelopes, and idle
- * watches live under `$DSH_HOME/peers/`, so sessions in different processes
- * coordinate without a shared parent. Only the process that holds a live target
- * drains that target's mailbox: it steers one `user/message` per envelope
- * through `Agent.steer()` and deletes the envelope once the log carries it. The
- * capability is off until a profile mounts the peer-sessions bundle.
+ * directory of another checkout does not. Presence rows, activity rows,
+ * mailbox envelopes, and idle watches live under `$DSH_HOME/peers/`, so
+ * sessions in different processes coordinate without a shared parent. Only the
+ * process that holds a live target drains that target's mailbox: it steers one
+ * `user/message` per envelope through `Agent.steer()` and deletes the envelope
+ * once the log carries it. The capability is off until a profile mounts the
+ * peer-sessions bundle.
  *
  * @module @deepseek-ai/dsh-experimental-peer-sessions
  */
@@ -28,13 +29,24 @@ import type { Session, SessionEvent, SessionId } from '@deepseek-ai/dsh-session'
 import type { UserMessage } from '@deepseek-ai/dsh-llm'
 import { boundContextSummary, createUserMessage } from '@deepseek-ai/dsh-llm'
 import { realpathNormalize } from '@deepseek-ai/dsh-workspace'
+import { mutationPath } from '@deepseek-ai/dsh-workspace-changes'
 import z from '@deepseek-ai/schemastery'
 // Type-only: the `title` projection key this service reads for display names.
 import type {} from '@deepseek-ai/dsh-session-title'
+// Type-only: the `todo/write` event this service folds into `doing`, and one entry of its list.
+import type { TodoItem } from '@deepseek-ai/dsh-tool-todo'
 // Type-only: the `approval/asked` and `approval/decided` session events this service folds.
 import type {} from '@deepseek-ai/dsh-user-approval'
 // Type-only: the `user-questions/request` waterfall this service observes.
 import type { AskUserQuestionAnswer, AskUserQuestionRequest } from '@deepseek-ai/dsh-user-questions'
+import {
+  activityFileKey,
+  PEER_ACTIVITY_VERSION,
+  removeActivity,
+  writeActivity,
+  type PeerActivityFile,
+  type PeerActivityRecord,
+} from './activity.ts'
 import {
   peerAmbiguous,
   peerIdleTurn,
@@ -63,7 +75,7 @@ import { listPresence, readPresence, removePresence, writePresence } from './pre
 import { removeEmptyShard } from './record.ts'
 import { deleteWatch, listWatchShards, PEER_WATCH_VERSION, readWatchShard, writeWatch, type PeerWatchRecord } from './watches.ts'
 import { peerDeliveryProjection, type PeerDeliveryState } from './projection.ts'
-import { peerRepoKey } from './repo.ts'
+import { peerCheckout, peerRepoKey, type PeerCheckout } from './repo.ts'
 import type {
   NotifyPeerIdleRequest,
   NotifyPeerIdleResult,
@@ -74,7 +86,8 @@ import type {
   SendPeerMessageResult,
 } from './types.ts'
 
-export { peerRepoKey }
+export { peerCheckout, peerRepoKey }
+export type { PeerCheckout } from './repo.ts'
 export { PeerError }
 export type { PeerErrorCode } from './errors.ts'
 // The durable mailbox write and its envelope version are public because a
@@ -106,6 +119,11 @@ const DEFAULT_MAX_PENDING_PER_SENDER_PER_TARGET = 4
 const DEFAULT_MAX_MESSAGE_BYTES = 8_192
 const DEFAULT_MAX_IDLE_WATCHES = 32
 const DEFAULT_PEER_INBOUND = 'steer'
+const DEFAULT_ACTIVITY_TTL_MS = 1_800_000
+const DEFAULT_MAX_ACTIVITY_FILES = 12
+const DEFAULT_MAX_ACTIVITY_PEERS = 4
+const DEFAULT_MAX_ACTIVITY_BYTES = 4_096
+const DEFAULT_OVERLAP = 'warn'
 
 /** Peer-service deployment limits. Invalid values fail plugin load. */
 export interface Config {
@@ -121,6 +139,16 @@ export interface Config {
   readonly maxIdleWatches?: number
   /** Whether an idle target receives a message in a new turn (`steer`) or holds it until it runs again (`deferred`). */
   readonly peerInbound?: 'steer' | 'deferred'
+  /** Age at which a peer's published activity stops counting as current work. */
+  readonly activityTtlMs?: number
+  /** Maximum files one session's activity row keeps, newest first. */
+  readonly maxActivityFiles?: number
+  /** Maximum peers one rendered activity snapshot covers. */
+  readonly maxActivityPeers?: number
+  /** Maximum UTF-8 bytes in one rendered activity snapshot. */
+  readonly maxActivityBytes?: number
+  /** Whether a rendered snapshot reports peers heading for the same file (`warn`) or stay silent (`off`). */
+  readonly overlap?: 'warn' | 'off'
 }
 
 /** Schemastery validation for {@link Config}; omitted fields take the shipped values. */
@@ -131,6 +159,11 @@ export const Config: z<Config, ResolvedLimits> = z.object({
   maxMessageBytes: z.number().step(1).min(1).default(DEFAULT_MAX_MESSAGE_BYTES),
   maxIdleWatches: z.number().step(1).min(1).default(DEFAULT_MAX_IDLE_WATCHES),
   peerInbound: z.union(['steer', 'deferred']).default(DEFAULT_PEER_INBOUND),
+  activityTtlMs: z.number().step(1).min(1).default(DEFAULT_ACTIVITY_TTL_MS),
+  maxActivityFiles: z.number().step(1).min(1).default(DEFAULT_MAX_ACTIVITY_FILES),
+  maxActivityPeers: z.number().step(1).min(1).default(DEFAULT_MAX_ACTIVITY_PEERS),
+  maxActivityBytes: z.number().step(1).min(1).default(DEFAULT_MAX_ACTIVITY_BYTES),
+  overlap: z.union(['warn', 'off']).default(DEFAULT_OVERLAP),
 })
 
 /** Reject one stated deployment limit that is not a positive safe integer. */
@@ -148,10 +181,17 @@ function requirePeerInbound(value: string | undefined): void {
   }
 }
 
+/** Reject an overlap mode that is not one of the two implemented modes. */
+function requireOverlap(value: string | undefined): void {
+  if (value !== undefined && value !== 'warn' && value !== 'off') {
+    throw new Error(`peer-sessions: overlap must be 'warn' or 'off', got ${value}`)
+  }
+}
+
 /**
  * Validate one peer-session configuration at load and apply the shipped defaults.
  * @param config - stated limits; omitted fields take the shipped values, so this checks only what a caller set.
- * @throws when a limit is not a positive safe integer, the inbound mode is unknown, or the sender cap exceeds the target cap.
+ * @throws when a limit is not a positive safe integer, the inbound or overlap mode is unknown, or the sender cap exceeds the target cap.
  */
 function resolveLimits(config: Config): ResolvedLimits {
   requirePositiveLimit('pollMs', config.pollMs)
@@ -159,7 +199,12 @@ function resolveLimits(config: Config): ResolvedLimits {
   requirePositiveLimit('maxPendingPerSenderPerTarget', config.maxPendingPerSenderPerTarget)
   requirePositiveLimit('maxMessageBytes', config.maxMessageBytes)
   requirePositiveLimit('maxIdleWatches', config.maxIdleWatches)
+  requirePositiveLimit('activityTtlMs', config.activityTtlMs)
+  requirePositiveLimit('maxActivityFiles', config.maxActivityFiles)
+  requirePositiveLimit('maxActivityPeers', config.maxActivityPeers)
+  requirePositiveLimit('maxActivityBytes', config.maxActivityBytes)
   requirePeerInbound(config.peerInbound)
+  requireOverlap(config.overlap)
   // The plugin config slot hands the service already-defaulted values; parsing
   // them again resolves the same defaults for a service built from a partial
   // config, so one schema owns what every limit defaults to.
@@ -178,6 +223,11 @@ interface ResolvedLimits {
   readonly maxMessageBytes: number
   readonly maxIdleWatches: number
   readonly peerInbound: 'steer' | 'deferred'
+  readonly activityTtlMs: number
+  readonly maxActivityFiles: number
+  readonly maxActivityPeers: number
+  readonly maxActivityBytes: number
+  readonly overlap: 'warn' | 'off'
 }
 
 /** Render one thrown value for a warning line without replacing the original rejection. */
@@ -187,12 +237,30 @@ function describeError(error: unknown): string {
   return inspect(error, { breakLength: Infinity, compact: true, depth: 4 })
 }
 
-/** Where one session's peers live: its recorded directory and that directory's repository key. */
+/** Where one session's peers live: its recorded directory, and what that directory resolves to. */
 interface PeerLocation {
   /** Working directory recorded on the session header. */
   readonly cwd: string
+  /** Canonical form of that directory, the base for resolving this session's own tool paths. */
+  readonly canonicalCwd: string
   /** Repository key of that directory; peers group by it, not by the exact directory. */
   readonly repoKey: string
+}
+
+/** One session's directory resolved for peer coordination. */
+interface PeerPlace {
+  /** Where the session publishes itself: its directory and repository key. */
+  readonly location: PeerLocation
+  /** Checkout the walk found for that directory. */
+  readonly checkout: PeerCheckout
+}
+
+/** One tool call whose result this process has not observed yet. */
+interface PendingCall {
+  /** Session whose activity row receives the file when this call succeeds. */
+  readonly owner: AgentPeerState
+  /** Path key the call would record. */
+  readonly p: string
 }
 
 /** Process-local peer state of one agent this service observed being created. */
@@ -201,6 +269,19 @@ interface AgentPeerState {
   readonly agent: Agent
   /** Repository location of that session, or `undefined` when it has no usable working directory. */
   readonly location: PeerLocation | undefined
+  /**
+   * Checkout this session publishes an activity row for: set only for a
+   * top-level session with a location, which is exactly a session that owns a
+   * row. Cached at creation because the header working directory never changes,
+   * and because disposal runs after the registry forgot the agent.
+   */
+  readonly checkout: PeerCheckout | undefined
+  /** What this session last said it is working on, or `undefined` when no todo is in progress. */
+  doing: string | undefined
+  /** Files this session wrote in this process, newest first, one entry per path key. */
+  readonly files: PeerActivityFile[]
+  /** Calls this session started whose results have not arrived, keyed by tool call id. */
+  readonly pendingCalls: Map<string, PendingCall>
   /** Approval questions raised in this process and not yet decided. */
   openAsks: number
   /** Whether a user question from this agent is waiting for its answer. */
@@ -302,6 +383,9 @@ export default class PeerService extends Service {
 
   /** The last queued presence-file operation per session, so writes land in call order. */
   private readonly presenceWrites = new Map<SessionId, Promise<void>>()
+
+  /** The last queued activity-file operation per session, so a row computed from older state never lands after a newer one. */
+  private readonly activityWrites = new Map<SessionId, Promise<void>>()
 
   /** Listener work whose completion the disposer must await. */
   private readonly pendingWork = new Set<Promise<void>>()
@@ -461,6 +545,7 @@ export default class PeerService extends Service {
     return { status: 'watching' }
   }
 
+
   /** Caps handed to the mailbox writer. */
   private mailboxLimits(): PeerMailboxLimits {
     return {
@@ -518,7 +603,7 @@ export default class PeerService extends Service {
   private async repoKeyOf(agent: Agent): Promise<string | undefined> {
     const state = this.states.get(agent.id)
     if (state !== undefined) return state.location?.repoKey
-    return (await computePeerLocation(agent.session.header.cwd))?.repoKey
+    return (await computePeerPlace(agent.session.header.cwd))?.location.repoKey
   }
 
   /**
@@ -583,21 +668,31 @@ export default class PeerService extends Service {
   }
 
   /**
-   * Publish one agent's presence row and drain its freshly discovered mailbox.
+   * Publish one agent's presence and activity rows and drain its freshly
+   * discovered mailbox.
    * @param agent - the just-created agent.
    */
   private async observeCreated(agent: Agent): Promise<void> {
-    const location = await computePeerLocation(agent.session.header.cwd)
+    const place = await computePeerPlace(agent.session.header.cwd)
     const state: AgentPeerState = {
       agent,
-      location,
+      location: place?.location,
+      // Only a top-level session with a location owns an activity row; a
+      // subagent's writes land on its root's row instead. Recording that at
+      // creation is what keeps the removal working after disposal, when the
+      // registry has already dropped the agent.
+      checkout: place !== undefined && this.isTopLevel(agent) ? place.checkout : undefined,
+      doing: undefined,
+      files: [],
+      pendingCalls: new Map(),
       openAsks: 0,
       questioning: false,
       inFlight: new Set(),
       attempts: new Map(),
     }
     this.states.set(agent.id, state)
-    if (this.isTopLevel(agent) && location !== undefined) await this.publish(agent, state, location)
+    await this.publishActivity(state)
+    if (this.isTopLevel(agent) && state.location !== undefined) await this.publish(agent, state, state.location)
     // Every created agent drains, including one that publishes no row: an
     // envelope planted for a subagent or for a session without a working
     // directory must be dropped instead of steered.
@@ -617,12 +712,13 @@ export default class PeerService extends Service {
       await this.settleIdleTurn(agent, state)
       await this.notifyWatchers(agent)
     }
+    await this.publishActivity(state)
     if (!this.isTopLevel(agent) || state.location === undefined) return
     await this.publish(agent, state, state.location)
   }
 
   /**
-   * Retire one agent's presence, watches, and in-process state.
+   * Retire one agent's presence row, activity row, watches, and in-process state.
    * @param agent - the disposed agent.
    */
   private async observeDisposed(agent: Agent): Promise<void> {
@@ -635,23 +731,146 @@ export default class PeerService extends Service {
     await this.queuePresence(agent.id, 'removing', async () => {
       await removePresence(this.home, agent.id)
     })
+    // `ownedRow` cannot answer here — the registry drops the agent before it
+    // announces the disposal — so the checkout recorded at creation is what
+    // proves this session ever owned a row.
+    if (state.checkout !== undefined) await this.removeActivityRow(agent.id)
+    for (const other of this.states.values()) {
+      for (const [callId, call] of other.pendingCalls) {
+        if (call.owner === state) other.pendingCalls.delete(callId)
+      }
+    }
     if (state.location === undefined) return
     await this.deleteWatchesOf(agent.id)
   }
 
   /**
-   * Rewrite the presence row for the session events that change what peers see.
+   * Fold the session events that change what peers see about one session.
    * @param session - the session whose log grew.
    * @param event - the committed event.
    */
   private observeSessionEvent(session: Session, event: SessionEvent): void {
     const state = this.states.get(session.id)
     if (state === undefined) return
+    if (event.type === 'todo/write') {
+      this.observeTodoWrite(state, event.data.todos)
+      return
+    }
+    if (event.type === 'tool/call') {
+      this.observeToolCall(session, state, event.data.callId, event.data.name, event.data.arguments)
+      return
+    }
+    if (event.type === 'tool/result') {
+      this.observeToolResult(state, event.data.message.toolCallId, event.data.message.isError === true)
+      return
+    }
     if (event.type === 'approval/asked') state.openAsks += 1
     else if (event.type === 'approval/decided') state.openAsks = Math.max(0, state.openAsks - 1)
     else if (event.type !== 'session/title') return
     if (!this.isTopLevel(state.agent) || state.location === undefined) return
     this.track(this.publish(state.agent, state, state.location), 'presence')
+    this.track(this.publishActivity(state), 'activity')
+  }
+
+  /**
+   * Record what one session says it is working on.
+   *
+   * Only the session that owns the row may state this: a child's todo list
+   * describes the child's own work, so it never reaches its parent's row.
+   * @param state - the session whose todo list changed.
+   * @param todos - the whole replacement list.
+   */
+  private observeTodoWrite(state: AgentPeerState, todos: readonly TodoItem[]): void {
+    if (this.ownedRow(state) === undefined) return
+    const current = todos.find(todo => todo.status === 'in_progress')
+    state.doing = current === undefined ? undefined : boundContextSummary(current.content)
+    this.track(this.publishActivity(state), 'activity')
+  }
+
+  /**
+   * Key the path one tool call is about to mutate, for the row of the session
+   * that owns it.
+   * @param session - the session whose log carries the call.
+   * @param state - that session's peer state.
+   * @param callId - tool call id the matching result carries.
+   * @param name - tool name the model invoked.
+   * @param args - the model's raw arguments string.
+   */
+  private observeToolCall(session: Session, state: AgentPeerState, callId: string, name: string, args: string): void {
+    let parsed: unknown
+    try {
+      parsed = JSON.parse(args)
+    } catch (error: unknown) {
+      // Arguments that are not JSON name no path; the tool call reports the
+      // malformed input to the model itself.
+      void error
+      return
+    }
+    const path = mutationPath(name, parsed)
+    if (path === undefined) return
+    const location = state.location
+    if (location === undefined) return
+    const owner = this.activityOwnerOf(session, state)
+    if (owner === undefined || owner.checkout === undefined) return
+    // The path is the calling session's, so a subagent's relative path resolves
+    // against the subagent's own directory while the key stays the root's.
+    state.pendingCalls.set(callId, { owner, p: activityFileKey(owner.checkout.root, location.canonicalCwd, path) })
+  }
+
+  /**
+   * Record a successful tool call's file on the row that owns it.
+   * @param state - the session whose result arrived.
+   * @param callId - tool call id this result answers.
+   * @param failed - whether the tool reported an error.
+   */
+  private observeToolResult(state: AgentPeerState, callId: string, failed: boolean): void {
+    const call = state.pendingCalls.get(callId)
+    state.pendingCalls.delete(callId)
+    if (call === undefined || failed) return
+    const { owner, p } = call
+    const previous = owner.files.findIndex(file => file.p === p)
+    if (previous !== -1) owner.files.splice(previous, 1)
+    owner.files.unshift({ p, at: Date.now() })
+    if (owner.files.length > this.limits.maxActivityFiles) owner.files.length = this.limits.maxActivityFiles
+    this.track(this.publishActivity(owner), 'activity')
+  }
+
+  /**
+   * The row one live session may publish, when it may publish one.
+   *
+   * A subagent owns none: it has no checkout recorded, and its writes land on
+   * the row of the ancestor that has one.
+   * @param state - the candidate's peer state.
+   * @returns the location and checkout to publish under, or `undefined` when the session owns no row.
+   */
+  private ownedRow(state: AgentPeerState): { readonly location: PeerLocation; readonly checkout: PeerCheckout } | undefined {
+    const { location, checkout } = state
+    if (location === undefined || checkout === undefined) return undefined
+    if (!this.isTopLevel(state.agent)) return undefined
+    return { location, checkout }
+  }
+
+  /**
+   * Resolve the row one session's tool call reports to: the session itself when
+   * it owns a row, else the nearest ancestor that does.
+   * @param session - the session whose log carries the call.
+   * @param state - that session's peer state.
+   * @returns the owning state, or `undefined` when no ancestor in this process owns a row.
+   */
+  private activityOwnerOf(session: Session, state: AgentPeerState): AgentPeerState | undefined {
+    if (this.ownedRow(state) !== undefined) return state
+    let parent = session.header.parentSession
+    for (let hops = session.header.delegationDepth ?? 0; parent !== undefined && hops > 0; hops -= 1) {
+      const ancestor = this.ctx.agents.get(parent)
+      // A parent this process does not hold owns no row here, and its own
+      // parent is not reachable either.
+      if (ancestor === undefined) return undefined
+      const ancestorState = this.states.get(ancestor.id)
+      if (ancestorState === undefined) return undefined
+      if (this.ownedRow(ancestorState) !== undefined) return ancestorState
+      parent = ancestor.session.header.parentSession
+    }
+    return undefined
   }
 
   /**
@@ -741,6 +960,71 @@ export default class PeerService extends Service {
       })
     this.presenceWrites.set(sessionId, queued)
     this.track(queued, 'presence')
+    return queued
+  }
+
+  /**
+   * Write one agent's activity row for its current in-process state.
+   *
+   * Only a session that owns a row publishes one: a subagent's writes land on
+   * its root's row instead. The row is computed when it is queued, so a later
+   * publish always describes at least as much as an earlier one, and the queue
+   * keeps the two in that order.
+   * @param state - the publishing session's peer state.
+   * @returns fulfillment once this row is committed, or immediately when the session owns no row.
+   */
+  private publishActivity(state: AgentPeerState): Promise<void> {
+    const row = this.ownedRow(state)
+    if (row === undefined) return Promise.resolve()
+    const agent = state.agent
+    const record: PeerActivityRecord = {
+      version: PEER_ACTIVITY_VERSION,
+      sessionId: agent.id,
+      repoKey: row.location.repoKey,
+      root: row.checkout.root,
+      cwd: row.location.cwd,
+      name: this.nameOf(agent),
+      status: this.statusOf(state),
+      pid: process.pid,
+      updatedAt: Date.now(),
+      ...state.doing === undefined ? {} : { doing: state.doing },
+      files: [...state.files],
+    }
+    return this.queueActivity(agent.id, 'publishing', async () => {
+      await writeActivity(this.home, record)
+    })
+  }
+
+  /**
+   * Retire one session's activity row on the queue its publishes use.
+   * @param sessionId - the disposed session.
+   * @returns fulfillment once this removal, and every queued before it, settled.
+   */
+  private removeActivityRow(sessionId: SessionId): Promise<void> {
+    return this.queueActivity(sessionId, 'removing', async () => {
+      await removeActivity(this.home, sessionId)
+    })
+  }
+
+  /**
+   * Run one activity-file operation after every earlier one for that session.
+   * @param sessionId - session whose row the operation touches.
+   * @param action - the operation's verb, for the failure log.
+   * @param operation - the queued file operation.
+   * @returns fulfillment after this operation, and every queued before it, settled.
+   */
+  private queueActivity(sessionId: SessionId, action: 'publishing' | 'removing', operation: () => Promise<void>): Promise<void> {
+    const previous = this.activityWrites.get(sessionId) ?? Promise.resolve()
+    const queued = previous
+      .then(operation)
+      .catch((error: unknown) => {
+        this.ctx.logger.warn(`peer-sessions: ${action} activity for "${sessionId}" failed: ${describeError(error)}`)
+      })
+      .finally(() => {
+        if (this.activityWrites.get(sessionId) === queued) this.activityWrites.delete(sessionId)
+      })
+    this.activityWrites.set(sessionId, queued)
+    this.track(queued, 'activity')
     return queued
   }
 
@@ -1147,15 +1431,18 @@ export default class PeerService extends Service {
 }
 
 /**
- * Resolve one session directory to the repository location peers group by.
+ * Resolve one session directory to the repository location peers group by and
+ * the checkout that location belongs to.
  * @param cwd - the session header's working directory, when it has one.
- * @returns the directory and its repository key, or `undefined` when the
- * directory is absent, relative, or gone.
+ * @returns the directory with its checkout and repository key, or `undefined`
+ * when the directory is absent, relative, or gone.
  */
-async function computePeerLocation(cwd: string | undefined): Promise<PeerLocation | undefined> {
+async function computePeerPlace(cwd: string | undefined): Promise<PeerPlace | undefined> {
   if (cwd === undefined) return undefined
   try {
-    return { cwd, repoKey: await peerRepoKey(await realpathNormalize(cwd)) }
+    const canonicalCwd = await realpathNormalize(cwd)
+    const checkout = await peerCheckout(canonicalCwd)
+    return { location: { cwd, canonicalCwd, repoKey: checkout.key }, checkout }
   } catch (error: unknown) {
     // A missing or relative working directory yields no repository, so that
     // session publishes nothing and no envelope can authorize against it.

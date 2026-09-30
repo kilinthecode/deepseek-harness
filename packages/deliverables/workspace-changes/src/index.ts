@@ -23,6 +23,8 @@ export type {
   WorkspaceChangedFile, WorkspaceChanges, WorkspaceChangesSummary, WorkspaceDiffHunk, WorkspaceFileDiff,
 } from './types.ts'
 
+export { mutationPath } from './capture.ts'
+
 /** Stable Loader identity. */
 export const name = 'workspace-changes'
 

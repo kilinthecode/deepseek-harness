@@ -42,6 +42,11 @@ describe('PeerService configuration', () => {
       maxMessageBytes: 8_192,
       maxIdleWatches: 32,
       peerInbound: 'steer',
+      activityTtlMs: 1_800_000,
+      maxActivityFiles: 12,
+      maxActivityPeers: 4,
+      maxActivityBytes: 4_096,
+      overlap: 'warn',
     })
   })
 

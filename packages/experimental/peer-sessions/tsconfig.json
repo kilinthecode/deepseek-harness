@@ -42,6 +42,9 @@
       "path": "../../session/session-title"
     },
     {
+      "path": "../../todo/tool-todo"
+    },
+    {
       "path": "../../interaction/user-approval"
     },
     {
