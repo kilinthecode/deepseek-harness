@@ -15280,7 +15280,7 @@
       "kind": "event",
       "event": "subagent/model-selection-policy",
       "surface": false,
-      "digest": "a6567ccb2e530606b775371eb4fa31468d72084339968e8b0440a516a23b39dc",
+      "digest": "fde25355968b1b7eacba0c45b16fa179d607295763e0cc2c1a79874296235a0b",
       "schema": {
         "root": 0,
         "nodes": [
@@ -15294,22 +15294,22 @@
               },
               {
                 "name": "ignorable",
-                "type": 5,
+                "type": 6,
                 "optional": true
               },
               {
                 "name": "seq",
-                "type": 6,
+                "type": 7,
                 "optional": false
               },
               {
                 "name": "time",
-                "type": 6,
+                "type": 7,
                 "optional": false
               },
               {
                 "name": "type",
-                "type": 7,
+                "type": 8,
                 "optional": false
               }
             ],
@@ -15322,6 +15322,11 @@
                 "name": "allowedModels",
                 "type": 2,
                 "optional": false
+              },
+              {
+                "name": "defaultModel",
+                "type": 5,
+                "optional": true
               }
             ],
             "indices": []
@@ -15349,6 +15354,27 @@
           {
             "kind": "primitive",
             "type": "string"
+          },
+          {
+            "kind": "object",
+            "properties": [
+              {
+                "name": "model",
+                "type": 4,
+                "optional": false
+              },
+              {
+                "name": "provider",
+                "type": 4,
+                "optional": false
+              },
+              {
+                "name": "reasoningEffort",
+                "type": 4,
+                "optional": true
+              }
+            ],
+            "indices": []
           },
           {
             "kind": "literal",
@@ -22620,53 +22646,6 @@
       },
       "names": [],
       "sources": []
-    },
-    {
-      "digest": "0d47a8f3d847243c4488e755ad4cab7a04ac5d4621b9c81865524cf3f4d8536f",
-      "schema": {
-        "root": 0,
-        "nodes": [
-          {
-            "kind": "object",
-            "properties": [
-              {
-                "name": "allowedModels",
-                "type": 1,
-                "optional": false
-              }
-            ],
-            "indices": []
-          },
-          {
-            "kind": "array",
-            "element": 2
-          },
-          {
-            "kind": "object",
-            "properties": [
-              {
-                "name": "model",
-                "type": 3,
-                "optional": false
-              },
-              {
-                "name": "provider",
-                "type": 3,
-                "optional": false
-              }
-            ],
-            "indices": []
-          },
-          {
-            "kind": "primitive",
-            "type": "string"
-          }
-        ]
-      },
-      "names": [],
-      "sources": [
-        "packages/subagent/tool-subagent/src/model-selection-state.ts:17"
-      ]
     },
     {
       "digest": "0e10d7c096b47e61defe372a5fc8bd37d835199410eac44367f95c45082498bd",
@@ -69519,94 +69498,6 @@
       ]
     },
     {
-      "digest": "a6567ccb2e530606b775371eb4fa31468d72084339968e8b0440a516a23b39dc",
-      "schema": {
-        "root": 0,
-        "nodes": [
-          {
-            "kind": "object",
-            "properties": [
-              {
-                "name": "data",
-                "type": 1,
-                "optional": false
-              },
-              {
-                "name": "ignorable",
-                "type": 5,
-                "optional": true
-              },
-              {
-                "name": "seq",
-                "type": 6,
-                "optional": false
-              },
-              {
-                "name": "time",
-                "type": 6,
-                "optional": false
-              },
-              {
-                "name": "type",
-                "type": 7,
-                "optional": false
-              }
-            ],
-            "indices": []
-          },
-          {
-            "kind": "object",
-            "properties": [
-              {
-                "name": "allowedModels",
-                "type": 2,
-                "optional": false
-              }
-            ],
-            "indices": []
-          },
-          {
-            "kind": "array",
-            "element": 3
-          },
-          {
-            "kind": "object",
-            "properties": [
-              {
-                "name": "model",
-                "type": 4,
-                "optional": false
-              },
-              {
-                "name": "provider",
-                "type": 4,
-                "optional": false
-              }
-            ],
-            "indices": []
-          },
-          {
-            "kind": "primitive",
-            "type": "string"
-          },
-          {
-            "kind": "literal",
-            "value": true
-          },
-          {
-            "kind": "primitive",
-            "type": "number"
-          },
-          {
-            "kind": "literal",
-            "value": "subagent/model-selection-policy"
-          }
-        ]
-      },
-      "names": [],
-      "sources": []
-    },
-    {
       "digest": "a6b41f5bede8094d7bf635be5d69b1bd7a25e006ca9cf9415bceb9322f1a7feb",
       "schema": {
         "root": 0,
@@ -86837,10 +86728,12 @@
         ]
       },
       "names": [
-        "packages/api/session-controller/src/types.ts#ModelSelection"
+        "packages/api/session-controller/src/types.ts#ModelSelection",
+        "packages/subagent/tool-subagent/src/model-selection.ts#DefaultChildRoute"
       ],
       "sources": [
-        "packages/api/session-controller/src/types.ts:100"
+        "packages/api/session-controller/src/types.ts:100",
+        "packages/subagent/tool-subagent/src/model-selection.ts:27"
       ]
     },
     {
@@ -94015,6 +93908,79 @@
       ]
     },
     {
+      "digest": "fc4318228624afc7ba81bb333cb5ea6f46b6c451143390c4834e53f37c2f6b0d",
+      "schema": {
+        "root": 0,
+        "nodes": [
+          {
+            "kind": "object",
+            "properties": [
+              {
+                "name": "allowedModels",
+                "type": 1,
+                "optional": false
+              },
+              {
+                "name": "defaultModel",
+                "type": 4,
+                "optional": true
+              }
+            ],
+            "indices": []
+          },
+          {
+            "kind": "array",
+            "element": 2
+          },
+          {
+            "kind": "object",
+            "properties": [
+              {
+                "name": "model",
+                "type": 3,
+                "optional": false
+              },
+              {
+                "name": "provider",
+                "type": 3,
+                "optional": false
+              }
+            ],
+            "indices": []
+          },
+          {
+            "kind": "primitive",
+            "type": "string"
+          },
+          {
+            "kind": "object",
+            "properties": [
+              {
+                "name": "model",
+                "type": 3,
+                "optional": false
+              },
+              {
+                "name": "provider",
+                "type": 3,
+                "optional": false
+              },
+              {
+                "name": "reasoningEffort",
+                "type": 3,
+                "optional": true
+              }
+            ],
+            "indices": []
+          }
+        ]
+      },
+      "names": [],
+      "sources": [
+        "packages/subagent/tool-subagent/src/model-selection-state.ts:21"
+      ]
+    },
+    {
       "digest": "fc8242857caf7450d7f68a1f509dce83e237bd21571666006895124cb2246a83",
       "schema": {
         "root": 0,
@@ -96922,6 +96888,120 @@
           {
             "kind": "literal",
             "value": "pending"
+          }
+        ]
+      },
+      "names": [],
+      "sources": []
+    },
+    {
+      "digest": "fde25355968b1b7eacba0c45b16fa179d607295763e0cc2c1a79874296235a0b",
+      "schema": {
+        "root": 0,
+        "nodes": [
+          {
+            "kind": "object",
+            "properties": [
+              {
+                "name": "data",
+                "type": 1,
+                "optional": false
+              },
+              {
+                "name": "ignorable",
+                "type": 6,
+                "optional": true
+              },
+              {
+                "name": "seq",
+                "type": 7,
+                "optional": false
+              },
+              {
+                "name": "time",
+                "type": 7,
+                "optional": false
+              },
+              {
+                "name": "type",
+                "type": 8,
+                "optional": false
+              }
+            ],
+            "indices": []
+          },
+          {
+            "kind": "object",
+            "properties": [
+              {
+                "name": "allowedModels",
+                "type": 2,
+                "optional": false
+              },
+              {
+                "name": "defaultModel",
+                "type": 5,
+                "optional": true
+              }
+            ],
+            "indices": []
+          },
+          {
+            "kind": "array",
+            "element": 3
+          },
+          {
+            "kind": "object",
+            "properties": [
+              {
+                "name": "model",
+                "type": 4,
+                "optional": false
+              },
+              {
+                "name": "provider",
+                "type": 4,
+                "optional": false
+              }
+            ],
+            "indices": []
+          },
+          {
+            "kind": "primitive",
+            "type": "string"
+          },
+          {
+            "kind": "object",
+            "properties": [
+              {
+                "name": "model",
+                "type": 4,
+                "optional": false
+              },
+              {
+                "name": "provider",
+                "type": 4,
+                "optional": false
+              },
+              {
+                "name": "reasoningEffort",
+                "type": 4,
+                "optional": true
+              }
+            ],
+            "indices": []
+          },
+          {
+            "kind": "literal",
+            "value": true
+          },
+          {
+            "kind": "primitive",
+            "type": "number"
+          },
+          {
+            "kind": "literal",
+            "value": "subagent/model-selection-policy"
           }
         ]
       },

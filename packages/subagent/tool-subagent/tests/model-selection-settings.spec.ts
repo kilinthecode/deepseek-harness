@@ -2,7 +2,7 @@
 
 import { describe, expect, it, vi } from 'vitest'
 import { Context } from '@deepseek-ai/cordis'
-import { ToolCallId } from '@deepseek-ai/dsh-llm'
+import { ReasoningEffortId, ToolCallId } from '@deepseek-ai/dsh-llm'
 import { Session, SESSION_FORMAT_VERSION, SessionId } from '@deepseek-ai/dsh-session'
 import type { SessionEvent } from '@deepseek-ai/dsh-session'
 import { bindScopeParent, createScope, scopeOf, scopeTarget } from '@deepseek-ai/dsh-scope'
@@ -134,6 +134,123 @@ describe('SubagentModelSelectionConfig', () => {
     await ctx.fiber.dispose()
   })
 
+  it('rejects an enabled out-of-list default route and reports it in current() once valid', async () => {
+    const ctx = new Context()
+    selectionConfigs.set(ctx, await liveConfig(ctx, SubagentModelSelectionConfig))
+
+    await selectionConfigs.get(ctx)!.replace({ enabled: true, allowedModels: ALLOWED_MODELS, defaultModel: null })
+    expect(ctx.subagentModelSelection.current()).toEqual({ enabled: true, allowedModels: ALLOWED_MODELS })
+
+    await selectionConfigs.get(ctx)!.replace({
+      enabled: true, allowedModels: ALLOWED_MODELS, defaultModel: { provider: 'alpha', model: 'other-model' },
+    })
+    expect(() => ctx.subagentModelSelection.current())
+      .toThrow('subagent model selection default route "alpha/other-model" is not in allowedModels')
+
+    await selectionConfigs.get(ctx)!.replace({
+      enabled: true, allowedModels: ALLOWED_MODELS,
+      defaultModel: { provider: 'alpha', model: 'fast-model', reasoningEffort: 'max' },
+    })
+    expect(ctx.subagentModelSelection.current()).toEqual({
+      enabled: true,
+      allowedModels: ALLOWED_MODELS,
+      defaultModel: { provider: 'alpha', model: 'fast-model', reasoningEffort: 'max' },
+    })
+    await ctx.fiber.dispose()
+  })
+
+  it('ignores a stale or out-of-list default while disabled, so turning the feature off never fails Session composition', async () => {
+    const ctx = new Context()
+    selectionConfigs.set(ctx, await liveConfig(ctx, SubagentModelSelectionConfig))
+
+    // An out-of-list default would throw while enabled (previous test); while
+    // disabled it must not, since selectForSession never reads either field
+    // from a disabled current().
+    await selectionConfigs.get(ctx)!.replace({
+      enabled: false, allowedModels: ALLOWED_MODELS, defaultModel: { provider: 'alpha', model: 'other-model' },
+    })
+    expect(ctx.subagentModelSelection.current()).toEqual({ enabled: false, allowedModels: ALLOWED_MODELS })
+
+    // A valid, in-list default is still omitted while disabled.
+    await selectionConfigs.get(ctx)!.replace({
+      enabled: false, allowedModels: ALLOWED_MODELS,
+      defaultModel: { provider: 'alpha', model: 'fast-model', reasoningEffort: 'max' },
+    })
+    expect(ctx.subagentModelSelection.current()).toEqual({ enabled: false, allowedModels: ALLOWED_MODELS })
+    await ctx.fiber.dispose()
+  })
+
+  it('folds a durable policy across format versions: v1 events without a default, v2 events with one, and rejects an out-of-list default', async () => {
+    const ctx = new Context()
+    await ctx.plugin(SessionProjectionRegistry)
+    ctx.sessionProjections.register(subagentModelSelectionProjectionDefinition)
+
+    // A v1-written event carries no defaultModel key at all (the field did not exist yet);
+    // the fold must still produce a policy, simply without a default.
+    const v1 = Session.create(SessionId('v1-event'))
+    v1.append('subagent/model-selection-policy', { allowedModels: ALLOWED_MODELS })
+    expect(subagentModelSelectionPolicy(ctx.sessionProjections, v1)).toEqual({ allowedModels: ALLOWED_MODELS })
+
+    const v2 = Session.create(SessionId('v2-event'))
+    v2.append('subagent/model-selection-policy', {
+      allowedModels: ALLOWED_MODELS,
+      defaultModel: { provider: 'alpha', model: 'fast-model', reasoningEffort: ReasoningEffortId('max') },
+    })
+    expect(subagentModelSelectionPolicy(ctx.sessionProjections, v2)).toEqual({
+      allowedModels: ALLOWED_MODELS,
+      defaultModel: { provider: 'alpha', model: 'fast-model', reasoningEffort: 'max' },
+    })
+
+    const outOfList = Session.create(SessionId('default-out-of-list'))
+    outOfList.append('subagent/model-selection-policy', {
+      allowedModels: ALLOWED_MODELS,
+      defaultModel: { provider: 'alpha', model: 'other-model' },
+    })
+    expect(() => subagentModelSelectionPolicy(ctx.sessionProjections, outOfList))
+      .toThrow('subagent/model-selection-policy default route "alpha/other-model" is not in allowedModels')
+
+    const malformedDefault = Session.create(SessionId('malformed-default'))
+    malformedDefault.append('subagent/model-selection-policy', {
+      allowedModels: ALLOWED_MODELS,
+      defaultModel: { provider: 'alpha', model: '' },
+    })
+    expect(() => subagentModelSelectionPolicy(ctx.sessionProjections, malformedDefault))
+      .toThrow('requires non-empty provider and model ids')
+
+    const nullDefault = Session.create(SessionId('null-default'))
+    nullDefault.append('subagent/model-selection-policy', {
+      allowedModels: ALLOWED_MODELS,
+      defaultModel: null,
+    } as never)
+    expect(() => subagentModelSelectionPolicy(ctx.sessionProjections, nullDefault))
+      .toThrow('requires a route object when defaultModel is present')
+    await ctx.fiber.dispose()
+  })
+
+  it('validates and brands a persisted-cache row through the projection\'s state schema', () => {
+    const { stateSchema } = subagentModelSelectionProjectionDefinition
+    expect(stateSchema.parse(null)).toBeNull()
+    expect(stateSchema.parse({ allowedModels: ALLOWED_MODELS })).toEqual({ allowedModels: ALLOWED_MODELS })
+    expect(stateSchema.parse({
+      allowedModels: ALLOWED_MODELS,
+      defaultModel: { provider: 'alpha', model: 'fast-model' },
+    })).toEqual({
+      allowedModels: ALLOWED_MODELS,
+      defaultModel: { provider: 'alpha', model: 'fast-model' },
+    })
+    expect(stateSchema.parse({
+      allowedModels: ALLOWED_MODELS,
+      defaultModel: { provider: 'alpha', model: 'fast-model', reasoningEffort: 'max' },
+    })).toEqual({
+      allowedModels: ALLOWED_MODELS,
+      defaultModel: { provider: 'alpha', model: 'fast-model', reasoningEffort: 'max' },
+    })
+    expect(() => stateSchema.parse({
+      allowedModels: ALLOWED_MODELS,
+      defaultModel: { provider: 'alpha', model: '' },
+    })).toThrow()
+  })
+
   it('samples each new root Session without changing existing definitions', async () => {
     const ctx = await boot()
     const disabled = await createAgent(ctx, 'disabled')
@@ -145,7 +262,7 @@ describe('SubagentModelSelectionConfig', () => {
       allowedModels: ALLOWED_MODELS,
     })
     const enabled = await createAgent(ctx, 'enabled')
-    expect(subagentModelSelectionPolicy(ctx.sessionProjections, enabled.session)).toEqual(ALLOWED_MODELS)
+    expect(subagentModelSelectionPolicy(ctx.sessionProjections, enabled.session)).toEqual({ allowedModels: ALLOWED_MODELS })
     expect(selectable(ctx, enabled)).toBe(true)
     expect(selectable(ctx, disabled)).toBe(false)
 
@@ -330,19 +447,34 @@ describe('SubagentModelSelectionConfig', () => {
     await ctx.fiber.dispose()
   })
 
-  it('inherits the parent decision and preserves seeded decisions across composition', async () => {
+  it('inherits the parent decision, including a recorded default, and preserves seeded decisions across composition', async () => {
     const ctx = await boot()
     await selectionConfigs.get(ctx)!.update({
       enabled: true,
       allowedModels: ALLOWED_MODELS,
+      defaultModel: { provider: 'alpha', model: 'fast-model' },
     })
     const parent = await createAgent(ctx, 'parent')
-    await selectionConfigs.get(ctx)!.update({ enabled: false })
+    await selectionConfigs.get(ctx)!.update({ enabled: false, defaultModel: null })
     const child = await createAgent(ctx, 'child', {
       meta: { parentSession: parent.id, origin: 'subagent' },
     })
     expect(selectable(ctx, child)).toBe(true)
-    expect(subagentModelSelectionPolicy(ctx.sessionProjections, child.session)).toEqual(ALLOWED_MODELS)
+    expect(subagentModelSelectionPolicy(ctx.sessionProjections, child.session)).toEqual({
+      allowedModels: ALLOWED_MODELS,
+      defaultModel: { provider: 'alpha', model: 'fast-model' },
+    })
+
+    // Depth 2: the grandchild inherits from the child's own recorded policy,
+    // not by re-sampling settings — which stayed disabled the whole time.
+    const grandchild = await createAgent(ctx, 'grandchild', {
+      meta: { parentSession: child.id, origin: 'subagent' },
+    })
+    expect(selectable(ctx, grandchild)).toBe(true)
+    expect(subagentModelSelectionPolicy(ctx.sessionProjections, grandchild.session)).toEqual({
+      allowedModels: ALLOWED_MODELS,
+      defaultModel: { provider: 'alpha', model: 'fast-model' },
+    })
 
     const orphan = await createAgent(ctx, 'orphan', {
       meta: { parentSession: SessionId('missing-parent'), origin: 'subagent' },
