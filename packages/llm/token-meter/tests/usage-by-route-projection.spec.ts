@@ -2,12 +2,13 @@ import { describe, expect, it } from 'vitest'
 import { Context } from '@deepseek-ai/cordis'
 import { createMessage } from '@deepseek-ai/dsh-llm'
 import type { TokenUsage } from '@deepseek-ai/dsh-llm'
-import SessionStore from '@deepseek-ai/dsh-session'
+import SessionStore, { SessionSeq } from '@deepseek-ai/dsh-session'
 import type { Session } from '@deepseek-ai/dsh-session'
 import SessionProjectionRegistry from '@deepseek-ai/dsh-session-projection'
 import TokenMeter, { UNATTRIBUTED_ROUTE } from '@deepseek-ai/dsh-token-meter'
 import type { TokenUsageProjection } from '@deepseek-ai/dsh-token-meter/client'
 import { RetryId } from '@deepseek-ai/dsh-llm-retry'
+import { CompactionId } from '@deepseek-ai/dsh-compaction'
 
 const CONFIG = { provider: 'test', model: 'test-model' }
 const OTHER = { provider: 'test', model: 'other-model' }
@@ -175,6 +176,58 @@ describe('per-route usage projection', () => {
     settlement(session, { inputTokens: 10, outputTokens: 2 }, 1, 1)
 
     expect(projected(ctx, session)).toEqual(before)
+  })
+
+  it('bills a compaction summary to the route that wrote it', async () => {
+    const { ctx, session } = await harness()
+    header(session, CONFIG)
+    settlement(session, { inputTokens: 10, outputTokens: 2 }, 1, 1)
+    session.append('compaction/summary', {
+      compactionId: CompactionId('usage-by-route-summary'),
+      summary: [{ type: 'text', text: 'summary' }],
+      shadowedRange: { start: SessionSeq(0), end: SessionSeq(0) },
+      shadowedSeqs: [SessionSeq(0)],
+      shadowedTokenCount: 0,
+      provider: 'other',
+      model: 'summarizer',
+      usage: { inputTokens: 1_000_000, outputTokens: 100 },
+    })
+
+    expect(projected(ctx, session)).toEqual({
+      'test/test-model': {
+        uncachedInputTokens: 10,
+        outputTokens: 2,
+        cacheReadTokens: 0,
+        cacheWriteTokens: 0,
+      },
+      'other/summarizer': {
+        uncachedInputTokens: 1_000_000,
+        outputTokens: 100,
+        cacheReadTokens: 0,
+        cacheWriteTokens: 0,
+      },
+    })
+  })
+
+  it('keeps a forked session’s inherited requests with the parent', async () => {
+    const { ctx, session } = await harness()
+    header(session, CONFIG)
+    settlement(session, { inputTokens: 10, outputTokens: 2 }, 1, 1)
+    const child = ctx.sessions.fork(session)
+    expect(projected(ctx, child)).toEqual({})
+
+    header(child, OTHER)
+    settlement(child, { inputTokens: 4, outputTokens: 1 }, 2, 1)
+
+    expect(projected(ctx, child)).toEqual({
+      'test/other-model': {
+        uncachedInputTokens: 4,
+        outputTokens: 1,
+        cacheReadTokens: 0,
+        cacheWriteTokens: 0,
+      },
+    })
+    expect(projected(ctx, session)['test/test-model']!.uncachedInputTokens).toBe(10)
   })
 
   it('keeps a repeated header and settled attempts without usage from moving state', async () => {

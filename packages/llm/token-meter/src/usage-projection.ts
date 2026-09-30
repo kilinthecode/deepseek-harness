@@ -42,6 +42,10 @@ const addReplacing = (
   cacheWriteTokens: totals.cacheWriteTokens - (previous?.cacheWriteTokens ?? 0) + next.cacheWriteTokens,
 })
 
+/** Add one sample to a running total that owns no replacement slot for it. */
+const addBuckets = (totals: TokenUsageProjection, next: TokenUsageProjection): TokenUsageProjection =>
+  addReplacing(totals, undefined, next)
+
 const projectionSchema = z.object({
   uncachedInputTokens: z.number().int().nonnegative(),
   outputTokens: z.number().int().nonnegative(),
@@ -54,6 +58,8 @@ const projectionSchema = z.object({
  * shape; the state type is inferred from it.
  */
 const tokenUsageStateSchema = z.object({
+  /** Events before this offset came from a fork parent, so their usage is the parent's to report. */
+  inheritedEventCount: z.number().int().nonnegative(),
   totals: projectionSchema,
   last: z.object({
     turn: z.number().int().nonnegative(),
@@ -105,7 +111,9 @@ export const UNATTRIBUTED_ROUTE = 'unattributed'
 
 /** Per-route durable usage folded from logged requests and settlements. */
 export interface UsageByRouteState {
-  /** Route of the newest `request/header`; null before the first header. */
+  /** Events before this offset came from a fork parent, so their usage is the parent's to report. */
+  inheritedEventCount: number
+  /** Route of the newest `request/header` this session owns; null before the first. */
   route: string | null
   /** Token buckets per {@link routeKeyOf} route, summed over settled attempts. */
   routes: Record<string, TokenUsageProjection>
@@ -119,6 +127,7 @@ export interface UsageByRouteState {
 }
 
 const usageByRouteStateSchema: z.ZodType<UsageByRouteState> = z.object({
+  inheritedEventCount: z.number().int().nonnegative(),
   route: z.string().nullable(),
   routes: z.record(z.string(), projectionSchema),
   last: z.object({
@@ -151,27 +160,56 @@ interface SettledUsageSlot {
   readonly usage: TokenUsage
 }
 
+/** One compaction summary's provider usage and the route that reported it. */
+interface SummaryUsageSample {
+  readonly route: string
+  readonly usage: TokenUsage
+}
+
+/** State face both usage units share: the fork prefix they exclude and the newest settled slot. */
+interface UsageFoldState {
+  /** Events before this offset were inherited from a fork parent, whose own session reports their usage. */
+  readonly inheritedEventCount: number
+  readonly last: { turn: number; step: number } | null
+}
+
 /**
- * Fold the per-event policy both usage projections share. `llm/retry-started`
- * closes the slot it names so the retried attempt counts again instead of
- * resampling the attempt that never settled. Only a message-producing event
- * carrying a usage sample reaches `settle`, which owns the projection-specific
- * bookkeeping; every other event leaves the state unchanged.
+ * Fold the per-event policy both usage projections share.
+ *
+ * Only events this session owns are counted. A fork seeds its log with a copy
+ * of its parent's events, and those requests are the parent's billed usage —
+ * the parent's own record reports them, so folding them here too would bill one
+ * request once per descendant of the fork tree.
+ *
+ * `llm/retry-started` closes the slot it names so the retried attempt counts
+ * again instead of resampling the attempt that never settled. A message-
+ * producing event carrying a usage sample reaches `settle`; a compaction
+ * summary carrying one reaches `absorb`, because a summary call is billed by
+ * the provider but settles no attempt slot of its own. Every other event leaves
+ * the state unchanged.
+ *
  * @param state - projection state whose `last` records the newest settled slot.
  * @param event - committed session event to fold.
- * @param settle - projection-specific settlement of one accepted sample.
+ * @param settle - projection-specific settlement of one accepted attempt sample.
+ * @param absorb - projection-specific addition of one compaction summary sample.
  * @returns the next state, or the unchanged state when this event settles nothing.
  */
-function foldSettledUsage<S extends { last: { turn: number; step: number } | null }>(
+function foldSettledUsage<S extends UsageFoldState>(
   state: S,
   event: SessionEvent,
   settle: (state: S, slot: SettledUsageSlot) => S,
+  absorb: (state: S, sample: SummaryUsageSample) => S,
 ): S {
+  if (event.seq < state.inheritedEventCount) return state
   if (event.type === 'llm/retry-started') {
     const last = state.last
     return last?.turn === event.data.turn && last.step === event.data.step
       ? { ...state, last: null }
       : state
+  }
+  if (event.type === 'compaction/summary') {
+    const usage = event.data.usage
+    return usage === undefined ? state : absorb(state, { route: routeKeyOf(event.data), usage })
   }
   if (event.type !== 'assistant/message' && event.type !== 'assistant/attempt') return state
   const sample = usageOf(event)
@@ -183,14 +221,16 @@ function foldSettledUsage<S extends { last: { turn: number; step: number } | nul
  * Token-meter's session projection unit.
  *
  * Each v2 Assistant settlement contributes the last usage sample embedded in
- * its stream. `llm/retry-started` closes the replacement slot so the retried
- * attempt adds to the total.
+ * its stream, and each `compaction/summary` the provider usage of the
+ * summarization call it logged. `llm/retry-started` closes the replacement slot
+ * so the retried attempt adds to the total. A seeded (forked) session counts
+ * only the events it produced, so an inherited prefix is never billed twice.
  */
 export const tokenUsageProjectionDefinition = {
   key: 'tokenUsage',
-  stateVersion: 2,
+  stateVersion: 3,
   stateSchema: tokenUsageStateSchema,
-  init: () => ({ totals: zeroBuckets(), last: null }),
+  init: (_header, inheritedEventCount) => ({ inheritedEventCount, totals: zeroBuckets(), last: null }),
   apply: (state, event) => foldSettledUsage(state, event, (current, slot) => {
     const buckets = bucketsFrom(slot.usage)
     const previous = current.last !== null
@@ -201,10 +241,14 @@ export const tokenUsageProjectionDefinition = {
     if (previous !== undefined && bucketsEqual(previous, buckets)) return current
 
     return {
+      ...current,
       totals: addReplacing(current.totals, previous, buckets),
       last: { turn: slot.turn, step: slot.step, buckets },
     }
-  }),
+  }, (current, sample) => ({
+    ...current,
+    totals: addBuckets(current.totals, bucketsFrom(sample.usage)),
+  })),
   wire: { viewSchema: projectionSchema, view: state => state.totals },
 } satisfies ProjectionDefinition<'tokenUsage', TokenUsageState>
 
@@ -284,15 +328,20 @@ export const contextPressureProjectionDefinition = {
  * same-step resample moves its own previous contribution — possibly between
  * routes, when a retry changed the route — so only the replacement counts. A
  * sample arriving before any header falls into {@link UNATTRIBUTED_ROUTE}
- * rather than disappearing.
+ * rather than disappearing. A `compaction/summary` bills the route the summary
+ * call itself reported, which is not necessarily the conversation's newest
+ * request route. Only events the session owns are billed, so a forked session
+ * prices its own requests and not the prefix it inherited.
  */
 export const usageByRouteProjectionDefinition = {
   key: 'usageByRoute',
-  stateVersion: 1,
+  stateVersion: 2,
   stateSchema: usageByRouteStateSchema,
-  init: (): UsageByRouteState => ({ route: null, routes: {}, last: null }),
+  init: (_header, inheritedEventCount): UsageByRouteState => ({
+    inheritedEventCount, route: null, routes: {}, last: null,
+  }),
   apply: (state, event) => {
-    if (event.type === 'request/header') {
+    if (event.type === 'request/header' && event.seq >= state.inheritedEventCount) {
       const route = routeKeyOf(event.data.header.config)
       return route === state.route ? state : { ...state, route }
     }
@@ -314,7 +363,13 @@ export const usageByRouteProjectionDefinition = {
       }
       routes[route] = addReplacing(routes[route] ?? zeroBuckets(), undefined, buckets)
       return { ...current, routes, last: { turn: slot.turn, step: slot.step, route, buckets } }
-    })
+    }, (current, sample) => ({
+      ...current,
+      routes: {
+        ...current.routes,
+        [sample.route]: addBuckets(current.routes[sample.route] ?? zeroBuckets(), bucketsFrom(sample.usage)),
+      },
+    }))
   },
   wire: {
     viewSchema: z.record(z.string(), projectionSchema),
