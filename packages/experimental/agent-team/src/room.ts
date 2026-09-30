@@ -604,18 +604,21 @@ export class TeamRoom {
     proposal: RoomProposalSnapshot,
     stalled: readonly SessionId[],
   ): Promise<void> {
-    await this.journal.transact(root.id, async () => {
+    const escalated = await this.journal.transact(root.id, async () => {
       const current = this.journal.state(root).roomProposals.find(candidate => candidate.id === proposal.id)
       // The escalation belongs to the revision whose windows expired. A settle
       // closes the decision, and a supersede reopens it at the next revision
       // with windows of its own, which this record must not cut short.
-      if (current === undefined || current.phase !== 'open' || current.revision !== proposal.revision) return
+      if (current === undefined || current.phase !== 'open' || current.revision !== proposal.revision) return false
       await this.journal.appendAndFlush(root, 'room/proposal', {
         version: 1,
         teamId: TeamId(root.id),
         proposal: { ...current, phase: 'escalated' },
       })
+      return true
     })
+    // A decision that closed or moved to a new revision was not escalated here.
+    if (!escalated) return
     this.published(root.id)
     this.ctx.logger.info(
       `room decision ${proposal.id} escalated: ${String(stalled.length)} reviewer(s) produced no activity for `

@@ -614,7 +614,6 @@ export class TeamService extends TypertRemoteService {
     const failures: unknown[] = []
     await this.lifecycle.settle(this.roster.pendingCreations(), failures)
     await this.lifecycle.settle(this.mailbox.pendingDispatches(), failures)
-    await this.lifecycle.settle(this.room.pendingTranscripts(), failures)
     for (const [root, childIds] of this.roster.liveChildrenByRoot()) {
       try {
         await this.roster.stopTeammates(root, childIds)
@@ -622,6 +621,9 @@ export class TeamService extends TypertRemoteService {
         failures.push(error)
       }
     }
+    // Stopping a teammate can commit its last assistant message, which starts a
+    // transcript append, so the appends are collected after the stops.
+    await this.lifecycle.settle(this.room.pendingTranscripts(), failures)
     if (failures.length > 0) throw new AggregateError(failures, 'Agent Teams runtime disposal failed')
   }
 }

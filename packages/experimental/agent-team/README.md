@@ -172,7 +172,7 @@ Every participant view reports whether that live participant produced no observe
 
 ### Disposal
 
-Disposal closes admission, aborts and awaits admitted creation and mailbox-dispatch transactions, awaits the room transcript appends still in flight, then asks the continuation owner to release the roster's exact live direct children and their descendants; non-Team continuable children of the Lead remain untouched. Cleanup failures make disposal fail visibly, bounded by `disposalTimeoutMs`.
+Disposal closes admission, aborts and awaits admitted creation and mailbox-dispatch transactions, then asks the continuation owner to release the roster's exact live direct children and their descendants, and last awaits the room transcript appends still in flight, including any that stopping a teammate started; non-Team continuable children of the Lead remain untouched. Cleanup failures make disposal fail visibly, bounded by `disposalTimeoutMs`.
 
 </details>
 

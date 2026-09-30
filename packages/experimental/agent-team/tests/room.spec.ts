@@ -19,6 +19,7 @@ import type { RoomFollowFrame, RoomProposalId, RoomStreamFrame } from '../src/in
 import type { TeamJournal } from '../src/journal.ts'
 import type { TeamMailbox } from '../src/mailbox.ts'
 import type { TeamRoom } from '../src/room.ts'
+import type { TeamRoster } from '../src/roster.ts'
 import { TeamId } from '../src/index.ts'
 import { TestSessionQuery } from './test-session-query.ts'
 
@@ -102,6 +103,27 @@ async function addLiveParticipant(ctx: Context, lead: Agent, name: string): Prom
   await vi.waitFor(() => { expect(ctx.agents.get(id)?.status).toBe('running') }, { timeout: 5_000 })
   cleanups.push(() => { ctx.agents.get(id)?.cancel({ kind: 'parent' }) })
   return id
+}
+
+/**
+ * Hold the next flush of the Lead log that commits a room transcript entry, so a
+ * test can observe what waits for that append.
+ * @returns a promise for the moment the flush is held, and the function that lets it finish.
+ */
+function holdNextTranscriptFlush(ctx: Context, lead: Agent): { entered: Promise<undefined>; release: () => void } {
+  const entered = Promise.withResolvers<undefined>()
+  const release = Promise.withResolvers<undefined>()
+  const flush = ctx.sessions.flush.bind(ctx.sessions)
+  let held = false
+  vi.spyOn(ctx.sessions, 'flush').mockImplementation(async (session) => {
+    if (!held && session === lead.session && lead.session.snapshotEvents().at(-1)?.type === 'room/message') {
+      held = true
+      entered.resolve(undefined)
+      await release.promise
+    }
+    return flush(session)
+  })
+  return { entered: entered.promise, release: () => { release.resolve(undefined) } }
 }
 
 /**
@@ -380,7 +402,6 @@ describe('room transcript', () => {
 
   it('settles a transcript append still in flight before disposal completes', async () => {
     const { ctx, lead, fiber } = await setup(acks(4))
-    // The compiled declarations erase private members, so the annotation carries the type.
     const room: TeamRoom = ctx.agentTeams['room']
     const observed = vi.spyOn(room, 'observeSessionEvent')
     await addParticipant(ctx, lead, 'bob', 'ack')
@@ -389,34 +410,51 @@ describe('room transcript', () => {
     const utterance = observed.mock.calls.map(([, event]) => event).find(event => event.type === 'assistant/message')
     expect(utterance).toBeDefined()
 
-    const entered = Promise.withResolvers<undefined>()
-    const release = Promise.withResolvers<undefined>()
-    const flush = ctx.sessions.flush.bind(ctx.sessions)
-    let held = false
-    vi.spyOn(ctx.sessions, 'flush').mockImplementation(async (session) => {
-      // Hold only the flush that commits a room transcript entry.
-      if (!held && session === lead.session && lead.session.snapshotEvents().at(-1)?.type === 'room/message') {
-        held = true
-        entered.resolve(undefined)
-        await release.promise
-      }
-      return flush(session)
-    })
+    const hold = holdNextTranscriptFlush(ctx, lead)
     const entries = (): number => lead.session.snapshotEvents().filter(event => event.type === 'room/message').length
     const before = entries()
     room.observeSessionEvent(lead.session, { ...utterance!, seq: SessionSeq(utterance!.seq + 1_000) })
-    await entered.promise
+    await hold.entered
 
     // Nothing else is queued behind the held append, so only disposal can wait for it.
     let disposed = false
     const disposal = fiber.dispose().then(() => { disposed = true })
     await new Promise(resolve => setTimeout(resolve, 50))
     const disposedBeforeRelease = disposed
-    release.resolve(undefined)
+    hold.release()
     await disposal
 
     expect(disposedBeforeRelease).toBe(false)
     expect(entries()).toBeGreaterThan(before)
+  }, 15_000)
+
+  it('settles a transcript append that stopping a teammate starts', async () => {
+    const { ctx, lead, fiber } = await setup([HANGING, ack(), ...acks(4)])
+    const room: TeamRoom = ctx.agentTeams['room']
+    const roster: TeamRoster = ctx.agentTeams['roster']
+    const observed = vi.spyOn(room, 'observeSessionEvent')
+    await addLiveParticipant(ctx, lead, 'alice')
+    await addParticipant(ctx, lead, 'bob', 'ack')
+    const utterance = observed.mock.calls.map(([, event]) => event).find(event => event.type === 'assistant/message')
+    expect(utterance).toBeDefined()
+
+    const hold = holdNextTranscriptFlush(ctx, lead)
+    // The last event a stopped teammate commits reaches the room while the stop
+    // is still running, after any list of pending appends taken before it.
+    const stop = roster.stopTeammates.bind(roster)
+    vi.spyOn(roster, 'stopTeammates').mockImplementation(async (root, childIds) => {
+      await stop(root, childIds)
+      room.observeSessionEvent(lead.session, { ...utterance!, seq: SessionSeq(utterance!.seq + 1_000) })
+    })
+    let disposed = false
+    const disposal = fiber.dispose().then(() => { disposed = true })
+    await hold.entered
+    await new Promise(resolve => setTimeout(resolve, 50))
+    const disposedBeforeRelease = disposed
+    hold.release()
+    await disposal
+
+    expect(disposedBeforeRelease).toBe(false)
   }, 15_000)
 
   it('ends a reader whose Lead is gone without failing the change that notified it', async () => {
@@ -1049,15 +1087,21 @@ describe('room collective decisions', () => {
       roomReviewReminders: 1,
     })
     await addLiveParticipant(ctx, lead, 'alice')
-    await ctx.agentTeams.roomPropose(lead, { statement: 'a reminder nobody receives', signal: SIGNAL })
-    // The one reminder fails at the mailbox, so the deadline re-armed before the
-    // send is all that carries the decision to its escalation.
+    // The review request reaches alice and the one reminder after it fails at the
+    // mailbox, so the deadline re-armed before that send is all that carries the
+    // decision to its escalation. Queued before the proposal, the failure lands on
+    // the reminder however slowly the machine runs.
     const mailbox: TeamMailbox = ctx.agentTeams['mailbox']
-    vi.spyOn(mailbox, 'send').mockRejectedValueOnce(new Error('mailbox unavailable'))
+    const send = mailbox.send.bind(mailbox)
+    const sends = vi.spyOn(mailbox, 'send')
+      .mockImplementationOnce(send)
+      .mockRejectedValueOnce(new Error('mailbox unavailable'))
+    await ctx.agentTeams.roomPropose(lead, { statement: 'a reminder nobody receives', signal: SIGNAL })
 
     await vi.waitFor(() => {
       expect(ctx.agentTeams.roomView(lead).proposals[0]?.phase).toBe('escalated')
     }, { timeout: 5_000 })
+    expect(sends).toHaveBeenCalledTimes(2)
     const timeouts = lead.session.snapshotEvents()
       .flatMap(event => event.type === 'room/review-timeout' ? [event.data.timeout] : [])
     expect(timeouts.map(timeout => timeout.kind)).toEqual(['reminder', 'escalated'])
@@ -1069,6 +1113,8 @@ describe('room collective decisions', () => {
       roomReviewReminders: 0,
     })
     await addLiveParticipant(ctx, lead, 'alice')
+    const infos: string[] = []
+    ctx.logger.info = ((value: unknown) => { infos.push(String(value)) }) as typeof ctx.logger.info
     const opened = await ctx.agentTeams.roomPropose(lead, { statement: 'v1', signal: SIGNAL })
     // The escalation record commits, and the Lead revises the decision before the
     // sweep's next transaction, the one that closes the decision, runs.
@@ -1089,6 +1135,8 @@ describe('room collective decisions', () => {
     expect(ctx.agentTeams.roomView(lead).proposals).toEqual([
       expect.objectContaining({ id: opened.id, revision: 2, phase: 'open' }),
     ])
+    // The sweep escalated nothing, so nothing announces an escalation.
+    expect(infos.filter(line => line.includes('escalated'))).toEqual([])
     await fiber.dispose()
   }, 15_000)
 
