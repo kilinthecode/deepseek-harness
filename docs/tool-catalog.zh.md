@@ -2112,13 +2112,7 @@ lsp 工具将提供方选择和语言服务器子进程置于 ctx.lsp 之后，�
     },
     "reasoning_effort": {
       "type": "string",
-      "description": "Reasoning effort for this teammate. Defaults to your own setting.",
-      "enum": [
-        "off",
-        "low",
-        "medium",
-        "high"
-      ]
+      "description": "Reasoning effort for this teammate, named as the target model declares it. Defaults to your own setting."
     }
   },
   "required": [

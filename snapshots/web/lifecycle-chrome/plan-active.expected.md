@@ -25,7 +25,7 @@
 - banner:
   - button "Open right sidebar":
     - img
-- text: Into the Unknown Preview
+- text: Into the Unknown
 - button "Choose workspace":
   - img
   - text: workspace

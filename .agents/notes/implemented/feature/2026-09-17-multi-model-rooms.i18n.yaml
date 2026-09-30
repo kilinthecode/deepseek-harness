@@ -2,5 +2,5 @@
 # side as of the last confirmed-consistent state. Both languages carry equal authority;
 # after editing either side, bring the other along and re-record with:
 #   pnpm run verify-translation-pairing --write .agents/notes/implemented/feature/2026-09-17-multi-model-rooms.md
-2026-09-17-multi-model-rooms.md: eda1cdc134edb8d7191fc9344571f6f3c17b5b68
-2026-09-17-multi-model-rooms.zh.md: be298a3c3d020e03f9f88c6868e9ab0df8d48e9a
+2026-09-17-multi-model-rooms.md: 1d76e075242875532d811f8c8546fa91eeda4358
+2026-09-17-multi-model-rooms.zh.md: 813c22798746d862c2fae5b6bf514faa5fd9e078

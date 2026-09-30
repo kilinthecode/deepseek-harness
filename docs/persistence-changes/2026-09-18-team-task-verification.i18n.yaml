@@ -2,5 +2,5 @@
 # side as of the last confirmed-consistent state. Both languages carry equal authority;
 # after editing either side, bring the other along and re-record with:
 #   pnpm run verify-translation-pairing --write docs/persistence-changes/2026-09-18-team-task-verification.md
-2026-09-18-team-task-verification.md: cf5768dcbf30d7937cbca6b0fe3ae29e8dfba982
-2026-09-18-team-task-verification.zh.md: fde5d396d037277925a454ab35812692459d096f
+2026-09-18-team-task-verification.md: b27a8e078df0314859f14729343d33ad19172fc8
+2026-09-18-team-task-verification.zh.md: c8bf2a84ddbe95804455c6961c2fe137758ec506
