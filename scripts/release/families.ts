@@ -12,8 +12,8 @@
 import { globSync, readFileSync } from 'node:fs'
 import { resolve } from 'node:path'
 import {
-  officialClientBuildEnvironment,
   readClientBuildRecord,
+  releaseClientBuildEnvironment,
 } from '../client-build-environment.ts'
 import { validateTarballPayload } from '../publication-payload.ts'
 
@@ -327,9 +327,9 @@ class DshFamily extends ReleaseFamily {
   ] as const
   readonly tagPrefix = 'dsh-v'
 
-  /** Require current artifacts from a complete official client build. */
+  /** Require current artifacts from a complete build of the selected client profile. */
   override verifyBuildArtifacts(root: string): void {
-    readClientBuildRecord(root, officialClientBuildEnvironment(root))
+    readClientBuildRecord(root, releaseClientBuildEnvironment(root))
   }
 
   /**

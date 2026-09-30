@@ -4,7 +4,7 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { dirname, join, resolve } from 'node:path'
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { officialClientBuildEnvironment, writeClientBuildRecord } from '../client-build-environment.ts'
+import { officialClientBuildEnvironment, resolveClientBuildEnvironment, writeClientBuildRecord } from '../client-build-environment.ts'
 import { releaseFamily, type ReleaseMember } from './families.ts'
 import { compareVersions, nextVendorVersion, planShared, reachesPayload } from './bump.ts'
 
@@ -199,6 +199,23 @@ describe('release families', () => {
 
     write(join(official, 'packages/client/example/lib/client.js'), 'module.exports = { changed: true }\n')
     expect(() => { dsh.verifyBuildArtifacts(official) }).toThrow(/artifacts differ/)
+  })
+
+  it('verifies the selected fork client profile instead of requiring the official one', () => {
+    const dsh = releaseFamily('dsh')
+    const officialEnvironment = officialClientBuildEnvironment(resolve(import.meta.dirname, '../..'))
+    vi.stubEnv('DSH_CLIENT_COMMIT_HASH', officialEnvironment.DSH_CLIENT_COMMIT_HASH)
+    const portalEnvironment = resolveClientBuildEnvironment({
+      DSH_CLIENT_COMMIT_HASH: officialEnvironment.DSH_CLIENT_COMMIT_HASH,
+      DSH_CLIENT_VERSION: officialEnvironment.DSH_CLIENT_VERSION,
+    }, 'portal')
+    const portal = buildFixture(portalEnvironment)
+
+    // Without a selection the packed artifacts are still required to be upstream's.
+    expect(() => { dsh.verifyBuildArtifacts(portal) }).toThrow(/DSH_CLIENT_TITLE/)
+    vi.stubEnv('DSH_BUILD_CLIENT_PROFILE', 'portal')
+    expect(() => { dsh.verifyBuildArtifacts(portal) }).not.toThrow()
+    expect(() => { dsh.verifyBuildArtifacts(buildFixture(officialEnvironment)) }).toThrow(/DSH_CLIENT_TITLE/)
   })
 
   it('publishes a dependency before its consumer, and orders ties by name', () => {
