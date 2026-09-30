@@ -17,10 +17,14 @@ export interface OnboardingArtworkLoaderProps {
 
 /**
  * @param props - owning step, active interface language and step-owned geometry.
- * @returns the step's illustration once its chunk has arrived, nothing before that.
+ * @returns the step's illustration once its chunk has arrived; before that, the
+ * same image-free root so the step keeps its geometry while the chunk loads.
  */
 export function OnboardingArtworkLoader({ step, locale, className }: OnboardingArtworkLoaderProps): ReactNode {
-  return <Suspense fallback={null}>
+  // The fallback is the artwork root's own markup without its images — same
+  // classes and aria-hidden — so the step reserves the illustration geometry
+  // and the arriving pair replaces it without reflowing the page.
+  return <Suspense fallback={<div className={`${css.illustration} ${className ?? ''}`} aria-hidden="true" />}>
     <LoadedOnboardingArtwork step={step} locale={locale} className={className}
       rootClassName={css.illustration} lightClassName={css.lightIllustration} darkClassName={css.darkIllustration} />
   </Suspense>
