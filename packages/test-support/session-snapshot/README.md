@@ -165,6 +165,7 @@ These limits define when the kit needs special care. They are current package co
 - **Session harvest requires raw JSONL mode** — `runScenario` collects persisted `.jsonl` logs, so snapshot configs set the JSONL backend's `compression: 'none'`; compressed JSONL has no snapshot-harvest path.
 - **Built mode requires current artifacts** — run `pnpm run build` before selecting `DSH_EXAMPLE_MODE=lib`; source mode remains the zero-build path.
 - **ACP remains for protocol behavior** — cancellation and permission round trips whose stimulus is the ACP client stay on that adapter; assembled one-shot and persistent-control behavior uses headless and SDK adapters.
+- **A live concurrent scenario replays only when its tool results are timing-independent** — Sessions that wake each other record a wall-clock order a keyless replay cannot reproduce, so a live multi-agent room needs a deterministic flow before it becomes a committed corpus case.
 
 <a id="dev-note"></a>
 ### Dev Note

@@ -93,3 +93,90 @@ export class Deque<T> {
     this.head = 0
   }
 }
+
+/** How one {@link FrameQueue} reader finishes with entries still queued. */
+export type FrameQueueDrain =
+  /** Deliver the remaining backlog to the reader before the iteration ends. */
+  | 'drain'
+  /** End the iteration as soon as the queue finishes, discarding the backlog. */
+  | 'discard'
+
+/**
+ * Buffered hand-off from many producers to one asynchronous reader.
+ *
+ * {@link push} delivers immediately when the reader is waiting and otherwise
+ * queues; {@link finish} releases a waiting reader, and {@link iterate} yields
+ * queued entries in FIFO order until the queue finishes or its signal aborts.
+ * The caller declares, once, whether a finish drains the backlog or discards it,
+ * so a queue whose reader must observe the tail and one torn down without
+ * further delivery share this implementation without sharing that policy.
+ */
+export class FrameQueue<T> {
+  private readonly buffer = new Deque<T>()
+  private wake: (() => void) | undefined
+  private done = false
+
+  /**
+   * @param drain - backlog policy applied when the queue finishes.
+   */
+  constructor(private readonly drain: FrameQueueDrain) {}
+
+  /** Number of entries waiting for the reader. */
+  get size(): number {
+    return this.buffer.size
+  }
+
+  /** Whether this queue has finished; a finished queue discards further pushes. */
+  get finished(): boolean {
+    return this.done
+  }
+
+  /**
+   * Queue one entry for the reader, or discard it when the queue already finished.
+   * @param entry - entry to deliver to the reader.
+   */
+  push(entry: T): void {
+    if (this.done) return
+    this.buffer.pushBack(entry)
+    this.release()
+  }
+
+  /** Finish the reader: queued entries follow the construction-time drain policy. */
+  finish(): void {
+    if (this.done) return
+    this.done = true
+    this.release()
+  }
+
+  /**
+   * Yield queued entries in order until the queue finishes or the signal aborts.
+   * @param signal - caller cancellation; aborting finishes the queue.
+   * @returns every entry the reader observed while the queue stayed open.
+   */
+  async *iterate(signal: AbortSignal): AsyncIterable<T> {
+    const onAbort = (): void => { this.finish() }
+    signal.addEventListener('abort', onAbort, { once: true })
+    try {
+      while (!this.done && !signal.aborted) {
+        const entry = this.buffer.popFront()
+        if (entry !== undefined) {
+          yield entry
+          continue
+        }
+        await new Promise<void>((resolve) => { this.wake = resolve })
+      }
+      if (this.drain === 'drain') {
+        while (this.buffer.size > 0 && !signal.aborted) yield this.buffer.popFront() as T
+      }
+    } finally {
+      signal.removeEventListener('abort', onAbort)
+      this.finish()
+    }
+  }
+
+  private release(): void {
+    const wake = this.wake
+    this.wake = undefined
+    wake?.()
+  }
+}

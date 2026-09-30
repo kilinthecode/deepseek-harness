@@ -80,6 +80,11 @@ export class BlockAssembler {
         // and the final assembled block in agreement.
         if (partial.block) return
         partial.block = chunk.block
+        // The closed block is authoritative and {@link assemble} never reads the
+        // deltas again, so holding them would retain a second copy of the block's
+        // bytes for as long as this assembler stays reachable.
+        partial.text = ''
+        partial.toolCallArguments = ''
         return
       }
       case 'usage': {

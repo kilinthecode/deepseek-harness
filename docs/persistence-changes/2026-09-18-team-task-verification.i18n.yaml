@@ -1,0 +1,28 @@
+# Bilingual-pair consistency record for 2026-09-18-team-task-verification.md (docs/i18n/README.md): per heading
+# section, a hash of its English and Chinese blocks outside code blocks and generated regions.
+# After editing either side, bring the other along and re-record with:
+#   pnpm run verify-translation-pairing --write docs/persistence-changes/2026-09-18-team-task-verification.md
+/:
+  en: 3d5a424ae7d7e46b
+  zh: c22a8e4a62d8cc1a
+/2026-09-18-team-task-verification:
+  en: 670161f544723c00
+  zh: aee939f708d5aa46
+/2026-09-18-team-task-verification/summary:
+  en: 8d847813dc8ddc0e
+  zh: a511aad831d73429
+/2026-09-18-team-task-verification/table-of-contents:
+  en: 6cf314a069ceb451
+  zh: 9adff678e9ecab3b
+/2026-09-18-team-task-verification/declaration:
+  en: 6907136f28e48c90
+  zh: 02f8298485f3d8e7
+/2026-09-18-team-task-verification/compatibility:
+  en: 70d4dc91f2581837
+  zh: ae36b6512417c340
+/2026-09-18-team-task-verification/verification:
+  en: 2e4684c73f799a8b
+  zh: f48a633d650a501e
+/2026-09-18-team-task-verification/dev-note:
+  en: b75c8458928b72b9
+  zh: 003ba4e17b4b5269

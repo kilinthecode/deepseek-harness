@@ -1,0 +1,18 @@
+/* Rigid turn: the wireframe is one figure, so a rotating projection must not
+   move the inner cell against its edges. */
+.spinner {
+  flex: none;
+  animation: dsh-tesseract-spin 1.2s linear infinite;
+}
+
+@keyframes dsh-tesseract-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .spinner {
+    animation: none;
+  }
+}

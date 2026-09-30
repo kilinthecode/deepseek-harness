@@ -95,6 +95,9 @@ export class AppWebEntry {
       // renderer draws is the one the first frame measures.
       this.stopDragRecall = installWindowDragRecall({ document: this.container.ownerDocument })
       await mountClient(ctx, this.container)
+      // The application now renders beneath the boot page overlay; start its
+      // leave sequence so the brand moment plays out and fades to the app.
+      this.page.leave()
     } catch (reason) {
       console.error(reason)
       if (onFailure !== undefined) onFailure(reason)
@@ -102,7 +105,10 @@ export class AppWebEntry {
     }
   }
 
-  /** Dispose the client plugin tree and whichever page owns the mount point. */
+  /**
+   * Dispose the client plugin tree and remove the boot page at once, cutting
+   * short a handoff still holding the brand.
+   */
   async dispose(): Promise<void> {
     this.stopDragRecall?.()
     this.stopDragRecall = undefined

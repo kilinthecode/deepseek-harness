@@ -96,7 +96,8 @@ describe('installer preparation preserves application dependencies', () => {
       DSH_DESKTOP_MACOS_TEAM_ID: 'TEAMID1234',
       APPLE_KEYCHAIN_PROFILE: 'installer-test',
     }, 'darwin', 'arm64')
-    const packaged = new Set(config.files.filter((entry): entry is string => typeof entry === 'string'))
+    const packaged = new Set<string>()
+    for (const entry of config.files) if (typeof entry === 'string') packaged.add(entry)
     for (const name of referenced) expect(packaged.has(`lib/${name}`)).toBe(true)
   })
 })

@@ -14,8 +14,8 @@ it('ships install metadata with the built web application', async () => {
   // so only an absent `id`, which defaults to the resolved `start_url`, gives
   // each mount its own identity. `public-mount.e2e.ts` reads the resolved form.
   expect(manifest).toEqual({
-    name: 'DeepSeek Harness',
-    short_name: 'DSH',
+    name: 'Portal Harness',
+    short_name: 'Portal',
     start_url: './',
     scope: './',
     display: 'fullscreen',
@@ -34,8 +34,19 @@ it('ships fixed-color favicons selected by document media queries', async () => 
   expect(index).toContain('<link rel="icon" type="image/svg+xml" href="./favicon.svg" media="(prefers-color-scheme: light)" />')
   const light = await readFile(join(DIST_ROOT, 'favicon.svg'), 'utf8')
   const dark = await readFile(join(DIST_ROOT, 'favicon-dark.svg'), 'utf8')
+  // The light-scheme mark is a dark tile with light strokes and the dark-scheme
+  // mark inverts both, so each keeps its contrast against the browser chrome.
+  // Each pair maps a dark-scheme color attribute to its light-scheme value.
+  const palette: ReadonlyArray<readonly [dark: string, light: string]> = [
+    ['stop-color="#f7f8fa"', 'stop-color="#262a34"'],
+    ['stop-color="#e9ebf1"', 'stop-color="#191c23"'],
+    ['stroke="#191c23"', 'stroke="#e9ebf1"'],
+  ]
   expect(light).not.toContain('<style>')
-  expect(light).toContain('fill="#000"')
-  expect(dark).toContain('fill="#fff"')
-  expect(dark.replace('fill="#fff"', 'fill="#000"')).toBe(light)
+  expect(light).toContain('fill="url(#lift)"')
+  for (const [darkColor, lightColor] of palette) {
+    expect(light).toContain(lightColor)
+    expect(dark).toContain(darkColor)
+  }
+  expect(palette.reduce((svg, [darkColor, lightColor]) => svg.replace(darkColor, lightColor), dark)).toBe(light)
 })

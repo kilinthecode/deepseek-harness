@@ -2228,10 +2228,10 @@ describe('automatic listener and loader composition', () => {
     expect(session.snapshotEvents().some(event => event.type === 'compaction/summary')).toBe(false)
   })
 
-  it('warns once per routed target when proactive pressure has no context metadata', async () => {
+  it('surfaces every pressure configuration failure when proactive pressure has no context metadata', async () => {
     const ctx = createContext()
-    const warnings: string[] = []
-    ctx.logger.warn = ((message: string) => void warnings.push(message)) as typeof ctx.logger.warn
+    const errors: string[] = []
+    ctx.logger.error = ((message: string) => void errors.push(message)) as typeof ctx.logger.error
     vi.spyOn(ctx.llm, 'resolveModelInfo').mockImplementation((provider, model) => Promise.resolve({
       provider,
       id: model,
@@ -2248,15 +2248,16 @@ describe('automatic listener and loader composition', () => {
     await preStep(ctx, agent(session, MODEL))
     await preStep(ctx, agent(session, MODEL))
 
-    expect(warnings).toEqual([
+    expect(errors).toEqual([
+      expect.stringContaining(`no context capacity for ${MODEL}/${MODEL}`),
       expect.stringContaining(`no context capacity for ${MODEL}/${MODEL}`),
     ])
   })
 
-  it('warns once per routed target when absolute retention exceeds its resolved threshold', async () => {
+  it('surfaces every failure when absolute retention exceeds its resolved threshold', async () => {
     const ctx = createContext()
-    const warnings: string[] = []
-    ctx.logger.warn = ((message: string) => void warnings.push(message)) as typeof ctx.logger.warn
+    const errors: string[] = []
+    ctx.logger.error = ((message: string) => void errors.push(message)) as typeof ctx.logger.error
     void new TestCompactionEngine(ctx, {
       headroomTokens: 0,
       maxTokens: 8192,
@@ -2268,7 +2269,8 @@ describe('automatic listener and loader composition', () => {
     await preStep(ctx, agent(session, MODEL))
     await preStep(ctx, agent(session, MODEL))
 
-    expect(warnings).toEqual([
+    expect(errors).toEqual([
+      expect.stringContaining('retainTokens (500) must be less than threshold tokens 500'),
       expect.stringContaining('retainTokens (500) must be less than threshold tokens 500'),
     ])
   })

@@ -1,5 +1,6 @@
 /** Sign final native runtime files before the enclosing Desktop application is signed. */
 
+import { execFileSync } from 'node:child_process'
 import { createHash } from 'node:crypto'
 import { closeSync, openSync, readSync } from 'node:fs'
 import { join } from 'node:path'
@@ -31,7 +32,9 @@ export async function signMacOSRuntime(
   root: string, appId: string, expected: MacOSSigningEnvironment, cacheDirectory?: string,
 ): Promise<number> {
   const files = inventoryDesktopRuntime(root).map(file => file.path).filter(path => MACH_O_MAGICS.has(magic(join(root, path))))
-  const policy = cacheDirectory === undefined ? undefined : macOSCachePolicy(process.env.DSH_DESKTOP_MACOS_SIGNING_PROBE ?? '')
+  // Local ad-hoc builds (DSH_ADHOC_SIGN=1) skip Developer ID signing for machines without certificates.
+  const adhoc = process.env.DSH_ADHOC_SIGN === '1'
+  const policy = cacheDirectory === undefined || adhoc ? undefined : macOSCachePolicy(process.env.DSH_DESKTOP_MACOS_SIGNING_PROBE ?? '')
   let hits = 0
   let misses = 0
   let next = 0
@@ -45,7 +48,14 @@ export async function signMacOSRuntime(
       const entitlements = needsJit ? join(import.meta.dirname, 'jit-entitlements.plist') : undefined
       const file = join(root, path)
       const thin = ['cefaedfe', 'cffaedfe', 'feedface', 'feedfacf'].includes(magic(file))
-      if (cacheDirectory !== undefined && policy !== undefined && thin) {
+      if (adhoc) {
+        execFileSync('/usr/bin/codesign', [
+          '--force', '--sign', '-', '--identifier', identifier,
+          ...(entitlements === undefined ? [] : ['--entitlements', entitlements]),
+          file,
+        ], { stdio: 'pipe' })
+        execFileSync('/usr/bin/codesign', ['--verify', '--strict', file], { stdio: 'pipe' })
+      } else if (cacheDirectory !== undefined && policy !== undefined && thin) {
         if (await cachedMacOSSignature(file, cacheDirectory, policy(identifier, expected, entitlements))) hits++
         else misses++
       } else {

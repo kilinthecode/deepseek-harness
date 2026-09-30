@@ -2,6 +2,8 @@ import { WINDOWS_TITLEBAR_HEIGHT } from './windows-layout.ts'
 /** Electron shell: desktop project ownership, custom protocol, windows, and lifecycle. */
 
 import { readFile, writeFile } from 'node:fs/promises'
+import { resolveDshHome } from '@deepseek-ai/dsh-home-paths'
+import { DESKTOP_EDITION_ENV, resolveDesktopEdition } from '../scripts/desktop-release-environment.mjs'
 import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import {
@@ -74,12 +76,17 @@ let backendReady = false
 /** Error-level console output of the primary window, attached to crash reports. */
 const rendererConsole = new RendererConsoleTail()
 
+/** Product name of the resolved desktop edition, read by the first locale lookup. */
+let desktopDisplayName: string | undefined
+/** Harness home the resolved edition owns, passed to the Host it starts. */
+let activeDshHome: string | undefined
+
 // Platform-conventional logs directory (macOS ~/Library/Logs/<name>, otherwise under userData);
 // set before ready so the first fatal report already resolves under it.
 app.setAppLogsPath()
 
 function currentDesktopLocale(): ReturnType<typeof resolveDesktopLocale> {
-  return resolveDesktopLocale(windowsLanguage ?? app.getLocale())
+  return resolveDesktopLocale(windowsLanguage ?? app.getLocale(), desktopDisplayName)
 }
 /** Quit without the task confirmation; the caller has already decided the application must stop. */
 function quitWithoutConfirmation(): void {
@@ -91,7 +98,7 @@ const recovery = new DesktopFatalRecovery({
   show: options => dialog.showMessageBox(options),
   stop: () => { shuttingDown = true; return stopForRecovery() },
   disablePlugins: async () => {
-    const manager = new DesktopProjectManager(resolveDesktopPaths(), runtimeResources())
+    const manager = new DesktopProjectManager(resolveDesktopPaths(activeDshHome), runtimeResources())
     const backupPath = await manager.disableAllPlugins()
     console.info('Desktop profile recovery completed:', { profilePatchBackup: backupPath ?? null, homePatch: 'unchanged' })
   },
@@ -309,10 +316,23 @@ function createWindow(preload: string, show = false, primary = false): BrowserWi
 
 async function main(): Promise<void> {
   void pruneCrashReports(app.getPath('logs'))
+  const manifestValue: unknown = JSON.parse(await readFile(join(app.getAppPath(), 'package.json'), 'utf8'))
+  if (typeof manifestValue !== 'object' || manifestValue === null) throw new Error('desktop policy: invalid application manifest')
+  const manifest = manifestValue as Record<string, unknown>
+  const editionValue = app.isPackaged ? manifest.dshDesktopEdition : process.env[DESKTOP_EDITION_ENV]
+  if (editionValue !== undefined && typeof editionValue !== 'string') {
+    throw new Error(`desktop policy: ${DESKTOP_EDITION_ENV} must be a string`)
+  }
+  const edition = resolveDesktopEdition({ [DESKTOP_EDITION_ENV]: editionValue })
+  const configuredHome = process.env.DSH_HOME
+  const dshHome = resolveDshHome(configuredHome === undefined || configuredHome.trim() === ''
+    ? `~/${edition.defaultDshHomeDirectoryName}` : undefined)
+  desktopDisplayName = edition.displayName
+  activeDshHome = dshHome
   const journalDirectory = process.env.DSH_DESKTOP_UPDATE_JOURNAL_DIR
   const updateJournal = journalDirectory === undefined ? undefined : new DesktopUpdateJournal(journalDirectory, app.getVersion())
   const resources = runtimeResources()
-  const paths = resolveDesktopPaths()
+  const paths = resolveDesktopPaths(dshHome)
   const development = !app.isPackaged
   const primaryRuntime = development
     ? developmentPrimaryRuntime()
@@ -408,7 +428,7 @@ async function main(): Promise<void> {
   const backend = new DesktopBackendController((onFailure) => {
     const hostInspectPort = developmentHostInspectPort(development)
     const host = new DesktopHostProcess(resources.node, resources.dsh, activeProject,
-      hostInspectPort, process.env, onFailure,
+      hostInspectPort, { ...process.env, DSH_HOME: dshHome }, onFailure,
       primaryRuntime,
       resources, (next) => { platformView.setSession(next) })
     return {
@@ -871,10 +891,13 @@ async function main(): Promise<void> {
     updates.dispose()
   })
 
+  // macOS reads the application icon from the bundle, and the unpackaged
+  // development bundle carries Electron's icon; carry the product icon on the Dock instead.
+  if (development && process.platform === 'darwin') app.dock?.setIcon(join(app.getAppPath(), 'resources', 'icon-macos.png'))
   const applicationIconPath = development ? join(app.getAppPath(), 'resources', 'icon-windows.png')
     : join(process.resourcesPath, 'icon.png')
   app.setAboutPanelOptions({
-    applicationName: 'DeepSeek Harness',
+    applicationName: edition.displayName,
     applicationVersion: app.getVersion(),
     // The release has no separate build number; omit Electron's bundle version.
     version: '',
@@ -1225,8 +1248,6 @@ async function main(): Promise<void> {
   })
 
   mainWindow = createMainWindow()
-  const manifest: unknown = JSON.parse(await readFile(join(app.getAppPath(), 'package.json'), 'utf8'))
-  if (typeof manifest !== 'object' || manifest === null) throw new Error('desktop policy: invalid application manifest')
   const developmentPolicy = app.isPackaged ? undefined : process.env.DSH_DESKTOP_MANDATORY_UPDATE_CONFIG
   const policyInput: unknown = app.isPackaged
     ? ('dshMandatoryUpdatePolicy' in manifest ? manifest.dshMandatoryUpdatePolicy : undefined)

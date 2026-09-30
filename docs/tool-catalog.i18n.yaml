@@ -9,8 +9,8 @@
   en: 6cc2cd9ced70bb09
   zh: 1c0e6cb4ba2ed637
 /tool-schema-catalog/tool-package-map:
-  en: 1984c5f40853948e
-  zh: 00e827ad9c6ca067
+  en: 66ac24e4276e1866
+  zh: 4b8fbcbd8b997dd5
 /tool-schema-catalog/deepseek-ai-dsh-plugin-manager:
   en: e0143916bb634762
   zh: e0143916bb634762
@@ -282,8 +282,26 @@
   en: 2eac7360ba68b1bd
   zh: b5d676bf288c245e
 /tool-schema-catalog/deepseek-ai-dsh-experimental-tool-agent-team/wait-agent:
-  en: 50dcffe804868ce3
+  en: 4d6b8aef920674fa
   zh: 8c265475a281f2c2
+/tool-schema-catalog/deepseek-ai-dsh-experimental-tool-agent-room:
+  en: eda68ebf370653a5
+  zh: eda68ebf370653a5
+/tool-schema-catalog/deepseek-ai-dsh-experimental-tool-agent-room/room-escalate:
+  en: faec45e44dd8531e
+  zh: a95ea8b46e96319d
+/tool-schema-catalog/deepseek-ai-dsh-experimental-tool-agent-room/room-prompt:
+  en: 5aafadca521a90d3
+  zh: 195d8be296ed4976
+/tool-schema-catalog/deepseek-ai-dsh-experimental-tool-agent-room/room-propose:
+  en: c9745c112835d8e4
+  zh: eb833a279c7c1b5b
+/tool-schema-catalog/deepseek-ai-dsh-experimental-tool-agent-room/room-review:
+  en: 90b78cf7e2ffddbb
+  zh: 862be30aeafa3f02
+/tool-schema-catalog/deepseek-ai-dsh-experimental-tool-agent-room/room-view:
+  en: 2ff11b72846e665a
+  zh: 66440c3a0e08580e
 /tool-schema-catalog/deepseek-ai-dsh-tool-memory:
   en: b94bf14065439df0
   zh: b94bf14065439df0

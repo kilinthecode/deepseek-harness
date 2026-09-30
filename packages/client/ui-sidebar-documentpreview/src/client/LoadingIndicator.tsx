@@ -1,7 +1,7 @@
 /** Shared indeterminate loading feedback for document reads and rendering. */
 import type { ReactNode } from 'react'
 import clsx from 'clsx'
-import { StateDot } from '@deepseek-ai/dsh-client-ui-primitives'
+import { TesseractSpinner } from '@deepseek-ai/dsh-client-ui-primitives'
 import css from './LoadingIndicator.module.css'
 
 /**
@@ -13,7 +13,7 @@ export function LoadingIndicator({ label, inline = false }: {
   inline?: boolean
 }): ReactNode {
   return <span className={clsx(css.loading, inline && css.inline)} role="status" aria-label={label} data-document-loading>
-    <StateDot state="ongoing" size={inline ? 14 : 28} />
+    <TesseractSpinner size={inline ? 14 : 28} />
     {!inline && <span>{label}</span>}
   </span>
 }

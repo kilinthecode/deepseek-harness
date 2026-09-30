@@ -22,6 +22,33 @@ const OFFICIAL_CLIENT_BUILD_ENVIRONMENT = {
   DSH_CLIENT_TITLE: 'DeepSeek Harness',
 } as const
 
+/**
+ * Public client environment for the Portal fork's artifacts.
+ *
+ * The fork's product identity is a named profile rather than an edit to the
+ * official values, so upstream keeps owning `official` and a sync only has to
+ * preserve this block. `packages/client/portal-brand` occupies the brand slots
+ * under this profile and stays silent under `official`.
+ */
+const PORTAL_CLIENT_BUILD_ENVIRONMENT = {
+  DSH_CLIENT_BUILD_PROFILE: 'portal',
+  DSH_CLIENT_TITLE: 'Portal Harness',
+} as const
+
+/**
+ * Public client environment for the fork's dev-channel artifacts.
+ *
+ * `portal-dev` is the identity of the side-by-side dev build that receives
+ * changes before the `portal` build does. It differs from `portal` only in
+ * product identity: `packages/client/portal-brand` renders its dev variant
+ * under this profile, and the dev desktop edition pairs it with its own data
+ * root and update channel.
+ */
+const PORTAL_DEV_CLIENT_BUILD_ENVIRONMENT = {
+  DSH_CLIENT_BUILD_PROFILE: 'portal-dev',
+  DSH_CLIENT_TITLE: 'Portal Dev',
+} as const
+
 /** Public variable carrying the source commit embedded in client artifacts. */
 const CLIENT_COMMIT_HASH_VARIABLE = 'DSH_CLIENT_COMMIT_HASH'
 
@@ -179,6 +206,16 @@ function clientBuildEnvironment(environment: NodeJS.ProcessEnv): ClientBuildEnvi
 }
 
 /**
+ * Public environments of every named client build profile, in reporting order.
+ * The key set is the accepted profile names and the diagnostic's expected list.
+ */
+const CLIENT_BUILD_PROFILE_ENVIRONMENTS = {
+  official: OFFICIAL_CLIENT_BUILD_ENVIRONMENT,
+  portal: PORTAL_CLIENT_BUILD_ENVIRONMENT,
+  'portal-dev': PORTAL_DEV_CLIENT_BUILD_ENVIRONMENT,
+} as const
+
+/**
  * Resolve the exact public environment selected for a complete client build.
  * @param environment - parent process environment.
  * @param profile - explicit profile, or the non-public selector when omitted.
@@ -189,22 +226,26 @@ export function resolveClientBuildEnvironment(
   profile: string | undefined = environment[CLIENT_BUILD_PROFILE_SELECTOR],
 ): ClientBuildEnvironment {
   if (profile === undefined) return clientBuildEnvironment(environment)
-  if (profile === 'official') {
-    const commitHash = environment[CLIENT_COMMIT_HASH_VARIABLE]
-    const version = environment[CLIENT_VERSION_VARIABLE]
-    if (commitHash === undefined) {
-      throw new Error(`${CLIENT_COMMIT_HASH_VARIABLE} is required for the official client build profile`)
-    }
-    if (version === undefined) {
-      throw new Error(`${CLIENT_VERSION_VARIABLE} is required for the official client build profile`)
-    }
-    return {
-      DSH_CLIENT_COMMIT_HASH: commitHash,
-      DSH_CLIENT_VERSION: version,
-      ...OFFICIAL_CLIENT_BUILD_ENVIRONMENT,
-    }
+  const named = Object.hasOwn(CLIENT_BUILD_PROFILE_ENVIRONMENTS, profile)
+    ? CLIENT_BUILD_PROFILE_ENVIRONMENTS[profile as keyof typeof CLIENT_BUILD_PROFILE_ENVIRONMENTS]
+    : undefined
+  if (named === undefined) {
+    const expected = Object.keys(CLIENT_BUILD_PROFILE_ENVIRONMENTS).map(name => JSON.stringify(name)).join(', ')
+    throw new Error(`unknown client build profile ${JSON.stringify(profile)}; expected ${expected}`)
   }
-  throw new Error(`unknown client build profile ${JSON.stringify(profile)}; expected "official"`)
+  const commitHash = environment[CLIENT_COMMIT_HASH_VARIABLE]
+  const version = environment[CLIENT_VERSION_VARIABLE]
+  if (commitHash === undefined) {
+    throw new Error(`${CLIENT_COMMIT_HASH_VARIABLE} is required for the ${profile} client build profile`)
+  }
+  if (version === undefined) {
+    throw new Error(`${CLIENT_VERSION_VARIABLE} is required for the ${profile} client build profile`)
+  }
+  return {
+    DSH_CLIENT_COMMIT_HASH: commitHash,
+    DSH_CLIENT_VERSION: version,
+    ...named,
+  }
 }
 
 /**

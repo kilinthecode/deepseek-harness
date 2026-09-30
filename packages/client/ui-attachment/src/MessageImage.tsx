@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import type { ImageAttachmentRef } from '@deepseek-ai/dsh-attachment'
-import { IconLoadingOutlineRegular, IconRefreshOutlineRegular } from '@deepseek-ai/dsh-client-ui-primitives'
+import { IconRefreshOutlineRegular, TesseractSpinner } from '@deepseek-ai/dsh-client-ui-primitives'
 import { ImageLightbox } from '@deepseek-ai/dsh-client-ui-primitives'
 import type { ImageLightboxLabels } from '@deepseek-ai/dsh-client-ui-primitives'
 import css from './MessageImage.module.css'
@@ -154,7 +154,7 @@ export function MessageImage({ image, load, variant, labels }: {
         {src === null
           ? (
             <span className={css.loading} aria-hidden={loadingThumbnail || undefined}>
-              {loadingThumbnail ? <IconLoadingOutlineRegular className={css.spinner} /> : labels.loading}
+              {loadingThumbnail ? <TesseractSpinner /> : labels.loading}
             </span>
           )
           : <img src={src} alt={label} style={fit === undefined ? undefined : { objectPosition: fit.objectPosition }} />}

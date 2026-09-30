@@ -2,15 +2,14 @@
 
 import type { Context } from '@deepseek-ai/cordis'
 import z from '@deepseek-ai/schemastery'
-import type { Agent } from '@deepseek-ai/dsh-agent'
+import type { Agent, AgentOptions } from '@deepseek-ai/dsh-agent'
+import type {} from '@deepseek-ai/dsh-attachment'
 import { TeamTaskId } from '@deepseek-ai/dsh-experimental-agent-team'
 import type { TeamMemberView } from '@deepseek-ai/dsh-experimental-agent-team'
+import { ReasoningEffortId, resolveDelegationImages } from '@deepseek-ai/dsh-llm'
 import type { ImageInputSupport } from '@deepseek-ai/dsh-llm'
 import { plainForkParentOf } from '@deepseek-ai/dsh-subagent'
-import { defineTool } from '@deepseek-ai/dsh-tools'
-import type { InferValue, ValueSchemaSpec } from '@deepseek-ai/dsh-tools'
-import { resolveDelegationImages } from '@deepseek-ai/dsh-llm'
-import type {} from '@deepseek-ai/dsh-attachment'
+import { callingAgent, defineTool, jsonOutput, type InferValue } from '@deepseek-ai/dsh-tools'
 
 /** Cordis plugin name. */
 export const name = 'tool-agent-team'
@@ -38,7 +37,7 @@ The Team Lead and all teammates share the same working directory and filesystem.
 
 Prefer read/edit/write for file changes. If a file operation returns FS_STALE_VERSION, read the current file, rebase your intended change onto the new content, and retry. Bash, formatters, code generators, and scripts are not fully protected by the filesystem version guard; coordinate them explicitly and have the Lead review the final diff and run tests.
 
-Use the target returned by spawn_teammate or list_agents for send_message and interrupt_agent, or as owner when assigning or filtering shared tasks. send_message steers a running target at its nearest step boundary and starts or resumes an inactive target. inactive means no turn is executing; it does not describe task completion, success, failure, or waiting for other agents. provisioning means member creation is in progress; failed means member creation failed. A delivered peer item starts with its stable message id and sender name. A successful send is already durable even when its result says queued; do not resend it. Shared-task workflow is list, get, claim with the current revision, perform the work, then complete. Task readiness never starts an owner. Before wait_agent, use list_agents and make sure another required member is running or provisioning; use send_message first when the required member is inactive. wait_agent observes only changes after that call starts, never wakes a member, and returns noProgress immediately when no other member can produce a change. Re-list after wakeup or timeout. The Lead must wait for required teammates before giving the final answer.`
+Use the target returned by spawn_teammate or list_agents for send_message and interrupt_agent, or as owner when assigning or filtering shared tasks. send_message steers a running target at its nearest step boundary and starts or resumes an inactive target. inactive means no turn is executing; it does not describe task completion, success, failure, or waiting for other agents. provisioning means member creation is in progress; failed means member creation failed. A delivered peer item starts with its stable message id and sender name. A successful send is already durable even when its result says queued; do not resend it. Shared-task workflow is list, get, claim with the current revision, perform the work, then submit it. Only another member's verify verdict completes the task or returns it with the objection; judge a peer's submission against the work itself, not its report. Task readiness never starts an owner. Before wait_agent, use list_agents and make sure another required member is running or provisioning; use send_message first when the required member is inactive. wait_agent observes only changes after that call starts, never wakes a member, and returns noProgress immediately when no other member can produce a change. Re-list after wakeup or timeout. The Lead must wait for required teammates before giving the final answer.`
 
 const ACTIVE_WAIT_STATUSES: ReadonlySet<TeamMemberView['status']> = new Set(['running', 'provisioning'])
 const NO_ACTIVE_PEER_MESSAGE = 'No other Team member is running or provisioning. wait_agent cannot make progress or wake inactive teammates. Re-list with list_agents and team_task_list, then use send_message to wake each required inactive teammate before waiting again.'
@@ -82,12 +81,22 @@ const TASK_VIEW_SCHEMA = {
     revision: { type: 'integer', required: true },
     subject: { type: 'string', required: true },
     description: { type: 'string', required: true },
-    status: { type: 'string', required: true, enum: ['pending', 'in_progress', 'completed', 'deleted'] },
+    status: { type: 'string', required: true, enum: ['pending', 'in_progress', 'verifying', 'completed', 'deleted'] },
     ownerName: { type: 'string' },
     blockedBy: { type: 'array', required: true, items: { type: 'string' } },
     writeScopes: { type: 'array', required: true, items: { type: 'string' } },
     ready: { type: 'boolean', required: true },
     writeScopeWarnings: { type: 'array', required: true, items: { type: 'string' } },
+    verification: {
+      type: 'object',
+      additionalProperties: false,
+      properties: {
+        submittedRevision: { type: 'integer', required: true },
+        verifierName: { type: 'string' },
+        verdict: { type: 'string', enum: ['approved', 'rejected'] },
+        reason: { type: 'string' },
+      },
+    },
   },
 } as const
 
@@ -144,43 +153,18 @@ const TASK_LIST_VALUE_SCHEMA = {
   },
 } as const
 
-/**
- * Declare one canonical output schema with compact model-facing JSON. Every
- * Team result is a fixed record, so the declared schema is what makes the
- * compiler check `execute` against the value the model is promised.
- * @param schema - canonical value schema for one tool.
- * @returns the `output` declaration accepted by {@link defineTool}.
- */
-function jsonOutput<const S extends ValueSchemaSpec>(schema: S): {
-  schema: S
-  render: (args: unknown, value: InferValue<S>) => [{ type: 'text'; text: string }]
-} {
-  return {
-    schema,
-    render: (_args: unknown, value: InferValue<S>) => [{ type: 'text', text: JSON.stringify(value) }],
-  }
-}
-
-/** Recover the exact caller guaranteed by Agent-scoped tool discovery. */
-function callingAgent(agent: Agent | undefined, toolName: string): Agent {
-  /* v8 ignore next 2 -- Team tools are registered only in an exact Agent scope, so discovery supplies this carrier. */
-  if (agent === undefined) throw new Error(`${toolName} requires a calling Agent`)
-  return agent
-}
-
 /** Register the complete Team tool set in one exact Agent scope. */
 function install(agent: Agent, ctx: Context, config: Required<Config>): () => void {
   const scoped = agent.ctx
-  const disposers: Array<() => unknown> = []
-  const register = (disposer: () => unknown): void => { disposers.push(disposer) }
-  try {
-    register(scoped.systemPrompt.section({
+  // oxlint-disable-next-line typescript/no-misused-promises -- Cordis effect generators collect yielded disposers synchronously.
+  return scoped.effect(function* () {
+    yield scoped.systemPrompt.section({
       name: 'team:policy',
       order: scoped.systemPrompt.getSectionOrder('TEAM_POLICY'),
       text: POLICY,
-    }))
+    })
 
-    register(scoped.tools.register(defineTool({
+    yield scoped.tools.register(defineTool({
       name: 'spawn_teammate',
       description: 'Create one named, durable teammate. Only the Team Lead may call this tool.',
       parameters: {
@@ -197,6 +181,18 @@ function install(agent: Agent, ctx: Context, config: Required<Config>): () => vo
           enum: ['fresh', 'fork'],
           description: 'fresh starts without Lead history; fork inherits completed Lead turns. Defaults to fresh.',
         },
+        provider: {
+          type: 'string',
+          description: 'Model provider route for this teammate, for example deepseek-official. Defaults to your own route.',
+        },
+        model: {
+          type: 'string',
+          description: 'Model id for this teammate; pick one that fits its responsibility, since teammates on different models disagree more usefully than copies of one model. Defaults to your own model.',
+        },
+        reasoning_effort: {
+          type: 'string',
+          description: 'Reasoning effort for this teammate, named as the target model declares it. Defaults to your own setting.',
+        },
       },
       output: jsonOutput(SPAWN_VALUE_SCHEMA),
       async execute(args, exec) {
@@ -207,6 +203,11 @@ function install(agent: Agent, ctx: Context, config: Required<Config>): () => vo
           ctx.get('attachments')?.imageLimits.maxImagesPerMessage,
         )
         const context = args.context ?? 'fresh'
+        const agentOptions: AgentOptions = {
+          ...args.provider === undefined ? {} : { provider: args.provider },
+          ...args.model === undefined ? {} : { model: args.model },
+          ...args.reasoning_effort === undefined ? {} : { reasoningEffort: ReasoningEffortId(args.reasoning_effort) },
+        }
         const result = await ctx.agentTeams.spawnTeammate(agent, {
           name: args.name,
           description: args.description,
@@ -225,13 +226,14 @@ To message another teammate, use send_message({ target: "<teammate name>", messa
           ],
           context,
           provider: context === 'fork' ? config.forkProvider : config.freshProvider,
+          ...Object.keys(agentOptions).length === 0 ? {} : { agentOptions },
           signal: exec.signal,
         })
         return { member: modelMember(result.member) }
       },
-    })))
+    }))
 
-    register(scoped.tools.register(defineTool({
+    yield scoped.tools.register(defineTool({
       name: 'send_message',
       description: 'Send one durable message to another Team member. A running target receives it at the nearest step boundary; an inactive target starts or resumes a turn.',
       parameters: {
@@ -256,9 +258,9 @@ To message another teammate, use send_message({ target: "<teammate name>", messa
           signal: exec.signal,
         })
       },
-    })))
+    }))
 
-    register(scoped.tools.register(defineTool({
+    yield scoped.tools.register(defineTool({
       name: 'list_agents',
       description: 'List the Lead and every durable teammate with an addressable target, current availability, and image-input support. inactive means no turn is executing, not a task result. provisioning and failed describe member creation.',
       parameters: {},
@@ -273,9 +275,9 @@ To message another teammate, use send_message({ target: "<teammate name>", messa
           return acceptsImages === undefined ? view : { ...view, acceptsImages }
         })
       },
-    })))
+    }))
 
-    register(scoped.tools.register(defineTool({
+    yield scoped.tools.register(defineTool({
       name: 'wait_agent',
       description: 'Wait for the next teammate status, mailbox, or shared-task change after this call starts. This never wakes inactive members and returns noProgress immediately when no other member is running or provisioning. Re-list after wakeup or timeout instead of polling.',
       parameters: {
@@ -308,9 +310,9 @@ To message another teammate, use send_message({ target: "<teammate name>", messa
         }
         return await ctx.agentTeams.waitForChange(caller, timeoutMs, exec.signal)
       },
-    })))
+    }))
 
-    register(scoped.tools.register(defineTool({
+    yield scoped.tools.register(defineTool({
       name: 'interrupt_agent',
       description: 'Interrupt one teammate\'s current turn while preserving its pending inbox. Team Lead only.',
       parameters: {
@@ -320,9 +322,9 @@ To message another teammate, use send_message({ target: "<teammate name>", messa
       execute(args, exec) {
         return Promise.resolve(ctx.agentTeams.interrupt(callingAgent(exec.agent, 'interrupt_agent'), args.target))
       },
-    })))
+    }))
 
-    register(scoped.tools.register(defineTool({
+    yield scoped.tools.register(defineTool({
       name: 'team_task_create',
       description: 'Create one unowned pending task on the shared Team task board.',
       parameters: {
@@ -344,15 +346,15 @@ To message another teammate, use send_message({ target: "<teammate name>", messa
           ...args.write_scopes === undefined ? {} : { writeScopes: args.write_scopes },
         })
       },
-    })))
+    }))
 
-    register(scoped.tools.register(defineTool({
+    yield scoped.tools.register(defineTool({
       name: 'team_task_list',
       description: 'List shared tasks, including readiness, owner, revision, blockers, and write-scope warnings.',
       parameters: {
         status: {
           type: 'string',
-          enum: ['pending', 'in_progress', 'completed'],
+          enum: ['pending', 'in_progress', 'verifying', 'completed'],
           description: 'Optional exact status filter.',
         },
         owner: { type: 'string', description: 'Optional member target from spawn_teammate or list_agents, matching ownerName; use unowned for tasks without an owner.' },
@@ -376,9 +378,9 @@ To message another teammate, use send_message({ target: "<teammate name>", messa
           ...(cursor + limit < filtered.length ? { nextCursor: cursor + limit } : {}),
         })
       },
-    })))
+    }))
 
-    register(scoped.tools.register(defineTool({
+    yield scoped.tools.register(defineTool({
       name: 'team_task_get',
       description: 'Read the complete latest value of one shared task before changing or executing it.',
       parameters: {
@@ -391,9 +393,9 @@ To message another teammate, use send_message({ target: "<teammate name>", messa
           TeamTaskId(args.task_id),
         ))
       },
-    })))
+    }))
 
-    register(scoped.tools.register(defineTool({
+    yield scoped.tools.register(defineTool({
       name: 'team_task_update',
       description: 'Compare-and-set a shared task action using the latest revision from team_task_get or team_task_list.',
       parameters: {
@@ -402,14 +404,16 @@ To message another teammate, use send_message({ target: "<teammate name>", messa
         action: {
           type: 'string',
           required: true,
-          enum: ['claim', 'release', 'edit', 'set_dependencies', 'complete', 'reopen', 'reassign', 'delete'],
-          description: 'Task transition to apply.',
+          enum: ['claim', 'release', 'edit', 'set_dependencies', 'submit', 'verify', 'reopen', 'reassign', 'delete'],
+          description: 'Task transition to apply. submit hands your own finished work to a peer; verify records a peer verdict on submitted work.',
         },
         subject: { type: 'string', description: 'Replacement title for edit.' },
         description: { type: 'string', description: 'Replacement details for edit.' },
         blocked_by: { type: 'array', items: { type: 'string' }, description: 'Complete blocker list for set_dependencies.' },
         write_scopes: { type: 'array', items: { type: 'string' }, description: 'Replacement advisory write scopes for edit.' },
         owner: { type: 'string', description: 'Member target from spawn_teammate or list_agents for Lead-only reassign; omit to unassign.' },
+        verdict: { type: 'string', enum: ['approved', 'rejected'], description: 'Peer verdict required by verify.' },
+        reason: { type: 'string', description: 'Why the peer approved or rejected; required by verify and read by the owner.' },
       },
       output: jsonOutput(TASK_VIEW_SCHEMA),
       async execute(args, exec) {
@@ -422,16 +426,12 @@ To message another teammate, use send_message({ target: "<teammate name>", messa
           ...args.blocked_by === undefined ? {} : { blockedBy: args.blocked_by.map(TeamTaskId) },
           ...args.write_scopes === undefined ? {} : { writeScopes: args.write_scopes },
           ...args.owner === undefined ? {} : { owner: args.owner },
+          ...args.verdict === undefined ? {} : { verdict: args.verdict },
+          ...args.reason === undefined ? {} : { reason: args.reason },
         })
       },
-    })))
-  } catch (error: unknown) {
-    for (const dispose of disposers.reverse()) void dispose()
-    throw error
-  }
-  return () => {
-    for (const dispose of disposers.reverse()) void dispose()
-  }
+    }))
+  }, 'tool-team.agentScope()')
 }
 
 /**

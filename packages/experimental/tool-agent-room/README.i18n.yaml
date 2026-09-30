@@ -1,0 +1,49 @@
+# Bilingual-pair consistency record for README.md (docs/i18n/README.md): per heading
+# section, a hash of its English and Chinese blocks outside code blocks and generated regions.
+# After editing either side, bring the other along and re-record with:
+#   pnpm run verify-translation-pairing --write packages/experimental/tool-agent-room/README.md
+/:
+  en: 908c5c606c7aede9
+  zh: cf07ffca1b770dbe
+/deepseek-ai-dsh-experimental-tool-agent-room:
+  en: 51362b8a8893cc09
+  zh: b96ecec56941645d
+/deepseek-ai-dsh-experimental-tool-agent-room/summary:
+  en: 100109296b77810a
+  zh: b50701e2b737205f
+/deepseek-ai-dsh-experimental-tool-agent-room/table-of-contents:
+  en: d152484eb41ac6b4
+  zh: 09388d293f9be9cb
+/deepseek-ai-dsh-experimental-tool-agent-room/use-this-package:
+  en: 74708855ccd297c2
+  zh: 3899d2e0e8b49bca
+/deepseek-ai-dsh-experimental-tool-agent-room/use-this-package/when-to-choose-it:
+  en: 601a1e4c4d0fe85b
+  zh: cae6d04b8ce0af57
+/deepseek-ai-dsh-experimental-tool-agent-room/understand-the-implementation:
+  en: 4624c7b9f757331c
+  zh: 1b0a3b40574c7db4
+/deepseek-ai-dsh-experimental-tool-agent-room/further-exploration:
+  en: 2573f60d482b99b2
+  zh: 2937aa2574306bed
+/deepseek-ai-dsh-experimental-tool-agent-room/model-experience:
+  en: 215e7ba838619b7b
+  zh: a311da3843709f90
+/deepseek-ai-dsh-experimental-tool-agent-room/model-experience/room-tools:
+  en: d79c9f52a5cb494d
+  zh: a1972ada363021fe
+/deepseek-ai-dsh-experimental-tool-agent-room/model-experience/room-tools/what-the-model-sees:
+  en: 66c326f08f629253
+  zh: b4fae46101d1b67b
+/deepseek-ai-dsh-experimental-tool-agent-room/model-experience/room-tools/token-effect:
+  en: 8b45333433dfa12d
+  zh: 48153b13d87f9f44
+/deepseek-ai-dsh-experimental-tool-agent-room/model-experience/room-tools/kv-cache-effect:
+  en: bd09d93c3d874c4c
+  zh: 68b06e9d87c41e0a
+/deepseek-ai-dsh-experimental-tool-agent-room/known-limitations-and-deferred-work:
+  en: 203d2fd34662da85
+  zh: a74e75daf766ad3f
+/deepseek-ai-dsh-experimental-tool-agent-room/known-limitations-and-deferred-work/dev-note:
+  en: b007bfde281ad956
+  zh: 7d61c119239c0fe7

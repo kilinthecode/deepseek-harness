@@ -1,0 +1,13 @@
+.badge {
+  display: inline-block;
+  padding: 0 6px;
+  border-radius: 4px;
+  font-size: 10px;
+  line-height: 16px;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  white-space: nowrap;
+  color: var(--dsw-alias-label-primary-foreground);
+  background-color: var(--dsw-alias-brand-primary);
+}

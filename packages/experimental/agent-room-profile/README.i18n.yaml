@@ -1,0 +1,52 @@
+# Bilingual-pair consistency record for README.md (docs/i18n/README.md): per heading
+# section, a hash of its English and Chinese blocks outside code blocks and generated regions.
+# After editing either side, bring the other along and re-record with:
+#   pnpm run verify-translation-pairing --write packages/experimental/agent-room-profile/README.md
+/:
+  en: ad4180db32081ad9
+  zh: 731c2d0190eb6da9
+/deepseek-ai-dsh-experimental-agent-room-profile:
+  en: 42b96982a1899913
+  zh: db6928c0a836029f
+/deepseek-ai-dsh-experimental-agent-room-profile/summary:
+  en: 4c500f62dfd1d80a
+  zh: 9ad1d7a08e3491fa
+/deepseek-ai-dsh-experimental-agent-room-profile/table-of-contents:
+  en: d152484eb41ac6b4
+  zh: 09388d293f9be9cb
+/deepseek-ai-dsh-experimental-agent-room-profile/use-this-package:
+  en: bbff250eba0f1b89
+  zh: 0a618f05cc88ee2b
+/deepseek-ai-dsh-experimental-agent-room-profile/use-this-package/install-into-a-profile:
+  en: 7032e8837aaf976f
+  zh: 12f8518bc29b30d7
+/deepseek-ai-dsh-experimental-agent-room-profile/use-this-package/what-you-get:
+  en: 9ce0f3864056057a
+  zh: 373362caaee44295
+/deepseek-ai-dsh-experimental-agent-room-profile/understand-the-implementation:
+  en: 9b4fa3b75a75dfb7
+  zh: bb952b64c03dc81e
+/deepseek-ai-dsh-experimental-agent-room-profile/further-exploration:
+  en: 956c5d1124da7fbd
+  zh: bc42a2e8b83ced4c
+/deepseek-ai-dsh-experimental-agent-room-profile/model-experience:
+  en: 215e7ba838619b7b
+  zh: a311da3843709f90
+/deepseek-ai-dsh-experimental-agent-room-profile/model-experience/room-policy-and-tools:
+  en: f8b406d5d39313c1
+  zh: b0fc78d976251a52
+/deepseek-ai-dsh-experimental-agent-room-profile/model-experience/room-policy-and-tools/what-the-model-sees:
+  en: 88d4d4d797ef89de
+  zh: fda10f65a2b85e11
+/deepseek-ai-dsh-experimental-agent-room-profile/model-experience/room-policy-and-tools/token-effect:
+  en: 7cc81ab4dbf8d480
+  zh: 2bc824f00a567be0
+/deepseek-ai-dsh-experimental-agent-room-profile/model-experience/room-policy-and-tools/kv-cache-effect:
+  en: 8cdeeac0dac42058
+  zh: 77c351e495059623
+/deepseek-ai-dsh-experimental-agent-room-profile/known-limitations-and-deferred-work:
+  en: 5c43244eab901f7a
+  zh: 2eb4f67f54b4ad64
+/deepseek-ai-dsh-experimental-agent-room-profile/known-limitations-and-deferred-work/dev-note:
+  en: 82f33a6b96f945af
+  zh: 559be6ff60227045

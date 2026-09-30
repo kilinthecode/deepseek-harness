@@ -64,9 +64,10 @@ describe('bootstrap failure rendering', () => {
     const failure = vi.fn()
     await entry.run(failure)
     expect(failure).toHaveBeenCalledWith(new Error('web boot: window.__ModuleLoader__ bootstrap facade is missing'))
-    expect(container.textContent).toContain('Loading plugins')
+    // The boot page keeps its brand while the carrier owns the failure; the
+    // progress spinner joins it only once boot outlasts the brand moment.
+    expect(container.querySelector('[data-dsh-boot]')).not.toBeNull()
     expect(container.textContent).not.toContain('Failed to load plugins')
-    expect(container.querySelector('[data-dsh-boot-spinner]')).not.toBeNull()
     await entry.dispose()
   })
 
@@ -91,7 +92,7 @@ describe('bootstrap failure rendering', () => {
       if (carrier) {
         expect(report).toHaveBeenCalledOnce()
         expect(String(report.mock.calls[0]![0])).toContain('broken')
-        expect(container.querySelector('[data-dsh-boot-spinner]')).not.toBeNull()
+        expect(container.querySelector('[data-dsh-boot]')).not.toBeNull()
         expect(container.textContent).not.toContain('Failed to load plugins')
       } else {
         expect(report).not.toHaveBeenCalled()
@@ -133,6 +134,33 @@ describe('bootstrap failure rendering', () => {
         batches: [{ phase: 'application', url: '/batch.js', rev: 'batch', entries: ['duplicate'] }],
       }
     }, 'duplicate graph entry "duplicate"')
+  })
+})
+
+describe('pre-boot gate', () => {
+  it('holds the boot page back while a pre-boot stage owns the screen, then renders a rejected handshake', async () => {
+    const error = vi.spyOn(console, 'error').mockImplementation(() => {})
+    const container = document.createElement('div')
+    document.body.append(container)
+    const gate = Promise.withResolvers<undefined>()
+    const bootGlobal = globalThis as { __DSH_BOOT_READY__?: PromiseWithResolvers<undefined>; __DSH_PREBOOT_OWNED__?: boolean }
+    bootGlobal.__DSH_BOOT_READY__ = gate
+    bootGlobal.__DSH_PREBOOT_OWNED__ = true
+    try {
+      const entry = new AppWebEntry(container)
+      const running = entry.run()
+      // The pre-boot stage owns the page while the gate is pending.
+      expect(container.querySelector('[data-dsh-boot]')).toBeNull()
+      gate.reject(new Error('worker handshake failed'))
+      await running
+      expect(container.querySelector('[data-dsh-boot]')).not.toBeNull()
+      expect(container.textContent).toContain('worker handshake failed')
+      expect(error).toHaveBeenCalledOnce()
+      await entry.dispose()
+    } finally {
+      delete bootGlobal.__DSH_BOOT_READY__
+      delete bootGlobal.__DSH_PREBOOT_OWNED__
+    }
   })
 })
 
@@ -264,6 +292,45 @@ describe('plugin activation', () => {
     expect(container.textContent).toBe('mounted')
     await entry.dispose()
   })
+
+  it('holds the boot page over the mounted application until disposal removes it at once', async () => {
+    const container = document.createElement('div')
+    document.body.append(container)
+    const target = installFacade()
+    const entries: WebBootEntry[] = [
+      { id: MODULES_ID, url: '/modules.js', rev: '1' },
+      { id: 'renderer', url: '/renderer.js', rev: '1' },
+    ]
+    win.__DSH_BOOT__ = {
+      rev: 'graph',
+      entries,
+      batches: [{ phase: 'application', url: '/application.js', rev: 'batch', entries: entries.map(row => row.id) }],
+    }
+    const renderer: ClientBundleRegistration = {
+      id: 'renderer',
+      factory: () => ({
+        apply: (ctx: Context) => {
+          ctx.reflect.provide('uiRenderer', {
+            mount: (element: HTMLElement) => {
+              const app = document.createElement('main')
+              element.append(app)
+              return () => { app.remove() }
+            },
+          })
+        },
+      }),
+    }
+    const entry = new AppWebEntry(container, {
+      loadBundle: async () => { target.load(renderer) },
+    })
+
+    await entry.run()
+    // The handoff keeps the brand over the application while it settles.
+    expect(container.querySelector('main')).not.toBeNull()
+    expect(container.querySelector('[data-dsh-boot]')).not.toBeNull()
+    await entry.dispose()
+    expect(container.querySelector('[data-dsh-boot]')).toBeNull()
+  })
 })
 
 it('draws the shared boot page before Host injections and resumes without replacing the document', async () => {
@@ -277,8 +344,7 @@ it('draws the shared boot page before Host injections and resumes without replac
   const boot = entry.run()
   try {
     const page = container.querySelector('[data-dsh-boot]')
-    const spinner = container.querySelector('[data-dsh-boot-spinner]')
-    expect(spinner).not.toBeNull()
+    expect(page).not.toBeNull()
     await Promise.resolve()
     expect(create).not.toHaveBeenCalled()
     expect(error).not.toHaveBeenCalled()

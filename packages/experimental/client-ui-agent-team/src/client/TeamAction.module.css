@@ -324,3 +324,155 @@
   padding: 9px;
   font-size: 12px;
 }
+
+/* Room transcript and decision board. */
+.transcript {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  max-height: 240px;
+  overflow-y: auto;
+  scrollbar-width: thin;
+  scrollbar-color: var(--dsw-alias-scrollbar-bg-l2) transparent;
+}
+
+.turn {
+  display: grid;
+  grid-template-columns: minmax(0, 5rem) minmax(0, 1fr);
+  gap: 8px;
+  font-size: 12px;
+}
+
+.author {
+  color: var(--dsw-alias-label-secondary);
+  font-weight: 500;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.turnText {
+  color: var(--dsw-alias-label-primary);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.chair {
+  color: var(--dsw-alias-label-tertiary);
+  font-size: 12px;
+}
+
+.decisions {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.decision {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 8px;
+  border: 0.5px solid var(--dsw-alias-border-l1);
+  border-radius: 6px;
+}
+
+.decisionHead {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12px;
+  color: var(--dsw-alias-label-secondary);
+}
+
+.decisionId {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 4px;
+}
+
+.phase {
+  padding: 1px 6px;
+  border-radius: 999px;
+  corner-shape: round;
+  background: var(--dsw-alias-fill-l2);
+  color: var(--dsw-alias-label-primary);
+}
+
+.phase[data-phase='accepted'] {
+  border: 0.5px solid var(--dsw-alias-border-l4);
+}
+
+.phase[data-phase='rejected'] {
+  color: var(--dsw-alias-state-error-primary);
+}
+
+.phase[data-phase='escalated'] {
+  border: 0.5px solid var(--dsw-alias-border-l4);
+  color: var(--dsw-alias-label-secondary);
+}
+
+.statement {
+  margin: 0;
+  color: var(--dsw-alias-label-primary);
+  overflow-wrap: anywhere;
+}
+
+.votes {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  font-size: 12px;
+  color: var(--dsw-alias-label-tertiary);
+}
+
+.standings {
+  margin: 6px 0 0;
+  padding: 0;
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.standing {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  padding-left: 8px;
+  border-left: 0.5px solid var(--dsw-alias-border-l4);
+}
+
+.standingHead {
+  font-size: 12px;
+  color: var(--dsw-alias-label-secondary);
+}
+
+.standingReason {
+  font-size: 12px;
+  color: var(--dsw-alias-label-primary);
+  white-space: pre-wrap;
+}
+
+.liveText {
+  color: var(--dsw-alias-label-secondary);
+}
+
+.verification {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 2px;
+  font-size: 12px;
+  color: var(--dsw-alias-label-secondary);
+}
+
+.roomControls {
+  display: flex;
+  gap: 6px;
+  margin-bottom: 6px;
+}
+
+.roomControls input,
+.roomControls select {
+  flex: 1;
+  min-width: 0;
+}
