@@ -40,6 +40,8 @@ An explicit configured path has the highest precedence, then `$DSH_HOME`, then t
 
 `dshCachePath(...segments)` derives paths from the resolved home's `cache` directory. With no segments it returns the cache directory itself. Pass an initial options object, `dshCachePath({ dshHome: home }, ...segments)`, to use an explicit configured home with the same precedence and tilde expansion. It returns an absolute path without creating directories.
 
+The `cache` directory also holds Node's module compile cache at `$DSH_HOME/cache/node-compile-cache` (default `~/.dsh/cache/node-compile-cache`). The `dsh` launcher enables it on every start so repeated launches reuse already-compiled sources; Node keys entries by source content and Node version, the directory is created on first use, and deleting it only costs one recompile. An explicit `NODE_COMPILE_CACHE` or `NODE_DISABLE_COMPILE_CACHE` keeps Node's own precedence over it.
+
 ### Displaying a home
 
 For user-facing paths, render the root symbolically rather than as a machine path: the default home displays as `~/.dsh` and any configured home displays as `$DSH_HOME`. The display form never leaks an absolute machine path.
