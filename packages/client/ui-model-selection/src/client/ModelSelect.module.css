@@ -227,6 +227,17 @@
   white-space: nowrap;
 }
 
+/* Image-capable caption beneath the model name; same caption tone as the
+   trigger's effort value and chevron. */
+.optionCaption {
+  overflow: hidden;
+  color: var(--dsw-alias-label-caption);
+  font-size: 11px;
+  line-height: 16px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .check {
   display: grid;
   place-items: center;

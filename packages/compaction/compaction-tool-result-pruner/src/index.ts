@@ -40,6 +40,16 @@ interface SnapshotCandidate {
   readonly event: SessionEvent<'tool/result'>
 }
 
+/** One over-budget tool result and its bounded replacement content, planned
+ * from one stable surface snapshot before either function decides what to do
+ * with it. */
+interface PruneCandidate {
+  readonly seq: SessionSeq
+  readonly event: SessionEvent<'tool/result'>
+  readonly original: ToolResultMessage
+  readonly content: ContentBlock[]
+}
+
 /** Deterministic head/middle/tail pruning for current tool-result surface nodes. */
 export class ToolResultPruner extends Service {
   // The token meter prices each shadowed node for its logged shadow-price
@@ -122,6 +132,34 @@ export class ToolResultPruner extends Service {
   }
 
   /**
+   * Plan every over-budget tool-result replacement from one stable
+   * current-surface snapshot without mutating the session. `pruneSession` and
+   * `projectTokenSavings` share this routine so what counts as prunable cannot
+   * diverge between the two.
+   * @param session - session whose current surface is inspected.
+   * @returns one entry per surface tool result whose text exceeds the
+   *   configured threshold, each paired with its bounded replacement content.
+   */
+  private planPrune(session: Session): PruneCandidate[] {
+    const candidates: SnapshotCandidate[] = []
+    for (const seq of [...session.surface.nodes]) {
+      // oxlint-disable-next-line typescript/no-deprecated -- Existing Session history read; migration deferred.
+      const event = session.eventAt(seq)
+      /* v8 ignore next -- surface seqs are validated contiguous log references. */
+      if (event?.type === 'tool/result') candidates.push({ seq, event })
+    }
+
+    const plan: PruneCandidate[] = []
+    for (const { seq, event } of candidates) {
+      const original = session.deriveEventMessage(event) as ToolResultMessage
+      const content = this.pruneContent(original.content)
+      if (content === null) continue
+      plan.push({ seq, event, original, content })
+    }
+    return plan
+  }
+
+  /**
    * Prune every over-budget tool result from one stable current-surface snapshot.
    * Each replacement preserves the complete event data except for `content`,
    * cites the shadowed node so replay can recover the replacement input, and is
@@ -134,20 +172,9 @@ export class ToolResultPruner extends Service {
    * earlier in the pass remain durable.
    */
   pruneSession(session: Session): PruneResult {
-    const candidates: SnapshotCandidate[] = []
-    for (const seq of [...session.surface.nodes]) {
-      // oxlint-disable-next-line typescript/no-deprecated -- Existing Session history read; migration deferred.
-      const event = session.eventAt(seq)
-      /* v8 ignore next -- surface seqs are validated contiguous log references. */
-      if (event?.type === 'tool/result') candidates.push({ seq, event })
-    }
-
     const pruned: PrunedEntry[] = []
     let charsRemoved = 0
-    for (const { seq, event } of candidates) {
-      const original = session.deriveEventMessage(event) as ToolResultMessage
-      const content = this.pruneContent(original.content)
-      if (content === null) continue
+    for (const { seq, event, original, content } of this.planPrune(session)) {
       const charsBefore = this.measureContent(original.content)
       const charsAfter = this.measureContent(content)
       const message = freezeMessage<ToolResultMessage>({
@@ -179,6 +206,28 @@ export class ToolResultPruner extends Service {
       charsRemoved += charsBefore - charsAfter
     }
     return { pruned, charsRemoved }
+  }
+
+  /**
+   * Project the token savings `pruneSession` would land for the current
+   * surface, without appending anything. A caller compares the projection
+   * against a pressure margin to decide whether a prune-only reduction is
+   * worth landing on its own, before paying for a second cache break by also
+   * summarizing.
+   * @param session - session whose current surface is inspected.
+   * @returns aggregate estimated tokens `pruneSession` would currently
+   *   remove, summed per candidate as
+   *   `tokenMeter.estimateMessage(original) - tokenMeter.estimateMessage(replacement)`.
+   */
+  projectTokenSavings(session: Session): number {
+    const plan = this.planPrune(session)
+    let tokensSaved = 0
+    for (const { original, content } of plan) {
+      const replacement = freezeMessage<ToolResultMessage>({ ...original, content })
+      tokensSaved += this.ctx.tokenMeter.estimateMessage(original)
+        - this.ctx.tokenMeter.estimateMessage(replacement)
+    }
+    return tokensSaved
   }
 }
 

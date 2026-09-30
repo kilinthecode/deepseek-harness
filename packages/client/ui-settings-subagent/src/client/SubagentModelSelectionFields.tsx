@@ -7,11 +7,12 @@ import type {
   SubagentModelSelectionCardFace,
   SubagentModelSelectionCardState,
 } from './subagent-model-selection-card-controller.ts'
+import { subagentModelKey } from './subagent-model-selection-card-controller.ts'
 import css from './SubagentModelSelectionFields.module.css'
 
 /** Plain model state and callbacks supplied by the owning Subagent card. */
 export type SubagentModelSelectionFieldsProps = PropsLocale<'settings.subagent'>
-  & Pick<SubagentModelSelectionCardFace, 'toggleEnabled' | 'toggleModel' | 'retryCatalog'>
+  & Pick<SubagentModelSelectionCardFace, 'toggleEnabled' | 'toggleModel' | 'setDefaultModel' | 'setDefaultEffort' | 'retryCatalog'>
   & { state: SubagentModelSelectionCardState }
 
 /**
@@ -41,6 +42,11 @@ export function SubagentModelSelectionFields(props: SubagentModelSelectionFields
       group.candidates.push(candidate)
     }
   }
+  const selectedCandidates = state.candidates.filter(candidate => candidate.selected)
+  const defaultKey = state.defaultModel === null ? '' : subagentModelKey(state.defaultModel)
+  const defaultEfforts = (state.defaultModel === null
+    ? undefined
+    : selectedCandidates.find(candidate => candidate.key === defaultKey))?.reasoning?.efforts ?? []
   const renderCandidate = (candidate: SubagentModelCandidate) => (
     <label key={candidate.key} className={css.model}>
       <input
@@ -117,6 +123,44 @@ export function SubagentModelSelectionFields(props: SubagentModelSelectionFields
                 ? <p className={css.notice}>{t('subagentModelSelectionEmpty')}</p>
                 : null}
             {state.invalid ? <p className={css.invalid}>{t('subagentModelSelectionRequired')}</p> : null}
+            <div className={css.defaultSection}>
+              <div className={css.field}>
+                <span className={css.fieldLabel}>{t('subagentModelSelectionDefaultLabel')}</span>
+                <select
+                  className={`${css.input} ${css.selectInput}`}
+                  aria-label={t('subagentModelSelectionDefaultLabel')}
+                  value={defaultKey}
+                  disabled={!state.writable || state.saving}
+                  onChange={(event) => { props.setDefaultModel(event.target.value === '' ? null : event.target.value) }}
+                >
+                  <option value="">{t('subagentModelSelectionDefaultSameAsCaller')}</option>
+                  {selectedCandidates.map(candidate => (
+                    <option key={candidate.key} value={candidate.key}>
+                      {`${candidate.modelName} (${candidate.providerName})`}
+                    </option>
+                  ))}
+                </select>
+              </div>
+              {state.defaultModel !== null
+                ? (
+                  <div className={css.field}>
+                    <span className={css.fieldLabel}>{t('subagentModelSelectionDefaultEffortLabel')}</span>
+                    <select
+                      className={`${css.input} ${css.selectInput}`}
+                      aria-label={t('subagentModelSelectionDefaultEffortLabel')}
+                      value={state.defaultEffort ?? ''}
+                      disabled={!state.writable || state.saving}
+                      onChange={(event) => { props.setDefaultEffort(event.target.value === '' ? undefined : event.target.value) }}
+                    >
+                      <option value="">{t('subagentModelSelectionDefaultEffortModelDefault')}</option>
+                      {defaultEfforts.map(effort => (
+                        <option key={effort.id} value={effort.id}>{effort.name}</option>
+                      ))}
+                    </select>
+                  </div>
+                )
+                : null}
+            </div>
           </div>
         )
         : null}

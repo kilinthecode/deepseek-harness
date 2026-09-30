@@ -72,6 +72,9 @@ export function getBuiltinModels(): unknown[] {
   return []
 }
 
+/** Builtin-catalog model loader (unavailable): `llm-pi-ai`'s own `createModels` calls this directly. */
+export const builtinModels = notImplementedFail(MODULE, 'builtinModels')
+
 /** Anthropic messages API binding (unavailable). */
 export const anthropicMessagesApi = notImplementedFail(MODULE, 'anthropicMessagesApi')
 
@@ -81,12 +84,15 @@ export const openAICompletionsApi = notImplementedFail(MODULE, 'openAICompletion
 /** OpenAI responses API binding (unavailable). */
 export const openAIResponsesApi = notImplementedFail(MODULE, 'openAIResponsesApi')
 
+/** OpenAI `prompt_cache_key` clamp (unavailable). */
+export const clampOpenAIPromptCacheKey = notImplementedFail(MODULE, 'clampOpenAIPromptCacheKey')
+
 /** CommonJS interop marker: the worker loader hands `default` to default imports. */
 export const __esModule = true
 
 /** CommonJS default export: the members `require()` hands a caller of this module. */
 export default {
   createProvider, createModels, getSupportedThinkingLevels, isContextOverflow, builtinProviders,
-  getBuiltinModels, getBuiltinProviders, anthropicMessagesApi, openAICompletionsApi,
-  openAIResponsesApi,
+  getBuiltinModels, getBuiltinProviders, builtinModels, anthropicMessagesApi, openAICompletionsApi,
+  openAIResponsesApi, clampOpenAIPromptCacheKey,
 }

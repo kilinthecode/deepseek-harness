@@ -165,6 +165,18 @@ const SDK_ASSERTIONS: Readonly<Record<string, SdkAssertions>> = {
       },
     },
   },
+  'subagent-dsh-sdk-default-route': {
+    environment: { DSH_TEST_PARENT_PROVIDER: 'deepseek-official' },
+    dshSdkChild: {
+      config: dshSdkChildConfig,
+      agentConfig: {
+        provider: 'mock',
+        model: 'mock-default',
+        reasoningEffort: 'max',
+        maxTokens: 777,
+      },
+    },
+  },
 }
 
 interface CorpusScenario {
