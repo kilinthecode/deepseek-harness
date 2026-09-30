@@ -425,6 +425,7 @@ describe('task admission and package contracts', () => {
         depthLimit: false,
         toolFilter: false,
         persona: false,
+        cwd: false,
       },
       inheritsParentContext: false,
     })

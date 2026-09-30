@@ -27,6 +27,7 @@ import SubagentRuntime, {
 } from '../src/index.ts'
 import type { SubagentRunEndInfo, SubagentRunInfo } from '../src/index.ts'
 import type { SubagentPromptRequestId } from '../src/control-types.ts'
+import { markAdjacentAgentSendMessageTool } from '../src/internal.ts'
 import * as SubagentInvariant from '../src/invariant.ts'
 import { TestSessionQuery } from './test-session-query.ts'
 import { loadStoredSession } from './persistence-helpers.ts'
@@ -98,13 +99,43 @@ async function mountScheduleForOwnership(ctx: Context): Promise<void> {
   fibers.push(await ctx.plugin(ScheduleService))
 }
 
+/**
+ * Test-only stand-in for the standard `send_message` tool
+ * (`@deepseek-ai/dsh-tool-subagent-control`), carrying the same internal
+ * marker so `withContinuableReturnGuidance` wiring can be exercised without
+ * a devDependency on that downstream consumer package.
+ */
+const fakeSendMessageTool = markAdjacentAgentSendMessageTool(defineTool({
+  name: 'send_message',
+  description: 'test-only adjacent-agent send_message stand-in',
+  parameters: {
+    agent_id: { type: 'string', required: true },
+    message: { type: 'string', required: true },
+  },
+  output: {
+    schema: { type: 'string' },
+    render: (_args, value) => [{ type: 'text', text: value }],
+  },
+  async execute() {
+    return 'ok'
+  },
+}))
+
 /** Boot the full continuable stack: loop, persistence, providers, and subagents. */
 async function setupWith(
   adapter: LlmAdapter,
-  options: { persistence?: boolean; schedule?: boolean; sessionQuery?: boolean; maxActiveSubagents?: number } = {},
+  options: {
+    persistence?: boolean
+    schedule?: boolean
+    sessionQuery?: boolean
+    maxActiveSubagents?: number
+    parentCwd?: string
+    sendMessageTool?: boolean
+  } = {},
 ) {
   const ctx = new Context()
   await mountAgentLoopTestDependencies(ctx)
+  if (options.sendMessageTool) ctx.tools.register(fakeSendMessageTool)
   let disposePersistence: (() => Promise<void>) | undefined
   let root: string | undefined
   if (options.persistence !== false) {
@@ -125,11 +156,15 @@ async function setupWith(
   await ctx.plugin(SubagentSpawn, { providerName: 'spawn' })
   await ctx.plugin(SubagentFork, { providerName: 'fork' })
   ctx.llm.registerAdapter(['mock'], adapter)
-  const parent = await ctx.agentLoop.create(SessionId('parent'), { provider: 'mock', model: 'mock' })
+  const parent = await ctx.agentLoop.create(
+    SessionId('parent'),
+    { provider: 'mock', model: 'mock' },
+    options.parentCwd === undefined ? {} : { cwd: options.parentCwd },
+  )
   return { ctx, parent, disposePersistence, root }
 }
 
-async function setup(script: Script, options: { persistence?: boolean } = {}) {
+async function setup(script: Script, options: Parameters<typeof setupWith>[1] = {}) {
   const adapter = new MockAdapter(script)
   const booted = await setupWith(adapter, options)
   return { ...booted, adapter }
@@ -137,11 +172,16 @@ async function setup(script: Script, options: { persistence?: boolean } = {}) {
 
 const testSignal = new AbortController().signal
 
-function startSpec(parent: Agent, provider = 'spawn', signal: AbortSignal = testSignal) {
+function startSpec(
+  parent: Agent,
+  provider = 'spawn',
+  signal: AbortSignal = testSignal,
+  requestOverrides: { cwd?: string } = {},
+) {
   return {
     provider,
     label: 'child task',
-    request: { prompt: [{ type: 'text' as const, text: 'child task' }], parent },
+    request: { prompt: [{ type: 'text' as const, text: 'child task' }], parent, ...requestOverrides },
     signal,
   }
 }
@@ -578,7 +618,7 @@ describe('SubagentRuntime.startContinuable', () => {
     const start = vi.fn(async () => { throw new Error('must not dispatch') })
     ctx.subagents.registerProvider({
       name: 'one-shot',
-      capabilities: { agentOptions: false, outputSchema: false, depthLimit: false, toolFilter: false, persona: false },
+      capabilities: { agentOptions: false, outputSchema: false, depthLimit: false, toolFilter: false, persona: false, cwd: false },
       inheritsParentContext: false,
       start,
     })
@@ -924,6 +964,155 @@ describe('SubagentRuntime.startContinuable', () => {
   })
 })
 
+describe('SubagentRuntime.startContinuable cwd', () => {
+  it("lets a request cwd override win over the parent's in the child SessionHeader.cwd", async () => {
+    const overrideDir = mkdtempSync(join(tmpdir(), 'dsh-subagent-continuable-cwd-'))
+    cleanups.push(async () => { rmSync(overrideDir, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 }) })
+    const { ctx, parent } = await setup([textResponse('answer')], { parentCwd: tmpdir() })
+
+    const started = await ctx.subagents.startContinuable(startSpec(parent, 'spawn', testSignal, { cwd: overrideDir }))
+    await waitNoActivation(ctx, started.childId)
+
+    const loaded = await loadStoredSession(ctx.sessionPersistence, started.childId)
+    expect(loaded.meta.cwd).toBe(overrideDir)
+    expect(loaded.meta.cwd).not.toBe(tmpdir())
+  })
+
+  it('rejects a relative continuable cwd before any child exists', async () => {
+    const { ctx, parent } = await setup([])
+    await expect(
+      ctx.subagents.startContinuable(startSpec(parent, 'spawn', testSignal, { cwd: 'relative/dir' })),
+    ).rejects.toThrow('must be an absolute path')
+    expect(ctx.agents.list().map(agent => agent.id)).toEqual([SessionId('parent')])
+  })
+
+  it('rejects a nonexistent continuable cwd before any child exists', async () => {
+    const { ctx, parent } = await setup([])
+    const missing = join(tmpdir(), 'dsh-subagent-cwd-does-not-exist-xyz')
+    await expect(
+      ctx.subagents.startContinuable(startSpec(parent, 'spawn', testSignal, { cwd: missing })),
+    ).rejects.toThrow('is not an accessible directory')
+    expect(ctx.agents.list().map(agent => agent.id)).toEqual([SessionId('parent')])
+  })
+
+  it('rejects a continuable cwd on a provider without the cwd capability, before any child exists', async () => {
+    const { ctx, parent } = await setup([])
+    let failure: unknown
+    try {
+      await ctx.subagents.startContinuable(startSpec(parent, 'fork', testSignal, { cwd: tmpdir() }))
+    } catch (error: unknown) {
+      failure = error
+    }
+    expect(failure).toBeInstanceOf(SubagentError)
+    expect((failure as SubagentError).code).toBe('UNSUPPORTED_CAPABILITY')
+    // Same wording `assertCapabilities` uses on the one-shot path (`SubagentRuntime.start`).
+    expect((failure as SubagentError).message).toBe('subagent provider "fork" does not support the "cwd" capability')
+    expect(ctx.agents.list().map(agent => agent.id)).toEqual([SessionId('parent')])
+  })
+
+  it('reports the capability gap, not the path defect, when a capability-less provider also gets an invalid cwd', async () => {
+    const { ctx, parent } = await setup([])
+    // A relative path would fail `assertUsableCwd` too; the capability check
+    // must win because it runs first.
+    await expect(
+      ctx.subagents.startContinuable(startSpec(parent, 'fork', testSignal, { cwd: 'relative/dir' })),
+    ).rejects.toMatchObject({ code: 'UNSUPPORTED_CAPABILITY' })
+  })
+
+  it('fails loud instead of resuming a continuable child into a missing persisted cwd', async () => {
+    // A worktree-isolated child's cwd can disappear between activations: its
+    // worktree was merged or discarded after the child went idle.
+    const cwdRoot = mkdtempSync(join(tmpdir(), 'dsh-subagent-resume-cwd-'))
+    const { ctx, parent } = await setup([textResponse('first answer')])
+    const started = await ctx.subagents.startContinuable(startSpec(parent, 'spawn', testSignal, { cwd: cwdRoot }))
+    await waitNoActivation(ctx, started.childId)
+    rmSync(cwdRoot, { recursive: true, force: true })
+
+    let failure: unknown
+    try {
+      await queuePrompt(ctx, parent, started.childId, message('resume it'))
+    } catch (error: unknown) {
+      failure = error
+    }
+    expect(failure).toBeInstanceOf(SubagentError)
+    expect((failure as SubagentError).code).toBe('NOT_RESUMABLE')
+    expect((failure as SubagentError).message).toBe(
+      `subagent "${started.childId}" cannot resume: its working directory "${cwdRoot}" is no longer an accessible directory`,
+    )
+    // The dead directory never reached agents.resume(): no child Agent came back live.
+    expect(ctx.agents.get(started.childId)).toBeUndefined()
+  })
+})
+
+describe('continuable return guidance workspace wording', () => {
+  const parentId = JSON.stringify(SessionId('parent'))
+  const sendMessageInstruction = `Your parent agent id is ${parentId}. Before you finish, send your result to that `
+    + `agent with send_message({ agent_id: ${parentId}, message: "<self-contained result>" }). `
+  const sendEarlierMessagesSentence = 'Send earlier messages as well when a finding changes what the parent should '
+    + 'do next; sending a message does not end your turn.'
+  const SHARED_WORKSPACE_GUIDANCE = sendMessageInstruction
+    + 'The parent shares your workspace but does not automatically receive your transcript, tool output, or '
+    + `reasoning. ${sendEarlierMessagesSentence}`
+  const DISTINCT_WORKSPACE_GUIDANCE = sendMessageInstruction
+    + 'Your parent works in a different directory and cannot read your files; it does not automatically receive '
+    + 'your transcript, tool output, or reasoning. Put your report — the commands you ran, their results, and '
+    + `anything you did not verify — in the send_message body. ${sendEarlierMessagesSentence}`
+
+  it("tells a child its parent shares the workspace when it inherits the parent's cwd", async () => {
+    const { ctx, parent } = await setup([textResponse('answer')], { parentCwd: tmpdir(), sendMessageTool: true })
+    const started = await ctx.subagents.startContinuable(startSpec(parent))
+    await waitNoActivation(ctx, started.childId)
+    const loaded = await loadStoredSession(ctx.sessionPersistence, started.childId)
+    expect(hasUserText(loaded.events, SHARED_WORKSPACE_GUIDANCE)).toBe(true)
+    expect(hasUserText(loaded.events, DISTINCT_WORKSPACE_GUIDANCE)).toBe(false)
+  })
+
+  it('tells a child its parent works in a different directory when an explicit cwd diverges', async () => {
+    const overrideDir = mkdtempSync(join(tmpdir(), 'dsh-subagent-guidance-cwd-'))
+    cleanups.push(async () => { rmSync(overrideDir, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 }) })
+    const { ctx, parent } = await setup([textResponse('answer')], { parentCwd: tmpdir(), sendMessageTool: true })
+
+    const started = await ctx.subagents.startContinuable(startSpec(parent, 'spawn', testSignal, { cwd: overrideDir }))
+    await waitNoActivation(ctx, started.childId)
+    const loaded = await loadStoredSession(ctx.sessionPersistence, started.childId)
+    expect(hasUserText(loaded.events, DISTINCT_WORKSPACE_GUIDANCE)).toBe(true)
+    expect(hasUserText(loaded.events, SHARED_WORKSPACE_GUIDANCE)).toBe(false)
+  })
+
+  it("treats a trailing-slash spelling of the parent's cwd as the same workspace", async () => {
+    // realpath strips a trailing slash, so this spells the identical directory
+    // as `parentCwd` without being string-equal to it.
+    const { ctx, parent } = await setup(
+      [textResponse('answer')],
+      { parentCwd: tmpdir(), sendMessageTool: true },
+    )
+
+    const started = await ctx.subagents.startContinuable(
+      startSpec(parent, 'spawn', testSignal, { cwd: `${tmpdir()}/` }),
+    )
+    await waitNoActivation(ctx, started.childId)
+    const loaded = await loadStoredSession(ctx.sessionPersistence, started.childId)
+    expect(hasUserText(loaded.events, SHARED_WORKSPACE_GUIDANCE)).toBe(true)
+    expect(hasUserText(loaded.events, DISTINCT_WORKSPACE_GUIDANCE)).toBe(false)
+  })
+
+  it('falls back to the raw cwd spelling on both sides when the shared directory cannot be resolved', async () => {
+    // An unresolvable cwd (never independently validated when only inherited,
+    // unlike an explicit override) still compares equal to itself verbatim.
+    const missingParentCwd = join(tmpdir(), 'dsh-subagent-missing-parent-cwd-xyz')
+    const { ctx, parent } = await setup(
+      [textResponse('answer')],
+      { parentCwd: missingParentCwd, sendMessageTool: true },
+    )
+
+    const started = await ctx.subagents.startContinuable(startSpec(parent, 'spawn', testSignal))
+    await waitNoActivation(ctx, started.childId)
+    const loaded = await loadStoredSession(ctx.sessionPersistence, started.childId)
+    expect(hasUserText(loaded.events, SHARED_WORKSPACE_GUIDANCE)).toBe(true)
+    expect(hasUserText(loaded.events, DISTINCT_WORKSPACE_GUIDANCE)).toBe(false)
+  })
+})
+
 describe('continuable image Queue prompts', () => {
   const imageBlock = {
     type: 'image' as const,
@@ -1113,7 +1302,7 @@ describe('direct-child Queue residency routing', () => {
     await ctx.plugin(SubagentInvariant)
     const disposeProvider = ctx.subagents.registerProvider({
       name: 'retired',
-      capabilities: { agentOptions: false, outputSchema: false, depthLimit: false, toolFilter: false, persona: false },
+      capabilities: { agentOptions: false, outputSchema: false, depthLimit: false, toolFilter: false, persona: false, cwd: false },
       inheritsParentContext: false,
       start: async () => { throw new Error('one-shot start is not used') },
       prepareContinuable: () => Promise.resolve({}),

@@ -13,6 +13,7 @@ import { mountAgentLoopTestDependencies } from '@deepseek-ai/dsh-agent-loop-test
 import SessionProjectionRegistry from '@deepseek-ai/dsh-session-projection'
 import SubagentRuntime from '@deepseek-ai/dsh-subagent'
 import * as SubagentSpawn from '@deepseek-ai/dsh-subagent-spawn-in-process'
+import { SubagentWorktrees } from '@deepseek-ai/dsh-subagent-worktree'
 import * as tool from '../src/index.ts'
 import * as ToolInvariant from '../src/invariant.ts'
 import SubagentModelSelectionConfig from '../src/model-selection-settings.ts'
@@ -35,6 +36,13 @@ function selectable(ctx: Context, agent: Awaited<ReturnType<Context['agents']['c
     && properties['model'] !== undefined
     && properties['reasoning_effort'] !== undefined
     && ctx.tools.schemas(agent).some(candidate => candidate.name === 'list_subagent_models')
+}
+
+/** Read whether one Agent's delegation definition carries the `isolation` parameter. */
+function isolationOffered(ctx: Context, agent: Awaited<ReturnType<Context['agents']['create']>>['agent']): boolean {
+  const schema = ctx.tools.schemas(agent).find(candidate => candidate.name === 'subagent')
+  const properties = (schema?.parameters as { properties?: Record<string, unknown> } | undefined)?.properties
+  return properties?.['isolation'] !== undefined
 }
 
 const modelSelectionPresets = new WeakMap<Context, ReturnType<typeof createScope>>()
@@ -296,6 +304,24 @@ describe('SubagentModelSelectionConfig', () => {
     await ctx.fiber.dispose()
   })
 
+  it('follows the worktree service\'s isolation offer in every per-Agent definition of a preset', async () => {
+    const ctx = await boot()
+    const worktrees = new SubagentWorktrees(ctx, SubagentWorktrees.Config())
+    const early = await createAgent(ctx, 'offer-early')
+    expect(isolationOffered(ctx, early)).toBe(false)
+
+    const withdraw = worktrees.offerIsolation()
+    const late = await createAgent(ctx, 'offer-late')
+    // The Agent that mounted its tool before the offer replaces it in its own scope; the later one mounts with the offer.
+    expect(isolationOffered(ctx, early)).toBe(true)
+    expect(isolationOffered(ctx, late)).toBe(true)
+
+    withdraw()
+    expect(isolationOffered(ctx, early)).toBe(false)
+    expect(isolationOffered(ctx, late)).toBe(false)
+    await ctx.fiber.dispose()
+  })
+
   it('releases a shared-preset installation reservation after policy selection fails', async () => {
     const ctx = await boot(false)
     const preset = createScope(ctx, { preset: 'standard' })
@@ -473,7 +499,7 @@ it('reads the saved default depth at each delegation without remounting the tool
   try {
     ctx.subagents.registerProvider({
       name: 'capture-depth',
-      capabilities: { agentOptions: true, outputSchema: true, depthLimit: true, toolFilter: true, persona: true },
+      capabilities: { agentOptions: true, outputSchema: true, depthLimit: true, toolFilter: true, persona: true, cwd: true },
       inheritsParentContext: false,
       start: async (request) => {
         depths.push(request.maxDepth)

@@ -1,7 +1,7 @@
 /** Recorded-session replay through the shipped headless `dsh` profile. */
 
 import { startHttpMcpFixture } from '../../packages/mcp/mcp-client/tests/http-fixture.ts'
-import { cp, copyFile, mkdir, mkdtemp, readFile, readdir, rm, symlink, utimes, writeFile } from 'node:fs/promises'
+import { appendFile, cp, copyFile, mkdir, mkdtemp, readFile, readdir, rm, symlink, utimes, writeFile } from 'node:fs/promises'
 import { existsSync } from 'node:fs'
 import { spawnSync } from 'node:child_process'
 import { tmpdir } from 'node:os'
@@ -77,7 +77,7 @@ function snapshotMode(value: string | undefined): SnapshotMode {
 }
 
 const mode = snapshotMode(process.env.DSH_SNAPSHOT)
-const RUNTIME_WORKSPACE_ENTRIES = ['.agents', '.dsh', '.snapshot-patches'] as const
+const RUNTIME_WORKSPACE_ENTRIES = ['.agents', '.dsh', '.git', '.snapshot-patches'] as const
 
 interface JsonObject {
   [key: string]: unknown
@@ -242,9 +242,10 @@ async function writeSessionFixtures(
     ? refreshFixtureReplacements(actualLogs.map(harvested), prior)
     : []
   const fresh = actualLogs.map((log, index) => {
+    // `{{cwd}}` is the workspace root in every role; a child that works in a linked worktree keeps its own cwd as a path below it.
     const stable = tokenizeSessionFixtureCwd(mode === 'refresh'
       ? stabilizeRefreshLog(log.content, prior[index] as string, replacements, ctx)
-      : log.content)
+      : log.content, ctx.cwd)
     return scrubSessionSnapshot(prepareSessionSnapshotFixtureForComparison(stable))
   })
   const output = redactSessionSnapshotIds(stabilizeFixtureMessageIds(fresh, prior))
@@ -253,16 +254,30 @@ async function writeSessionFixtures(
 }
 
 /**
+ * Replace the volatile typed identities in a run's logs, so a prompt or schema sidecar never stores a
+ * worktree id, repository key, or other per-run path segment (a child's system prompt names its own cwd).
+ * @param actualLogs - current run's primary-first Session logs.
+ * @returns the same logs, in the same order, with typed identity tokens.
+ */
+function withTypedIdentities(actualLogs: readonly SessionLog[]): SessionLog[] {
+  return redactSessionSnapshotIds(actualLogs.map(log => log.content)).map((content, index) => ({
+    content,
+    header: (actualLogs[index] as SessionLog).header,
+  }))
+}
+
+/**
  * Write prompt and tool-schema sidecars independently of Session-generation retention.
  * @param scenario - scenario and sidecar ownership metadata.
- * @param actualLogs - current run's primary-first Session logs.
+ * @param runLogs - current run's primary-first Session logs.
  * @param ctx - volatile run values used by header normalization.
  */
 async function writeHeaderSidecars(
   scenario: HeadlessScenario,
-  actualLogs: readonly SessionLog[],
+  runLogs: readonly SessionLog[],
   ctx: NormalizeContext,
 ): Promise<void> {
+  const actualLogs = withTypedIdentities(runLogs)
   if (scenario.manifest.header.pin === true
     || [...headerPins.values()].some(pin => pin.manifest.header.systemPromptSource === scenario.name
       || pin.manifest.header.toolSchemasSource === scenario.name)) {
@@ -474,6 +489,9 @@ async function seedWorkspace(scenario: HeadlessScenario, cwd: string): Promise<v
   await prepare(cwd)
 }
 
+/** Pinned seed identity and dates that make the `git-repo` setup's commit id reproducible. */
+const SEED_COMMIT_DATE = '2026-01-01T00:00:00Z'
+
 const workspaceSetups: Record<string, (cwd: string) => Promise<void>> = {
   async 'office-skills'(cwd) {
     await cp(join(repoRoot, 'packages/skill/skill-office/assets'), join(cwd, 'office-skills'), { recursive: true })
@@ -512,6 +530,37 @@ const workspaceSetups: Record<string, (cwd: string) => Promise<void>> = {
       const mtime = new Date(2000, 0, 1, 0, 0, 0, index + 1)
       await utimes(target, mtime, mtime)
     }
+  },
+  async 'git-repo'(cwd) {
+    // Seeds the copied files as one commit whose id never depends on the host clock,
+    // Git identity, or signing configuration, so replay can name that commit.
+    const git = (...args: string[]): void => {
+      const result = spawnSync(
+        'git',
+        ['-c', 'user.email=seed@example.com', '-c', 'user.name=seed', '-c', 'commit.gpgsign=false', ...args],
+        {
+          cwd,
+          encoding: 'utf8',
+          env: { ...process.env, GIT_AUTHOR_DATE: SEED_COMMIT_DATE, GIT_COMMITTER_DATE: SEED_COMMIT_DATE },
+        },
+      )
+      if (result.error !== undefined || result.status !== 0) {
+        throw new Error(`git-repo setup: git ${args.join(' ')} failed: ${result.error?.message ?? result.stderr.trim()}`)
+      }
+    }
+    git('init', '-q', '-b', 'main')
+    // The app and the harness create these directories inside the checkout. Excluding them keeps the seed
+    // commit's tree to the scenario's own files and leaves the checkout clean for a later merge.
+    const exclude = join(cwd, '.git', 'info', 'exclude')
+    await mkdir(dirname(exclude), { recursive: true })
+    await appendFile(exclude, RUNTIME_WORKSPACE_ENTRIES.filter(entry => entry !== '.git').map(entry => `/${entry}/\n`).join(''))
+    // Commits made later by tools in this repository and its linked worktrees, such as a worker's commit
+    // or a merge, take this identity rather than the host's, which a clean CI runner does not have.
+    git('config', 'user.name', 'seed')
+    git('config', 'user.email', 'seed@example.com')
+    git('config', 'commit.gpgsign', 'false')
+    git('add', '-A')
+    git('commit', '-q', '-m', 'seed')
   },
 }
 
@@ -747,7 +796,8 @@ async function verifyProviderCwdResume(
   }
 }
 
-async function verifyHeaders(scenario: HeadlessScenario, actualLogs: readonly SessionLog[], ctx: NormalizeContext): Promise<void> {
+async function verifyHeaders(scenario: HeadlessScenario, runLogs: readonly SessionLog[], ctx: NormalizeContext): Promise<void> {
+  const actualLogs = withTypedIdentities(runLogs)
   const pin = pinOf(scenario)
   const fixture = await readFile(join(pin.dir, await primaryFixtureFile(pin.dir)), 'utf8')
   const pinned = normalizedHeaders(fixture, fixtureContext(fixture))
@@ -1037,6 +1087,107 @@ describe('headless recorded-session snapshots', () => {
       expect(sessionFixtureNames(await readdir(directory))).toEqual(['session.v1.jsonl'])
     } finally {
       await rm(directory, { recursive: true, force: true })
+    }
+  })
+
+  it('stores a child prompt that names its worktree with typed identity tokens', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'dsh-headless-worktree-sidecars-'))
+    try {
+      const scenario: HeadlessScenario = {
+        name: 'worktree-pin',
+        dir: directory,
+        manifest: {
+          version: 1,
+          scenario: 'worktree-pin',
+          profile: 'headless',
+          composition: 'default',
+          recording: 'authored',
+          header: { class: 'default', pin: true, childSystemPrompts: [1] },
+        },
+      }
+      const workspace = '/tmp/dsh-log-snap-AbC123'
+      const worktree = `${workspace}/.dsh/worktrees/dsh-log-snap-AbC123-1a2b3c4d5e6f/wt-1a2b3c4d`
+      const sessionLog = (id: string, cwd: string, prompt: string, parentSession?: string): SessionLog => {
+        const header = {
+          type: 'session', version: SESSION_FORMAT_VERSION, id, createdAt: 1, cwd,
+          ...parentSession === undefined ? {} : { parentSession }, isSeeded: false, delegationDepth: 0,
+        }
+        const rows = [
+          header,
+          { type: 'system/message', seq: 0, time: 1, data: {
+            turn: 1, step: 1,
+            message: { role: 'system', content: [{ type: 'text', text: prompt }],
+              source: { kind: 'plugin', plugin: '@deepseek-ai/dsh-system-prompt' }, id: `${id}-message` },
+          }, surfaceOp: 'append' },
+          { type: 'request/header', seq: 1, time: 2, data: {
+            header: { config: { provider: 'test', model: 'test' }, tools: [{ name: 'a_tool', description: 'schema', parameters: {} }] },
+            reason: 'initial',
+          } },
+        ]
+        return { content: rows.map(row => JSON.stringify(row)).join('\n'), header }
+      }
+
+      await writeHeaderSidecars(
+        scenario,
+        [
+          sessionLog('parent-session', workspace, `Your working directory is ${workspace}.`),
+          sessionLog('child-session', worktree, `Your working directory is ${worktree}.`, 'parent-session'),
+        ],
+        { sessionIds: ['parent-session'], cwd: workspace },
+      )
+
+      expect(await readFile(join(directory, 'system-prompt.expected.md'), 'utf8'))
+        .toBe('Your working directory is {{cwd}}.\n')
+      expect(await readFile(join(directory, 'system-prompt.1.expected.md'), 'utf8'))
+        .toBe('Your working directory is {{cwd}}/.dsh/worktrees/{{repoKey:1}}/{{worktree:1}}.\n')
+    } finally {
+      await rm(directory, { recursive: true, force: true })
+    }
+  })
+
+  it('seeds the git-repo workspace as a clean repository whose commits do not depend on the host', async () => {
+    const git = (cwd: string, args: readonly string[], env: NodeJS.ProcessEnv = process.env) => {
+      const result = spawnSync('git', args, { cwd, env, encoding: 'utf8' })
+      expect(result.status, `git ${args.join(' ')}: ${result.stderr}`).toBe(0)
+      return result.stdout.trim()
+    }
+    const seed = async (): Promise<string> => {
+      const workspace = await mkdtemp(join(tmpdir(), 'dsh-git-repo-'))
+      await writeFile(join(workspace, 'app.txt'), 'seed line\n')
+      // The harness materializes profile patches before it seeds the repository, and their text names the workspace.
+      await mkdir(join(workspace, '.snapshot-patches'), { recursive: true })
+      await writeFile(join(workspace, '.snapshot-patches', '0-cordis.snapshot.yml'), `${workspace}\n`)
+      await (workspaceSetups['git-repo'] as (cwd: string) => Promise<void>)(workspace)
+      return workspace
+    }
+    const first = await seed()
+    const second = await seed()
+    try {
+      // The app creates these directories inside the checkout while it runs.
+      await mkdir(join(first, '.dsh', 'worktrees'), { recursive: true })
+      await mkdir(join(first, '.agents'), { recursive: true })
+      await writeFile(join(first, '.dsh', 'worktrees', 'record.json'), '{}\n')
+      await writeFile(join(first, '.agents', 'note.md'), 'note\n')
+
+      expect(git(first, ['status', '--porcelain'])).toBe('')
+      expect(git(first, ['ls-tree', '-r', '--name-only', 'HEAD'])).toBe('app.txt')
+      expect(git(first, ['rev-parse', 'HEAD'])).toBe(git(second, ['rev-parse', 'HEAD']))
+
+      // A later commit by a tool (a worker's commit or a merge) needs no identity from the host. Git
+      // otherwise derives one from the login name and hostname, which a clean CI runner cannot do.
+      const hostless = Object.fromEntries(Object.entries({
+        ...process.env,
+        HOME: first,
+        GIT_CONFIG_GLOBAL: '/dev/null',
+        GIT_CONFIG_NOSYSTEM: '1',
+        GIT_CONFIG_COUNT: '1',
+        GIT_CONFIG_KEY_0: 'user.useConfigOnly',
+        GIT_CONFIG_VALUE_0: 'true',
+      }).filter(([key]) => !/^(GIT_(AUTHOR|COMMITTER)_|EMAIL$)/.test(key)))
+      git(first, ['commit', '--allow-empty', '-q', '-m', 'later'], hostless)
+      expect(git(first, ['log', '-1', '--format=%an <%ae>'])).toBe('seed <seed@example.com>')
+    } finally {
+      await Promise.all([first, second].map(workspace => rm(workspace, { recursive: true, force: true })))
     }
   })
 

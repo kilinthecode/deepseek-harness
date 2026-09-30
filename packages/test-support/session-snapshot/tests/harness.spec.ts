@@ -669,6 +669,28 @@ describe('runScenario', () => {
     expect(result.rawStdout).toContain('workspace:committed.txt,runtime.txt')
   })
 
+  it('keeps repository metadata out of the captured initial and final workspace', { timeout: 20_000 }, async () => {
+    const { fixtureFile } = await scenario({})
+
+    const result = await runScenario(
+      { steps: boot },
+      {
+        agent: AGENT,
+        mode: 'replay',
+        fixtureFile,
+        prepareWorkspace: async (cwd) => {
+          await mkdir(join(cwd, '.git'), { recursive: true })
+          await writeFile(join(cwd, '.git', 'HEAD'), 'ref: refs/heads/main\n')
+          await writeFile(join(cwd, 'tracked.txt'), 'tracked')
+        },
+      },
+    )
+
+    const captured = [...result.initialWorkspace, ...result.finalWorkspace].map(entry => entry.path)
+    expect(captured).toContain('tracked.txt')
+    expect(captured).not.toContain('.git/HEAD')
+  })
+
   it('creates the generated workspace under an explicit parent', { timeout: 20_000 }, async () => {
     const { fixtureFile } = await scenario({})
     const workspaceParent = await mkdtemp(join(tmpdir(), 'acp-snap-parent-'))

@@ -359,6 +359,14 @@
       config:
         providerName: fork
 
+    # Inert until an optional bundle mounts a row that registers a worktree
+    # isolation offer on it (the Agent crew bundle's tool-subagent-worktree):
+    # no tools, prompt section, or session events of its own. One instance is
+    # shared by every bundle that needs it, so it lives in the shared base
+    # rather than in each consumer's own patch layer.
+    - id: subagent-worktree
+      name: '@deepseek-ai/dsh-subagent-worktree'
+
     # Continuable background children are selected per delegation tool. The
     # separately loaded follow-up tool registers the one global `send_message`.
     - id: tool-subagent-control

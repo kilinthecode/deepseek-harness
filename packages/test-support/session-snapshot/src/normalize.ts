@@ -113,6 +113,9 @@ export interface SessionSnapshotComparisonOptions extends Omit<NormalizeOptions,
   nativeWriterOutput?: true
 }
 
+/** macOS directories that are symlinks into `/private`, so a path below one has two spellings. */
+const MAC_SYMLINKED_ROOTS = ['/var/', '/tmp/', '/etc/'] as const
+
 /** Return every known spelling of the generated cwd, most specific first. */
 function cwdSpellings(ctx: NormalizeContext): string[] {
   const spellings = [...new Set([ctx.cwd, ...ctx.cwdAliases ?? []])]
@@ -120,7 +123,12 @@ function cwdSpellings(ctx: NormalizeContext): string[] {
   const macAliases = spellings
     .filter(spelling => spelling.startsWith('/') && !spelling.startsWith('/private/'))
     .map(spelling => `/private${spelling}`)
-  return [...new Set([...spellings, ...macAliases])]
+  // A resolved cwd (`/private/var/...`) keeps its symlinked spelling in paths built from the temporary
+  // directory's own name, such as the Harness home the worktree service places its worktrees under.
+  const macSymlinkAliases = spellings
+    .filter(spelling => MAC_SYMLINKED_ROOTS.some(root => spelling.startsWith(`/private${root}`)))
+    .map(spelling => spelling.slice('/private'.length))
+  return [...new Set([...spellings, ...macAliases, ...macSymlinkAliases])]
     .sort((left, right) => right.length - left.length)
 }
 
@@ -273,14 +281,18 @@ function tokenizeFixtureValue(
  * path.
  *
  * @param rawLog The raw or refresh-stabilized session JSONL fixture.
+ * @param workspaceCwd The generated workspace root the token stands for. Defaults to the log's
+ *   own session cwd, which is the workspace root only for a Session that did not start in another
+ *   directory; a child that works in a linked worktree passes the primary Session's cwd so its
+ *   own cwd stays a path below `{{cwd}}` instead of replacing the token.
  * @returns Compact JSONL whose known cwd spellings become `{{cwd}}`.
- * @throws If a non-empty line is invalid JSON or the session cwd has no basename.
+ * @throws If a non-empty line is invalid JSON or the workspace cwd has no basename.
  */
-export function tokenizeSessionFixtureCwd(rawLog: string): string {
+export function tokenizeSessionFixtureCwd(rawLog: string, workspaceCwd?: string): string {
   const lines = rawLog.split('\n')
   const firstLine = lines.find(line => line.trim().length > 0)
   const header = firstLine === undefined ? undefined : JSON.parse(firstLine) as { cwd?: unknown }
-  const cwd = typeof header?.cwd === 'string' ? header.cwd : ''
+  const cwd = workspaceCwd ?? (typeof header?.cwd === 'string' ? header.cwd : '')
   const basename = cwd.split(/[\\/]/).at(-1)
   if (basename === undefined || basename.length === 0) {
     throw new Error('acp-snapshot: cannot tokenize a cwd without a basename')

@@ -1,0 +1,223 @@
+/**
+ * Argv git invocations through `ctx.subprocess`: explicit executable
+ * resolution, a scrubbed non-interactive environment, and bounded collected
+ * output. Every command here runs in the host realm (never a sandboxed
+ * confinement) with argv built only from durable records, `Config`, or
+ * operator (CLI) input — never from model input.
+ *
+ * @module @deepseek-ai/dsh-subagent-worktree/git
+ */
+
+import type { SubprocessRuntime } from '@deepseek-ai/dsh-subprocess'
+
+/** Milliseconds a git child gets to exit after termination starts; a fixed lifecycle constant, not a deployment tunable. */
+const GIT_TERMINATE_GRACE_MS = 2_000
+
+/**
+ * Default in-memory stdout cap for an ordinary git command (status, rev-parse,
+ * commit, merge, worktree, branch, add, `diff --name-only`). Every one of
+ * these produces output far smaller than this ceiling under real use; it
+ * exists only to bound a pathological repository, not to shape normal output.
+ */
+const DEFAULT_GIT_STDOUT_MAX_BYTES = 1024 * 1024
+
+/** In-memory stderr cap for every git command; diagnostics are inherently short. */
+const GIT_STDERR_MAX_BYTES = 64 * 1024
+
+/** Milliseconds one cleanup command may run on its own fresh signal; a fixed lifecycle constant, not a deployment tunable. */
+const CLEANUP_GRACE_MS = 30_000
+
+/**
+ * A fresh, non-aborted signal for the git commands that undo or classify a
+ * failed operation. The caller's own signal is often the reason the operation
+ * failed (it was cancelled), and a command started on an aborted signal never
+ * runs, so cleanup on that signal would leave the failure half undone: a merge
+ * still in progress, a worktree and branch still on disk. Bounded, so cleanup
+ * cannot hang.
+ * @returns a signal that aborts after a fixed grace period.
+ */
+export function cleanupSignal(): AbortSignal {
+  return AbortSignal.timeout(CLEANUP_GRACE_MS)
+}
+
+/** Settled git command facts; a nonzero exit is a result, not an exception — callers interpret it. */
+export interface GitCommandResult {
+  readonly exitCode: number | null
+  readonly stdout: string
+  readonly stderr: string
+  /**
+   * Whether `stdout` lost data to its collection byte cap. The retained text is
+   * the end of the stream, and its first line may have lost its head to the
+   * cut. A caller that only checks `exitCode` (`git add`, `git commit`,
+   * `git merge`) can ignore this; a caller that parses `stdout` (`rev-parse`,
+   * `status`, `diff --name-only`) must use
+   * {@link GitRunner.expectComplete}, which refuses a partial result — only a
+   * listing read by its last lines may accept one, through
+   * {@link GitRunner.expectTruncatable}.
+   */
+  readonly stdoutLossy: boolean
+}
+
+/**
+ * Global git options that confine one command to a linked worktree whose files
+ * a sandboxed child can write. Git would otherwise take its repository from the
+ * worktree's own `.git` entry, which the child can rewrite to name a repository
+ * with a `core.fsmonitor` command of its choosing, and would resolve a relative
+ * `core.hooksPath` or `core.fsmonitor` from the repository configuration inside
+ * the child's tree, where the child can plant the hook. `--git-dir` names the
+ * worktree's administrative directory, which lives in the shared git directory
+ * the child cannot write, and the two `-c` settings turn off hooks and the
+ * file-system monitor for the command. `--no-verify` alone does not: it skips
+ * only `pre-commit` and `commit-msg`.
+ * @param gitDir - the worktree's administrative directory under the shared git directory.
+ * @param workTree - the worktree directory the command runs in.
+ * @returns the options to place before the git subcommand.
+ */
+export function confinedWorktreeArgs(gitDir: string, workTree: string): readonly string[] {
+  return ['--git-dir', gitDir, '--work-tree', workTree, '-c', 'core.hooksPath=/dev/null', '-c', 'core.fsmonitor=false']
+}
+
+/** Per-command spawn facts. */
+export interface GitRunOptions {
+  /** Working directory for the command. */
+  readonly cwd: string
+  /**
+   * Administrative directory of the linked worktree at `cwd`, for a command
+   * that runs in a directory a sandboxed child can write. When set, the command
+   * runs with {@link confinedWorktreeArgs}. Leave it unset for commands that run
+   * in a checkout the child cannot write, such as the base checkout.
+   */
+  readonly worktreeGitDir?: string | undefined
+  /** Cancellation forwarded to the spawned process; omitted for callers with no signal to offer (for example `list`). */
+  readonly signal?: AbortSignal | undefined
+  /** In-memory stdout cap for this command, replacing {@link DEFAULT_GIT_STDOUT_MAX_BYTES}. */
+  readonly maxBytes?: number | undefined
+}
+
+/** A failed git command, carrying the settled result for callers that want more than the message. */
+export class GitCommandError extends Error {
+  constructor(what: string, public readonly result: GitCommandResult) {
+    super(`${what} failed: ${result.stderr.trim() || `exit code ${String(result.exitCode)}`}`)
+    this.name = 'GitCommandError'
+  }
+}
+
+/**
+ * Runs one resolved git executable with a scrubbed, non-interactive
+ * environment and bounded collected output. The executable is resolved once
+ * and cached for the life of this runner.
+ */
+export class GitRunner {
+  private executable: Promise<string> | undefined
+
+  constructor(private readonly subprocess: SubprocessRuntime) {}
+
+  /**
+   * Resolve and cache the `git` executable for this runner's lifetime. Only a
+   * fulfilled lookup is cached: a rejection (for example a transient resolver
+   * error, or an aborted `signal` on this very call) clears the cached promise
+   * first, so the failure does not poison every later command with the same
+   * rejected promise — the next call resolves fresh.
+   */
+  private resolveExecutable(signal: AbortSignal | undefined): Promise<string> {
+    this.executable ??= this.subprocess.resolveExecutable('git', undefined, signal).catch((error: unknown) => {
+      this.executable = undefined
+      throw error
+    })
+    return this.executable
+  }
+
+  /**
+   * Run `git <args>` to completion. Never throws on a nonzero exit: several
+   * callers (`merge`, `diff --cached --quiet`) interpret specific nonzero
+   * codes as meaningful outcomes rather than failures.
+   * @param args - git arguments; never shell-interpreted.
+   * @param options - working directory, output cap, and cancellation.
+   * @returns exit facts and collected output.
+   */
+  async run(args: readonly string[], options: GitRunOptions): Promise<GitCommandResult> {
+    const executable = await this.resolveExecutable(options.signal)
+    const confinement = options.worktreeGitDir === undefined ? [] : confinedWorktreeArgs(options.worktreeGitDir, options.cwd)
+    const handle = this.subprocess.spawn({
+      argv: [executable, ...confinement, ...args],
+      cwd: options.cwd,
+      stdio: {
+        stdin: 'ignore',
+        stdout: { maxBytes: options.maxBytes ?? DEFAULT_GIT_STDOUT_MAX_BYTES },
+        stderr: { maxBytes: GIT_STDERR_MAX_BYTES },
+      },
+      graceMs: GIT_TERMINATE_GRACE_MS,
+      signal: options.signal,
+      // GIT_CONFIG_COUNT=0 defeats ambient GIT_CONFIG_KEY_n/VALUE_n overrides (the
+      // subprocess credential scrub removes them from `env`, not from indexed
+      // config keys); GIT_TERMINAL_PROMPT=0 refuses an interactive credential
+      // prompt instead of hanging; GIT_OPTIONAL_LOCKS=0 skips opportunistic
+      // background index updates that could contend with a concurrent worktree
+      // operation; LC_ALL=C keeps porcelain output stable for parsing.
+      env: { GIT_CONFIG_COUNT: '0', GIT_TERMINAL_PROMPT: '0', GIT_OPTIONAL_LOCKS: '0', LC_ALL: 'C' },
+    })
+    const outcome = await handle.done
+    /* v8 ignore start -- collect-mode stdio always yields both readers (seam contract). */
+    const stdoutRead = handle.collected.stdout?.readFrom(0)
+    const stderrRead = handle.collected.stderr?.readFrom(0)
+    const stdout = stdoutRead?.text ?? ''
+    const stderr = stderrRead?.text ?? ''
+    const stdoutLossy = stdoutRead?.lossy ?? false
+    /* v8 ignore stop */
+    return { exitCode: outcome.exitCode, stdout, stderr, stdoutLossy }
+  }
+
+  /**
+   * Run `git <args>` and throw with its stderr when it exits nonzero.
+   * @param args - git arguments; never shell-interpreted.
+   * @param what - short command description for the thrown message.
+   * @param options - working directory, output cap, and cancellation.
+   * @returns the successful result.
+   * @throws {GitCommandError} when the command exits nonzero.
+   */
+  async expect(args: readonly string[], what: string, options: GitRunOptions): Promise<GitCommandResult> {
+    const result = await this.run(args, options)
+    if (result.exitCode !== 0) throw new GitCommandError(what, result)
+    return result
+  }
+
+  /**
+   * {@link expect}, additionally failing loud when the captured stdout lost
+   * data to its collection byte cap. Use this instead of {@link expect} for
+   * every command whose `stdout` the caller goes on to parse (`rev-parse`,
+   * `status --porcelain`, `diff`, `diff --name-only`) — a caller that only
+   * checks the exit code has no need for it.
+   * @param args - git arguments; never shell-interpreted.
+   * @param what - short command description for the thrown message.
+   * @param options - working directory, output cap, and cancellation.
+   * @returns the successful result, with `stdout` guaranteed complete.
+   * @throws {GitCommandError} when the command exits nonzero.
+   * @throws when the command's `stdout` lost data to its byte cap.
+   */
+  async expectComplete(args: readonly string[], what: string, options: GitRunOptions): Promise<GitCommandResult> {
+    const result = await this.expect(args, what, options)
+    if (result.stdoutLossy) {
+      throw new Error(`subagent-worktree: ${what} output exceeded its capture limit; refusing to parse a partial result`)
+    }
+    return result
+  }
+
+  /**
+   * {@link expect}, additionally accepting a `stdout` whose head the byte cap
+   * dropped, for the one caller that reads a listing by its last lines. The
+   * retained text is the end of the stream, so the lines such a caller needs
+   * are the ones kept — but the first of them may have lost its head to the
+   * cut, so the caller must drop that first line, as
+   * {@link GitCommandResult.stdoutLossy} reports. Every other parsed command
+   * goes through {@link expectComplete}, which refuses a partial result
+   * instead.
+   * @param args - git arguments; never shell-interpreted.
+   * @param what - short command description for the thrown message.
+   * @param options - working directory, output cap, and cancellation.
+   * @returns the successful result, marked lossy when its `stdout` lost its head.
+   * @throws {GitCommandError} when the command exits nonzero.
+   */
+  async expectTruncatable(args: readonly string[], what: string, options: GitRunOptions): Promise<GitCommandResult> {
+    return this.expect(args, what, options)
+  }
+}

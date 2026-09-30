@@ -42,7 +42,7 @@ dsh --profile web --dump-config
 
 ## 应用启动
 
-受支持的 Node 应用通过具名 `dsh` profile 启动。随附 profile 为 `web`、`headless`、`sdk`、`sdk-minimal` 和 `acp`，可通过 `dsh --profile <name>` 或 `dsh <name>` 选择。`plugin` 表示管理命令；同名 profile 必须用 `--profile plugin` 选择。TypeScript SDK 会解析其同版本 `dsh` 依赖并选择 `sdk`；自定义插件组合继续由 profile 与有序 patch 文件表达，而不是另一个可执行文件或内联应用树。`sdk-minimal` 是位于同一 launcher 后的仓库自有独立组合包，而不是由调用方提供的 Cordis 配置树。
+受支持的 Node 应用通过具名 `dsh` profile 启动。随附 profile 为 `web`、`headless`、`agents`、`sdk`、`sdk-minimal` 和 `acp`，可通过 `dsh --profile <name>` 或 `dsh <name>` 选择。`plugin` 表示管理命令；同名 profile 必须用 `--profile plugin` 选择。TypeScript SDK 会解析其同版本 `dsh` 依赖并选择 `sdk`；自定义插件组合继续由 profile 与有序 patch 文件表达，而不是另一个可执行文件或内联应用树。`sdk-minimal` 是位于同一 launcher 后的仓库自有独立组合包，而不是由调用方提供的 Cordis 配置树。
 
 Vendored CLI、仅用于构建和测试的可执行文件、进程内直接挂载插件以及私有浏览器 WebWorker 预览都不属于 Harness 应用启动器。[`verify-application-entrypoints`](../scripts/verify-application-entrypoints.ts)将每个包 bin、可执行源码、根 demo 以及根脚本 `start:web` 与 `dev:web` 归入显式类别，并拒绝任何绕过 `dsh` 的 Node 应用路径。
 
@@ -163,6 +163,7 @@ seam 正是替换一个提供方就能改变整个产品的原因。文件系统
 | 添加持久会话状态 | 扩展 `SessionEventMap`；从日志渲染和回放 |
 | 生成会话标题 | 注册唯一的 `ctx.sessionTitle` 提供方 |
 | 管理同会话目标 | 使用 `ctx.goals`；通过 `agent/*` 续跑 |
+| 为被委派的 agent 提供独立 checkout | `subagent` 使用 `isolation: "worktree"`；`ctx.subagentWorktrees` 的 accept 负责评审与合并 |
 | 在轮次边界 fork 会话 | `ctx.agents.create({ sessionId, seed, meta: { parentSession, seedLength } })`——只有经 agent-loop 发布的会话才会持久化 |
 | 在新后端存储会话 | 基于共享的句柄脚手架实现 `SessionPersistence`（`create`/`open`/`stat`/`list`/`export`） |
 | 将注册项限定到单个 agent | 使用该 agent 的 `agent.ctx` |

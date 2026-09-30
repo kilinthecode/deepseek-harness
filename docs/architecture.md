@@ -42,7 +42,7 @@ Composition mechanics are in [app-boot](../packages/boot/app-boot/README.md#prof
 
 ## Application launch
 
-Supported Node applications launch through named `dsh` profiles. The shipped profiles are `web`, `headless`, `sdk`, `sdk-minimal`, and `acp`, selected with `dsh --profile <name>` or `dsh <name>`. `plugin` names the management command; a profile with that name requires `--profile plugin`. The TypeScript SDK resolves its same-version `dsh` dependency and selects `sdk`; custom plugin composition remains a profile plus ordered patch files, not another executable or inline application tree. `sdk-minimal` is a repository-owned standalone bundle behind the same launcher, not a caller-supplied Cordis tree.
+Supported Node applications launch through named `dsh` profiles. The shipped profiles are `web`, `headless`, `agents`, `sdk`, `sdk-minimal`, and `acp`, selected with `dsh --profile <name>` or `dsh <name>`. `plugin` names the management command; a profile with that name requires `--profile plugin`. The TypeScript SDK resolves its same-version `dsh` dependency and selects `sdk`; custom plugin composition remains a profile plus ordered patch files, not another executable or inline application tree. `sdk-minimal` is a repository-owned standalone bundle behind the same launcher, not a caller-supplied Cordis tree.
 
 Vendored CLIs, build-only and test-only executables, direct in-process plugin mounting, and the private browser WebWorker preview are not Harness application launchers. [`verify-application-entrypoints`](../scripts/verify-application-entrypoints.ts) keeps every package bin, executable source, root demo, and the root `start:web` and `dev:web` scripts in an explicit class and rejects a Node application path that bypasses `dsh`.
 
@@ -159,6 +159,7 @@ New behavior attaches to a documented extension point. Changing the loop itself 
 | Add durable session state | extend `SessionEventMap`; render and replay from the log |
 | Generate session titles | register the sole `ctx.sessionTitle` provider |
 | Manage a same-session objective | use `ctx.goals`; continue through `agent/*` |
+| Give a delegated agent its own checkout | `subagent` with `isolation: "worktree"`; `ctx.subagentWorktrees` accept reviews and merges |
 | Fork a session at a turn boundary | `ctx.agents.create({ sessionId, seed, meta: { parentSession, seedLength } })` — only agent-loop-published sessions persist |
 | Store sessions in a new backend | implement `SessionPersistence` (`create`/`open`/`stat`/`list`/`export`) over the shared handle scaffolding |
 | Scope a registration to one agent | use that agent's `agent.ctx` |

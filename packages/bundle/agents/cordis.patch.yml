@@ -1,0 +1,44 @@
+# The dsh-agents bundle patch: `dsh agents` over dsh-base. It mounts no Host,
+# HTTP server, Web runtime, or browser plugin. An ordinary provider plugin
+# injects `cmdlineArgs`, parses the run/list/accept/discard verbs
+# (`dsh agents run "<task>"`) and this app's --help, then the runner drives
+# `ctx.subagentWorktrees` and `ctx.subagents` to split the task across a
+# worker in its own git worktree, has an independent reviewer check the
+# result, and prints the durable outcome.
+
+- id: system-prompt
+  config:
+    personaSuffix: Your working directory is {{cwd}}.
+    personaPrefix: >-
+      You are a coding agent powered by the {{model}} model.
+
+- id: tools
+  config:
+    # Keep the same temporary process-wide PTC mode opt-in as the Web surface.
+    mode: !!js process.env.DSH_TOOLS_MODE
+
+- insert:
+    - id: agents-startup
+      name: '@deepseek-ai/dsh-agents/startup'
+
+    # Reads its verb and options from the ordinary agentsStartup provider.
+    - id: agents-runner
+      name: '@deepseek-ai/dsh-agents'
+      inject: [agentsStartup]
+      config:
+        verb: !!js ctx.agentsStartup.verb
+        task: !!js ctx.agentsStartup.task
+        name: !!js ctx.agentsStartup.name
+        model: !!js ctx.agentsStartup.model
+        effort: !!js ctx.agentsStartup.effort
+        reviewer: !!js ctx.agentsStartup.reviewer
+        reviewerEffort: !!js ctx.agentsStartup.reviewerEffort
+        test: !!js ctx.agentsStartup.test
+        worktree: !!js ctx.agentsStartup.worktree
+        fixRounds: !!js ctx.agentsStartup.fixRounds
+        all: !!js ctx.agentsStartup.all
+        id: !!js ctx.agentsStartup.id
+        json: !!js ctx.agentsStartup.json
+
+- id: hmr
+  disabled: true

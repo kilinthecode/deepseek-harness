@@ -1,0 +1,497 @@
+/**
+ * Merges a reviewed commit into the base checkout, classifying a failed merge
+ * as a conflict (aborted, branch kept), a refusal (blocked, nothing changed),
+ * or an error (aborted if it started, then thrown). `--no-ff` is required:
+ * parallel workers branch from the same base, so after the first merge every
+ * later branch can no longer fast-forward.
+ *
+ * Only a merge this call started is ever aborted: the base checkout is the
+ * user's working tree, and a `MERGE_HEAD` this call did not create (the user's
+ * own merge, or another tool's) is left exactly as found. Exit 128 is not proof
+ * of a refusal: `builtin/merge.c` reports a refusal that started nothing with
+ * it, and also dies with it after starting — `write_merge_state()` can
+ * `die_errno()` once `MERGE_HEAD` is written (a failed `MERGE_MSG` write), and
+ * `finish()` can die after the merge was applied (a failed commit object write,
+ * `HEAD` ref update, or lock). A `MERGE_HEAD` naming another commit is left in
+ * place and reported `blocked`, while one naming the very commit this call was
+ * merging is left in place too and thrown: it may be this call's own
+ * half-applied merge, or another operation's merge of that same commit, which
+ * git refuses with this exit code without touching it, and nothing can tell
+ * those two apart. Exit 128 with no `MERGE_HEAD` and no unmerged paths is
+ * settled by `git merge-base --is-ancestor`: `merged` when the reviewed commit
+ * already landed, `blocked` with git's message when it did not. Everything
+ * after the merge command fails runs on a fresh signal, because the failure is
+ * often the caller's own cancellation and a command started on an aborted
+ * signal never runs.
+ *
+ * @module @deepseek-ai/dsh-subagent-worktree/merge
+ */
+
+import { DIAGNOSTIC_TAIL_CHARS, tailChars } from './bounds.ts'
+import { cleanupSignal } from './git.ts'
+import type { GitRunner } from './git.ts'
+
+/**
+ * Outcome of one merge attempt into the base checkout. A `merged` outcome names the commit that landed the
+ * reviewed commit, as {@link landedCommitOf} defines it.
+ */
+export type MergeAttemptResult =
+  | { readonly kind: 'merged'; readonly mergeCommit: string }
+  | { readonly kind: 'conflict'; readonly files: readonly string[] }
+  | { readonly kind: 'blocked'; readonly reason: string }
+
+/** Callbacks from one merge attempt to its caller. */
+export interface MergeAttemptHooks {
+  /**
+   * Called after the pre-merge probes pass and immediately before `git merge` starts, for a last check the caller
+   * cannot make earlier. A throw stops the attempt before any merge state exists.
+   */
+  readonly beforeMerge: () => void
+  /**
+   * Called the instant `git merge` exits 0, before any follow-up git command, so the caller knows the merge
+   * landed even if reading its commit id then fails.
+   */
+  readonly onLanded: () => void
+  /**
+   * Reports, for the host log, a merge that may be left in progress — one this call started, or the mid-merge state
+   * that stopped it. The message names the absolute base checkout path; the error thrown right after it says the
+   * same to the caller without a path.
+   */
+  readonly report: (message: string) => void
+}
+
+/**
+ * git's exit code for a `git symbolic-ref -q`, `git rev-parse -q --verify`, or `git merge-base --is-ancestor` probe
+ * whose answer is "no". Any other nonzero exit, or none (the process was cancelled), means the probe itself failed
+ * and its answer is unknown.
+ */
+const PROBE_NO_EXIT_CODE = 1
+
+/** git's exit code for a `git merge-base --is-ancestor` whose answer is "yes". */
+const PROBE_YES_EXIT_CODE = 0
+
+/** git's exit code for a merge that stopped on conflicts. */
+const MERGE_CONFLICT_EXIT_CODE = 1
+
+/**
+ * git's exit code for a command that died instead of running. `builtin/merge.c` reaches it through `die()` both
+ * before a merge changes anything — a base checkout with a merge already in progress produces
+ * `die("You have not concluded your merge (MERGE_HEAD exists).")` — and after it started: `write_merge_state()`
+ * can `die_errno()` once `MERGE_HEAD` is written (a failed `MERGE_MSG` write), and `finish()` can die after the
+ * merge was applied (a failed commit object write, `HEAD` ref update, or lock). A merge state seen at this exit
+ * code is therefore classified by which commit it names.
+ */
+const GIT_DIED_EXIT_CODE = 128
+
+/**
+ * The commit `MERGE_HEAD` names in the base checkout, when a merge is in progress.
+ * @throws when the probe itself failed, so the caller never reads an unknown answer as "no merge in progress".
+ */
+async function readMergeHead(git: GitRunner, repoRoot: string, signal: AbortSignal): Promise<string | undefined> {
+  const result = await git.run(['rev-parse', '-q', '--verify', 'MERGE_HEAD'], { cwd: repoRoot, signal })
+  if (result.exitCode === 0) return result.stdout.trim()
+  if (result.exitCode === PROBE_NO_EXIT_CODE) return undefined
+  throw new Error(`subagent-worktree: could not check the base checkout for a merge in progress (git rev-parse exited ${String(result.exitCode)})`)
+}
+
+/**
+ * Whether the base checkout's `HEAD` is detached, so a merge there would update no branch.
+ * @throws when the probe itself failed (a cancelled probe has no answer), rather than guessing.
+ */
+async function hasDetachedHead(git: GitRunner, repoRoot: string, signal: AbortSignal): Promise<boolean> {
+  const result = await git.run(['symbolic-ref', '-q', 'HEAD'], { cwd: repoRoot, signal })
+  if (result.exitCode === 0) return false
+  if (result.exitCode === PROBE_NO_EXIT_CODE) return true
+  throw new Error(`subagent-worktree: could not read HEAD of the base checkout (git symbolic-ref exited ${String(result.exitCode)})`)
+}
+
+/**
+ * The error for a merge this call started that is still in progress in the base checkout. The host log gets the
+ * absolute path; the error, which reaches the model, says the checkout is left mid-merge and how to clear it.
+ */
+function mergeSurvivedAbort(hooks: MergeAttemptHooks, repoRoot: string, id: string, commit: string): Error {
+  hooks.report(
+    `subagent-worktree: the merge of ${commit} in "${repoRoot}" could not be aborted and is still in progress; `
+    + 'run "git merge --abort" there before merging anything else',
+  )
+  return new Error(
+    `subagent-worktree: the merge of worktree ${id} could not be aborted: the base checkout is left mid-merge and must be `
+    + 'aborted there with "git merge --abort" before anything else is merged',
+  )
+}
+
+/**
+ * The error for this call's own merge that was aborted while another operation started its own merge in the base
+ * checkout in the meantime. That `MERGE_HEAD` is not this call's, so it must not be aborted: the abort worked, and
+ * the caller is told the checkout has another merge to leave alone. The host log gets the absolute path and the
+ * commit the other merge is of; the error, which reaches the model, names neither.
+ */
+function mergeReplacedAfterAbort(
+  hooks: MergeAttemptHooks, repoRoot: string, id: string, commit: string, foreign: string,
+): Error {
+  hooks.report(
+    `subagent-worktree: the merge of ${commit} in "${repoRoot}" was aborted, and a merge of ${foreign} is now `
+    + 'in progress there; leave that one to whoever started it',
+  )
+  return new Error(
+    `subagent-worktree: the merge of worktree ${id} was aborted, but another merge is now in progress in the base `
+    + 'checkout; that merge belongs to another operation and must not be aborted here',
+  )
+}
+
+/**
+ * The error for a merge this call started whose state could not be determined, so it may be in progress. The host
+ * log gets the absolute path and the cause; the error, which reaches the model, names neither.
+ * @param situation - what could not be determined, as a clause that follows "the merge".
+ */
+function mergeStateUnknown(
+  hooks: MergeAttemptHooks, repoRoot: string, id: string, commit: string, situation: string, cause: unknown,
+): Error {
+  hooks.report(
+    `subagent-worktree: the merge of ${commit} in "${repoRoot}" ${situation} (${String(cause)}), so it may still be in progress; `
+    + 'run "git status" there, and "git merge --abort" if it shows a merge',
+  )
+  return new Error(
+    `subagent-worktree: the merge of worktree ${id} ${situation}: the base checkout may be left mid-merge; check it, `
+    + 'and abort the merge there with "git merge --abort" if one is in progress',
+  )
+}
+
+/**
+ * The error for a `git merge` that exited 128 with a `MERGE_HEAD` naming the very commit this call was merging.
+ * git reports a refusal that started nothing with that exit code — another merge already in progress is the case in
+ * point — and also some failures after starting, so this state may be this call's own half-applied merge or another
+ * operation's merge of the same commit, which git refuses the same way without touching it. The two cannot be told
+ * apart, so nothing is aborted and the merge is left in place. The host log gets the absolute path and the commit;
+ * the error, which reaches the model, names neither.
+ */
+function mergeSameCommitInProgress(hooks: MergeAttemptHooks, repoRoot: string, id: string, commit: string): Error {
+  hooks.report(
+    `subagent-worktree: git merge of ${commit} in "${repoRoot}" exited 128 with a merge of that same commit in `
+    + 'progress; it was left in place, because it cannot be told apart from a merge another operation started',
+  )
+  return new Error(
+    `subagent-worktree: git exited 128 with a merge of worktree ${id}'s commit in progress in the base checkout; that `
+    + 'merge was left in place because it cannot be told apart from a merge another operation started, and it must be '
+    + 'finished or aborted there with "git merge --abort"',
+  )
+}
+
+/**
+ * The commit `MERGE_HEAD` names right after this call's `git merge` failed.
+ * @throws when the probe itself fails: a merge this call started may then be in progress and unnoticed, which is
+ *   reported and thrown as {@link mergeStateUnknown}.
+ */
+async function readMergeHeadAfterFailure(
+  git: GitRunner, repoRoot: string, id: string, commit: string, hooks: MergeAttemptHooks,
+): Promise<string | undefined> {
+  try {
+    return await readMergeHead(git, repoRoot, cleanupSignal())
+  } catch (error) {
+    throw mergeStateUnknown(hooks, repoRoot, id, commit, 'failed, and whether it left a merge in progress could not be checked', error)
+  }
+}
+
+/**
+ * Abort the merge this call started, which the caller has already established is this call's own (`MERGE_HEAD`
+ * names the commit this call merged), and check that it is gone. The abort and the check each run on their own
+ * fresh signal, so an abort that timed out does not stop the check.
+ * @throws when the merge survives the abort, when a `MERGE_HEAD` naming another commit took its place (that merge
+ *   is not this call's to abort, so no second abort runs), or when the abort or the check failed and so left the
+ *   state unknown but possibly this call's: the base checkout is then left mid-merge, and no classification of the
+ *   failed merge can stand in for saying so.
+ */
+async function abortOwnMerge(git: GitRunner, repoRoot: string, id: string, commit: string, hooks: MergeAttemptHooks): Promise<void> {
+  let remaining: string | undefined
+  try {
+    await git.run(['merge', '--abort'], { cwd: repoRoot, signal: cleanupSignal() })
+    remaining = await readMergeHead(git, repoRoot, cleanupSignal())
+  } catch (error) {
+    throw mergeStateUnknown(hooks, repoRoot, id, commit, 'could not be confirmed aborted', error)
+  }
+  if (remaining === undefined) return
+  // Another operation started its own merge between the abort and this check: that `MERGE_HEAD` is not this call's,
+  // so it is reported and thrown, never aborted.
+  if (remaining !== commit) throw mergeReplacedAfterAbort(hooks, repoRoot, id, commit, remaining)
+  throw mergeSurvivedAbort(hooks, repoRoot, id, commit)
+}
+
+/**
+ * Whether the base checkout already contains `commit` in its history, which is how a `git merge` that died with exit
+ * 128 after applying its result (`finish()` can `die_errno()` on a failed commit object write, `HEAD` ref update, or
+ * lock) still tells that the reviewed commit landed.
+ * @throws when the probe failed (a cancelled probe has no answer), so an unknown state is never read as "not landed".
+ */
+async function isAncestor(git: GitRunner, repoRoot: string, commit: string, id: string): Promise<boolean> {
+  const result = await git.run(['merge-base', '--is-ancestor', commit, 'HEAD'], { cwd: repoRoot, signal: cleanupSignal() })
+  if (result.exitCode === PROBE_YES_EXIT_CODE) return true
+  if (result.exitCode === PROBE_NO_EXIT_CODE) return false
+  throw new Error(
+    `subagent-worktree: could not check whether worktree ${id}'s commit already landed in the base checkout `
+    + `(git merge-base ${result.exitCode === null ? 'was cancelled' : `exited ${String(result.exitCode)}`})`,
+  )
+}
+
+/**
+ * The error for a failed scan of the base checkout's unmerged paths after git refused this call's merge with exit
+ * 128. Those paths decide whether the refusal was about conflicts another operation left behind, so a failed scan
+ * leaves the state unknown. The host log gets the absolute path and the cause; the error, which reaches the model,
+ * names neither.
+ */
+function unmergedPathsUnknown(hooks: MergeAttemptHooks, repoRoot: string, id: string, commit: string, cause: unknown): Error {
+  hooks.report(
+    `subagent-worktree: the unmerged paths of "${repoRoot}" could not be read after git refused the merge of ${commit} `
+    + `with exit 128 (${String(cause)})`,
+  )
+  return new Error(
+    `subagent-worktree: git refused the merge of worktree ${id} with exit 128, and whether the base checkout has `
+    + 'unmerged paths could not be checked; check it with "git status" before accepting again',
+  )
+}
+
+/**
+ * The error for a failed read of the conflicting paths that stopped this call's merge, which the caller has already
+ * aborted. The host log gets the absolute path and the cause; the error, which reaches the model, names neither.
+ */
+function conflictsUnreadable(hooks: MergeAttemptHooks, repoRoot: string, id: string, commit: string, cause: unknown): Error {
+  hooks.report(
+    `subagent-worktree: the conflicting paths of "${repoRoot}" could not be read after the merge of ${commit} stopped `
+    + `on conflicts (${String(cause)})`,
+  )
+  return new Error(
+    `subagent-worktree: merge of worktree ${id} stopped and was aborted, but its conflicting paths could not be read`,
+    { cause },
+  )
+}
+
+/** The paths git lists as unmerged in the base checkout. */
+async function unmergedPaths(git: GitRunner, repoRoot: string, signal: AbortSignal): Promise<string[]> {
+  // Asked for submodule conflicts whatever `diff.ignoreSubmodules` or `submodule.<name>.ignore` say: a conflict whose
+  // only unmerged path is a submodule gitlink must not read as "no conflicts".
+  const unmerged = await git.expectComplete(
+    ['diff', '--name-only', '--diff-filter=U', '--ignore-submodules=none'], 'git diff --diff-filter=U', { cwd: repoRoot, signal },
+  )
+  return unmerged.stdout.split('\n').filter(line => line.length > 0)
+}
+
+/** The paths that stopped a merge on conflicts, or the failure that kept them from being read; never throws. */
+async function readConflicts(git: GitRunner, repoRoot: string): Promise<{ files: string[] } | { failure: unknown }> {
+  try {
+    return { files: await unmergedPaths(git, repoRoot, cleanupSignal()) }
+  } catch (failure) {
+    return { failure }
+  }
+}
+
+/**
+ * The commit that landed a reviewed commit in the base checkout's history: the earliest merge commit on the way
+ * from `reviewed` to `HEAD` that lists `reviewed` as a parent, which is the merge commit `git merge --no-ff`
+ * created. When a complete listing holds no such commit (it was fast-forwarded in, or `git merge` found it
+ * already contained and created nothing), the reviewed commit is its own landing commit. It is never `HEAD` as
+ * such, which may be a later commit that has nothing to do with the reviewed one.
+ *
+ * The listing is read newest-first in topological order, so a merge is always listed after every merge it descends
+ * from and the last line that lists `reviewed` is the earliest landing of it in DAG order. Date order alone can
+ * list an earlier landing after a later one — a re-landing merge committed with an older date, or a skewed clock —
+ * and would then answer with the later landing. (`--reverse` is not the fix for that: git applies `--max-count`
+ * before reversing, and a reversed listing would be read from its newest end, where the cut falls on the answer.)
+ *
+ * A history longer than the command's output cap — after a landing merge, every later merge on the way is such a
+ * commit, so the listing grows with every merge — loses its newest lines and keeps the oldest ones, which are the
+ * merges that can answer this. The possibly partial first line of that truncated suffix is dropped, and when no
+ * line of it lists `reviewed`, this throws instead of returning the reviewed commit: the merge that lists it may
+ * be exactly what the cut dropped, and that guess would be persisted as the worktree's `mergedCommit`.
+ * @param git - command runner.
+ * @param repoRoot - the base checkout's top-level directory.
+ * @param reviewed - the reviewed commit, which is an ancestor of the base checkout's `HEAD`.
+ * @param signal - cancellation for the read.
+ * @returns the landing commit's full id.
+ * @throws when `git rev-list` failed, or when a truncated listing holds no line that lists `reviewed`. A complete
+ *   listing that holds no such line is not a failure: the reviewed commit landed without a merge commit.
+ */
+export async function landedCommitOf(git: GitRunner, repoRoot: string, reviewed: string, signal: AbortSignal): Promise<string> {
+  const merges = await git.expectTruncatable(
+    ['rev-list', '--ancestry-path', '--merges', '--parents', '--topo-order', `${reviewed}..HEAD`], 'git rev-list', { cwd: repoRoot, signal },
+  )
+  // A truncated read kept a suffix of the listing, whose first line may have lost its head to the cut and is no
+  // commit line at all, so it is dropped. Topological order lists a merge after every merge it descends from, so
+  // the last line that lists the reviewed commit is its earliest landing in DAG order, whatever the dates say.
+  const lines = merges.stdout.split('\n').slice(merges.stdoutLossy ? 1 : 0)
+  let landed: string | undefined
+  for (const line of lines) {
+    const [merge = '', ...parents] = line.split(' ')
+    if (merge !== '' && parents.includes(reviewed)) landed = merge
+  }
+  if (landed !== undefined) return landed
+  if (merges.stdoutLossy) {
+    // Only a complete listing can say that no merge lists the reviewed commit: the cut may have dropped exactly the
+    // one that did, so standing the reviewed commit in for it would persist a wrong `mergedCommit`.
+    throw new Error(
+      'subagent-worktree: the base checkout\'s history is longer than the landing-merge listing could capture, and no '
+      + 'merge in the part that was read lists the reviewed commit, so the commit that landed it cannot be named',
+    )
+  }
+  return reviewed
+}
+
+/**
+ * Read the landing commit right after a merge that landed — one whose `git merge` exited 0, or one it turned out had
+ * already been applied when git died with exit 128. A cancellation or a transient failure must not hide a merge that
+ * already landed, so a failed read is retried once on a fresh signal.
+ * @param git - command runner.
+ * @param repoRoot - the base checkout's top-level directory.
+ * @param reviewed - the reviewed commit, which is an ancestor of the base checkout's `HEAD`.
+ * @param signal - cancellation for the first read; the retry runs on {@link cleanupSignal}.
+ * @returns the landing commit's full id, as {@link landedCommitOf} defines it.
+ * @throws when both reads failed, or when the second one found a truncated listing that cannot name the landing commit.
+ */
+export async function readLandedCommit(git: GitRunner, repoRoot: string, reviewed: string, signal: AbortSignal): Promise<string> {
+  try {
+    return await landedCommitOf(git, repoRoot, reviewed, signal)
+  } catch {
+    return await landedCommitOf(git, repoRoot, reviewed, cleanupSignal())
+  }
+}
+
+/**
+ * Classify a `git merge` that did not exit 0, aborting only a merge this call started. Exit 128 is ambiguous: git
+ * reaches it by dying before the merge changes anything — another merge already in progress is the case in point —
+ * and also after starting (`write_merge_state()` can die once `MERGE_HEAD` is written, `finish()` after the merge was
+ * applied), so it is classified by the `MERGE_HEAD` it left: none, with a clean checkout, is either `merged` — when
+ * `git merge-base --is-ancestor` finds the reviewed commit already in the base checkout's history, which is how a
+ * failure after `finish()` applied the merge shows — or `blocked` with git's message; one naming another commit is
+ * `blocked` with nothing aborted; one naming the very commit this call was merging is left in place and thrown,
+ * because it cannot be told apart from another operation's merge of that same commit, which git refuses this way
+ * without touching it. Every other nonzero exit is classified by the merge state, because git's exit codes cannot
+ * otherwise separate a refusal from an error (an untracked file in the way is also refused with a nonzero exit).
+ * @throws when the merge was killed, or failed after starting without stopping on conflicts, or a merge this
+ *   call started could not be aborted or shown to be gone, or exit 128 found a `MERGE_HEAD` naming this call's own
+ *   commit (the base checkout is then left mid-merge, and no outcome claiming nothing was merged stands in for it),
+ *   or a probe that had to answer — the unmerged-path scan at this exit code, or the ancestry check after it — failed
+ *   instead.
+ */
+async function classifyFailedMerge(
+  git: GitRunner,
+  repoRoot: string,
+  id: string,
+  commit: string,
+  failed: { exitCode: number | null; stderr: string },
+  hooks: MergeAttemptHooks,
+): Promise<MergeAttemptResult> {
+  const mergeHead = await readMergeHeadAfterFailure(git, repoRoot, id, commit, hooks)
+  if (failed.exitCode === null) {
+    // A kill is this call's own cancellation or timeout, so a `MERGE_HEAD` naming the reviewed commit is
+    // overwhelmingly this call's merge, and leaving it would strand the user's checkout mid-merge on every cancelled
+    // accept. Exit 128 below is also how git refuses to start when someone else's merge is already in progress, so
+    // the same state at that exit code is left exactly as found instead.
+    if (mergeHead === commit) await abortOwnMerge(git, repoRoot, id, commit, hooks)
+    throw new Error(`subagent-worktree: merge of worktree ${id} was killed before it finished`)
+  }
+  if (failed.exitCode === GIT_DIED_EXIT_CODE) {
+    // The merge of this call's own commit is not aborted: it may be another operation's merge of that same commit,
+    // which git refuses with this exit code before touching anything, and aborting it would destroy that merge.
+    if (mergeHead === commit) throw mergeSameCommitInProgress(hooks, repoRoot, id, commit)
+    if (mergeHead !== undefined) {
+      return { kind: 'blocked', reason: 'the base checkout has a merge in progress (MERGE_HEAD exists), and git refused this merge before starting it' }
+    }
+    // A refusal with no MERGE_HEAD can still be about unmerged paths another operation left behind (a conflicted
+    // cherry-pick is refused with the same exit code), and those paths name the state better than git's message.
+    let unmerged: string[]
+    try {
+      unmerged = await unmergedPaths(git, repoRoot, cleanupSignal())
+    } catch (error) {
+      throw unmergedPathsUnknown(hooks, repoRoot, id, commit, error)
+    }
+    if (unmerged.length > 0) {
+      return { kind: 'blocked', reason: 'the base checkout has conflicts this accept did not create' }
+    }
+    // Exit 128 is also how git dies after the merge was applied (`finish()`), so the reviewed commit may be in the
+    // base checkout's history although this call's merge reported failure: then it landed, and reporting `blocked`
+    // would have the next accept merge it a second time ("Already up to date").
+    if (await isAncestor(git, repoRoot, commit, id)) {
+      hooks.onLanded()
+      return { kind: 'merged', mergeCommit: await readLandedCommit(git, repoRoot, commit, cleanupSignal()) }
+    }
+    return { kind: 'blocked', reason: tailChars(failed.stderr.trim(), DIAGNOSTIC_TAIL_CHARS) }
+  }
+  if (mergeHead === commit) {
+    // Only a merge that stopped with the conflict exit code can report conflicts, and the abort discards the unmerged
+    // paths that outcome names, so that one case reads them first; a failed read never skips the abort. Every other
+    // failed exit needs no paths and is aborted before any further probe runs.
+    const conflicts = failed.exitCode === MERGE_CONFLICT_EXIT_CODE ? await readConflicts(git, repoRoot) : undefined
+    await abortOwnMerge(git, repoRoot, id, commit, hooks)
+    if (conflicts !== undefined && 'failure' in conflicts) {
+      throw conflictsUnreadable(hooks, repoRoot, id, commit, conflicts.failure)
+    }
+    if (conflicts !== undefined && conflicts.files.length > 0) return { kind: 'conflict', files: conflicts.files }
+    throw new Error(
+      `subagent-worktree: merge of worktree ${id} failed unexpectedly after starting: ${tailChars(failed.stderr.trim(), DIAGNOSTIC_TAIL_CHARS)}`,
+    )
+  }
+  if (mergeHead !== undefined || (await unmergedPaths(git, repoRoot, cleanupSignal())).length > 0) {
+    return { kind: 'blocked', reason: 'the base checkout has conflicts this accept did not create' }
+  }
+  return { kind: 'blocked', reason: tailChars(failed.stderr.trim(), DIAGNOSTIC_TAIL_CHARS) }
+}
+
+/**
+ * Attempt `git merge --no-ff --no-edit` of one reviewed commit into the base
+ * checkout.
+ *
+ * Before starting, refuses as `blocked` — without running `git merge` at all —
+ * when the base checkout already has an operation in progress (`MERGE_HEAD`
+ * exists) or its `HEAD` is detached. After this call's own `git merge` fails,
+ * the merge state decides: a merge that died (exit 128, which git reaches both
+ * before starting — another operation's merge already in progress is the case
+ * in point — and after starting some failures) is `blocked` with nothing
+ * aborted when its `MERGE_HEAD`, if any, names another commit, `merged` when it
+ * left no `MERGE_HEAD` and the reviewed commit is now an ancestor of the base
+ * checkout's `HEAD` (git can die in `finish()` after applying the merge), and
+ * throws with the merge left in place when its `MERGE_HEAD` names the very
+ * commit this call was merging, because that one cannot be told apart from a
+ * merge another operation started of the same commit; a merge this call started
+ * that stopped on conflicts is aborted and reported as `conflict`; one that was
+ * killed, or failed after starting without conflicts, is aborted and thrown;
+ * conflicts or a `MERGE_HEAD` this call did not create are `blocked` and left
+ * untouched; a clean refusal that started no merge is `blocked` with git's
+ * message.
+ * @param git - command runner.
+ * @param repoRoot - the base checkout's top-level directory.
+ * @param id - the worktree id, named in the merge commit message.
+ * @param label - the worktree's display label, named in the merge commit message.
+ * @param commit - the reviewed commit to merge, as a full commit id.
+ * @param signal - cancellation for the whole accept operation.
+ * @param hooks - last-moment check, landed notification, and operator reports.
+ * @returns the merge outcome; a merged one names {@link landedCommitOf} of the reviewed commit.
+ * @throws when a pre-merge probe or `hooks.beforeMerge` failed, this call's merge was killed or failed after
+ *   starting, a merge this call started could not be aborted or shown to be gone (the base checkout is then left
+ *   mid-merge, and the error says so), exit 128 found a `MERGE_HEAD` naming the commit this call was merging
+ *   (thrown, with that merge left exactly as found), another merge took this call's merge place after the abort
+ *   (thrown, with that other merge left exactly as found), or the landing commit could not be read after a
+ *   successful merge (`hooks.onLanded` has then already been called).
+ */
+export async function attemptMerge(
+  git: GitRunner,
+  repoRoot: string,
+  id: string,
+  label: string,
+  commit: string,
+  signal: AbortSignal,
+  hooks: MergeAttemptHooks,
+): Promise<MergeAttemptResult> {
+  if (await readMergeHead(git, repoRoot, signal) !== undefined) {
+    return { kind: 'blocked', reason: 'the base checkout already has a merge in progress (MERGE_HEAD exists)' }
+  }
+  if (await hasDetachedHead(git, repoRoot, signal)) {
+    return { kind: 'blocked', reason: 'the base checkout HEAD is detached; a merge there would update no branch' }
+  }
+
+  hooks.beforeMerge()
+  const message = `Merge worktree ${id}: ${label}`
+  const result = await git.run(['merge', '--no-ff', '--no-edit', '-m', message, commit], { cwd: repoRoot, signal })
+  if (result.exitCode === 0) {
+    hooks.onLanded()
+    return { kind: 'merged', mergeCommit: await readLandedCommit(git, repoRoot, commit, signal) }
+  }
+  return classifyFailedMerge(git, repoRoot, id, commit, result, hooks)
+}

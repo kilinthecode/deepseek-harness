@@ -42,6 +42,9 @@
       "path": "../subagent"
     },
     {
+      "path": "../subagent-worktree"
+    },
+    {
       "path": "../../jobs/jobs"
     },
     {

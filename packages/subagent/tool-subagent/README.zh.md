@@ -51,6 +51,7 @@ kind: "package-reference"
 | `persona` | — | 每个子 agent 独立的 persona；要求提供方具备 `persona` 能力 |
 | `toolFilter` | — | 每个子 agent 独立的全局工具限制；要求提供方具备 `toolFilter` 能力 |
 | `maxDepth` | Host 设置（`1`） | 绝对委派深度上限（`0` 禁止委派）；`'provider-managed'` 不向进程外提供方发送上限 |
+| `worktreeIsolation` | `false` | 公开 `isolation` 参数，通过 `ctx.subagentWorktrees` 为一次调用分配独立的 git worktree，只能通过 `accept_worktree` 审核并合并；要求 subagent-worktree 服务与具备 `cwd` 能力的提供方；具备该能力的提供方还在 `ctx.subagentWorktrees.offersIsolation` 成立期间公开该参数，该值变化时工具会重新挂载 |
 
 生成的[配置目录](../../../docs/config-catalog.zh.md#deepseek-aidsh-tool-subagent)是每个受支持字段及其 JSDoc 的穷尽式真源。
 
@@ -62,9 +63,13 @@ kind: "package-reference"
 
 `maxDepth` 限制递归深度（`0` 禁止委派）；省略时，每次委派读取 Host 当前的 `subagent.maxDepth` 设置，初始值为 `1`。数值深度要求提供方具备 `depthLimit` 能力；`'provider-managed'` 把预算留给进程外提供方。当提供方支持时，`persona` 与 `toolFilter` 会配置每个子 agent；工具在达到上限时仍然可见——每次尝试启动都会检查调用 agent 的当前深度，被拒绝时返回出错的工具结果。
 
+### Worktree 隔离
+
+当该行设置了 `worktreeIsolation: true`，或 `ctx.subagentWorktrees.offersIsolation` 成立且提供方具备 `cwd` 能力时，调用即可传入 `isolation: "worktree"`——不具备该能力的提供方无法把子级放入 worktree，因此提供永远不会给它的工具加上该参数。该提供由已挂载的 `@deepseek-ai/dsh-tool-subagent-worktree` 条目注册，因此能触及由 agent 预设挂载的工具，而 bundle 补丁无法改动这些预设中的行。工具监听 `subagent-worktree/offer-changed`，一旦该提供改变了其提供方的答案就重新挂载工具定义，因此加载顺序与 bundle 开关都不再决定它；在一次挂载的生命周期内，schema 与执行器共用同一个答案。执行器会在创建前先解析出独立的审阅者路由，通过 `ctx.subagentWorktrees` 创建一个链接的 git worktree，为子 agent 的提示词加上说明该 worktree 的工作简报前缀，并以该 worktree 为 `cwd` 运行子 agent——这要求提供方具备 `cwd` 能力。启动失败会尽力丢弃刚创建的 worktree。子 agent 所做的更改在 `accept_worktree` 提交、审核并合并之前都不会进入调用方的检出；模型通过同级的 `@deepseek-ai/dsh-tool-subagent-worktree` 工具调用 `accept_worktree`、`discard_worktree` 与 `list_worktrees`。在 `backgroundMode: 'one-shot'` 下，`isolation: "worktree"` 与后台任务组合会被直接拒绝；请改用前台调用或 `backgroundMode: 'continuable'`。`worktreeIsolation` 保持默认值 `false` 且没有有效的提供时，schema 中不包含 `isolation`；此时传入该参数会导致调用失败，错误消息会列出操作者开启该提供的几种方式。
+
 ### 选择子级 LLM
 
-设置 `modelSelectionSettings: true`，即可在组合每个全新顶层 Session 时读取宿主的 `subagent-model-selection` 偏好。没有已记录策略的恢复 Session 会保持禁用，包括显式为空的恢复。启用后，非空的精确 provider/model 路由列表会记录进 Session、由子 Session 继承，后续设置编辑不会改变它。工具随后公开可选的 `provider`、`model` 与 `reasoning_effort` 字段，并注册共享的 `list_subagent_models` 工具。此模式要求后端声明 `agentOptions`；两个进程内后端和 DSH SDK 支持该能力，而 ACP、Codex 与 Claude Code 会拒绝它，而不是忽略它。
+设置 `modelSelectionSettings: true`，即可在组合每个全新顶层 Session 时读取宿主的 `subagent-model-selection` 偏好；该选项需要宿主的模型选择设置服务（`@deepseek-ai/dsh-tool-subagent/model-selection-settings`）和挂载在 agent 预设之内的行，因此无法在以 base 为基础的 profile 的 Host 级行上设置，那样该行会加载失败。没有已记录策略的恢复 Session 会保持禁用，包括显式为空的恢复。启用后，非空的精确 provider/model 路由列表会记录进 Session、由子 Session 继承，后续设置编辑不会改变它。工具随后公开可选的 `provider`、`model` 与 `reasoning_effort` 字段，并注册共享的 `list_subagent_models` 工具。此模式要求后端声明 `agentOptions`；两个进程内后端和 DSH SDK 支持该能力，而 ACP、Codex 与 Claude Code 会拒绝它，而不是忽略它。
 
 一次调用需同时提供 `provider` 与 `model`；当配置值、父 agent 值或提供方持有的默认值能提供路由时，也可只提供推理等级。静态的 `provider.agentRouteDefaults` 在存在时构成提供方／模型基线；工具配置与模型字段会在路由相关强度合并和确切路由预检前覆盖它。没有这些默认值的提供方会使用父 agent 最新已记录请求中的兼容值，再使用父级首次请求前的创建选项，并保留配置的 `maxTokens`。更改路由但未显式提供推理等级时，会清除继承的路由自有等级，使所选模型解析自己的默认值。实时 LLM 适配器在创建子 agent 前校验有效路由。目录成员资格只提供建议，因此适配器接受时，模型可以使用未列出的 id。
 
@@ -129,11 +134,11 @@ kind: "package-reference"
 
 #### 模型看到什么
 
-委派工具的描述使用 `running` 与 `inactive` 表达后续投递的可用状态；`inactive` 不表示任务结果。当提供方存在时，以当前实例配置的名称公开已生成的默认 [`subagent` schema](../../../docs/tool-catalog.zh.md#deepseek-aidsh-tool-subagent)。启用的 Session 策略会添加 `provider`、`model` 与 `reasoning_effort`，以及继承和选择指引；提供方必须支持 `agentOptions`。提供方是否继承上下文会改变工具描述和提示词描述。启用后台模式会添加 `run_in_background`：可继续模式会记录其默认值为 `true`、运行时结算通知与显式前台覆盖；一次性模式会记录其默认值为 `false`，以及用 `job_output` 收集或用 `job_kill` 停止的 job id。当工具在本次组装的作用域中可见时，一个 `tool:<toolName>` 系统提示词 section 会指示模型同时启动相互独立的可继续委派、在它们运行时继续工作，并且仅当下一步动作依赖结果时选择前台；工具限制会同时移除其 schema 和这段指引。
+委派工具的描述使用 `running` 与 `inactive` 表达后续投递的可用状态；`inactive` 不表示任务结果。当提供方存在时，以当前实例配置的名称公开已生成的默认 [`subagent` schema](../../../docs/tool-catalog.zh.md#deepseek-aidsh-tool-subagent)。启用的 Session 策略会添加 `provider`、`model` 与 `reasoning_effort`，以及继承和选择指引；提供方必须支持 `agentOptions`。提供方是否继承上下文会改变工具描述和提示词描述。启用后台模式会添加 `run_in_background`：可继续模式会记录其默认值为 `true`、运行时结算通知与显式前台覆盖；一次性模式会记录其默认值为 `false`，以及用 `job_output` 收集或用 `job_kill` 停止的 job id。由该行或由有效的服务提供带来的隔离会添加一个提供 `"worktree"` 选项的 `isolation` 枚举参数，详见"Worktree 隔离"一节。当工具在本次组装的作用域中可见时，一个 `tool:<toolName>` 系统提示词 section 会指示模型同时启动相互独立的可继续委派、在它们运行时继续工作，并且仅当下一步动作依赖结果时选择前台；工具限制会同时移除其 schema 和这段指引。
 
 #### Token 影响
 
-每个父级请求支付固定的 schema 成本；模型选择会增加三个参数。每个提供方实例增加一个 schema，每个可继续实例还增加一个简短的系统提示词 section。
+每个父级请求支付固定的 schema 成本；模型选择会增加三个参数，提供隔离会增加一个参数，二者都仅在启用时才生效。每个提供方实例增加一个 schema，每个可继续实例还增加一个简短的系统提示词 section。
 
 #### KV Cache 影响
 
@@ -177,7 +182,7 @@ Start independent subagent delegations together in one assistant message and con
 
 #### 模型看到什么
 
-调用会保留描述与提示词。成功时只包含子 agent 的最终文本；其他结果变为 `Error: <stop reason>`，随后在存在时附上安全的提供方诊断，再附上任何部分 assistant 文本。子 agent 中间步骤不会进入父级。
+调用会保留描述与提示词。成功时只包含子 agent 的最终文本；其他结果变为 `Error: <stop reason>`，随后在存在时附上安全的提供方诊断，再附上任何部分 assistant 文本。子 agent 中间步骤不会进入父级。隔离调用成功时的文本会新增一行，指明 worktree id 与分支并引导模型调用 `accept_worktree`；隔离的运行失败时，错误文本也会附上同样的指引，说明可调用 `accept_worktree` 或 `discard_worktree`，因此失败不会让模型找不到回到子 agent 更改的路径。未隔离的结果两种情况下都不受影响。
 
 #### Token 影响
 
@@ -191,7 +196,7 @@ Start independent subagent delegations together in one assistant message and con
 
 #### 模型看到什么
 
-在配置的可继续模式下，启动时返回内容恰为 `started subagent <childId>`；在配置的一次性模式下，则返回 `started background subagent job <id>`。一次性模式下，通用 Task 接口提供后续状态、最终输出、取消响应与通知；若结果携带提供方诊断，失败状态的 detail 会包含它。可继续模式下，本工具不返回自己的结果：子 agent 的结算以服务负责的通知到达父级，独立加载的 `send_message` 工具投递后续消息，而通过其 id 查看子 agent 的 transcript（文本记录）即是其详细输出来源。
+在配置的可继续模式下，启动时返回内容恰为 `started subagent <childId>`；在配置的一次性模式下，则返回 `started background subagent job <id>`。一次性模式下，通用 Task 接口提供后续状态、最终输出、取消响应与通知；若结果携带提供方诊断，失败状态的 detail 会包含它。可继续模式下，本工具不返回自己的结果：子 agent 的结算以服务负责的通知到达父级，独立加载的 `send_message` 工具投递后续消息，而通过其 id 查看子 agent 的 transcript（文本记录）即是其详细输出来源。隔离的可继续启动改为返回 `started subagent <childId> in worktree <wid> (branch <branch>, base <commit>)`，当调用方检出存在该 worktree 不包含的未提交更改时，会附加一条说明。
 
 #### Token 影响
 
@@ -212,6 +217,7 @@ Start independent subagent delegations together in one assistant message and con
 - **等待中的一次性实例较晚才发现重复名称**（`TODO(subagent-dup-toolname)`）——可继续实例会在插件应用期间预留提示词 section 名称，但若要阻止等待中的一次性实例回滚提供方注册，仍需要一份预期名称注册表。
 - **随附 fork 工具不能选择子级 LLM 路由**——它们继承父级提供方与模型，使复制的对话前缀仍有资格复用 KV Cache。仅当路由变更能保留复用或公开有界重算成本时，才重新启用选择。
 - **非路由子 agent 策略按实例固定**——另一个 persona、工具过滤器或深度上限需要另一个名称不同的工具。LLM 选择要求启用逐 Session 偏好，且提供方必须声明 `agentOptions`；两个进程内提供方和 DSH SDK 会声明该能力，而 ACP、Codex 与 Claude Code 会拒绝它，而不是忽略它。
+- **Worktree 隔离无法与一次性后台任务组合**——在 `backgroundMode: 'one-shot'` 下，`isolation: "worktree"` 与 `run_in_background: true` 组合会被直接拒绝；请改用前台调用或配置 `backgroundMode: 'continuable'`。
 
 <a id="dev-note"></a>
 ### 开发备注

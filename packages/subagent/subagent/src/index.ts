@@ -216,6 +216,7 @@ export class SubagentRuntime extends TypertRemoteService {
     this.emitLifecycle = createLifecycleEmitter(this.ctx, parent => scopeTarget(this, parent))
     ctx.inject(['agents'], (childCtx: Context) => {
       const manager = new SubagentContinuationManager(childCtx, {
+        assertContinuableCwdCapability: (name, requestsCwd) => { this.assertContinuableCwdCapability(name, requestsCwd) },
         prepareContinuable: (name, request) => this.prepareContinuable(name, request),
         observeActivation: (provider, childId, parent) => this.observeActivation(provider, childId, parent),
       }, () => this.config.maxActiveSubagents.get())
@@ -591,7 +592,12 @@ export class SubagentRuntime extends TypertRemoteService {
   /**
    * Resolve one provider's detached continuable-creation contribution. Method
    * presence on the provider IS the capability, so a provider without it is
-   * rejected before the manager reserves any child resources.
+   * rejected before the manager reserves any child resources. `cwd` is
+   * validated here too — where the provider is resolved — because a
+   * continuable child is composed by the continuation manager itself and
+   * never reaches {@link assertCapabilities}.
+   * @param name - the provider to resolve.
+   * @param request - the provider-facing continuable-creation request.
    */
   private async prepareContinuable(
     name: string,
@@ -606,6 +612,22 @@ export class SubagentRuntime extends TypertRemoteService {
       )
     }
     return provider.prepareContinuable(request)
+  }
+
+  /**
+   * Reject a continuable `cwd` request before any path validation or provider
+   * dispatch — where the provider is resolved, mirroring {@link assertCapabilities}
+   * on the one-shot path. A continuable child is composed by the continuation
+   * manager itself and never reaches {@link assertCapabilities}, so `cwd` is
+   * the one continuable-creation input this service still gates directly.
+   * @param name - the provider to resolve.
+   * @param requestsCwd - whether the continuable start request set `cwd`.
+   * @throws {SubagentError} `UNSUPPORTED_CAPABILITY` when `requestsCwd` and
+   *   the named provider's `capabilities.cwd` is `false`.
+   */
+  private assertContinuableCwdCapability(name: string, requestsCwd: boolean): void {
+    if (!requestsCwd) return
+    this.assertCapability(this.expectProvider(name), 'cwd')
   }
 
   /** Look up a provider for dispatch or fail loud. */
@@ -648,14 +670,20 @@ export class SubagentRuntime extends TypertRemoteService {
       { when: request.maxDepth !== undefined, cap: 'depthLimit' },
       { when: request.toolFilter !== undefined, cap: 'toolFilter' },
       { when: request.persona !== undefined, cap: 'persona' },
+      { when: request.cwd !== undefined, cap: 'cwd' },
     ]
     for (const { when, cap } of needs) {
-      if (when && !provider.capabilities[cap]) {
-        throw new SubagentError(
-          `subagent provider "${provider.name}" does not support the "${cap}" capability`,
-          'UNSUPPORTED_CAPABILITY',
-        )
-      }
+      if (when) this.assertCapability(provider, cap)
+    }
+  }
+
+  /** Reject `cap` when `provider` does not advertise it. */
+  private assertCapability(provider: SubagentProvider, cap: keyof SubagentCapabilities): void {
+    if (!provider.capabilities[cap]) {
+      throw new SubagentError(
+        `subagent provider "${provider.name}" does not support the "${cap}" capability`,
+        'UNSUPPORTED_CAPABILITY',
+      )
     }
   }
 }

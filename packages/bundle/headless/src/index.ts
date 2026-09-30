@@ -292,6 +292,111 @@ async function resolveAgent(
   }
 }
 
+/** One child lifecycle edge, as the subagent runtime publishes it. */
+interface ChildLifecycleEdge {
+  runId: string
+}
+
+/**
+ * The continuable child work one run must outlive, read through the published
+ * `subagent/start`/`subagent/end` pair.
+ *
+ * A child's settlement notice reaches its parent before that pair closes: the
+ * Activation wakes the parent and publishes its terminal edge afterwards. The
+ * child's own status is already `idle` for the whole pipeline that flushes and
+ * disposes it, so "no running child" is not proof that the notice's turn was
+ * requested; a closed epoch is.
+ */
+class ChildSettlements {
+  /** Published epochs whose terminal edge has not arrived yet. */
+  private readonly open = new Set<string>()
+  private waiter: PromiseWithResolvers<void> | undefined
+  private stopped = false
+  private readonly stop: () => void
+
+  /**
+   * Track the child lifecycle edges of one context.
+   * @param ctx - plugin context owning the listeners and the shutdown signal.
+   */
+  constructor(ctx: Context) {
+    // The subagent runtime owns this pair and dsh-base composes it; this bundle
+    // composes neither, so the edges are read structurally rather than through
+    // its module augmentation, like the preset reader above.
+    // oxlint-disable-next-line typescript/unbound-method -- the events mixin accessor returns a pre-bound function
+    const onLifecycle = ctx.on as (
+      name: 'subagent/start' | 'subagent/end',
+      listener: (edge: ChildLifecycleEdge) => void,
+    ) => () => void
+    const started = onLifecycle('subagent/start', (edge) => {
+      this.open.add(edge.runId)
+      this.wake()
+    })
+    const settled = onLifecycle('subagent/end', (edge) => {
+      this.open.delete(edge.runId)
+      this.wake()
+    })
+    // Disposal ends the wait: teardown can abort an Activation whose terminal
+    // edge would otherwise never arrive.
+    const shutdown = ctx.effect(() => () => {
+      this.stopped = true
+      this.wake()
+    })
+    this.stop = () => {
+      started()
+      settled()
+      void shutdown()
+    }
+  }
+
+  /** Whether the owning context was disposed while this watch was live. */
+  get disposed(): boolean {
+    return this.stopped
+  }
+
+  /** How many published child epochs have not published their terminal edge. */
+  get unsettled(): number {
+    return this.open.size
+  }
+
+  /**
+   * Arm the next child lifecycle edge. Arm this before reading
+   * {@link unsettled}: an edge that arrives across that synchronous decision
+   * must wake the waiter instead of being lost.
+   * @returns a promise resolving on the next start or end edge, or on disposal.
+   */
+  nextEdge(): Promise<void> {
+    this.waiter ??= Promise.withResolvers()
+    return this.waiter.promise
+  }
+
+  /** Drop this watch's listeners. */
+  dispose(): void {
+    this.stop()
+    this.wake()
+  }
+
+  private wake(): void {
+    this.waiter?.resolve()
+    this.waiter = undefined
+  }
+}
+
+/**
+ * Await the end of the run's child work: the lead's own turns plus every turn a
+ * child settlement notice starts on it. A later turn can start more children,
+ * so every edge re-runs the same decision.
+ * @param agent - the one Agent this invocation owns.
+ * @param children - the child settlement watch armed before the task was sent.
+ */
+async function awaitChildSettlements(agent: Agent, children: ChildSettlements): Promise<void> {
+  while (true) {
+    await agent.whenIdle()
+    const edge = children.nextEdge()
+    if (children.disposed || (agent.status !== 'running' && children.unsettled === 0)) return
+    await edge
+  }
+}
+
 /** Report an unexpected direct-driver failure and request a failing exit. */
 function fail(io: HeadlessIo, error: unknown, json: boolean): void {
   const message = error instanceof Error ? error.message : String(error)
@@ -360,16 +465,22 @@ async function run(ctx: Context, config: Config, io: HeadlessIo): Promise<void> 
   const firstSeq = agent.session.seq
   const projection = config.json === true ? projectJsonRun(ctx, agent, io.stdout, { cwd }) : undefined
   const stopReasoning = projection === undefined ? streamReasoning(ctx, agent, io.stderr) : undefined
+  // Armed before the task is submitted so every child the run starts, including
+  // the ones a later turn starts, is observed.
+  const children = new ChildSettlements(ctx)
   try {
     try {
       agent.followup(createUserMessage({
         content: [{ type: 'text', text: task }],
         source: { kind: 'user' },
       }))
-      await agent.whenIdle()
+      await awaitChildSettlements(agent, children)
     } finally {
       stopReasoning?.()
     }
+    // A tree disposed under an unsettled child ends the run here, exactly as
+    // pending Loader settlement does: the launcher owns the process exit.
+    if (children.disposed) return
     await sessions.flush(agent.session)
     const outcome = summarize(agent.session, firstSeq)
     if (projection === undefined) io.stdout.write(outcome.text + '\n')
@@ -379,6 +490,7 @@ async function run(ctx: Context, config: Config, io: HeadlessIo): Promise<void> 
     }
     io.exit(outcome.reason?.kind === 'completed' ? 0 : 1)
   } finally {
+    children.dispose()
     projection?.dispose()
   }
 }

@@ -23,6 +23,7 @@ import {
   appendDelegatedPolicyOverrides,
   applyChildComposition,
   assertSubagentMaxDepth,
+  assertUsableCwd,
   captureDelegatedPolicyOverrides,
   childSessionMeta,
   finalAssistantOutput,
@@ -109,6 +110,9 @@ export async function startInProcessRun(
   if (request.signal.aborted) throw prePublicationAbort()
   const parent = request.parent
   const childDepth = resolveChildDepth(parent, request.maxDepth)
+  const childCwd = request.cwd === undefined
+    ? undefined
+    : assertUsableCwd('subagent', 'child cwd', request.cwd)
 
   const childId = brandString<SessionId>(randomUUID())
   const seed = options.seed
@@ -134,7 +138,7 @@ export async function startInProcessRun(
   const handle = await parent.ctx.agents.create({
     sessionId: childId,
     parentAgent: parent,
-    meta: childSessionMeta(parent, childDepth, seed !== undefined),
+    meta: childSessionMeta(parent, childDepth, seed !== undefined, childCwd),
     ...seed !== undefined ? { seed } : {},
     ...seed === undefined ? {} : { inheritedEventCount: activationBoundary },
     agentOptions: resolveChildAgentOptions(parent, request.agentOptions, childDepth),

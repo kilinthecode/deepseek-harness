@@ -210,6 +210,7 @@ const packageFileExtras: Readonly<Record<string, readonly string[]>> = {
   '@deepseek-ai/dsh-sandbox-windows-acl': ['lib/runner.js', 'lib/types-*.js'],
   '@deepseek-ai/dsh-skill-badge': ['assets'],
   '@deepseek-ai/dsh-skill-office': ['assets'],
+  '@deepseek-ai/dsh-skill-agent-crew': ['assets'],
   '@deepseek-ai/dsh-subprocess': ['lib/control.js'],
   // SSH launches a private helper and shares wire definitions and TLS setup
   // between that helper and the connection owner.
@@ -232,6 +233,9 @@ const packageFileExtras: Readonly<Record<string, readonly string[]>> = {
   // The headless entry and its startup row share the JSON projection code
   // through a hashed tsdown chunk; both import it by relative path.
   '@deepseek-ai/dsh-headless': ['lib/json-stream-*.js'],
+  // The agents entry and its startup row share route-parsing code through a
+  // hashed tsdown chunk; both import it by relative path.
+  '@deepseek-ai/dsh-agents': ['lib/route-*.js'],
 }
 
 function sameStringList(actual: readonly string[] | undefined, expected: readonly string[]): boolean {

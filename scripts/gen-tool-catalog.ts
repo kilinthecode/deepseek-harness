@@ -36,6 +36,8 @@ import SubagentRuntime from '@deepseek-ai/dsh-subagent'
 import type { SubagentProvider } from '@deepseek-ai/dsh-subagent'
 import * as ToolSubagentControl from '@deepseek-ai/dsh-tool-subagent-control'
 import * as ToolSubagentListAgents from '@deepseek-ai/dsh-tool-subagent-control/list-agents'
+import type SubagentWorktrees from '@deepseek-ai/dsh-subagent-worktree'
+import * as ToolSubagentWorktree from '@deepseek-ai/dsh-tool-subagent-worktree'
 import SkillRegistry from '@deepseek-ai/dsh-skill'
 import * as SkillFileSystem from '@deepseek-ai/dsh-skill-filesystem'
 import LocalJobRegistry from '@deepseek-ai/dsh-jobs-local'
@@ -121,7 +123,7 @@ class CatalogWorkflowEngine extends WorkflowEngine {
 function registerCatalogSubagentProvider(ctx: Context, name: string): void {
   const provider: SubagentProvider = {
     name,
-    capabilities: { agentOptions: true, outputSchema: true, depthLimit: true, toolFilter: true, persona: true },
+    capabilities: { agentOptions: true, outputSchema: true, depthLimit: true, toolFilter: true, persona: true, cwd: true },
     inheritsParentContext: false,
     start: () => Promise.reject(new Error('tool-catalog provider cannot start a child')),
     // Declared so consumers configured for continuable background mode mount.
@@ -566,6 +568,20 @@ const TOOL_PACKAGES: ToolPackage[] = [
     },
     note:
       'The globally named control tools over continuable background subagents: provider-bound `tool-subagent` instances register distinct delegation tools, while this package registers `send_message` and `interrupt_agent` once, plus `list_agents` from its separately loaded `/list-agents` plugin (whose catalog rows use the sessionProjections and live Agent registries).',
+  },
+  {
+    pkg: '@deepseek-ai/dsh-tool-subagent-worktree',
+    dir: 'tool-subagent-worktree',
+    source: 'packages/subagent/tool-subagent-worktree/src/index.ts',
+    requires: ['ctx.tools', 'ctx.subagentWorktrees'],
+    writes: ['tool/call', 'tool/result'],
+    async mount(ctx) {
+      // Schema harvest never executes accept/discard/list, and the isolation offer changes no schema here.
+      ctx.provide('subagentWorktrees', {} as SubagentWorktrees)
+      await ctx.plugin(ToolSubagentWorktree, { offerIsolation: false })
+    },
+    note:
+      '`accept_worktree`, `discard_worktree`, and `list_worktrees` land, discard, and list the isolated git worktrees `ctx.subagentWorktrees` provisions for `subagent` calls made with `isolation: "worktree"`; every call scopes its request to the calling Session as owner. While this row is mounted with its default `offerIsolation: true`, every `subagent` delegation tool whose provider has the `cwd` capability offers that parameter.',
   },
   {
     pkg: '@deepseek-ai/dsh-tool-jobs',

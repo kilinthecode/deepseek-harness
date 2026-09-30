@@ -12,12 +12,15 @@ The `dsh` command is the sole supported Node application launcher: profiles are 
 | `dsh --profile <name> --from-default-profile <template>` | Create a new custom profile from a shipped template, then boot it. |
 | `dsh --profile acp` | Serve automation clients over ACP stdio until disconnect. |
 | `dsh --profile headless "job"` | Run one fresh persisted session, print the final answer, and exit. |
+| `dsh --profile agents run "task"` | Run one task in a worker agent's own git worktree, with independent review before merge. |
 | `dsh --profile sdk` | Serve SDK clients over JSON-RPC stdio until shutdown or disconnect. |
 | `dsh --profile sdk-minimal` | Serve SDK clients with the standalone minimal agent tree. |
 | `dsh web` | Boot the Web profile. |
 | `dsh plugin --profile <name> <pnpm args>` | Manage a profile's plugins by forwarding to pnpm in the profile directory. |
 
-The invoking directory is the default workspace root. The `web`, `headless`, `sdk`, `sdk-minimal`, and `acp` profiles auto-initialize on first use from shipped templates. Create another profile at an unused, non-shipped name with `--from-default-profile`, or initialize a base-backed profile through `dsh plugin`. The `desktop` name is reserved for the Electron-owned profile, so the CLI rejects boot, config-dump, and plugin-management requests for it.
+The invoking directory is the default workspace root. The `web`, `headless`, `agents`, `sdk`, `sdk-minimal`, and `acp` profiles auto-initialize on first use from shipped templates. Create another profile at an unused, non-shipped name with `--from-default-profile`, or initialize a base-backed profile through `dsh plugin`. The `desktop` name is reserved for the Electron-owned profile, so the CLI rejects boot, config-dump, and plugin-management requests for it.
+
+`dsh agents run "<task>"` creates a worker agent in its own git worktree, has an independent reviewer check the exact commit, and merges only a passing change into your checkout; `dsh agents list`, `accept`, and `discard` manage the worktrees that produces. See [`dsh-agents`](../../packages/bundle/agents/README.md) for its flags, exit codes, and `--json` event stream.
 
 ## App arguments
 
