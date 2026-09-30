@@ -269,6 +269,90 @@
       }
     },
     {
+      "name": "memory_forget",
+      "description": "Delete one saved memory by name and scope.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": "string",
+            "description": "Name of the memory to delete."
+          },
+          "scope": {
+            "type": "string",
+            "description": "Scope the memory lives in.",
+            "enum": [
+              "global",
+              "project"
+            ]
+          }
+        },
+        "required": [
+          "name",
+          "scope"
+        ]
+      }
+    },
+    {
+      "name": "memory_recall",
+      "description": "Read saved global memories and the current project's memories from the live store, including memories saved after the snapshot. Use it for snapshot entries shown only as an index line; inlined snapshot entries need no recall.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "query": {
+            "type": "string",
+            "description": "Case-insensitive substring matched against name, description, and content. Omit to list the newest memories."
+          }
+        }
+      }
+    },
+    {
+      "name": "memory_write",
+      "description": "Save one durable memory for future sessions.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": "string",
+            "description": "Stable lowercase kebab-case identifier (1 to 64 characters), e.g. \"prefers-pnpm\". Writing an existing name in the same scope replaces that memory."
+          },
+          "type": {
+            "type": "string",
+            "description": "user (who the user is and how they like to work) | feedback (feedback or corrections on how to do the work) | project (a durable fact or constraint about the current project) | reference (a pointer to an external resource such as a URL, ticket, or dashboard).",
+            "enum": [
+              "user",
+              "feedback",
+              "project",
+              "reference"
+            ]
+          },
+          "scope": {
+            "type": "string",
+            "description": "project for facts about the current repository (visible in sessions inside its project root) | global for everything else (visible in every session).",
+            "enum": [
+              "global",
+              "project"
+            ]
+          },
+          "description": {
+            "type": "string",
+            "description": "One line (no line breaks, at most 256 characters) shown in the memory snapshot; make it specific enough to decide whether to recall the memory."
+          },
+          "content": {
+            "type": "string",
+            "description": "A declarative fact that remains true in every future session: the fact, why it matters, and how to apply it. Not a command."
+          }
+        },
+        "required": [
+          "name",
+          "type",
+          "scope",
+          "description",
+          "content"
+        ]
+      }
+    },
+    {
       "name": "notify_peer_idle",
       "description": "Subscribe once to a peer. You receive a single notice the next time it is idle. If it is already idle, the notice is sent now. This does not wake the peer. If the peer disappears, you will not get that notice.",
       "parameters": {
