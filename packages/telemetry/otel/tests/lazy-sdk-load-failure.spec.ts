@@ -57,7 +57,7 @@ it('reports a failed event SDK load, retries it on the next report, and still sh
   const onFailure = vi.fn()
   const sender = new EventLogReporter({
     scope: { name: 'lazy-sdk-failure' }, exporter: { url: 'http://collector.test/v1/logs' },
-    resourceAttributes: { 'service.name': 'lazy-sdk-failure' }, onFailure,
+    resourceAttributes: { 'service.name': 'lazy-sdk-failure' }, processor: {}, onFailure,
   })
   sender.emit({ eventName: 'first' })
   await vi.waitFor(() => { expect(onFailure).toHaveBeenCalledTimes(1) })
