@@ -1057,6 +1057,26 @@ describe('SQLite reconciliation and source lifecycle', () => {
     expect(lists).toBe(4)
   })
 
+  it('lists persistence once per search page in the steady state', async () => {
+    const durable = header('steady-listing')
+    TestPersistence.reset([{ meta: durable, events: messageEvents('steady needle') }])
+    const ctx = await liveContext()
+    await ctx.plugin(TestPersistence)
+
+    await expect(ctx.sessionQuery.searchSessions({ query: 'needle' }))
+      .resolves.toMatchObject({ items: [{ header: durable }] })
+    expect(TestPersistence.reads.get(durable.id)).toBe(1)
+
+    // The next page cold-loads nothing: the revision still matches the index,
+    // so one listing supplies the population and the second O(N) scan that only
+    // re-derived it is gone.
+    const listingsBefore = TestPersistence.listSignals.length
+    await expect(ctx.sessionQuery.searchSessions({ query: 'needle' }))
+      .resolves.toMatchObject({ items: [{ header: durable }] })
+    expect(TestPersistence.listSignals.length - listingsBefore).toBe(1)
+    expect(TestPersistence.reads.get(durable.id)).toBe(1)
+  })
+
   it('retries if the persistence binding changes while live sessions are observed', async () => {
     const durable = header('live-boundary-retry')
     TestPersistence.reset([{ meta: durable, events: messageEvents('durable needle') }])
