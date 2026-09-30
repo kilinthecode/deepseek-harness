@@ -4,6 +4,7 @@ import type { Attributes } from '@opentelemetry/api'
 import type { Logger, SeverityNumber } from '@opentelemetry/api-logs'
 import type { BatchLogRecordProcessorOptions, LogRecordExporter, LoggerProvider } from '@opentelemetry/sdk-logs'
 import type { SessionLogOptions } from './session-log.ts'
+import { SdkLoad } from './sdk-load.ts'
 
 /**
  * SDK entry points the ordinary-event pipeline needs. Whole module namespaces are
@@ -89,8 +90,8 @@ export class EventLogReporter {
   private exporter: LogRecordExporter | undefined
   private provider: LoggerProvider | undefined
   private logger: Logger | undefined
-  /** Load started by a report, awaited by a later shutdown. */
-  private connecting: Promise<void> | undefined
+  /** This reporter's SDK import, started by the first report and awaited by shutdown. */
+  private readonly sdkLoad: SdkLoad<EventLogSdk>
   /** Records reported before the pipeline existed; delivered in report order. */
   private readonly pending: EventLogEntry[] = []
   private readonly cancellation = new AbortController()
@@ -99,6 +100,7 @@ export class EventLogReporter {
   /** @param options - explicit transport, resource, scope, queue, and diagnostic settings. */
   constructor(options: EventLogOptions) {
     this.options = options
+    this.sdkLoad = new SdkLoad(loadSdk, (error) => { options.onFailure('Product telemetry SDK failed to load', error) })
   }
 
   /**
@@ -152,14 +154,8 @@ export class EventLogReporter {
    * `onFailure` and leaves the queued records for the next report's retry.
    */
   private startLoading(): void {
-    if (this.connecting !== undefined || this.logger !== undefined) return
-    this.connecting = loadSdk().then((sdk) => {
-      this.connecting = undefined
-      this.flush(sdk)
-    }, (error: unknown) => {
-      this.connecting = undefined
-      this.options.onFailure('Product telemetry SDK failed to load', error instanceof Error ? error : new Error(String(error)))
-    })
+    if (this.logger !== undefined) return
+    this.sdkLoad.start((sdk) => { this.flush(sdk) })
   }
 
   /**
@@ -173,7 +169,7 @@ export class EventLogReporter {
     const sdk = loaded
     // While this channel's load is outstanding, a report joins the queue behind the
     // earlier ones, even after the shared graph finished loading.
-    if (sdk === undefined || this.connecting !== undefined) {
+    if (sdk === undefined || this.sdkLoad.pending) {
       // The batch processor drops records past its queue bound; the pre-load queue does too.
       if (this.pending.length < (this.options.processor.maxQueueSize ?? DEFAULT_MAX_QUEUE_SIZE)) this.pending.push(entry)
       this.startLoading()
@@ -194,8 +190,7 @@ export class EventLogReporter {
     const listener = signal === undefined ? undefined : addAbortListener(signal, abort)
     if (signal?.aborted) abort()
     try {
-      const connecting = this.connecting
-      if (connecting !== undefined) await connecting
+      await this.sdkLoad.settled()
       const provider = this.provider
       const exporter = this.exporter
       if (provider === undefined || exporter === undefined) return

@@ -6,6 +6,7 @@ import type { OTLPExporterNodeConfigBase } from '@opentelemetry/otlp-exporter-ba
 import type {
   BatchLogRecordProcessorOptions, LogRecordExporter, LoggerProvider, LogRecordProcessor, ReadableLogRecord,
 } from '@opentelemetry/sdk-logs'
+import { SdkLoad } from './sdk-load.ts'
 
 /**
  * SDK entry points the Session pipeline needs. Whole module namespaces are kept
@@ -227,8 +228,8 @@ export class SessionLogReporter {
   private provider: LoggerProvider | undefined
   private processor: SessionLogProcessor | undefined
   private logger: Logger | undefined
-  /** Load started by a report, awaited by a later shutdown. */
-  private connecting: Promise<void> | undefined
+  /** This reporter's SDK import, started by the first report and awaited by shutdown. */
+  private readonly sdkLoad: SdkLoad<SessionLogSdk>
   /** Records reported before the pipeline existed; delivered in report order. */
   private readonly pending: SessionLogRecord[] = []
   private stopped = false
@@ -237,6 +238,7 @@ export class SessionLogReporter {
   /** @param options - explicit transport, resource identity, queue limits, and diagnostics. */
   constructor(options: SessionLogOptions) {
     this.options = options
+    this.sdkLoad = new SdkLoad(loadSdk, (error) => { options.onFailure('Session log SDK failed to load', error) })
     this.limit = resolveSessionLogLimits(options)
   }
 
@@ -294,14 +296,8 @@ export class SessionLogReporter {
    * `onFailure` and leaves the queued records for the next report's retry.
    */
   private startLoading(): void {
-    if (this.connecting !== undefined || this.logger !== undefined) return
-    this.connecting = loadSdk().then((sdk) => {
-      this.connecting = undefined
-      this.flush(sdk)
-    }, (error: unknown) => {
-      this.connecting = undefined
-      this.options.onFailure('Session log SDK failed to load', error instanceof Error ? error : new Error(String(error)))
-    })
+    if (this.logger !== undefined) return
+    this.sdkLoad.start((sdk) => { this.flush(sdk) })
   }
 
   /**
@@ -315,7 +311,7 @@ export class SessionLogReporter {
     const sdk = loaded
     // While this channel's load is outstanding, a report joins the queue behind the
     // earlier ones, even after the shared graph finished loading.
-    if (sdk === undefined || this.connecting !== undefined) {
+    if (sdk === undefined || this.sdkLoad.pending) {
       if (this.pending.length >= (this.options.processor?.maxQueueSize ?? 2048)) {
         this.options.onFailure('Session log queue is full; record rejected')
         return
@@ -341,6 +337,6 @@ export class SessionLogReporter {
    * @returns completion after queued requests settle and the SDK transport shuts down.
    */
   shutdown(): Promise<void> {
-    return (this.connecting ?? Promise.resolve()).then(() => this.provider?.shutdown())
+    return this.sdkLoad.settled().then(() => this.provider?.shutdown())
   }
 }
