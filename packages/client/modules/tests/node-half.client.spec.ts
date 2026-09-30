@@ -1021,6 +1021,33 @@ describe('client bundle activation', () => {
     })
     expect(consumer.findEntry(2, 0)).toMatchObject({ originalSource: '/packages/demo/mapped.ts' })
   })
+
+  it('scans the Loader entry tree once per flush instead of once per dirty name', () => {
+    const names = Array.from({ length: 12 }, (_, index) => `@fixture/flush-scan-${String(index)}`)
+    for (const name of names) writeBuiltPackage(name, {})
+    let scans = 0
+    const ctx = new Context()
+    const owned: typeof contexts[number] = { ctx }
+    contexts.push(owned)
+    ctx.baseUrl = pathToFileURL(root!).href + '/'
+    ctx.provide('loader', {
+      *entries() {
+        scans += 1
+        for (const packageName of names) {
+          yield {
+            options: { name: packageName },
+            fiber: {},
+            disabled: false,
+            parent: { tree: { ctx: { baseUrl: ctx.baseUrl } } },
+          }
+        }
+      },
+    })
+    new ClientModuleRegistry(ctx)
+    // The activation flush seeds from one walk and reconciles every dirty name
+    // from one indexed walk; a rescan per name would walk the tree once per row.
+    expect(scans).toBeLessThan(names.length / 2)
+  })
 })
 
 function emitLoaderEntryChange(context: Context, name: string): void {
