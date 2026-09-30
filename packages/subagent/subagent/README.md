@@ -101,6 +101,7 @@ This section explains how the service is built and where the observable behavior
 | [`src/control.ts`](src/control.ts) | Browser control request validation and stable failure codes |
 | [`src/control-types.ts`](src/control-types.ts) | Client-safe catalog row, control requests, receipts, and failures |
 | [`src/archive-admission.ts`](src/archive-admission.ts) | The `subagent` family of the Workspace registry's archive admission: running descendants and their parent-cause cancel |
+| [`src/plain-fork.ts`](src/plain-fork.ts) | Classifies an exact live Agent as a plain fork of a qualifying parent, for runtime-gated prompt or tool installers |
 
 ### One-shot flow
 
@@ -119,6 +120,7 @@ Successful local child creation appends a `subagent/catalog` fact to the parent 
 - **Agent-message authority is exact adjacency** — `sendMessage()` requires the exact live sender; every sender may target a direct continuable child, while only a sender with a resident continuable Activation may target its direct parent.
 - **The descriptor is log-only** — a session event absent from model history and retained across compaction; a continuable descriptor records the resolved child provider, model, and reasoning effort explicitly for cold resume.
 - **This runtime answers archive admission for children** ([seam](../../workspace/workspace/README.md)) — `workspace/session-activity` reports the live subagent descendants inside a turn as the `subagent` family, found by the durable lineage this package records (`parentSession` with the subagent origin, any depth, never a fork) and labelled from each child's descriptor through a live Session observation when the Session query service is composed, otherwise by id; `workspace/session-stop` cancels each of them with the parent cause, one at a time, so one child refusing its cancel is logged while its siblings still stop. The parent's own turn, its jobs, and the archived-lineage step gate belong to the API Session Controller.
+- **A plain fork classifies from its composition, not durable history** — `plainForkParentOf()` resolves the exact live delegating parent of a child seeded through `subagent_fork` whose composition installed no persona, tool filter, or structured-output runtime, checked from the in-process record `applyChildComposition` sets during the child's creation window in one-shot and continuable modes alike, including cold resume; a runtime-gated installer that adds prompt sections or tools on `agent.ctx` must also install them on a plain fork of a qualifying agent, so the fork's declared prompt matches the parent's and a provider prompt cache covers the inherited history.
 
 </details>
 
