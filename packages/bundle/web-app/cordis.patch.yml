@@ -133,6 +133,9 @@
     - id: account-controller
       name: '@deepseek-ai/dsh-api-account-controller'
 
+    - id: authorization-controller
+      name: '@deepseek-ai/dsh-api-authorization-controller'
+
     - id: settings-controller
       name: '@deepseek-ai/dsh-api-settings-controller'
 

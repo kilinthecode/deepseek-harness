@@ -86,4 +86,15 @@ describe('ModelsSection theme styles', () => {
     // branch, and a literal here is a single colour for both themes.
     expect(css).not.toMatch(/var\(--dsw-[a-z0-9-]+\s*,\s*(?:#|rgb|rgba|hsl|hsla)/)
   })
+
+  it('lays the sign-in dialog out as one column of flow-supplied blocks', () => {
+    // The status label sits in the row's action cluster, the dialog holds the
+    // notice, link or code and prompt stacked, and the code the human retypes
+    // stays in the code face while it wraps instead of clipping.
+    expect(block('.signInStatus')).toContain('color: var(--dsw-alias-label-secondary)')
+    expect(block('.signInDialog')).toContain('width: min(440px, 100%)')
+    expect(block('.signInBody')).toContain('gap: 12px')
+    expect(block('.signInCode')).toContain('font-family: var(--ds-font-family-code)')
+    expect(block('.signInCode')).toContain('word-break: break-all')
+  })
 })
