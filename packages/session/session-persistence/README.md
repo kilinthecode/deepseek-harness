@@ -82,7 +82,7 @@ The package is a seam, not a backend framework: it exports the abstract `Session
 
 - **Append-only, contiguous `seq`.** Committed events are never rewritten; `append`'s first `seq` must equal the stored next-seq, and a gap rejects.
 - **A torn physical tail never reaches a reader.** It belongs to an append that never resolved; the write path truncates it durably before its first new append.
-- **Lossless JSON data.** Batches and headers pass the shared one-pass validate-and-snapshot boundary (`materializeAppendBatch`/`materializeCreateHeader`); non-serializable payloads reject at the call site.
+- **Lossless JSON data.** Batches and headers entering through `handle.append`/`create` pass the shared one-pass validate-and-snapshot boundary (`materializeAppendBatch`/`materializeCreateHeader`), and routed `session/event` batches arrive already validated, detached and deep-frozen by `Session.append`; non-serializable payloads reject at the call site.
 - **Durability.** `append` persists best-effort; `flush` — per handle or service-wide — is the barrier that promises storage and also materializes an empty session.
 - **Fail-closed reads.** `validateStoredEvents` refuses unknown event vocabulary and retired pre-release shapes; `assertVersion` refuses foreign format versions.
 - **Single writer per backend instance.** The provider's in-process claim is taken at `create`/`open('write')` and released at handle close.

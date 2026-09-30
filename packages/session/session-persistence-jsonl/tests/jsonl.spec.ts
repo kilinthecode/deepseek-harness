@@ -45,6 +45,9 @@ const readTally = vi.hoisted(() => ({
   enabled: false,
 }))
 
+/** Shifts the birth time one path reports, as a file recreated on a reused inode would. */
+const birthShift = vi.hoisted(() => ({ path: undefined as string | undefined, delta: 0n }))
+
 const openTally = vi.hoisted(() => ({
   /** Physical open() calls per path; a header decode costs exactly one. */
   byPath: new Map<string, number>(),
@@ -73,6 +76,9 @@ vi.mock('node:fs/promises', async (importOriginal) => {
     stat: (async (...args: Parameters<typeof actual.stat>) => {
       if (String(args[0]) === statFailure.path && statFailure.error !== undefined) throw statFailure.error
       const identity = await actual.stat(...args)
+      if (String(args[0]) === birthShift.path && 'birthtimeNs' in identity) {
+        return { ...identity, birthtimeNs: identity.birthtimeNs + birthShift.delta }
+      }
       if (String(args[0]) !== statRace.path || !('mtimeNs' in identity)) return identity
       statRace.reads += 1
       if (statRace.mode === 'churn') return { ...identity, mtimeNs: identity.mtimeNs + BigInt(statRace.reads) }
@@ -301,6 +307,7 @@ afterEach(async () => {
   readTally.enabled = false
   openTally.byPath.clear()
   openTally.enabled = false
+  birthShift.path = undefined
   const pausedReadDone = pausedRead.active ? pausedRead.done : undefined
   readFailure.path = undefined
   readFailure.error = undefined
@@ -2093,6 +2100,20 @@ describe('JsonlSessionPersistence: stored-header memo', () => {
     expect(paths.map(path => openTally.byPath.get(path))).toEqual([1, 1])
   })
 
+  it('re-reads a header whose artifact was recreated on a reused inode', async () => {
+    const header = meta('memo-recreated', '/work')
+    await writeLog(ctx.sessionPersistence, header, oneTurnLog())
+    const path = rawLogPath(root, '/work', header.id)
+    openTally.enabled = true
+    await ctx.sessionPersistence.list()
+    expect(openTally.byPath.get(path)).toBe(1)
+    // Same device and inode, new birth time: a different file than the memoized one.
+    birthShift.path = path
+    birthShift.delta = 1n
+    await ctx.sessionPersistence.list()
+    expect(openTally.byPath.get(path)).toBe(2)
+  })
+
   it('retries a corrupt header instead of memoizing its verdict', async () => {
     const id = SessionId('memo-corrupt-retry')
     const path = rawLogPath(root, undefined, id)
@@ -2178,9 +2199,9 @@ describe('JsonlSessionPersistence: routed live persistence sharing', () => {
   it('never clones a committed live event on the persistence path', async () => {
     const session = ctx.sessions.create(SessionId('live-no-clone'))
     const handle = await ctx.sessionPersistence.create(session.header)
-    const appended = session.append('turn/start', { turn: 1 })
-
+    // The spy precedes the append: routing enqueues the event synchronously inside it.
     const clone = vi.spyOn(globalThis, 'structuredClone')
+    const appended = session.append('turn/start', { turn: 1 })
     await ctx.sessions.flush(session)
     expect(clone).not.toHaveBeenCalledWith(appended)
     clone.mockRestore()

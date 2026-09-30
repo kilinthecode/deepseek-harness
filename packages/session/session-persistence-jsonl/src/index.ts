@@ -172,9 +172,13 @@ interface ResolvedJsonlGeneration {
 
 /** One identity-checked, immutable stored header retained for repeat listings. */
 interface MemoizedHeader {
-  /** Device and inode of the artifact the header was decoded from. */
+  /**
+   * Device, inode and birth time of the artifact the header was decoded from.
+   * Birth time separates a recreated file that reuses a freed inode.
+   */
   readonly dev: bigint
   readonly ino: bigint
+  readonly birthtimeNs: bigint
   /** Generation version named by that artifact's filename. */
   readonly sourceVersion: number
   /** The header the artifact's immutable first line decoded to. */
@@ -1131,6 +1135,7 @@ class JsonlSessionPersistence extends SessionPersistence {
     if (memoized !== undefined
       && memoized.dev === identity.dev
       && memoized.ino === identity.ino
+      && memoized.birthtimeNs === identity.birthtimeNs
       && memoized.sourceVersion === selected.sourceVersion) {
       // A memo hit already passed the path/cwd identity check when the header
       // was decoded; the id check stays because it depends on this caller.
@@ -1189,6 +1194,7 @@ class JsonlSessionPersistence extends SessionPersistence {
     this.headerMemo.set(selected.sourcePath, {
       dev: identity.dev,
       ino: identity.ino,
+      birthtimeNs: identity.birthtimeNs,
       sourceVersion: selected.sourceVersion,
       header: structuredClone(header),
     })
