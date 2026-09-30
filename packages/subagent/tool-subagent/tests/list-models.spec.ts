@@ -165,7 +165,10 @@ describe('list_subagent_models', () => {
     ctx.llm.registerAdapter(['alpha'], new CatalogAdapter())
     const result = await call(ctx, { provider: 'alpha' })
     expect(result.isError).toBe(false)
-    expect(text(result)).toBe('alpha/fast — Fast: Focused work.\nalpha/plain (default) — Plain')
+    expect(text(result)).toBe(
+      'alpha/fast — Fast: Focused work.\nImage input: undeclared\n'
+      + 'alpha/plain (default) — Plain\nImage input: undeclared',
+    )
 
     const inspected = await call(ctx, { provider: 'alpha', model: 'plain' })
     expect(text(inspected)).toContain('alpha/plain (default) — Plain')

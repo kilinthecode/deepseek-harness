@@ -165,7 +165,7 @@ export function resolveCompactSpec(
   if (!Number.isInteger(contextWindow) || contextWindow <= 0) {
     throw new TargetPressureConfigError(
       targetKey,
-      `BasicCompactionConfig: ${targetKey} contextWindow (${contextWindow}) must be a positive integer`,
+      `BasicCompactionConfig: contextWindow (${contextWindow}) must be a positive integer`,
     )
   }
   if (!Number.isInteger(reservedCompletionTokens) || reservedCompletionTokens < 0) {
@@ -203,7 +203,7 @@ export function resolveCompactSpec(
     : policy.retainTokens
   if (retainTokens >= thresholdTokens) {
     throw new TargetPressureConfigError(
-      `${policy.target.provider}/${policy.target.model}`,
+      targetKey,
       `BasicCompactionConfig: ${policy.target.provider}/${policy.target.model} retainTokens `
       + `(${retainTokens}) must be less than threshold tokens ${thresholdTokens}`,
     )
