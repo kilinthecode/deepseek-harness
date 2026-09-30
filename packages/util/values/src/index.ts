@@ -50,7 +50,8 @@ function hasPlainArrayPrototype(value: unknown[]): boolean {
 /**
  * Whether an object is a plain or null-prototype record from any JavaScript realm.
  *
- * The current realm's `Object.prototype` is accepted by identity instead of by
+ * The current realm's `Object.prototype`, while it still ends the prototype
+ * chain, is accepted by identity instead of by
  * re-reading its constructor source, so the verdict is constant per prototype
  * object. The descriptor/source tripwire therefore no longer fires for a
  * post-load `Object.prototype.constructor` or `Function.prototype.toString`
@@ -59,7 +60,7 @@ function hasPlainArrayPrototype(value: unknown[]): boolean {
  */
 function hasPlainObjectPrototype(value: object): boolean {
   const prototype: unknown = Object.getPrototypeOf(value)
-  if (prototype === Object.prototype) return true
+  if (prototype === Object.prototype && Object.getPrototypeOf(prototype) === null) return true
   return prototype === null
     || typeof prototype === 'object' && isIntrinsicObjectPrototype(prototype)
 }

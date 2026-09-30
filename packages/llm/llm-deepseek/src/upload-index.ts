@@ -58,12 +58,12 @@ function absent(error: unknown): boolean {
 
 /**
  * Identity of one on-disk index generation, captured BEFORE the read it
- * describes. Inode plus nanosecond size/mtime/ctime change also catches an
+ * describes. Inode, birth time, and nanosecond size/mtime/ctime also catch an
  * atomic replace that keeps the same byte length, so a successor written by
  * another process is never mistaken for the cached parse.
  */
 function indexSignature(info: BigIntStats): string {
-  return `${info.ino}:${info.size}:${info.mtimeNs}:${info.ctimeNs}`
+  return `${info.ino}:${info.birthtimeNs}:${info.size}:${info.mtimeNs}:${info.ctimeNs}`
 }
 
 function parseRecord(value: unknown): DeepSeekUploadRecord {

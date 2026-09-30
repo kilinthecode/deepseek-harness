@@ -6,7 +6,9 @@
  * unknown extensions ship as octet-stream, and non-GET/HEAD is 405. Every
  * index response first passes Connection's browser authentication, then the
  * webserver's index render (structured injection rows, then raw taps).
- * Non-index assets stay public. The dist location is workspace knowledge of
+ * Non-index assets stay public and carry a weak size-and-mtime validator with
+ * `Cache-Control: no-cache`, so a rebuild that keeps an unhashed file's size and
+ * modification time is not detected. The dist location is workspace knowledge of
  * the composing application, so `distIndex` is typically supplied through a
  * `!!js` expression, never hardcoded by a deployment.
  * @module @deepseek-ai/dsh-host-frontend-static
