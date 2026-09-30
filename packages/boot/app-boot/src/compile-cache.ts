@@ -23,15 +23,15 @@ export const COMPILE_CACHE_DIR_NAME = 'node-compile-cache'
  * choice always wins. Every failure — an unwritable home, a cache volume Node
  * refuses, or a runtime without the API — is reported as one diagnostic line
  * and leaves the launch working without a cache.
- * A help or version answer compiles no profile, so those invocations stay cache-free.
+ * An invocation carrying a help or version flag answers without compiling a profile,
+ * so it stays cache-free wherever the flag appears.
  * @param executableName - the calling executable's display name for that diagnostic.
  * @param args - the command-line arguments after the entry script.
  * @returns a promise that settles once the attempt is done; it never rejects.
  */
 export async function enableDshCompileCache(executableName: string, args: readonly string[]): Promise<void> {
   if (process.env.NODE_COMPILE_CACHE !== undefined || process.env.NODE_DISABLE_COMPILE_CACHE !== undefined) return
-  const [first] = args
-  if (first === '-V' || first === '--version' || first === '-h' || first === '--help') return
+  if (args.some(arg => arg === '-V' || arg === '--version' || arg === '-h' || arg === '--help')) return
   try {
     // A dynamic import keeps this module loadable on a runtime that predates
     // the API, where the property is absent instead of a link-time failure.

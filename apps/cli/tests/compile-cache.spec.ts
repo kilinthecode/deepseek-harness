@@ -65,8 +65,8 @@ describe('launcher Node compile cache', () => {
     expect(run.enabled).toBe(true)
   }, LAUNCH_TIMEOUT_MS * 2)
 
-  it.each([['--version'], ['--help']])('never enables the cache for %s', async (flag) => {
-    const run = await launchWithHome([flag])
+  it.each([[['--version']], [['--help']], [['--patch', './overlay.yml', '-h']]])('never enables the cache for %j', async (args) => {
+    const run = await launchWithHome(args)
     expect(run.code).toBe(0)
     expect(run.enabled).toBe(false)
   }, LAUNCH_TIMEOUT_MS * 2)
