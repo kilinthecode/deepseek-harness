@@ -2,7 +2,7 @@
 
 import type { Context } from '@deepseek-ai/cordis'
 import type { Agent } from '@deepseek-ai/dsh-agent'
-import { Deque } from '@deepseek-ai/dsh-deque'
+import { FrameQueue } from '@deepseek-ai/dsh-deque'
 import type { JobSnapshot } from '@deepseek-ai/dsh-jobs'
 import type {
   Session, SessionId,
@@ -39,7 +39,7 @@ export class SessionControlController {
       if (jobs.length > 0) this.broadcast({ type: 'jobs', sessionId: session.id, jobs })
     })
     ctx.effect(() => () => {
-      for (const stream of this.streams) stream.end()
+      for (const stream of this.streams) stream.finish()
       this.streams.clear()
     }, 'session-controller.control')
   }
@@ -58,7 +58,7 @@ export class SessionControlController {
       yield* queue.iterate(signal)
     } finally {
       this.streams.delete(queue)
-      queue.end()
+      queue.finish()
     }
   }
 
@@ -114,44 +114,11 @@ export class SessionControlController {
   }
 }
 
-class ControlQueue {
-  private readonly buffer = new Deque<SessionControlFrame>()
-  private wake: (() => void) | undefined
-  private done = false
-
-  push(frame: SessionControlFrame): void {
-    if (this.done) return
-    this.buffer.pushBack(frame)
-    const wake = this.wake
-    this.wake = undefined
-    wake?.()
-  }
-
-  end(): void {
-    if (this.done) return
-    this.done = true
-    const wake = this.wake
-    this.wake = undefined
-    wake?.()
-  }
-
-  async *iterate(signal: AbortSignal): AsyncIterable<SessionControlFrame> {
-    const onAbort = (): void => { this.end() }
-    signal.addEventListener('abort', onAbort, { once: true })
-    try {
-      while (!this.done && !signal.aborted) {
-        const frame = this.buffer.popFront()
-        if (frame !== undefined) {
-          yield frame
-          continue
-        }
-        await new Promise<void>((resolve) => { this.wake = resolve })
-      }
-      while (this.buffer.size > 0 && !signal.aborted) yield this.buffer.popFront() as SessionControlFrame
-    } finally {
-      signal.removeEventListener('abort', onAbort)
-      this.end()
-    }
+class ControlQueue extends FrameQueue<SessionControlFrame> {
+  constructor() {
+    // A Session control stream is torn down while the client is still attached,
+    // so frames committed before the close are delivered rather than dropped.
+    super('drain')
   }
 }
 

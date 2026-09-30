@@ -392,7 +392,7 @@ describe('dsh-tool-room', () => {
     expect((view.transcript as unknown[]).length).toBeLessThanOrEqual(2)
   })
 
-  it('refuses every room tool for a provider-owned subagent', async () => {
+  it('does not expose room tools to a provider-owned subagent', async () => {
     const { ctx, lead } = await setup(Array.from({ length: 4 }, () => textResponse('ack')))
     const run = await ctx.subagents.start('spawn', {
       parent: lead,
@@ -402,11 +402,9 @@ describe('dsh-tool-room', () => {
     await run.result
     const child = run.localAgent!
     expect(ctx.agentTeams.tryMembership(child)).toBeUndefined()
-    // Scoped installation reaches the child before its descriptor is recorded,
-    // so the authority check inside the operation is what refuses it.
     const refused = await execute(ctx, child, 'room_view', {})
     expect(refused.isError).toBe(true)
-    expect(text(refused)).toContain('is not a member of an active Agent Team')
+    expect(text(refused)).toContain('unknown tool "room_view"')
   })
 
 

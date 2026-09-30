@@ -89,8 +89,45 @@ declare module '@deepseek-ai/dsh-session-projection/types' {
   interface SessionProjectionStateMap {
     tokenUsage: TokenUsageState
     contextPressure: ContextPressureState
+    usageByRoute: UsageByRouteState
   }
 }
+
+/** The route key usage samples attribute to: `provider/model`.
+ * @param config - provider and model identifying the route.
+ * @returns the `provider/model` route key.
+ */
+export const routeKeyOf = (config: { provider: string; model: string }): string =>
+  `${config.provider}/${config.model}`
+
+/** Route bucket a settled attempt falls into when no `request/header` named one. */
+export const UNATTRIBUTED_ROUTE = 'unattributed'
+
+/** Per-route durable usage folded from logged requests and settlements. */
+export interface UsageByRouteState {
+  /** Route of the newest `request/header`; null before the first header. */
+  route: string | null
+  /** Token buckets per {@link routeKeyOf} route, summed over settled attempts. */
+  routes: Record<string, TokenUsageProjection>
+  /** Newest settled attempt's slot; a same-step resample replaces it. */
+  last: {
+    turn: number
+    step: number
+    route: string
+    buckets: TokenUsageProjection
+  } | null
+}
+
+const usageByRouteStateSchema: z.ZodType<UsageByRouteState> = z.object({
+  route: z.string().nullable(),
+  routes: z.record(z.string(), projectionSchema),
+  last: z.object({
+    turn: z.number().int().nonnegative(),
+    step: z.number().int().nonnegative(),
+    route: z.string(),
+    buckets: projectionSchema,
+  }).nullable(),
+}).strict()
 
 /** The context-pressure state schema and source of its inferred type. */
 const contextPressureStateSchema = z.object({
@@ -107,6 +144,41 @@ const contextPressureStateSchema = z.object({
 
 type ContextPressureState = z.infer<typeof contextPressureStateSchema>
 
+/** One settled attempt's slot and the usage sample it contributed. */
+interface SettledUsageSlot {
+  readonly turn: number
+  readonly step: number
+  readonly usage: TokenUsage
+}
+
+/**
+ * Fold the per-event policy both usage projections share. `llm/retry-started`
+ * closes the slot it names so the retried attempt counts again instead of
+ * resampling the attempt that never settled. Only a message-producing event
+ * carrying a usage sample reaches `settle`, which owns the projection-specific
+ * bookkeeping; every other event leaves the state unchanged.
+ * @param state - projection state whose `last` records the newest settled slot.
+ * @param event - committed session event to fold.
+ * @param settle - projection-specific settlement of one accepted sample.
+ * @returns the next state, or the unchanged state when this event settles nothing.
+ */
+function foldSettledUsage<S extends { last: { turn: number; step: number } | null }>(
+  state: S,
+  event: SessionEvent,
+  settle: (state: S, slot: SettledUsageSlot) => S,
+): S {
+  if (event.type === 'llm/retry-started') {
+    const last = state.last
+    return last?.turn === event.data.turn && last.step === event.data.step
+      ? { ...state, last: null }
+      : state
+  }
+  if (event.type !== 'assistant/message' && event.type !== 'assistant/attempt') return state
+  const sample = usageOf(event)
+  if (sample === undefined) return state
+  return settle(state, { turn: event.data.turn, step: event.data.step, usage: sample })
+}
+
 /**
  * Token-meter's session projection unit.
  *
@@ -119,33 +191,20 @@ export const tokenUsageProjectionDefinition = {
   stateVersion: 2,
   stateSchema: tokenUsageStateSchema,
   init: () => ({ totals: zeroBuckets(), last: null }),
-  apply: (state, event) => {
-    if (event.type === 'llm/retry-started') {
-      return state.last?.turn === event.data.turn && state.last.step === event.data.step
-        ? { ...state, last: null }
-        : state
-    }
-    if (event.type !== 'assistant/message' && event.type !== 'assistant/attempt') {
-      return state
-    }
-    const sample = usageOf(event)
-    if (sample === undefined) return state
-    const { turn, step } = event.data
-    const usage: TokenUsage = sample
-
-    const buckets = bucketsFrom(usage)
-    const previous = state.last !== null
-      && state.last.turn === turn
-      && state.last.step === step
-      ? state.last.buckets
+  apply: (state, event) => foldSettledUsage(state, event, (current, slot) => {
+    const buckets = bucketsFrom(slot.usage)
+    const previous = current.last !== null
+      && current.last.turn === slot.turn
+      && current.last.step === slot.step
+      ? current.last.buckets
       : undefined
-    if (previous !== undefined && bucketsEqual(previous, buckets)) return state
+    if (previous !== undefined && bucketsEqual(previous, buckets)) return current
 
     return {
-      totals: addReplacing(state.totals, previous, buckets),
-      last: { turn, step, buckets },
+      totals: addReplacing(current.totals, previous, buckets),
+      last: { turn: slot.turn, step: slot.step, buckets },
     }
-  },
+  }),
   wire: { viewSchema: projectionSchema, view: state => state.totals },
 } satisfies ProjectionDefinition<'tokenUsage', TokenUsageState>
 
@@ -216,3 +275,49 @@ export const contextPressureProjectionDefinition = {
     }),
   },
 } satisfies ProjectionDefinition<'contextPressure', ContextPressureState>
+
+/**
+ * Token-meter's per-route usage unit.
+ *
+ * The newest `request/header` names the route its next settlement bills, so
+ * every settled attempt's usage sample lands in that route's buckets. A
+ * same-step resample moves its own previous contribution — possibly between
+ * routes, when a retry changed the route — so only the replacement counts. A
+ * sample arriving before any header falls into {@link UNATTRIBUTED_ROUTE}
+ * rather than disappearing.
+ */
+export const usageByRouteProjectionDefinition = {
+  key: 'usageByRoute',
+  stateVersion: 1,
+  stateSchema: usageByRouteStateSchema,
+  init: (): UsageByRouteState => ({ route: null, routes: {}, last: null }),
+  apply: (state, event) => {
+    if (event.type === 'request/header') {
+      const route = routeKeyOf(event.data.header.config)
+      return route === state.route ? state : { ...state, route }
+    }
+    return foldSettledUsage(state, event, (current, slot) => {
+      const route = current.route ?? UNATTRIBUTED_ROUTE
+      const buckets = bucketsFrom(slot.usage)
+      const previous = current.last !== null
+        && current.last.turn === slot.turn
+        && current.last.step === slot.step
+        ? current.last
+        : undefined
+      if (previous !== undefined && previous.route === route && bucketsEqual(previous.buckets, buckets)) {
+        return current
+      }
+      const routes = { ...current.routes }
+      if (previous !== undefined) {
+        // oxlint-disable-next-line typescript/no-non-null-assertion -- The recorded slot created this route entry.
+        routes[previous.route] = addReplacing(routes[previous.route]!, previous.buckets, zeroBuckets())
+      }
+      routes[route] = addReplacing(routes[route] ?? zeroBuckets(), undefined, buckets)
+      return { ...current, routes, last: { turn: slot.turn, step: slot.step, route, buckets } }
+    })
+  },
+  wire: {
+    viewSchema: z.record(z.string(), projectionSchema),
+    view: (state: UsageByRouteState): Record<string, TokenUsageProjection> => state.routes,
+  },
+} satisfies ProjectionDefinition<'usageByRoute', UsageByRouteState>

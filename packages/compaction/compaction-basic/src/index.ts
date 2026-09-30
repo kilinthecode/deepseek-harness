@@ -116,7 +116,6 @@ export class BasicCompactionEngine extends CompactionEngine {
   /** Resolved and validated compaction configuration. */
   readonly config: ResolvedConfig
 
-  private readonly warnedPressureConfigTargets = new Set<string>()
   private readonly overflowRetries = new WeakMap<Agent, number>()
   private readonly overflowAgents = new WeakMap<Session, Agent>()
 
@@ -150,12 +149,12 @@ export class BasicCompactionEngine extends CompactionEngine {
           const result = await this.compactIfNeeded(agent, 'pressure', signal)
           if (result !== null) logResult(result, 'step pressure')
         } catch (error: unknown) {
-          if (error instanceof TargetPressureConfigError) {
-            if (this.warnedPressureConfigTargets.has(error.targetKey)) return next()
-            this.warnedPressureConfigTargets.add(error.targetKey)
-          }
-          const message = error instanceof Error ? error.message : String(error)
-          ctx.logger.warn(`step compaction failed: ${message}; continuing the turn`)
+          // A pressure configuration failure leaves the target uncompacted for
+          // as long as it lasts, so every occurrence surfaces at error level;
+          // warning once left a broken gate silent after the first step.
+          const message = `step compaction failed: ${error instanceof Error ? error.message : String(error)}; continuing the turn`
+          if (error instanceof TargetPressureConfigError) ctx.logger.error(message)
+          else ctx.logger.warn(message)
         }
       }
       return next()
@@ -292,7 +291,6 @@ export class BasicCompactionEngine extends CompactionEngine {
     const targetKey = `${target.provider}/${target.model}`
     if (context === undefined) {
       throw new TargetPressureConfigError(
-        targetKey,
         `compaction-basic: no context capacity for ${targetKey}; `
         + 'configure contextWindow on that adapter model',
       )

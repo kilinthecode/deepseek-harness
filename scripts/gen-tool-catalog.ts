@@ -134,6 +134,47 @@ function registerCatalogSubagentProvider(ctx: Context, name: string): void {
 const catalogChildScopes = new WeakMap<Context, Agent>()
 
 /**
+ * Mount one lead-scoped Team or Room tool package for schema harvest.
+ * @param ctx - catalog context owning the provider and child scope.
+ * @param sessionId - id used for the synthetic lead Session and Agent.
+ * @param toolPlugin - scoped tool package to mount.
+ * @param roomView - optional Room-only service result.
+ * @returns when the scoped package registers its tools.
+ */
+async function mountCatalogTeamLead(
+  ctx: Context,
+  sessionId: string,
+  toolPlugin: typeof ToolTeam | typeof ToolRoom,
+  roomView?: () => unknown,
+): Promise<void> {
+  const session = ctx.sessions.create(SessionId(sessionId))
+  let agent!: Agent
+  const membership = {
+    get root() { return agent },
+    id: session.id,
+    role: 'lead' as const,
+    name: 'lead',
+  }
+  ctx.provide('agentTeams', {
+    tryMembership: (candidate: Agent) => candidate === agent ? membership : undefined,
+    membership: () => membership,
+    ...(roomView === undefined ? {} : { roomView }),
+  } as unknown as TeamService)
+  await ctx.plugin(Object.assign(async (inner: Context) => {
+    agent = {
+      id: session.id,
+      session,
+      options: {},
+      status: 'idle',
+    } as unknown as Agent
+    Object.assign(agent, { ctx: createScope(inner, agent).ctx })
+    await inner.agents.register(agent)
+  }, { inject: ['tools', 'systemPrompt', 'agents', 'agentTeams'] }))
+  await ctx.plugin(toolPlugin)
+  catalogChildScopes.set(ctx, agent)
+}
+
+/**
  * Install one scope-local tool package into an agent-like child scope for
  * schema harvest, without starting a model, Agent loop, or persistence backend.
  * @param ctx - catalog context owning the scope.
@@ -584,30 +625,7 @@ const TOOL_PACKAGES: ToolPackage[] = [
     async mount(ctx) {
       await ctx.plugin(AgentRegistry)
       await ctx.plugin(SessionStore)
-      const session = ctx.sessions.create(SessionId('tool-catalog-team-lead'))
-      let agent!: Agent
-      const membership = {
-        get root() { return agent },
-        id: session.id,
-        role: 'lead' as const,
-        name: 'lead',
-      }
-      ctx.provide('agentTeams', {
-        tryMembership: (candidate: Agent) => candidate === agent ? membership : undefined,
-        membership: () => membership,
-      } as unknown as TeamService)
-      await ctx.plugin(Object.assign(async (inner: Context) => {
-        agent = {
-          id: session.id,
-          session,
-          options: {},
-          status: 'idle',
-        } as unknown as Agent
-        Object.assign(agent, { ctx: createScope(inner, agent).ctx })
-        await inner.agents.register(agent)
-      }, { inject: ['tools', 'systemPrompt', 'agents', 'agentTeams'] }))
-      await ctx.plugin(ToolTeam)
-      catalogChildScopes.set(ctx, agent)
+      await mountCatalogTeamLead(ctx, 'tool-catalog-team-lead', ToolTeam)
     },
     scope: ctx => catalogChildScopes.get(ctx) as Agent,
     note:
@@ -622,31 +640,12 @@ const TOOL_PACKAGES: ToolPackage[] = [
     async mount(ctx) {
       await ctx.plugin(AgentRegistry)
       await ctx.plugin(SessionStore)
-      const session = ctx.sessions.create(SessionId('tool-catalog-room-lead'))
-      let agent!: Agent
-      const membership = {
-        get root() { return agent },
-        id: session.id,
-        role: 'lead' as const,
-        name: 'lead',
-      }
-      ctx.provide('agentTeams', {
-        tryMembership: (candidate: Agent) => candidate === agent ? membership : undefined,
-        membership: () => membership,
-        roomView: () => ({ participants: [], chair: 'lead', messages: [], proposals: [] }),
-      } as unknown as TeamService)
-      await ctx.plugin(Object.assign(async (inner: Context) => {
-        agent = {
-          id: session.id,
-          session,
-          options: {},
-          status: 'idle',
-        } as unknown as Agent
-        Object.assign(agent, { ctx: createScope(inner, agent).ctx })
-        await inner.agents.register(agent)
-      }, { inject: ['tools', 'systemPrompt', 'agents', 'agentTeams'] }))
-      await ctx.plugin(ToolRoom)
-      catalogChildScopes.set(ctx, agent)
+      await mountCatalogTeamLead(
+        ctx,
+        'tool-catalog-room-lead',
+        ToolRoom,
+        () => ({ participants: [], chair: 'lead', messages: [], proposals: [] }),
+      )
     },
     scope: ctx => catalogChildScopes.get(ctx) as Agent,
     note:

@@ -14,11 +14,11 @@ export class TeamJournal {
 
   /**
    * @param ctx - Team service context with the injected Session service.
-   * @param onCommit - synchronous notification after the Team event flush succeeds.
+   * @param onCommit - synchronous notification after the Team event flush succeeds, with its type.
    */
   constructor(
     private readonly ctx: Context,
-    private readonly onCommit: (root: Agent) => void,
+    private readonly onCommit: (root: Agent, type: TeamEventType) => void,
   ) {}
 
   /**
@@ -68,6 +68,6 @@ export class TeamJournal {
     const append = root.session.append.bind(root.session) as unknown as AppendTeamEvent
     append(type, data)
     await this.ctx.sessions.flush(root.session)
-    this.onCommit(root)
+    this.onCommit(root, type)
   }
 }

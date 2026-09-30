@@ -144,22 +144,17 @@ export class WorkspaceRegistry extends Service {
    * non-directory path rejects. Repeated calls for the same canonical path
    * return the existing entity without changing its title.
    * A newly created workspace is prepended to the durable registry order.
-   * Different canonical paths may share a display title.
+   * A new record is titled from the canonical path's base name, so different
+   * canonical paths may share a display title.
    * @param path - Existing directory to own, in a fully qualified path spelling.
-   * @param title - Display title used only when a new record is created.
    * @returns the existing or newly durable workspace.
    */
-  // TODO: `title` lost its last production caller when the gateway's
-  // create-by-name branch was deleted
-  // (.agents/notes/archived/simplification/2026-07-31-one-route-to-add-a-workspace.md);
-  // drop the parameter with its @param clause and the `create(path, title?)`
-  // lines in this package's README pair.
-  async create(path: string, title?: string): Promise<Workspace> {
+  async create(path: string): Promise<Workspace> {
     const canonical = await realpathNormalize(path)
     if (!(await stat(canonical)).isDirectory()) {
       throw new Error(`cannot create a workspace at '${canonical}': path is not a directory`)
     }
-    return await this.enqueueOperation(() => this.createCanonical(canonical, title))
+    return await this.enqueueOperation(() => this.createCanonical(canonical))
   }
 
   /**
@@ -304,12 +299,12 @@ export class WorkspaceRegistry extends Service {
     return undefined
   }
 
-  private async createCanonical(canonical: string, title?: string): Promise<WorkspaceEntity> {
+  private async createCanonical(canonical: string): Promise<WorkspaceEntity> {
     for (const entity of this.entities.values()) {
       if (entity.path === canonical) return entity
     }
 
-    const workspaceName = title ?? defaultWorkspaceTitle(canonical)
+    const workspaceName = defaultWorkspaceTitle(canonical)
     const table = this.requireTable()
     const state = this.requireState()
     const id = WorkspaceId(randomUUID())

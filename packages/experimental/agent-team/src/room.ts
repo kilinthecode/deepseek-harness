@@ -59,9 +59,9 @@ declare module '@deepseek-ai/cordis' {
      */
     'room/stream'(payload: RoomStreamFrame): void
     /**
-     * One room committed a change to its own log: a transcript entry, a
-     * decision, a revision, a review, or a deadline record. A live reader
-     * re-reads the room after it, and the durable record is the appended event.
+     * A room's transcript, roster, or decision board changed in its Lead log.
+     * A live reader re-reads the room after the commit, and the durable record
+     * is the appended event.
      * @param payload.teamId - Team identity of the room that changed.
      * @mode emit
      */
@@ -89,6 +89,12 @@ export interface RoomConfig {
 interface RoomParticipant {
   readonly id: SessionId
   readonly name: string
+  /**
+   * Whether the durable mailbox can address this participant. A member still
+   * provisioning has no committed Session, so it can be neither asked for a
+   * standing nor counted toward quorum; the Lead is always addressable.
+   */
+  readonly reachable: boolean
   /** Route the member record resolved for this participant, when it recorded one. */
   readonly agentModel?: string
 }
@@ -128,6 +134,11 @@ export class TeamRoom {
    */
   observeSessionEvent(session: Session, event: SessionEvent): void {
     if (!this.config.enabled) return
+    const agent = this.ctx.agents.get(session.header.id)
+    /* v8 ignore next -- the loop appends an assistant message only while its Agent is registered. */
+    if (agent === undefined) return
+    const membership = this.roster.tryMembership(agent)
+    if (membership === undefined) return
     // A durable event is evidence that its author is still working. The team log
     // is written to the Lead's Session whatever the actor, so room records and
     // peer delivery prove nothing about the Session that committed them.
@@ -136,11 +147,6 @@ export class TeamRoom {
     if (event.type !== 'assistant/message') return
     const content = messageText(event.data.message.content)
     if (content.length === 0) return
-    const agent = this.ctx.agents.get(session.header.id)
-    /* v8 ignore next -- the loop appends an assistant message only while its Agent is registered. */
-    if (agent === undefined) return
-    const membership = this.roster.tryMembership(agent)
-    if (membership === undefined) return
     const message: RoomMessageSnapshot = {
       // The author name and its own event sequence identify the utterance in both
       // a live run and a replay, where the Session identity differs.
@@ -216,6 +222,8 @@ export class TeamRoom {
         statement,
         phase: 'open',
       }
+      // Resolve the timer before committing, so a missing timer leaves no open proposal.
+      this.requireTimer()
       await this.journal.appendAndFlush(membership.root, 'room/proposal', {
         version: 1,
         teamId: TeamId(membership.root.id),
@@ -224,11 +232,13 @@ export class TeamRoom {
       return next
     })
     this.published(membership.root.id)
-    // Resolve the timer before asking anyone, so a composition that cannot serve
-    // a deadline fails before the room delivers its requests.
-    this.requireTimer()
-    await this.requestReviews(caller, proposal)
-    this.armReview(membership.root, proposal)
+    try {
+      await this.requestReviews(caller, proposal)
+    } finally {
+      // A refused delivery still leaves a committed open decision, so the
+      // deadline is armed either way; otherwise nothing would ever settle it.
+      this.armReview(membership.root, proposal)
+    }
     return this.proposalView(membership.root.id, proposal.id)
   }
 
@@ -279,7 +289,8 @@ export class TeamRoom {
     this.published(membership.root.id)
     if (settled !== undefined) {
       this.disarmReview(request.proposalId)
-      await this.announceOutcome(membership.root.id, caller, settled.proposal, settled.tally)
+      // The standing is already durable, so the notice is best effort.
+      await this.notify(() => this.announceOutcome(membership.root.id, caller, settled.proposal, settled.tally))
     }
     else {
       const current = this.journal.state(membership.root).roomProposals.find(c => c.id === request.proposalId)
@@ -313,13 +324,29 @@ export class TeamRoom {
     // Delivery takes its own root transaction to checkpoint the receipt, so it
     // must run after this one commits rather than nested inside it.
     if (membership.role !== 'lead') {
-      await this.mailbox.send(caller, {
+      await this.notify(() => this.mailbox.send(caller, {
         target: 'lead',
         content: [{ type: 'text', text: `Room decision ${proposal.id} needs a human decision: ${reason}` }],
         signal: request.signal,
-      })
+      }))
     }
     return this.proposalView(membership.root.id, request.proposalId)
+  }
+
+  /**
+   * Run one notice that follows an already committed room change. A refused
+   * delivery must not report the committed change as failed, which would make
+   * the caller repeat an operation the log has already recorded.
+   * @param notice - delivery to attempt; only its outcome is observed here.
+   */
+  private async notify(notice: () => Promise<unknown>): Promise<void> {
+    try {
+      await notice()
+    } catch (error: unknown) {
+      /* v8 ignore next -- a notice refused because the room is disposing is the only quiet path. */
+      if (this.lifecycle.disposed) return
+      this.ctx.logger.warn(`room notice failed: ${errorMessage(error)}`)
+    }
   }
 
   /**
@@ -376,6 +403,15 @@ export class TeamRoom {
    */
   noteActivity(id: SessionId): void {
     this.activity.set(id, Date.now())
+  }
+
+  /**
+   * Notify live readers after a committed membership change.
+   * @param root - exact Lead whose durable roster changed.
+   */
+  rosterChanged(root: Agent): void {
+    if (!this.config.enabled) return
+    this.published(root.id)
   }
 
   /** Notify live readers that this room committed a change. */
@@ -589,12 +625,13 @@ export class TeamRoom {
    * the roster uses to resolve a live member's Team identity.
    */
   private participants(rootId: SessionId, state: TeamState): RoomParticipant[] {
-    const result: RoomParticipant[] = [{ id: rootId, name: 'lead' }]
+    const result: RoomParticipant[] = [{ id: rootId, name: 'lead', reachable: true }]
     for (const member of state.members) {
       if (member.phase !== 'failed') {
         result.push({
           id: member.id,
           name: member.name,
+          reachable: member.phase === 'active',
           ...member.agentModel === undefined ? {} : { agentModel: member.agentModel },
         })
       }
@@ -617,10 +654,14 @@ export class TeamRoom {
     return timer
   }
 
-  /** Active reviewers for one decision, excluding its proposer. */
+  /**
+   * Reviewers one decision may count on: every addressable participant other
+   * than the proposer. A member that is still provisioning is a participant the
+   * room shows but cannot ask, so it never holds a decision open.
+   */
   private eligibleReviewers(state: TeamState, proposerId: SessionId): RoomParticipant[] {
     return this.participants(brandString<SessionId>(state.id), state)
-      .filter(candidate => candidate.id !== proposerId)
+      .filter(candidate => candidate.reachable && candidate.id !== proposerId)
   }
 
   /** Resolve one durable participant name for transcript attribution. */

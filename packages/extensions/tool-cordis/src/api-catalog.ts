@@ -462,7 +462,7 @@ export const SERVICE_API: readonly ServiceApiEntry[] = [
         signature: '@Remote({ mode: \'stream\' }) async *roomStream(agent: Agent, signal: AbortSignal): AsyncIterable<RoomFollowFrame>',
         description: 'Follow one room through the generated Remote API.',
         parameters: [{ name: 'agent', description: 'exact live Team member used as the authority credential.' }, { name: 'signal', description: 'cancellation owned by the Remote stream carrier.' }],
-        returns: 'a complete view first, then a view after every committed room change and a frame for every text chunk a participant streams.',
+        returns: 'a complete view first, then a view after every committed transcript, roster, or decision change and a frame for every text chunk a participant streams.',
       },
       {
         signature: '@Remote(\'roomPrompt\') remoteRoomPrompt(agent: Agent, request: PanelRoomPromptRequest): Promise<RoomPromptResult>',
@@ -3832,8 +3832,8 @@ export const EVENT_API: readonly EventApiEntry[] = [
     name: 'room/updated',
     mode: 'emit',
     signature: '\'room/updated\'(payload: { readonly teamId: TeamId }): void',
-    summary: 'One room committed a change to its own log: a transcript entry, a decision, a revision, a review, or a deadline record.',
-    description: 'One room committed a change to its own log: a transcript entry, a decision, a revision, a review, or a deadline record. A live reader re-reads the room after it, and the durable record is the appended event.',
+    summary: 'A room\'s transcript, roster, or decision board changed in its Lead log.',
+    description: 'A room\'s transcript, roster, or decision board changed in its Lead log. A live reader re-reads the room after the commit, and the durable record is the appended event.',
     parameters: [{ name: 'payload', description: '.teamId - Team identity of the room that changed.' }],
   },
   {

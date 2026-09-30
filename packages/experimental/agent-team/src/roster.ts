@@ -119,10 +119,10 @@ export class TeamRoster {
           if (member?.phase === 'active' || member?.phase === 'provisioning') {
             return { root, id: TeamId(root.id), role: 'teammate', name: member.name }
           }
-          // A direct child outside the durable roster is not a teammate. Ordinary
-          // host forks are independent roots; subagent descriptors distinguish
-          // provider-owned workers that must not receive a nested Team identity.
-          if (this.subagentDescriptor(agent)) return undefined
+          // A direct child outside the durable roster is not a teammate.
+          // Runtime ownership excludes provider children before they append a
+          // descriptor; ordinary host forks remain independent roots.
+          if (this.ctx.agents.isOwnedBy(agent.id, root) || this.subagentDescriptor(agent)) return undefined
           return { root: agent, id: TeamId(agent.id), role: 'lead', name: 'lead' }
         }
       }

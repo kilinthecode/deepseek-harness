@@ -3,6 +3,7 @@
 import { Context } from '@deepseek-ai/cordis'
 import z from '@deepseek-ai/schemastery'
 import type { Agent } from '@deepseek-ai/dsh-agent'
+import { FrameQueue } from '@deepseek-ai/dsh-deque'
 import type {} from '@deepseek-ai/dsh-session-persistence'
 import { Remote, TypertRemoteService } from '@deepseek-ai/dsh-typert-protocol'
 import { TeamActivity } from './activity.ts'
@@ -156,7 +157,11 @@ export class TeamService extends TypertRemoteService {
 
     this.activity = new TeamActivity()
     this.lifecycle = new TeamRuntimeLifecycle(this.config.disposalTimeoutMs)
-    this.journal = new TeamJournal(ctx, (root) => { this.activity.notify(TeamId(root.id)) })
+    const room: { current: TeamRoom | undefined } = { current: undefined }
+    this.journal = new TeamJournal(ctx, (root, type) => {
+      this.activity.notify(TeamId(root.id))
+      if (type === 'team/member') room.current?.rosterChanged(root)
+    })
     this.roster = new TeamRoster(ctx, this.journal, this.lifecycle, this.config.maxMembers)
     this.mailbox = new TeamMailbox(
       ctx,
@@ -175,15 +180,16 @@ export class TeamService extends TypertRemoteService {
       reviewGraceMs: this.config.roomReviewGraceMs,
       reviewReminders: this.config.roomReviewReminders,
     })
+    room.current = this.room
 
     ctx.on('session/event', (session, event) => { this.mailbox.observeSessionEvent(session, event) })
     ctx.on('session/event', (session, event) => { this.room.observeSessionEvent(session, event) })
     ctx.on('agent/assistant-stream', ({ agent, frame }) => {
       if (!this.config.roomEnabled) return
-      // A streaming participant is working even before it commits a message.
-      this.room.noteActivity(agent.id)
       const membership = this.roster.tryMembership(agent)
       if (membership === undefined) return
+      // A streaming participant is working even before it commits a message.
+      this.room.noteActivity(agent.id)
       ctx.emit('room/stream', {
         teamId: membership.id,
         participantId: agent.id,
@@ -285,7 +291,15 @@ export class TeamService extends TypertRemoteService {
   async updateTask(caller: Agent, request: UpdateTeamTaskRequest): Promise<TeamTaskView> {
     const membership = this.roster.membership(caller)
     const view = await this.tasks.update(caller, membership, request)
-    await this.announceTaskOutcome(caller, membership, request, view)
+    // The transition is already durable, so a refused notice must not report the
+    // committed mutation as failed: the model would retry it against the
+    // revision it no longer carries. Containment mirrors the room's transcript
+    // append, which fails the same way during disposal or a full mailbox.
+    await this.announceTaskOutcome(caller, membership, request, view).catch((error: unknown) => {
+      /* v8 ignore next -- a notice refused because the service is disposing is the only quiet path. */
+      if (this.lifecycle.disposed) return
+      this.ctx.logger.warn(`team task notice failed: ${errorMessage(error)}`)
+    })
     return view
   }
 
@@ -453,8 +467,8 @@ export class TeamService extends TypertRemoteService {
    * Follow one room through the generated Remote API.
    * @param agent - exact live Team member used as the authority credential.
    * @param signal - cancellation owned by the Remote stream carrier.
-   * @returns a complete view first, then a view after every committed room
-   *   change and a frame for every text chunk a participant streams.
+   * @returns a complete view first, then a view after every committed transcript,
+   *   roster, or decision change and a frame for every text chunk a participant streams.
    */
   @Remote({ mode: 'stream' })
   async *roomStream(agent: Agent, signal: AbortSignal): AsyncIterable<RoomFollowFrame> {
@@ -479,7 +493,7 @@ export class TeamService extends TypertRemoteService {
       offUpdated()
       offFrame()
       this.roomReaders.delete(reader)
-      reader.end()
+      reader.finish()
     }
   }
 
@@ -586,7 +600,7 @@ export class TeamService extends TypertRemoteService {
     this.lifecycle.close()
     this.activity.close()
     this.room.dispose()
-    for (const reader of this.roomReaders) reader.end()
+    for (const reader of this.roomReaders) reader.finish()
     this.roomReaders.clear()
 
     const failures: unknown[] = []
@@ -608,52 +622,10 @@ export class TeamService extends TypertRemoteService {
  * Remote stream. Frames queue until the consumer asks for them, and the queue is
  * finished by its own abort, by disposal, or by the consumer leaving.
  */
-class RoomFollowQueue {
-  private readonly buffer: RoomFollowFrame[] = []
-  private wake: (() => void) | undefined
-  private done = false
-
-  /** Enqueue one frame for the open reader. */
-  push(frame: RoomFollowFrame): void {
-    /* v8 ignore next -- disposal ends the reader before its listeners stop, so a
-       commit racing disposal is the only frame a finished queue can receive. */
-    if (this.done) return
-    this.buffer.push(frame)
-    const wake = this.wake
-    this.wake = undefined
-    wake?.()
-  }
-
-  /** Finish the reader: no further frame is delivered. */
-  end(): void {
-    if (this.done) return
-    this.done = true
-    const wake = this.wake
-    this.wake = undefined
-    wake?.()
-  }
-
-  /**
-   * Yield buffered frames as they arrive until the reader finishes.
-   * @param signal - caller cancellation for this stream.
-   * @returns every frame committed while the reader stayed open.
-   */
-  async *iterate(signal: AbortSignal): AsyncIterable<RoomFollowFrame> {
-    const onAbort = (): void => { this.end() }
-    signal.addEventListener('abort', onAbort, { once: true })
-    try {
-      while (!this.done && !signal.aborted) {
-        const frame = this.buffer.shift()
-        if (frame !== undefined) {
-          yield frame
-          continue
-        }
-        await new Promise<void>((resolve) => { this.wake = resolve })
-      }
-    } finally {
-      signal.removeEventListener('abort', onAbort)
-      this.end()
-    }
+class RoomFollowQueue extends FrameQueue<RoomFollowFrame> {
+  constructor() {
+    // Disposal and abort both end a room reader without delivering the backlog.
+    super('discard')
   }
 }
 

@@ -81,6 +81,8 @@ export {
   type DefineToolOptions,
 } from './schema.ts'
 
+export { applyAgentScopedTools, callingAgent, jsonOutput } from './authoring.ts'
+
 export {
   assertSupportedJsonSchema,
   assertObjectJsonSchema,
