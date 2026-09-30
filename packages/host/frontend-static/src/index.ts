@@ -12,8 +12,8 @@
  * @module @deepseek-ai/dsh-host-frontend-static
  */
 
-import type { ServerResponse } from 'node:http'
-import { readFile } from 'node:fs/promises'
+import type { IncomingMessage, ServerResponse } from 'node:http'
+import { readFile, stat } from 'node:fs/promises'
 import { dirname, extname, join, normalize, resolve, sep } from 'node:path'
 import type { Context } from '@deepseek-ai/cordis'
 import z from '@deepseek-ai/schemastery'
@@ -59,17 +59,55 @@ const STATIC_MISS_CODES: ReadonlySet<string | undefined> = new Set([
 ])
 
 /**
+ * Freshness contract for one non-index asset: a stored copy may be reused, but
+ * every reuse is revalidated. `no-cache` (not `no-store`) keeps the client
+ * re-checking validators while the dist may be rebuilt at any time.
+ */
+const ASSET_CACHE_CONTROL = 'no-cache'
+
+/** Weak validator over size and modification time — no content read. */
+function assetEtag(size: number, mtimeMs: number): string {
+  return `W/"${String(size)}-${String(Math.floor(mtimeMs))}"`
+}
+
+/**
+ * Whether the request already proves the current asset representation fresh.
+ * A present `If-None-Match` decides alone; `If-Modified-Since` is the fallback
+ * for a client that never saw an ETag. Entity tags compare weakly.
+ * @param headers - request headers carrying the conditional validators.
+ * @param etag - the asset's current weak validator.
+ * @param mtimeMs - modification time the `If-Modified-Since` date is compared against.
+ * @returns whether the response is a 304 rather than the bytes.
+ */
+function notModified(headers: IncomingMessage['headers'], etag: string, mtimeMs: number): boolean {
+  const ifNoneMatch = headers['if-none-match']
+  if (ifNoneMatch !== undefined) {
+    return ifNoneMatch.split(',').some((candidate) => {
+      const tag = candidate.trim()
+      return tag === '*' || tag.replace(/^W\//, '') === etag.replace(/^W\//, '')
+    })
+  }
+  const ifModifiedSince = headers['if-modified-since']
+  if (ifModifiedSince === undefined) return false
+  const since = Date.parse(ifModifiedSince)
+  // HTTP dates have second granularity, so compare whole seconds.
+  return !Number.isNaN(since) && Math.floor(mtimeMs / 1000) * 1000 <= since
+}
+
+/**
  * Serve one GET/HEAD static request from the dist root.
  * @param pathname - decoded URL pathname of the request.
  * @param res - the node:http response to write.
  * @param distRoot - absolute dist root directory (resolved by the caller).
  * @param distIndex - absolute path of index.html inside distRoot.
+ * @param headers - request headers, read only to revalidate a non-index asset.
  * @param authorizeIndex - authenticates an index response before its bytes are read.
  * @param renderIndex - produces the index.html body (structured injection
  * rendering) for the dist root and configured index path.
  */
 export async function serveStatic(
   pathname: string, res: ServerResponse, distRoot: string, distIndex: string,
+  headers: IncomingMessage['headers'],
   authorizeIndex: () => boolean,
   renderIndex: () => Promise<string>,
 ): Promise<void> {
@@ -82,27 +120,78 @@ export async function serveStatic(
     res.end()
     return
   }
-  let body: string | Buffer
-  let type: string
-  try {
-    if (target === distRoot || target === distIndex) {
-      if (!authorizeIndex()) return
-      body = await renderIndex()
-      type = HTML_MIME
-    } else {
-      body = await readFile(target)
-      type = MIME[extname(target)] ?? 'application/octet-stream'
+  // Non-index targets resolve metadata first, so a revalidating request is
+  // answered from size and mtime without the file being read at all.
+  if (target !== distRoot && target !== distIndex) {
+    let asset: AssetOutcome
+    try {
+      asset = await resolveAsset(target, headers)
+    } catch (error) {
+      // Only absent or non-file targets are 404; other filesystem failures
+      // reach the webserver's request-failure handling.
+      if (!isMissingPath(error)) throw error
+      asset = { kind: 'miss' }
     }
+    if (asset.kind === 'miss') res.writeHead(404)
+    else if (asset.kind === 'fresh') res.writeHead(304, asset.validators)
+    else res.writeHead(200, { 'content-type': asset.type, ...asset.validators })
+    res.end(asset.kind === 'body' ? asset.body : undefined)
+    return
+  }
+  // The index is rendered per request (fresh injection rows, base insertion),
+  // so it carries no validators and stays uncached.
+  let body: string
+  try {
+    if (!authorizeIndex()) return
+    body = await renderIndex()
   } catch (error) {
-    // Only absent or non-file targets are 404; other filesystem failures reach
-    // the webserver's request-failure handling.
-    if (!STATIC_MISS_CODES.has((error as NodeJS.ErrnoException).code)) throw error
+    if (!isMissingPath(error)) throw error
     res.writeHead(404)
     res.end()
     return
   }
-  res.writeHead(200, { 'content-type': type })
+  res.writeHead(200, { 'content-type': HTML_MIME })
   res.end(body)
+}
+
+/**
+ * One non-index dist outcome: the target's bytes, its revalidation-only 304, or
+ * the empty 404 an absent or non-file target keeps.
+ */
+type AssetOutcome =
+  | { kind: 'body'; validators: Record<string, string>; type: string; body: Buffer }
+  | { kind: 'fresh'; validators: Record<string, string> }
+  | { kind: 'miss' }
+
+/**
+ * Resolve one non-index target: metadata first, bytes only when the request's
+ * validators do not already prove the representation fresh.
+ * @param target - absolute path of the target inside the dist root.
+ * @param headers - request headers carrying the conditional validators.
+ * @returns the bytes to send, the 304 validators, or the empty-404 outcome.
+ */
+async function resolveAsset(target: string, headers: IncomingMessage['headers']): Promise<AssetOutcome> {
+  const info = await stat(target)
+  // A directory, socket, or device has no bytes to serve; it is the same empty
+  // 404 the old directory read produced through EISDIR.
+  if (!info.isFile()) return { kind: 'miss' }
+  const validators = {
+    etag: assetEtag(info.size, info.mtimeMs),
+    'last-modified': info.mtime.toUTCString(),
+    'cache-control': ASSET_CACHE_CONTROL,
+  }
+  if (notModified(headers, validators.etag, info.mtimeMs)) return { kind: 'fresh', validators }
+  return {
+    kind: 'body',
+    validators,
+    type: MIME[extname(target)] ?? 'application/octet-stream',
+    body: await readFile(target),
+  }
+}
+
+/** Whether a filesystem failure is the path being absent or non-file, not a real error. */
+function isMissingPath(error: unknown): boolean {
+  return STATIC_MISS_CODES.has((error as NodeJS.ErrnoException).code)
 }
 
 /**
@@ -133,6 +222,7 @@ export function apply(ctx: Context, config: Config): void {
       res,
       distRoot,
       distIndex,
+      req.headers,
       () => ctx.connection.authorizeIndex(req, res),
       renderIndex,
     )

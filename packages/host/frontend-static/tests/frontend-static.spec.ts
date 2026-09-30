@@ -6,11 +6,12 @@
  * GET/HEAD, and seat release on fiber disposal (HMR safety).
  */
 
+import * as fsPromises from 'node:fs/promises'
 import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { pathToFileURL } from 'node:url'
-import { afterEach, describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import { Context } from '@deepseek-ai/cordis'
 import Loader from '@deepseek-ai/cordis-plugin-loader'
 import Include from '@deepseek-ai/cordis-plugin-include'
@@ -18,6 +19,10 @@ import * as Connection from '@deepseek-ai/dsh-client-connection'
 import LocalCredentials from '@deepseek-ai/dsh-credentials-local'
 import HttpServer from '@deepseek-ai/dsh-host-webserver'
 import * as FrontendStatic from '../src/index.ts'
+
+// Spy (not replace): the composition still reads its fixture through the real
+// implementation, and the read count becomes observable.
+vi.mock('node:fs/promises', { spy: true })
 
 let root: string | undefined
 let context: Context | undefined
@@ -81,6 +86,11 @@ async function loadComposition(): Promise<Context> {
   })
   await context.loader.await()
   return context
+}
+
+/** How many times the fixture asset's bytes were read since the process started. */
+function assetReads(): number {
+  return vi.mocked(fsPromises.readFile).mock.calls.filter(([path]) => typeof path === 'string' && path.endsWith('app.js')).length
 }
 
 /** GET (by default) one path against the running server; returns status, content-type, and the body. */
@@ -215,5 +225,57 @@ describe('real Loader composition', () => {
     await frontendEntry!.fiber?.dispose()
     expect((await request(port, '/no/such/route')).status).toBe(404)
     expect(() => server.registerFallback(() => {})).not.toThrow()
+  })
+
+  it('revalidates a non-index asset from metadata alone, never re-reading it', { timeout: 60_000 }, async () => {
+    const loaded = await loadComposition()
+    const port = loaded.webServer.port
+    const assetPath = join(root!, 'dist', 'app.js')
+    const url = `http://127.0.0.1:${String(port)}/app.js`
+
+    const first = await fetch(url)
+    expect(first.status).toBe(200)
+    expect(await first.text()).toBe('export {}')
+    const etag = first.headers.get('etag')
+    expect(etag).toMatch(/^W\/"\d+-\d+"$/)
+    expect(first.headers.get('cache-control')).toBe('no-cache')
+    expect(Date.parse(first.headers.get('last-modified') ?? '')).toBeGreaterThan(0)
+
+    const readsBefore = assetReads()
+    const revalidated = await fetch(url, { headers: { 'if-none-match': etag! } })
+    expect(revalidated.status).toBe(304)
+    expect(await revalidated.text()).toBe('')
+    expect(revalidated.headers.get('etag')).toBe(etag)
+    expect(revalidated.headers.get('cache-control')).toBe('no-cache')
+    const head = await fetch(url, { method: 'HEAD', headers: { 'if-none-match': etag! } })
+    expect(head.status).toBe(304)
+    expect(await head.text()).toBe('')
+    const later = await fetch(url, {
+      headers: { 'if-modified-since': new Date(Date.now() + 60_000).toUTCString() },
+    })
+    expect(later.status).toBe(304)
+    // All three revalidations were answered from stat metadata alone.
+    expect(assetReads()).toBe(readsBefore)
+
+    // A rebuilt file invalidates the validator and its new bytes go out.
+    await writeFile(assetPath, 'export const rebuilt = true')
+    const stale = await fetch(url, { headers: { 'if-none-match': etag! } })
+    expect(stale.status).toBe(200)
+    expect(await stale.text()).toBe('export const rebuilt = true')
+    expect(stale.headers.get('etag')).not.toBe(etag)
+    expect(assetReads()).toBe(readsBefore + 1)
+
+    // The index is rendered per request, so it carries no validators.
+    const exchange = await fetch(loaded.connection.authenticatedUrl(`http://127.0.0.1:${String(port)}`), {
+      redirect: 'manual',
+    })
+    const setCookie = exchange.headers.get('set-cookie')
+    if (setCookie === null) throw new Error('authenticated frontend did not set a cookie')
+    const index = await fetch(`http://127.0.0.1:${String(port)}/`, {
+      headers: { cookie: setCookie.split(';', 1)[0]! },
+    })
+    expect(index.status).toBe(200)
+    expect(index.headers.get('etag')).toBeNull()
+    expect(index.headers.get('cache-control')).toBeNull()
   })
 })
