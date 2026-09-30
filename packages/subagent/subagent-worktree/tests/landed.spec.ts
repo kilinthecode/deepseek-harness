@@ -1,5 +1,5 @@
 import { spawnSync } from 'node:child_process'
-import { readFileSync, writeFileSync } from 'node:fs'
+import { existsSync, readFileSync, writeFileSync } from 'node:fs'
 import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -14,7 +14,7 @@ import type { WorktreeLayout } from '../src/paths.ts'
 import { requireRecordLocation, updateExistingRecordAt } from '../src/records.ts'
 import type { StoredWorktreeRecord } from '../src/records.ts'
 import type { WorktreeOwner } from '../src/types.ts'
-import { createWorktree, git, initFixtureRepo, removeFixture, setup } from './harness.ts'
+import { createWorktree, git, initFixtureRepo, removeFixture, replaceGitEntryWithFsmonitorRepo, setup } from './harness.ts'
 
 const cleanups: Array<() => Promise<unknown>> = []
 afterEach(async () => {
@@ -176,6 +176,21 @@ describe('recoverLandedMerge', () => {
     expect(recovery?.record).not.toHaveProperty('reviewingPid')
     expect(recovery?.verdict.commit).toBe(f.commit)
     expect(git(f.dir, 'rev-parse', 'HEAD').trim()).not.toBe(f.commit)
+  }, GIT_TEST_TIMEOUT_MS)
+
+  it('reads a worktree whose git entry the worker rewrote without running what its repository configures', async () => {
+    const f = await fixture()
+    const stale = await f.makeStale(f.commit)
+    const { layout } = await requireRecordLocation(f.root, f.record.id)
+    git(f.dir, 'merge', '--no-ff', '--no-edit', f.record.branch)
+    const marker = join(f.root, 'fsmonitor-ran')
+    await replaceGitEntryWithFsmonitorRepo(f.record.path, marker)
+
+    const recovery = await recoverLandedMerge(f.runner, layout, stale, signal, ignoreLog)
+
+    // The probes read the worktree's real HEAD and index, so it still reads as holding only the reviewed commit.
+    expect(recovery?.record).toMatchObject({ state: 'merged' })
+    expect(existsSync(marker)).toBe(false)
   }, GIT_TEST_TIMEOUT_MS)
 
   it('finds the merge commit that brought the reviewed commit in', async () => {

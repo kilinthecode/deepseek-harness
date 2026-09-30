@@ -24,6 +24,7 @@ import { isStaleReviewing, updateExistingRecordAt, withoutReviewingPid } from '.
 import type { StoredWorktreeRecord } from './records.ts'
 import type { WorktreeVerdict } from './types.ts'
 import { pathExists } from './fs-util.ts'
+import { worktreeGitDirOf } from './worktree-gitdir.ts'
 
 /** A stale `reviewing` record whose reviewed commit had already landed, now recorded `merged`. */
 export interface LandedRecovery {
@@ -68,8 +69,9 @@ const PROBE_NO_EXIT_CODE = 1
  */
 async function decisiveRun(
   git: GitRunner, args: readonly string[], probe: DecisiveProbe, cwd: string, id: string, signal: AbortSignal,
+  worktreeGitDir?: string,
 ): Promise<GitCommandResult> {
-  const result = await git.run(args, { cwd, signal })
+  const result = await git.run(args, { cwd, signal, worktreeGitDir })
   if (result.exitCode === null) {
     throw new Error(`subagent-worktree: could not check whether worktree ${id} already merged (git ${probe.what} was cancelled)`)
   }
@@ -91,8 +93,11 @@ async function decisiveRun(
  */
 async function worktreeHoldsOnly(git: GitRunner, record: StoredWorktreeRecord, reviewed: string, signal: AbortSignal): Promise<boolean> {
   if (!await pathExists(record.path)) return false
+  // The worktree is the worker's to write, so git is confined to its administrative directory from the shared git
+  // directory (see `confinedWorktreeArgs`) rather than reading what the worktree says.
+  const worktreeGitDir = await worktreeGitDirOf(git, record, signal)
   const head = await decisiveRun(
-    git, ['rev-parse', 'HEAD'], { what: 'rev-parse', answers: [PROBE_YES_EXIT_CODE] }, record.path, record.id, signal,
+    git, ['rev-parse', 'HEAD'], { what: 'rev-parse', answers: [PROBE_YES_EXIT_CODE] }, record.path, record.id, signal, worktreeGitDir,
   )
   if (head.stdout.trim() !== reviewed) return false
   const status = await decisiveRun(
@@ -102,6 +107,7 @@ async function worktreeHoldsOnly(git: GitRunner, record: StoredWorktreeRecord, r
     record.path,
     record.id,
     signal,
+    worktreeGitDir,
   )
   return status.stdout.trim() === ''
 }

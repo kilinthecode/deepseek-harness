@@ -33,6 +33,7 @@ import {
 import type { StoredWorktreeRecord } from './records.ts'
 import { callerRouteOf, runReviewer } from './review.ts'
 import { assertNoRunningWorkers } from './workers.ts'
+import { worktreeGitDirOf } from './worktree-gitdir.ts'
 import type {
   AcceptOutcome, AcceptWorktreeRequest, ResolveReviewerRequest, WorktreeId, WorktreeRecord, WorktreeRoute, WorktreeVerdict,
 } from './types.ts'
@@ -126,12 +127,15 @@ async function cleanupStaleReviewDirs(
  */
 async function commitWorktreeChanges(deps: AcceptDeps, record: StoredWorktreeRecord, id: WorktreeId, signal: AbortSignal): Promise<string> {
   assertNoRunningWorkers(deps.ctx.agents, record, id)
-  await deps.git.expect(['add', '-A'], 'git add', { cwd: record.path, signal })
+  // The worker's sandbox can write everything in its worktree, the `.git` entry and any hook path included, so git
+  // runs against the worktree's administrative directory from the shared git directory instead of what the worktree says.
+  const inWorktree = { cwd: record.path, signal, worktreeGitDir: await worktreeGitDirOf(deps.git, record, signal) }
+  await deps.git.expect(['add', '-A'], 'git add', inWorktree)
   const staged = await deps.git.run(
     // Asked for submodule changes whatever `diff.ignoreSubmodules` or `submodule.<name>.ignore` say, so a config
     // that hides them from `git diff` cannot make the change `git add -A` just staged read as an empty one.
     ['diff', '--cached', '--quiet', '--ignore-submodules=none'],
-    { cwd: record.path, signal },
+    inWorktree,
   )
   /* v8 ignore next -- `git diff --cached --quiet` in a worktree the immediately preceding `git add -A` just
    * confirmed valid returns only 0 (clean) or 1 (staged changes) under real git; any other exit code is a
@@ -144,10 +148,10 @@ async function commitWorktreeChanges(deps: AcceptDeps, record: StoredWorktreeRec
     await deps.git.expect(
       [...authorArgs, 'commit', '--no-verify', '-m', `${record.label} (worktree ${id})`],
       'git commit',
-      { cwd: record.path, signal },
+      inWorktree,
     )
   }
-  const head = await deps.git.expectComplete(['rev-parse', 'HEAD'], 'git rev-parse', { cwd: record.path, signal })
+  const head = await deps.git.expectComplete(['rev-parse', 'HEAD'], 'git rev-parse', inWorktree)
   return head.stdout.trim()
 }
 

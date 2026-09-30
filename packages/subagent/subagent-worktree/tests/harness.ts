@@ -1,7 +1,7 @@
 /** Shared fixtures: temporary git repositories, a real service composition, and a fake parent Agent. */
 
 import { execFileSync } from 'node:child_process'
-import { mkdtemp, rm } from 'node:fs/promises'
+import { chmod, mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { Context } from '@deepseek-ai/cordis'
@@ -38,6 +38,33 @@ export async function initFixtureRepo(prefix: string, objectFormat: 'sha1' | 'sh
 /** Remove a fixture directory tree; safe to call on an already-removed path. */
 export function removeFixture(dir: string): Promise<void> {
   return rm(dir, { recursive: true, force: true })
+}
+
+/**
+ * What a sandboxed child can do to the directory it writes: replace the worktree's `.git` entry with a repository of
+ * its own whose configuration runs a command. Any git process that trusts the entry executes the command.
+ * @param worktreePath - the linked worktree directory.
+ * @param marker - a file the command creates, which a test checks to see whether the command ran.
+ */
+export async function replaceGitEntryWithFsmonitorRepo(worktreePath: string, marker: string): Promise<void> {
+  await rm(join(worktreePath, '.git'), { recursive: true, force: true })
+  git(worktreePath, 'init', '-q')
+  git(worktreePath, 'config', 'core.fsmonitor', `touch ${marker}; echo`)
+}
+
+/**
+ * Plant hook scripts a child could write inside its worktree; each creates `<marker>-<hook name>` when it runs.
+ * @param hooksDir - the directory a relative `core.hooksPath` names, inside the worktree.
+ * @param names - the hooks to plant.
+ * @param marker - the marker file name prefix.
+ */
+export async function plantHooks(hooksDir: string, names: readonly string[], marker: string): Promise<void> {
+  await mkdir(hooksDir, { recursive: true })
+  for (const name of names) {
+    const path = join(hooksDir, name)
+    await writeFile(path, `#!/bin/sh\ntouch "${marker}-${name}"\n`)
+    await chmod(path, 0o755)
+  }
 }
 
 /**

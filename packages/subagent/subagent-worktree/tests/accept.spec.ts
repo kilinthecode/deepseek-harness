@@ -1,5 +1,5 @@
 import { spawnSync } from 'node:child_process'
-import { readFileSync, unlinkSync, writeFileSync } from 'node:fs'
+import { existsSync, readFileSync, unlinkSync, writeFileSync } from 'node:fs'
 import { chmod, mkdir, mkdtemp, readdir, readFile, rm, symlink, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -22,7 +22,9 @@ import { reviewCheckoutPathFor } from '../src/paths.ts'
 import { isStaleReviewing, requireRecordLocation, updateExistingRecordAt } from '../src/records.ts'
 import type { AcceptWorktreeRequest, WorktreeId, WorktreeOwner } from '../src/types.ts'
 import { expireSignal, KILLED_RESULT } from './cleanup-signals.ts'
-import { createWorktree, fakeAgent, git, initFixtureRepo, removeFixture, resolveTestConfig, setup } from './harness.ts'
+import {
+  createWorktree, fakeAgent, git, initFixtureRepo, plantHooks, removeFixture, replaceGitEntryWithFsmonitorRepo, resolveTestConfig, setup,
+} from './harness.ts'
 import type { TestConfig } from './harness.ts'
 import { mountScriptedReviewer } from './scripted-reviewer.ts'
 import type { ScriptedVerdict } from './scripted-reviewer.ts'
@@ -199,6 +201,42 @@ describe('accept: the user\'s git config', () => {
     // instead of reporting `empty` and leaving the staged submodule move unmentioned.
     await expect(ctx.subagentWorktrees.accept(acceptRequest(provisioned.record.id))).rejects.toThrow('git commit failed')
     expect(await pathExists(provisioned.record.path)).toBe(true)
+  }, GIT_TEST_TIMEOUT_MS)
+})
+
+describe('accept: a worker that plants code where git would run it', () => {
+  it('commits and merges without running the command that the worker\'s rewritten git entry configures', async () => {
+    const { ctx, dir } = await harness()
+    const marker = join(await scratchRoot(), 'fsmonitor-ran')
+    const provisioned = await createWorktree(ctx, OWNER, dir, 'do the thing')
+    await writeFile(join(provisioned.workDir, 'change.txt'), 'x')
+    // The worker's sandbox can write its whole worktree, so it can replace the entry git reads its repository from.
+    await replaceGitEntryWithFsmonitorRepo(provisioned.record.path, marker)
+
+    const outcome = await ctx.subagentWorktrees.accept(acceptRequest(provisioned.record.id))
+
+    expect(outcome.kind).toBe('merged')
+    expect(git(dir, 'ls-files', 'change.txt').trim()).toBe('change.txt')
+    expect(existsSync(marker)).toBe(false)
+  }, GIT_TEST_TIMEOUT_MS)
+
+  it('commits and merges without running hooks that a relative core.hooksPath resolves inside the worktree', async () => {
+    const { ctx, dir } = await harness()
+    const markers = await scratchRoot()
+    // The hooks directory is ignored, so the planted hooks stay out of the commit and out of the base checkout, and
+    // only a git command that runs in the worktree can reach them.
+    await writeFile(join(dir, '.gitignore'), '.githooks/\n')
+    git(dir, 'add', '.gitignore')
+    git(dir, 'commit', '-q', '-m', 'ignore the hooks directory')
+    git(dir, 'config', 'core.hooksPath', '.githooks')
+    const provisioned = await createWorktree(ctx, OWNER, dir, 'do the thing')
+    await writeFile(join(provisioned.workDir, 'change.txt'), 'x')
+    await plantHooks(join(provisioned.record.path, '.githooks'), ['post-commit', 'post-index-change', 'reference-transaction'], join(markers, 'ran'))
+
+    const outcome = await ctx.subagentWorktrees.accept(acceptRequest(provisioned.record.id))
+
+    expect(outcome.kind).toBe('merged')
+    expect(await readdir(markers)).toEqual([])
   }, GIT_TEST_TIMEOUT_MS)
 })
 

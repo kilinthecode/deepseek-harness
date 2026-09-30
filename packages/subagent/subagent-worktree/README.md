@@ -129,6 +129,8 @@ Cleanup that must run after the caller cancelled — aborting this accept's own 
 
 Every git and check-command invocation in this package runs through `ctx.subprocess` with explicit argv and cwd — never a shell — in the **host realm**, not inside any session sandbox: the deployment's confinement policy for a delegated worker's own tool calls does not apply to this service's own git plumbing. Argv for these commands comes only from `Config` or operator (CLI) input, never from model input, which is what makes running them unsandboxed acceptable.
 
+Two of these commands run in a directory the worker's sandbox can write: `accept` stages and commits in the worktree, and the recovery of an unrecorded merge reads the worktree's `HEAD` and status. Git would take its repository from the worktree's own `.git` entry, which the worker can rewrite to name a repository whose `core.fsmonitor` command then runs on the host. It would also resolve a relative `core.hooksPath` or `core.fsmonitor` from the base configuration inside the worker's tree, where the worker can plant the hook; `--no-verify` skips only `pre-commit` and `commit-msg`. These commands therefore run against the worktree's administrative directory, which the service finds in the shared git directory the worker cannot write, with `core.hooksPath=/dev/null` and `core.fsmonitor=false`. Commands in the base checkout are not confined this way, because the worker cannot write it. A merge runs the base repository's hooks, so when `core.hooksPath` names a tracked directory, a change to a hook there takes effect during the merge that lands it; the reviewer sees that change only as part of the diff.
+
 </details>
 
 -----
@@ -166,7 +168,7 @@ Independent model requests: the worker's first message and the reviewer child's 
 
 <a id="known-limitations-and-deferred-work"></a>
 
-- **Git and check commands run in the host realm, unsandboxed** — this package's own git plumbing and the configured check command run outside any session sandbox (see [Host-realm git](#host-realm-git)); a deployment that needs every subprocess confined must not point `testCommand` at anything it would not also run directly on the host.
+- **Git and check commands run in the host realm, unsandboxed** — this package's own git plumbing and the configured check command run outside any session sandbox (see [Host-realm git](#host-realm-git)); a deployment that needs every subprocess confined must not point `testCommand` at anything it would not also run directly on the host. The check command runs in a checkout of the worker's commit, so a test script the worker wrote runs with host privileges.
 - **Windows is unverified** — git worktree layout, path handling, and the file-lock takeover in `@deepseek-ai/dsh-atomic-write` are exercised only on macOS and Linux in this package's own tests.
 - **A worker installs its own dependencies** — the worktree is a plain linked checkout with no shared `node_modules`; the worker brief asks a worker to install from the local cache when needed, but nothing in this service does so on its behalf.
 - **Uncommitted base changes are not carried into a new worktree** — `create` reports them (bounded to 20 entries plus the total) as `baseDirty` so a caller can warn about them, but a worktree only ever branches from the base checkout's committed `HEAD`.

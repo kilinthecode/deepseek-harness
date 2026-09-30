@@ -58,10 +58,36 @@ export interface GitCommandResult {
   readonly stdoutLossy: boolean
 }
 
+/**
+ * Global git options that confine one command to a linked worktree whose files
+ * a sandboxed child can write. Git would otherwise take its repository from the
+ * worktree's own `.git` entry, which the child can rewrite to name a repository
+ * with a `core.fsmonitor` command of its choosing, and would resolve a relative
+ * `core.hooksPath` or `core.fsmonitor` from the repository configuration inside
+ * the child's tree, where the child can plant the hook. `--git-dir` names the
+ * worktree's administrative directory, which lives in the shared git directory
+ * the child cannot write, and the two `-c` settings turn off hooks and the
+ * file-system monitor for the command. `--no-verify` alone does not: it skips
+ * only `pre-commit` and `commit-msg`.
+ * @param gitDir - the worktree's administrative directory under the shared git directory.
+ * @param workTree - the worktree directory the command runs in.
+ * @returns the options to place before the git subcommand.
+ */
+export function confinedWorktreeArgs(gitDir: string, workTree: string): readonly string[] {
+  return ['--git-dir', gitDir, '--work-tree', workTree, '-c', 'core.hooksPath=/dev/null', '-c', 'core.fsmonitor=false']
+}
+
 /** Per-command spawn facts. */
 export interface GitRunOptions {
   /** Working directory for the command. */
   readonly cwd: string
+  /**
+   * Administrative directory of the linked worktree at `cwd`, for a command
+   * that runs in a directory a sandboxed child can write. When set, the command
+   * runs with {@link confinedWorktreeArgs}. Leave it unset for commands that run
+   * in a checkout the child cannot write, such as the base checkout.
+   */
+  readonly worktreeGitDir?: string | undefined
   /** Cancellation forwarded to the spawned process; omitted for callers with no signal to offer (for example `list`). */
   readonly signal?: AbortSignal | undefined
   /** In-memory stdout cap for this command, replacing {@link DEFAULT_GIT_STDOUT_MAX_BYTES}. */
@@ -111,8 +137,9 @@ export class GitRunner {
    */
   async run(args: readonly string[], options: GitRunOptions): Promise<GitCommandResult> {
     const executable = await this.resolveExecutable(options.signal)
+    const confinement = options.worktreeGitDir === undefined ? [] : confinedWorktreeArgs(options.worktreeGitDir, options.cwd)
     const handle = this.subprocess.spawn({
-      argv: [executable, ...args],
+      argv: [executable, ...confinement, ...args],
       cwd: options.cwd,
       stdio: {
         stdin: 'ignore',
