@@ -14491,6 +14491,9 @@ importers:
       '@deepseek-ai/dsh-subagent-spawn-in-process':
         specifier: workspace:*
         version: link:../../packages/subagent/subagent-spawn-in-process
+      '@deepseek-ai/dsh-subagent-worktree':
+        specifier: workspace:*
+        version: link:../../packages/subagent/subagent-worktree
       '@deepseek-ai/dsh-subprocess':
         specifier: workspace:*
         version: link:../../packages/subprocess/subprocess

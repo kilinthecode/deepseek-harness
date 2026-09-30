@@ -112,10 +112,11 @@ async function boot(layers: PatchOptions[][]) {
   const dir = mkdtempSync(join(tmpdir(), 'dsh-agent-crew-loader-'))
   tempDirs.push(dir)
   const entries = rows.map((row) => {
-    const fixture = FIXTURES[row.name as string]
-    if (fixture === undefined) throw new Error(`no fixture for the "${row.id}" row's package ${String(row.name)}`)
+    const fixture = FIXTURES[row.name]
+    if (fixture === undefined) throw new Error(`no fixture for the "${row.id}" row's package ${row.name}`)
     writeFileSync(join(dir, fixture.file), fixture.source)
-    return { id: row.id, name: pathToFileURL(join(dir, fixture.file)).href, ...row.config === undefined ? {} : { config: row.config } }
+    const config: unknown = row.config
+    return { id: row.id, name: pathToFileURL(join(dir, fixture.file)).href, ...config === undefined ? {} : { config } }
   })
   writeFileSync(join(dir, 'cordis.yml'), yaml.dump(entries))
 

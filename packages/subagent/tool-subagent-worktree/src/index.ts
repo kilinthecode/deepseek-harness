@@ -78,7 +78,7 @@ function requireCwd(agent: Agent): string {
  * an offer of worktree isolation that lasts as long as this plugin: the tools that land, discard, and list
  * worktrees and the parameter that creates them come and go together.
  * @param ctx - context carrying the tool registry and the worktree service.
- * @param config - whether to offer isolation on delegation tools; omitted offers it.
+ * @param config - whether to offer isolation on delegation tools.
  */
 export function apply(ctx: Context, config: Config): void {
   ctx.tools.register(defineTool({
@@ -155,5 +155,5 @@ export function apply(ctx: Context, config: Config): void {
     },
   }))
 
-  if (config.offerIsolation !== false) ctx.effect(() => ctx.subagentWorktrees.offerIsolation())
+  if (config.offerIsolation) ctx.effect(() => ctx.subagentWorktrees.offerIsolation())
 }
