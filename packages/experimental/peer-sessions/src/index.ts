@@ -630,7 +630,16 @@ export default class PeerService extends Service {
       .filter(file => isFresh(file, now, ttlMs))
       .map(file => file.p))
     const peers: SnapshotPeer[] = []
-    const rows = [...await listActivity(this.home)]
+    let listed: readonly PeerActivityRecord[]
+    try {
+      listed = await listActivity(this.home)
+    } catch (error: unknown) {
+      // Peer activity is advisory: a Harness-home read failure is reported and
+      // costs this step its snapshot, never the caller's turn.
+      this.ctx.logger.warn(`peer-sessions: reading peer activity failed: ${describeError(error)}`)
+      return undefined
+    }
+    const rows = [...listed]
       .sort((left, right) => SNAPSHOT_STATUS_ORDER[left.status] - SNAPSHOT_STATUS_ORDER[right.status]
         || right.updatedAt - left.updatedAt)
     for (const candidate of rows) {

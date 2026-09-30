@@ -143,14 +143,17 @@ describe('peer activity storage', () => {
     expect(peerNames(await rendered(fixture))).toEqual(['peer-b'])
   })
 
-  it('fails instead of showing nothing when the activity directory cannot be read', async () => {
+  it('warns and shows nothing when the activity directory cannot be read', async () => {
     const harness = await mountPeerHarness({ peer: { pollMs: 60_000 } })
     harnesses.push(harness)
     const fixture = await snapshotFixture(harness, 'peer-a')
-    // Only a missing directory means no peers; a file in its place is a fault to report.
+    // A file in the directory's place is a fault to report, but peer activity is
+    // advisory: the step goes on without a snapshot.
     await rm(activityDirectory(harness.home), { recursive: true })
     await writeFile(activityDirectory(harness.home), 'not a directory')
-    await expect(fixture.snapshot(1)).rejects.toThrow()
+    const warn = vi.spyOn(harness.ctx.logger, 'warn')
+    expect(await fixture.snapshot(1)).toBeUndefined()
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining('peer-sessions: reading peer activity failed: '))
   })
 })
 
