@@ -430,7 +430,7 @@ export const SERVICE_API: readonly ServiceApiEntry[] = [
         signature: '@Remote({ mode: \'stream\' }) async *roomStream(agent: Agent, signal: AbortSignal): AsyncIterable<RoomFollowFrame>',
         description: 'Follow one room through the generated Remote API.',
         parameters: [{ name: 'agent', description: 'exact live Team member used as the authority credential.' }, { name: 'signal', description: 'cancellation owned by the Remote stream carrier.' }],
-        returns: 'a complete view first, then a view after every committed transcript, roster, or decision change and a frame for every text chunk a participant streams.',
+        returns: 'a complete view first, then a view after every committed room change and a frame for every text chunk a participant streams.',
       },
       {
         signature: '@Remote(\'roomPrompt\') remoteRoomPrompt(agent: Agent, request: PanelRoomPromptRequest): Promise<RoomPromptResult>',
@@ -1039,6 +1039,12 @@ export const SERVICE_API: readonly ServiceApiEntry[] = [
         description: 'Read credentials for the configured Platform origin, bound to their issuing environment, and pair them with the account ID from the last successful profile read; no profile request is made.',
         parameters: [],
         returns: 'a Host-only snapshot, or null while signed out or when the credential changed during the read.',
+      },
+      {
+        signature: 'abstract getDeviceIdentity(): Promise<{ deviceId?: string; userId?: AccountUserId; osVersion: string }>',
+        description: 'Read existing login identity without creating a device or returning credentials.',
+        parameters: [],
+        returns: 'optional device/account identifiers and the provider\'s OS version string.',
       },
     ],
   },
@@ -1707,6 +1713,25 @@ export const SERVICE_API: readonly ServiceApiEntry[] = [
     ],
   },
   {
+    key: 'otel',
+    summary: 'Shared transport provider.',
+    description: 'Shared transport provider. Mounting creates no queue, identity, or network connection.',
+    methods: [
+      {
+        signature: 'createEventReporter(options: EventLogOptions): EventLogReporter',
+        description: 'Create an independent ordinary-event channel with count-based batching. The injected consumer must drain it during its fiber disposal.',
+        parameters: [{ name: 'options', description: 'transport, scope, resource, queue, and diagnostic settings selected by the consumer.' }],
+        returns: 'the caller-owned channel; no state is shared with other channels.',
+      },
+      {
+        signature: 'createSessionLogReporter(options: SessionLogOptions): SessionLogReporter',
+        description: 'Create an independent byte-bounded Session-log channel. Authorization and redaction precede reporting; the consumer owns shutdown and its outer deadline.',
+        parameters: [{ name: 'options', description: 'transport, scope, resource, queue, and diagnostic settings selected by the consumer.' }],
+        returns: 'the caller-owned channel, preserving complete accepted events within the request byte ceiling.',
+      },
+    ],
+  },
+  {
     key: 'permissionPresets',
     summary: 'Owns the deployment\'s configured permission presets, the fixed Auto integration hook, and their write path.',
     description: 'Owns the deployment\'s configured permission presets, the fixed Auto integration hook, and their write path. Requires a confining `ctx.shell` executor and `ctx.approval`; unmatched knob values are reported as CUSTOM_PRESET, not an error.',
@@ -1859,6 +1884,31 @@ export const SERVICE_API: readonly ServiceApiEntry[] = [
         parameters: [],
         returns: 'the first registry with a successful response, or null when disabled or neither responds successfully; results are cached.',
         throws: ['rejects when the service has been unloaded.'],
+      },
+    ],
+  },
+  {
+    key: 'productAnalytics',
+    summary: 'Authenticated event intake; disabled instances do not inspect identity or accept new events.',
+    description: 'Authenticated event intake; disabled instances do not inspect identity or accept new events.',
+    methods: [
+      {
+        signature: '@Remote enabled(): boolean',
+        description: 'Read the collection policy.',
+        parameters: [],
+        returns: 'whether this Host currently accepts Desktop analytics.',
+      },
+      {
+        signature: '@Remote({ mode: \'stream\' }) async *watchPolicy(signal: AbortSignal): AsyncIterable<boolean>',
+        description: 'Stream the effective policy initially and after live configuration edits.',
+        parameters: [{ name: 'signal', description: 'subscriber lifetime.' }],
+        returns: 'current policy values until cancellation or service disposal.',
+      },
+      {
+        signature: '@Remote async report(event: ProductEvent): Promise<void>',
+        description: 'Submit selected Desktop fields; missing identity is omitted and never generated.',
+        parameters: [{ name: 'event', description: 'typed product event without message contents or credentials.' }],
+        returns: 'after local submission; no delivery or warehouse acknowledgement.',
       },
     ],
   },
@@ -4273,8 +4323,8 @@ export const EVENT_API: readonly EventApiEntry[] = [
     name: 'room/updated',
     mode: 'emit',
     signature: '\'room/updated\'(payload: { readonly teamId: TeamId }): void',
-    summary: 'A room\'s transcript, roster, or decision board changed in its Lead log.',
-    description: 'A room\'s transcript, roster, or decision board changed in its Lead log. A live reader re-reads the room after the commit, and the durable record is the appended event.',
+    summary: 'One room committed a change to its own log: a transcript entry, a decision, a revision, a review, or a deadline record.',
+    description: 'One room committed a change to its own log: a transcript entry, a decision, a revision, a review, or a deadline record. A live reader re-reads the room after it, and the durable record is the appended event.',
     parameters: [{ name: 'payload', description: '.teamId - Team identity of the room that changed.' }],
   },
   {
@@ -5290,6 +5340,14 @@ export const TYPE_API: readonly TypeApiEntry[] = [
     declaration: 'export interface EscalateRoomDecisionRequest {\n    readonly proposalId: RoomProposalId;\n    readonly reason: string;\n    readonly signal: AbortSignal;\n}',
   },
   {
+    name: 'EventLogOptions',
+    declaration: 'export interface EventLogOptions {\n    exporter: SessionLogOptions[\'exporter\'];\n    resourceAttributes: Attributes;\n    scope: {\n        name: string;\n        version?: string;\n    };\n    processor: Omit<BatchLogRecordProcessorOptions, \'exporter\'>;\n    onFailure: SessionLogOptions[\'onFailure\'];\n}',
+  },
+  {
+    name: 'EventLogReporter',
+    declaration: 'export class EventLogReporter {\n    constructor(options: EventLogOptions);\n    emit(record: OTelEventRecord): void;\n    shutdown(): Promise<void>;\n}',
+  },
+  {
     name: 'EveryScheduleRecord',
     declaration: 'export interface EveryScheduleRecord {\n    readonly id: ScheduleId;\n    readonly kind: \'every\';\n    readonly title: string;\n    readonly prompt: string;\n    readonly everySeconds: number;\n    readonly scheduledAt: string;\n}',
   },
@@ -6042,6 +6100,10 @@ export const TYPE_API: readonly TypeApiEntry[] = [
     declaration: 'export interface OfficeToPdfResult {\n    readonly pdf: Uint8Array;\n    readonly missingFonts: string[];\n    readonly cacheKey: OfficeToPdfKey;\n    readonly generation: OfficeToPdfGeneration;\n}',
   },
   {
+    name: 'OnboardingPage',
+    declaration: 'export type OnboardingPage = \'onboarding_welcome\' | \'onboarding_recharge\' | \'onboarding_use_case\' | \'onboarding_process\';',
+  },
+  {
     name: 'OneShotScheduleRecord',
     declaration: 'export type OneShotScheduleRecord = AfterScheduleRecord | AtScheduleRecord;',
   },
@@ -6052,6 +6114,14 @@ export const TYPE_API: readonly TypeApiEntry[] = [
   {
     name: 'OptionalSessionSeq',
     declaration: 'export type OptionalSessionSeq = SessionSeq | null;',
+  },
+  {
+    name: 'OTelEventRecord',
+    declaration: 'export interface OTelEventRecord {\n    eventName: string;\n    body: string;\n    timestamp: number;\n    severityNumber?: SeverityNumber;\n    attributes?: Record<string, OTelEventScalar | Record<string, OTelEventScalar>>;\n}',
+  },
+  {
+    name: 'OTelEventScalar',
+    declaration: 'export type OTelEventScalar = string | number | boolean;',
   },
   {
     name: 'PackageResult',
@@ -6194,12 +6264,16 @@ export const TYPE_API: readonly TypeApiEntry[] = [
     declaration: 'export type PreToolDecision = {\n    kind: \'allow\';\n} | {\n    kind: \'deny\';\n    reason: string;\n    info?: ToolErrorInfo;\n} | {\n    kind: \'cancel\';\n} | {\n    kind: \'ask\';\n    reason?: string;\n    displayReason?: {\n        readonly en: string;\n        readonly [locale: string]: string;\n    };\n};',
   },
   {
-    name: 'ProductTelemetryRecord',
-    declaration: 'export interface ProductTelemetryRecord {\n    eventName: string;\n    body: string;\n    timestamp: number;\n    severityNumber?: SeverityNumber;\n    attributes?: Record<string, ProductTelemetryScalar | Record<string, ProductTelemetryScalar>>;\n}',
+    name: 'ProductEvent',
+    declaration: 'export type ProductEvent = {\n    [K in keyof ProductEventMap]: {\n        eventName: K;\n        attributes: ProductEventMap[K];\n        timestamp: number;\n    };\n}[keyof ProductEventMap];',
   },
   {
-    name: 'ProductTelemetryScalar',
-    declaration: 'export type ProductTelemetryScalar = string | number | boolean;',
+    name: 'ProductEventMap',
+    declaration: 'export interface ProductEventMap {\n    desktop_app_launch: Record<string, never>;\n    auth_page_view: Record<string, never>;\n    auth_page_click: {\n        button_name: \'sign_in\' | \'api-key\';\n    };\n    api_key_save_click: Record<string, never>;\n    onboarding_page_view: {\n        page_name: OnboardingPage;\n    };\n    onboarding_page_click: {\n        page_name: OnboardingPage;\n        button_name: \'next\' | \'back\' | \'skip\' | \'charge\' | \'later\' | \'continue\';\n        selected_content?: \'office\' | \'code\' | \'code_office\' | \'focus_result\' | \'key_detail\' | \'full_process\';\n    };\n    onboarding_popup_view: {\n        popup_name: \'skip_charge\' | \'skip_setting\';\n    };\n    onboarding_popup_click: {\n        popup_name: \'skip_charge\' | \'skip_setting\';\n        button_name: \'charge\' | \'know\' | \'enter\' | \'setting\' | \'close\';\n    };\n    desktop_upgrade_click: Record<string, never>;\n    desktop_upgrade_download_result: {\n        is_success: boolean;\n        error_reason?: string;\n    };\n    desktop_upgrade_install_restart_click: Record<string, never>;\n    send_button_click: {\n        session_id?: SessionId;\n        model_name?: string;\n        thinking_effort?: string;\n        run_mode: \'plan\' | \'goal\' | \'default\';\n        msg_type: \'default\' | \'steer\' | \'queue\';\n    };\n    model_switch: {\n        session_id?: SessionId;\n        switch_from: string;\n        switch_to: string;\n    };\n    thinking_level_switch: {\n        session_id?: SessionId;\n        switch_from: string;\n        switch_to: str /* …truncated — full shape in source */',
+  },
+  {
+    name: 'ProductTelemetryRecord',
+    declaration: 'export type ProductTelemetryRecord = OTelEventRecord;',
   },
   {
     name: 'ProfilePnpmInvocation',
@@ -6894,6 +6968,18 @@ export const TYPE_API: readonly TypeApiEntry[] = [
     declaration: 'export type SessionLogOffset = BrandedNumber<\'SessionLogOffset\'>;',
   },
   {
+    name: 'SessionLogOptions',
+    declaration: 'export interface SessionLogOptions {\n    exporter: OTLPExporterNodeConfigBase & {\n        url: string;\n    };\n    processor?: Omit<BatchLogRecordProcessorOptions, \'exporter\'>;\n    maxRequestBytes?: number;\n    scope: {\n        name: string;\n        version?: string;\n    };\n    resourceAttributes: Attributes;\n    onFailure: (message: string, error?: Error) => void;\n}',
+  },
+  {
+    name: 'SessionLogRecord',
+    declaration: 'export interface SessionLogRecord {\n    sessionId: SessionId;\n    event: Omit<SessionEvent, \'data\'> & {\n        data: unknown;\n    };\n    attributes?: Attributes;\n    severityNumber?: SeverityNumber;\n}',
+  },
+  {
+    name: 'SessionLogReporter',
+    declaration: 'export class SessionLogReporter {\n    constructor(options: SessionLogOptions);\n    reportSessionLog(record: SessionLogRecord): void;\n    stopPending(): void;\n    shutdown(): Promise<void>;\n}',
+  },
+  {
     name: 'SessionLogSnapshot',
     declaration: 'export interface SessionLogSnapshot {\n    session: SessionHeader;\n    inheritedEventCount: SessionLogOffset;\n    events: SessionEvent[];\n}',
   },
@@ -7099,7 +7185,7 @@ export const TYPE_API: readonly TypeApiEntry[] = [
   },
   {
     name: 'SessionTelemetryRecord',
-    declaration: 'export interface SessionTelemetryRecord {\n    channel: \'ledger\' | \'ops\';\n    time: number;\n    severity: SessionTelemetrySeverity;\n    attributes: Record<string, string | number>;\n    body: unknown;\n}',
+    declaration: 'export interface SessionTelemetryRecord {\n    sourceEvent?: {\n        sessionId: SessionId;\n        envelope: Omit<SessionEvent, \'data\'>;\n    };\n    channel: \'ledger\' | \'ops\';\n    time: number;\n    severity: SessionTelemetrySeverity;\n    attributes: Record<string, string | number>;\n    body: unknown;\n}',
   },
   {
     name: 'SessionTelemetrySeverity',

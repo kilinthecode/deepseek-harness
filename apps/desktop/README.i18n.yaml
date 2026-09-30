@@ -3,11 +3,11 @@
 # After editing either side, bring the other along and re-record with:
 #   pnpm run verify-translation-pairing --write apps/desktop/README.md
 /portal-desktop:
-  en: 0e4894ea7acf58d6
-  zh: 7fd57d430a8a2f7a
+  en: 1e796c37611cc677
+  zh: 750c94a2efbedd92
 /portal-desktop/closing-the-window-and-quitting:
-  en: d240d4f84d1995f2
-  zh: e408fa419ca3a3c2
+  en: 66ecbfaa40b42c12
+  zh: 384c9e18f4126780
 /portal-desktop/key-technical-decisions:
   en: 069fdfd72d2ea26a
   zh: 76ae549d43c99bb4
@@ -15,20 +15,20 @@
   en: 31cbb7452be8e1ad
   zh: 502ec556e2ec301e
 /portal-desktop/installation-ownership:
-  en: 8307baf6c5b691d0
-  zh: 86e46b9552017ff6
+  en: d186d3cfc9597688
+  zh: 5f7094355c5f562c
 /portal-desktop/installation-ownership/runtime-and-plugin-activation:
   en: 4efa9e3d88f1c9d0
   zh: 2210ce3df7efb81b
 /portal-desktop/develop:
-  en: 9b9b362a9865e763
-  zh: c748901168e2db8c
+  en: 40d2ad4014bf445b
+  zh: 6a08de06df9ed042
 /portal-desktop/develop/startup-onboarding:
-  en: 5e2d62207a603d81
-  zh: 5fb863d4906f4a67
+  en: a51346b8d880ddba
+  zh: 7913214c1c66063c
 /portal-desktop/develop/welcome-window-appearance:
-  en: 7220801ccc3b2e6b
-  zh: 042dc97976aef979
+  en: ae319a496639b38d
+  zh: ef044103240ac9da
 /portal-desktop/package:
   en: 4cd8a8da6977928d
   zh: 9f624855a2edac37

@@ -2572,7 +2572,7 @@ lsp 工具将提供方选择和语言服务器子进程置于 ctx.lsp 之后，�
 这 10 个工具限定于隐式 Team Lead 与持久 teammate 作用域。随产品发布的 dsh-base bundle 默认禁用该包；文档中的 Agent Teams profile patch 会启用它，并禁用旧 continuable child 的同名控制工具。
 
 
-<a id="deepseek-aidsh-tool-memory"></a>
+<a id="deepseek-aidsh-experimental-tool-agent-room"></a>
 
 ## `@deepseek-ai/dsh-experimental-tool-agent-room`
 
@@ -2714,7 +2714,7 @@ lsp 工具将提供方选择和语言服务器子进程置于 ctx.lsp 之后，�
 
 这 5 个工具限定于 room 参与者作用域。随产品发布的组合默认不挂载它们；部署会在开启 `roomEnabled: true` 的 `@deepseek-ai/dsh-experimental-agent-team` 旁启用它们，而每个结果都由服务端 quorum 而非工具决定。
 
-<a id="deepseek-aidsh-tool-todo"></a>
+<a id="deepseek-aidsh-tool-memory"></a>
 
 ## `@deepseek-ai/dsh-tool-memory`
 

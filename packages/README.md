@@ -35,6 +35,7 @@ Every package lives in exactly one group; new packages join existing groups, and
 | [`memory/`](memory/README.md) | Durable cross-session memory store, its model-facing tools and catalog, and a cache-parity background review |
 | [`schedule/`](schedule/README.md) | Host-owned scheduled follow-ups |
 | [`feedback/`](feedback/README.md) | Human feedback capture and command |
+| [`telemetry/`](telemetry/README.md) | Shared Cordis OTel reporting channels |
 | [`identity/`](identity/README.md) | Shared anonymous identity |
 | [`llm/`](llm/README.md) | LLM capability family: abstract service + provider adapters |
 | [`subprocess/`](subprocess/README.md) | Subprocess capability family: Service Definition + local process-tree provider |

@@ -96,6 +96,7 @@
     "@deepseek-ai/dsh-api-account-controller": "workspace:*",
     "@deepseek-ai/dsh-deepseek-account": "workspace:*",
     "@deepseek-ai/dsh-api-authorization-controller": "workspace:*",
-    "@deepseek-ai/dsh-authorization": "workspace:*"
+    "@deepseek-ai/dsh-authorization": "workspace:*",
+    "@deepseek-ai/dsh-client-product-analytics": "workspace:*"
   }
 }
