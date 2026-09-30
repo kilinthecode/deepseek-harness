@@ -324,6 +324,13 @@
   color: var(--dsw-alias-label-tertiary);
 }
 
+/* The generic row's own image gallery: the last section of the IN/OUT card,
+   sharing its section padding but no gutter label (the gallery is the whole
+   section, not a labeled text payload). */
+.resultImages {
+  padding: 12px 16px;
+}
+
 /* The terminal card scrolls its OUTPUT inside its own surface (same l1
    hairline as the IN/OUT card): the banner stays pinned and the scrollbar
    never rides over it. 224px = the 260px card cap minus the ~36px banner. */

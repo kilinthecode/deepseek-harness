@@ -92,11 +92,38 @@ kind: "package-reference"
 
 ### 登录提供方
 
-pi-ai 提供登录的提供方可以通过 harness 授权 seam 登录：流程提供 OAuth 或交互式密钥提示（密钥键入 pi-ai 自己的登录提示，而非设置表单），得到的凭据存储在 harness 凭据存储的 `llm-pi-ai/<provider id>` 记录中。存储的登录在其路由的 `apiKeyEnv` 覆盖之下完成认证，并在存储的跨进程锁下自行刷新；退出登录即删除存储记录。落在记录文法之外——小写连字符标识符——的手工声明路由键无法登录，因为对它的记录写入会以 `LlmError('UNSTORABLE_PROVIDER_ID')` 拒绝；这类路由改用 `apiKeyEnv` 或提供方 ambient 设置认证。
+pi-ai 提供登录的提供方可以通过 harness 授权 seam 登录：流程提供 OAuth 或交互式密钥提示（密钥键入 pi-ai 自己的登录提示，而非设置表单），得到的凭据存储在 harness 凭据存储的 `llm-pi-ai/<provider id>` 记录中。存储的登录在其路由的 `apiKeyEnv` 覆盖之下完成认证，并在存储的跨进程锁下自行刷新；退出登录即删除存储记录。落在记录文法之外——小写连字符标识符——的手工声明路由键无法登录，因为对它的记录写入会以 `LlmError('UNSTORABLE_PROVIDER_ID')` 拒绝；这类路由改用 `apiKeyEnv` 或提供方 ambient 设置认证。每个可配置提供方目录条目都以 `authorization { key, required }` 说明该登录，其中 `required` 恰在提供方完全没有 api-key 认证时为 true——`openai-codex` 的 ChatGPT 订阅登录就是它唯一接受的凭据。
 
 ### 解析模型目录
 
 profile 的 `models` 列表会替换而非扩展路由的已安装目录；每个条目从同 id 已安装模型取未设置字段的默认值，因此把路由收窄到两个模型、修正一个容量或添加比已安装目录更新的模型都是一行编辑。`modelOverrides` 无需该代价即可重塑个别已安装目录模型——修正一个模型，保留其余三十七个——当它与 `models` 列表并存、位于手工声明路由上、或点名目录未描述的模型时会被拒绝，因为静默不变的模型会成为别人日后寻找的拼写错误。
+
+```yaml
+- name: '@deepseek-ai/dsh-llm-pi-ai'
+  config:
+    providers:
+      # `openai-codex` signs in rather than taking a key, so a model the
+      # installed catalog has not caught up with is declared on its route.
+      openai-codex:
+        models:
+          - id: gpt-6-luna
+            name: GPT-6 Luna
+            contextWindow: 272000
+            maxTokens: 128000
+            input: ['text', 'image']
+            reasoningEfforts:
+              off: none
+              minimal: low
+              low: low
+              medium: medium
+              high: high
+              xhigh: xhigh
+              max: max
+          # `models` replaces the catalog, so the installed ids the deployment
+          # still serves are listed too; an entry naming only an id keeps every
+          # field the installed entry carries.
+          - id: gpt-5.6-luna
+```
 
 ### 带推理（reasoning）与协议兼容运行
 
@@ -191,7 +218,7 @@ Config 更新严格验证发生变化的 provider。初始加载将已存储的�
 
 #### KV Cache 影响
 
-转换保持逻辑请求顺序，图片句柄与卸载占位符则会添加模型可见文本。即使附件身份与请求字节保持稳定，执行世界路径变化也会改写历史句柄，并可能从该图片起阻止复用。更换适配器实例、提供方、模型或其他上游 token 具有相同的后缀影响。一次省略决策会把较早图片换成占位文本，因此复用在该消息处结束；省略永不回退，此后前缀保持稳定。
+转换保持逻辑请求顺序，图片句柄与卸载占位符则会添加模型可见文本。即使附件身份与请求字节保持稳定，执行世界路径变化也会改写历史句柄，并可能从该图片起阻止复用。更换适配器实例、提供方、模型或其他上游 token 具有相同的后缀影响。一次省略决策会把较早图片换成占位文本，因此复用在该消息处结束；省略永不回退，此后前缀保持稳定。在 `openai` 与 `openai-codex` 路由上，若 `GenerateOptions.cacheKey` 与本请求自身的 `sessionId` 不同，会用该共享键替换出站请求体中 pi-ai 依会话派生的 `prompt_cache_key`，使同一委派树中的兄弟与 fork 子节点在提供方侧路由到同一个已缓存前缀；本机制绝不补上 pi-ai 自身已省略的键（`cacheRetention: 'none'`，或 pi-ai 本就不对该路由发送该字段的情形）；其他提供方一律忽略该字段。
 
 ### 提供方响应
 

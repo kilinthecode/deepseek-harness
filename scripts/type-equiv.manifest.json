@@ -2328,6 +2328,36 @@
       "source": "packages/deliverables/workspace-changes/src/types.ts"
     },
     {
+      "doc": "docs/subsystems/memory.md",
+      "symbol": "MemoryWriteRequest",
+      "source": "packages/memory/memory/src/index.ts"
+    },
+    {
+      "doc": "docs/subsystems/memory.md",
+      "symbol": "MemoryWriteResult",
+      "source": "packages/memory/memory/src/index.ts"
+    },
+    {
+      "doc": "docs/subsystems/memory.md",
+      "symbol": "MemoryRecallRequest",
+      "source": "packages/memory/memory/src/index.ts"
+    },
+    {
+      "doc": "docs/subsystems/memory.md",
+      "symbol": "MemoryForgetRequest",
+      "source": "packages/memory/memory/src/index.ts"
+    },
+    {
+      "doc": "docs/subsystems/memory.md",
+      "symbol": "MemoryVisible",
+      "source": "packages/memory/memory/src/index.ts"
+    },
+    {
+      "doc": "docs/subsystems/memory.md",
+      "symbol": "MemoryErrorCode",
+      "source": "packages/memory/memory/src/index.ts"
+    },
+    {
       "doc": "docs/subsystems/product-telemetry.md",
       "symbol": "ProductTelemetryScalar",
       "source": "packages/host/product-telemetry-otel/src/index.ts"

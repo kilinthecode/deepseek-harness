@@ -11,6 +11,7 @@ import SessionProjectionRegistry from '@deepseek-ai/dsh-session-projection'
 import * as mock from './scripted-provider.ts'
 import * as tool from '../src/index.ts'
 import SubagentModelSelectionConfig from '../src/model-selection-settings.ts'
+import type { DefaultChildRoute } from '../src/model-selection.ts'
 
 /** Shared non-aborted tool signal for package-local integration tests. */
 export const testToolSignal = new AbortController().signal
@@ -29,6 +30,8 @@ let setupAgentCounter = 0
 /** Test-only opt-in translated to the real Host setting and Session path. */
 type SetupConfig = tool.Config & {
   withModelSelection?: boolean
+  /** Recorded default child route; requires `withModelSelection: true`. */
+  modelSelectionDefault?: DefaultChildRoute
   parentAgentOptions?: AgentOptions
 }
 
@@ -43,11 +46,12 @@ const TEST_ALLOWED_MODELS = [
 
 export async function setup(toolConfig: SetupConfig, mockConfig: Partial<mock.Config> = {}): Promise<Context> {
   const ctx = new Context()
-  const { withModelSelection, parentAgentOptions, ...config } = toolConfig
+  const { withModelSelection, modelSelectionDefault, parentAgentOptions, ...config } = toolConfig
   if (withModelSelection === true) {
     await ctx.plugin(SubagentModelSelectionConfig, {
       enabled: true,
       allowedModels: TEST_ALLOWED_MODELS,
+      ...modelSelectionDefault === undefined ? {} : { defaultModel: modelSelectionDefault },
     })
     await mountAgentLoopTestDependencies(ctx)
     await ctx.plugin(AgentLoop, { agents: [] })

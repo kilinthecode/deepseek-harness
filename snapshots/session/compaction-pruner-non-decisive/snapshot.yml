@@ -1,0 +1,9 @@
+version: 1
+scenario: compaction-pruner-non-decisive
+profile: headless
+composition: compaction-pruner-non-decisive
+recording: authored
+header:
+  class: compaction-pruner-non-decisive
+  pin: true
+  changes: 1

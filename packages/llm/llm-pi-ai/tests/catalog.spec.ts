@@ -140,6 +140,9 @@ describe('hand-declared providers', () => {
       // configuration surfaces mark as a route this deployment declared.
       declared: true,
     })
+    // Nothing pi-ai ships has a login for this key either, so no entry may
+    // claim a sign-in the adapter could never register a flow for.
+    expect(directory.find(entry => entry.provider === 'acme-gateway')?.authorization).toBeUndefined()
     // Membership of the catalog, not of the settings document: a shipped
     // provider carries a stored profile the moment anyone corrects it.
     expect(directory.filter(entry => entry.declared).map(entry => entry.provider))
@@ -506,6 +509,66 @@ describe('catalog routes with per-model configuration', () => {
     // The catalog route keeps its catalog protocol, so the new model reaches
     // the same endpoint shape the shipped models use.
     expect(server.paths).toEqual(['/v1/chat/completions'])
+  })
+
+  it('declares a newer model on an OAuth-only catalog route without restating its protocol or endpoint', () => {
+    // `openai-codex` authenticates through a stored sign-in alone, so a
+    // deployment still declares the models it serves here — that is the one
+    // thing configuration, not the sign-in, decides. An entry the installed
+    // catalog does not describe inherits the protocol and endpoint its shipped
+    // siblings agree on, while an entry naming only an id stays that catalog
+    // entry untouched.
+    const installed = getBuiltinModels('openai-codex')
+    const paired = installed.find(model => model.id === 'gpt-5.6-luna')
+    if (paired === undefined) throw new Error('the installed catalog ships no openai-codex gpt-5.6-luna model')
+    expect(new Set(installed.map(model => model.api))).toEqual(new Set(['openai-codex-responses']))
+
+    const resolved = resolveProfiles({
+      'openai-codex': {
+        models: [
+          {
+            id: 'gpt-6-luna',
+            name: 'GPT-6 Luna',
+            contextWindow: 272_000,
+            maxTokens: 128_000,
+            input: ['text', 'image'],
+            reasoningEfforts: {
+              off: 'none',
+              minimal: 'low',
+              low: 'low',
+              medium: 'medium',
+              high: 'high',
+              xhigh: 'xhigh',
+              max: 'max',
+            },
+          },
+          { id: 'gpt-5.6-luna' },
+        ],
+      },
+    })
+    const route = resolved.get('openai-codex')
+    const models = route?.piProvider?.getModels() ?? []
+    const declared = models.find(model => model.id === 'gpt-6-luna')
+    const bare = models.find(model => model.id === paired.id)
+    if (declared === undefined || bare === undefined) throw new Error('the codex route resolved no declared models')
+
+    expect(declared.api).toBe('openai-codex-responses')
+    expect(declared.baseUrl).toBe('https://chatgpt.com/backend-api')
+    expect(declared.thinkingLevelMap?.xhigh).toBe('xhigh')
+    expect(getSupportedThinkingLevels(declared)).toContain('xhigh')
+    // A declared cap is the deployment choosing one, so it also becomes the
+    // default the seam materializes into requests that name none.
+    expect(route?.configuredMaxTokens.get('gpt-6-luna')).toBe(128_000)
+    expect(bare).toMatchObject({
+      name: paired.name,
+      api: paired.api,
+      baseUrl: paired.baseUrl,
+      contextWindow: paired.contextWindow,
+      maxTokens: paired.maxTokens,
+      input: paired.input,
+      thinkingLevelMap: paired.thinkingLevelMap,
+    })
+    expect(route?.configuredMaxTokens.get(paired.id)).toBeUndefined()
   })
 
   it('fails an unconfigured model id before any provider request', async () => {
@@ -1226,7 +1289,8 @@ describe('configurable-provider directory', () => {
 
   it('offers every installed catalog route, including one that only signs in', async () => {
     const ctx = await harness({})
-    const offered = ctx.llm.listConfigurableProviders().map(entry => entry.provider)
+    const directory = ctx.llm.listConfigurableProviders()
+    const offered = directory.map(entry => entry.provider)
 
     // `openai-codex` is the one installed provider that authenticates through
     // OAuth alone. It is offered like any other because the collection now
@@ -1235,6 +1299,19 @@ describe('configurable-provider directory', () => {
     expect(offered).toContain('openai-codex')
     expect(offered).toContain('anthropic')
     expect(offered).toContain('openai')
+    // Each entry names the record that sign-in writes, and whether a keyless
+    // route has any other way in: `required` marks the route whose stored
+    // sign-in is the only credential it accepts.
+    const authorizationOf = (provider: string) =>
+      directory.find(entry => entry.provider === provider)?.authorization
+    expect(authorizationOf('openai-codex'))
+      .toEqual({ key: 'llm-pi-ai/openai-codex', required: true })
+    expect(authorizationOf('openai')).toEqual({ key: 'llm-pi-ai/openai', required: false })
+    expect(authorizationOf('anthropic')).toEqual({ key: 'llm-pi-ai/anthropic', required: false })
+    // The invariant the spot checks above stay samples of: a second provider
+    // upstream ships without an api key fails here instead of going unnoticed.
+    expect(directory.filter(entry => entry.authorization?.required).map(entry => entry.provider))
+      .toEqual(['openai-codex'])
   })
 
   it('lists a route a stored profile names as a catalog route, not a declared one', async () => {
@@ -1248,6 +1325,9 @@ describe('configurable-provider directory', () => {
       settingsNs: 'llm-pi-ai',
       settingsPath: ['providers', 'openai-codex'],
       declared: false,
+      // A stored profile narrows what the route serves; the sign-in the
+      // adapter registers for it is a fact about the provider, not the profile.
+      authorization: { key: 'llm-pi-ai/openai-codex', required: true },
     })
   })
 })

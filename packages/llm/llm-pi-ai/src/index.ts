@@ -71,7 +71,7 @@ import { assertServiceable, Config, resolveProfiles } from './config.ts'
 import type { ResolvedPiAiProviderProfile } from './config.ts'
 import { discoverModels } from './discovery.ts'
 import type { StoredModelDiscoveryProfile } from './discovery.ts'
-import { registerPiAiFlows } from './login.ts'
+import { registerPiAiFlows, authorizationFor } from './login.ts'
 
 export { PiAiAdapter } from './adapter.ts'
 export type { PiAiAdapterOptions } from './adapter.ts'
@@ -128,6 +128,7 @@ function directoryEntries(
   const catalog = new Set(catalogProviderIds())
   const entries = new Map<string, LlmConfigurableProvider>()
   const declare = (provider: string, displayName: string, error?: string): void => {
+    const authorization = authorizationFor(provider)
     entries.set(provider, {
       provider,
       displayName,
@@ -137,6 +138,10 @@ function directoryEntries(
       // narrowing a shipped provider's models stores a profile too, and that
       // route is still one pi-ai knows.
       declared: !catalog.has(provider),
+      // Only a catalog route has a login flow to advertise; a route pi-ai does
+      // not ship answers `undefined` here, so a hand-declared route never
+      // claims a sign-in nothing can run.
+      ...authorization === undefined ? {} : { authorization },
       ...error === undefined ? {} : { error },
     })
   }

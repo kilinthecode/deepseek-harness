@@ -184,6 +184,29 @@ describe('ToolCallTree', () => {
     expect(view.getByText('~/docs/a.ts')).toBeTruthy()
   })
 
+  it('dispatches the generic-row image gallery through the Tool-tree-owned resultImages slot', () => {
+    const sampleImage = {
+      attachmentId: 'sha256:tree-gallery', mediaType: 'image/png', bytes: 1, width: 1, height: 1,
+    }
+    const block = {
+      ...root('img1', { name: 'mcp_screenshot', argsRaw: '{}' }),
+      content: [{ type: 'image', attachment: sampleImage }],
+    } as never
+    const treeProps = props(block)
+    const calls: [string, unknown][] = []
+    const renderSlot = vi.fn((key: string, owner: unknown, options?: { fallback?: React.ReactNode }) => {
+      calls.push([key, owner])
+      return key === 'tool.call.toolview' ? options?.fallback ?? null : null
+    }) as ToolTreeProps['renderSlot']
+    const view = render(<ToolCallTree {...treeProps} renderSlot={renderSlot} />)
+    fireEvent.click(view.container.querySelector('[data-expandable]')!)
+    expect(calls).toContainEqual(['tool.call.resultImages', {
+      images: [{ attachment: sampleImage }],
+      align: 'start',
+      loadImage: treeProps.loadImage,
+    }])
+  })
+
   it('renders an Auto denial generically before keyed slot dispatch', () => {
     const block = {
       ...root('denied', { name: 'skill', argsRaw: '{"name":"deploy"}' }),

@@ -1,0 +1,10 @@
+version: 1
+scenario: memory-catalog-recall
+profile: headless
+composition: memory-catalog-recall
+recording: authored
+header:
+  class: memory-catalog-recall
+  pin: true
+replay:
+  override: true

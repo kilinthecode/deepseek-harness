@@ -12,6 +12,7 @@ import { SessionId, SessionLogOffset } from '@deepseek-ai/dsh-session'
 import JsonlSessionPersistence from '@deepseek-ai/dsh-session-persistence-jsonl'
 import SessionQueryEngine from '@deepseek-ai/dsh-session-query'
 import SubagentService from '@deepseek-ai/dsh-subagent'
+import { queueHostSubagentPrompt } from '@deepseek-ai/dsh-subagent/internal'
 import * as SubagentFork from '@deepseek-ai/dsh-subagent-fork-in-process'
 import * as SubagentSpawn from '@deepseek-ai/dsh-subagent-spawn-in-process'
 import { renderPrompt, renderContextSnapshot } from '@deepseek-ai/dsh-system-prompt'
@@ -731,5 +732,300 @@ describe('dsh-tool-team', () => {
     const childId = spawnedChildId(ctx, lead, result)
     await vi.waitFor(() => { expect(ctx.agents.get(childId)).toBeUndefined() }, { timeout: 5_000 })
     expect(ctx.agentTeams.listMembers(lead)[1]).toMatchObject({ provider: 'team-fresh' })
+  })
+})
+
+describe('plain fork parity with Team installation', () => {
+  it('mirrors the Lead\'s Team section and tools onto a plain subagent_fork, with the Lead\'s prefix', async () => {
+    const { ctx, lead, adapter } = await setup([textResponse('lead answer'), textResponse('fork answer')])
+    await runTurn(lead, 'Lead task')
+    const leadRequest = serializeRequest(adapter.requests[0]!)
+    const run = await ctx.subagents.start('fork', {
+      label: 'fork task',
+      prompt: [{ type: 'text', text: 'Continue independently' }],
+      parent: lead,
+      signal: SIGNAL,
+    })
+    await run.result
+    const forkRequest = serializeRequest(adapter.requests[1]!)
+    expect(forkRequest.tools).toEqual(leadRequest.tools)
+    expect(forkRequest.system).toEqual(leadRequest.system)
+    expect(forkRequest.messages.slice(0, leadRequest.messages.length)).toEqual(leadRequest.messages)
+    await run.dispose()
+  })
+
+  it('rejects send_message from a plain fork as a non-member, delivering nothing', async () => {
+    const { ctx, lead } = await setup([textResponse('lead answer'), textResponse('fork answer')])
+    await runTurn(lead, 'Lead task')
+    const beforeMessages = structuredClone(lead.session.deriveMessages())
+    const run = await ctx.subagents.start('fork', {
+      label: 'fork task',
+      prompt: [{ type: 'text', text: 'independent task' }],
+      parent: lead,
+      signal: SIGNAL,
+    })
+    const fork = run.localAgent!
+    // Deterministic under the header-origin classification rule: the one-shot
+    // `subagent/descriptor` is not appended yet at this synchronous point (it
+    // lands lazily in the fork's first `agent/pre-step`), so this assertion is
+    // false under the old descriptor-fold classification, which would read no
+    // descriptor yet and misclassify this fresh fork as an implicit new Lead.
+    expect(ctx.agentTeams.tryMembership(fork)).toBeUndefined()
+    const result = await execute(ctx, fork, 'send_message', { target: 'lead', message: 'I am the Lead now' })
+    expect(result.isError).toBe(true)
+    expect(result.error?.info?.code).toBe('TEAM_NOT_MEMBER')
+    expect(lead.session.deriveMessages()).toEqual(beforeMessages)
+    await run.dispose()
+  })
+
+  it('rejects spawn_teammate from a plain fork as a non-member, creating no teammate', async () => {
+    const { ctx, lead } = await setup([textResponse('lead answer'), textResponse('fork answer')])
+    await runTurn(lead, 'Lead task')
+    const beforeMembers = ctx.agentTeams.listMembers(lead)
+    const run = await ctx.subagents.start('fork', {
+      label: 'fork task',
+      prompt: [{ type: 'text', text: 'independent task' }],
+      parent: lead,
+      signal: SIGNAL,
+    })
+    const fork = run.localAgent!
+    // See the equivalent assertion in the send_message rejection test above.
+    expect(ctx.agentTeams.tryMembership(fork)).toBeUndefined()
+    const result = await execute(ctx, fork, 'spawn_teammate', {
+      name: 'rogue', description: 'unauthorized', prompt: 'act as the lead',
+    })
+    expect(result.isError).toBe(true)
+    expect(result.error?.info?.code).toBe('TEAM_NOT_MEMBER')
+    expect(ctx.agentTeams.listMembers(lead)).toEqual(beforeMembers)
+    await run.dispose()
+  })
+
+  const FORK_DENIAL_CASES = [
+    ['spawn_teammate', { name: 'rogue', description: 'unauthorized', prompt: 'act as the lead' }],
+    ['send_message', { target: 'lead', message: 'I am the Lead now' }],
+    ['list_agents', {}],
+    ['wait_agent', {}],
+    ['interrupt_agent', { target: 'witness' }],
+    ['team_task_create', { subject: 'rogue task', description: 'unauthorized task' }],
+    ['team_task_list', {}],
+    ['team_task_get', { task_id: 'missing-task' }],
+    ['team_task_update', { task_id: 'missing-task', expected_revision: 1, action: 'claim' }],
+  ] as const
+
+  it('covers every Team tool in the plain-fork denial table', () => {
+    expect(FORK_DENIAL_CASES.map(([toolName]) => toolName).sort()).toEqual(TOOL_NAMES)
+  })
+
+  it.each(FORK_DENIAL_CASES)('rejects %s from a plain fork of the Lead as a non-member, with no side effect', async (toolName, args) => {
+    const { ctx, lead } = await setup([textResponse('lead answer'), 'hang', textResponse('fork answer')])
+    await runTurn(lead, 'Lead task')
+    const witnessSpawn = await execute(ctx, lead, 'spawn_teammate', {
+      name: 'witness', description: 'stay available', prompt: 'wait',
+    })
+    const witnessId = spawnedChildId(ctx, lead, witnessSpawn)
+    await waitRunning(ctx, witnessId)
+    await execute(ctx, lead, 'team_task_create', { subject: 'baseline', description: 'baseline task' })
+
+    const beforeMembers = ctx.agentTeams.listMembers(lead)
+    const beforeTasks = ctx.agentTeams.listTasks(lead)
+    const beforeMessages = structuredClone(lead.session.deriveMessages())
+
+    const run = await ctx.subagents.start('fork', {
+      label: 'fork task', prompt: [{ type: 'text', text: 'independent task' }], parent: lead, signal: SIGNAL,
+    })
+    const fork = run.localAgent!
+    expect(ctx.agentTeams.tryMembership(fork)).toBeUndefined()
+
+    const result = await execute(ctx, fork, toolName, args)
+    expect(result.isError, text(result)).toBe(true)
+    expect(result.error?.info?.code).toBe('TEAM_NOT_MEMBER')
+    expect(ctx.agentTeams.listMembers(lead)).toEqual(beforeMembers)
+    expect(ctx.agentTeams.listTasks(lead)).toEqual(beforeTasks)
+    expect(lead.session.deriveMessages()).toEqual(beforeMessages)
+
+    await run.dispose()
+    await execute(ctx, lead, 'interrupt_agent', { target: 'witness' })
+    await vi.waitFor(() => { expect(ctx.agents.get(witnessId)).toBeUndefined() }, { timeout: 5_000 })
+  })
+
+  it('does not install Team tools on a persona or toolFilter fork', async () => {
+    // Continuable, not one-shot: a continuable descriptor records persona and
+    // toolFilter durably (a one-shot descriptor never does, see
+    // plain-fork.ts), so this is the reliable way to exercise the exclusion.
+    const { ctx, lead } = await setup([textResponse('lead answer')])
+    await runTurn(lead, 'Lead task')
+    // A known global tool name for the toolFilter case below: restrict()
+    // validates deny/allow entries against registered global tools, and
+    // every Team tool is scoped rather than global.
+    ctx.tools.register(defineContentToolFixture({
+      name: 'probe', description: 'test-only fixture tool', parameters: {}, async execute() { return [] },
+    }))
+
+    const personaId = SessionId('gate-persona-fork')
+    await ctx.subagents.startContinuable({
+      childId: personaId,
+      provider: 'fork',
+      label: 'x',
+      request: { prompt: [{ type: 'text', text: 'x' }], parent: lead, persona: 'You are a narrow specialist.' },
+      signal: SIGNAL,
+    })
+    expect(ctx.tools.get('spawn_teammate', ctx.agents.get(personaId))).toBeUndefined()
+    await ctx.subagents.drainContinuableChildren(lead, [personaId])
+
+    const toolFilterId = SessionId('gate-toolfilter-fork')
+    await ctx.subagents.startContinuable({
+      childId: toolFilterId,
+      provider: 'fork',
+      label: 'x',
+      request: { prompt: [{ type: 'text', text: 'x' }], parent: lead, toolFilter: { allow: ['probe'] } },
+      signal: SIGNAL,
+    })
+    expect(ctx.tools.get('spawn_teammate', ctx.agents.get(toolFilterId))).toBeUndefined()
+    await ctx.subagents.drainContinuableChildren(lead, [toolFilterId])
+  })
+
+  it('does not install Team tools on a fresh subagent child of the Lead', async () => {
+    const { ctx, lead } = await setup([textResponse('lead answer'), textResponse('fresh')])
+    await runTurn(lead, 'Lead task')
+    const freshRun = await ctx.subagents.start('spawn', {
+      label: 'x', prompt: [{ type: 'text', text: 'x' }], parent: lead, signal: SIGNAL,
+    })
+    expect(ctx.tools.get('spawn_teammate', freshRun.localAgent)).toBeUndefined()
+    await freshRun.dispose()
+  })
+
+  it('does not install Team tools on a one-shot outputSchema fork', async () => {
+    // A one-shot `subagent/descriptor` never records outputSchema (see
+    // descriptor.ts), so classification relies on the in-process composition
+    // record `applyChildComposition` sets from the driver's own
+    // `request.outputSchema`, not on anything read back from the log.
+    const { ctx, lead } = await setup([textResponse('lead answer'), textResponse('child')])
+    await runTurn(lead, 'Lead task')
+    const run = await ctx.subagents.start('fork', {
+      label: 'x', prompt: [{ type: 'text', text: 'x' }], parent: lead, signal: SIGNAL,
+      outputSchema: { type: 'object', properties: { ok: { type: 'boolean' } }, required: ['ok'] },
+    })
+    expect(ctx.tools.get('spawn_teammate', run.localAgent)).toBeUndefined()
+    await run.dispose()
+  })
+
+  it('does not install Team tools on a one-shot persona or toolFilter fork', async () => {
+    // Mirrors the continuable case above through the one-shot driver instead:
+    // a one-shot `subagent/descriptor` never records persona or toolFilter
+    // either (see plain-fork.ts), so this exercises the same in-process
+    // composition record from the other creation path.
+    const { ctx, lead } = await setup([
+      textResponse('lead answer'), textResponse('persona child'), textResponse('toolFilter child'),
+    ])
+    await runTurn(lead, 'Lead task')
+    // A known global tool name for the toolFilter case below: restrict()
+    // validates deny/allow entries against registered global tools, and
+    // every Team tool is scoped rather than global.
+    ctx.tools.register(defineContentToolFixture({
+      name: 'probe', description: 'test-only fixture tool', parameters: {}, async execute() { return [] },
+    }))
+
+    const personaRun = await ctx.subagents.start('fork', {
+      label: 'x', prompt: [{ type: 'text', text: 'x' }], parent: lead, signal: SIGNAL,
+      persona: 'You are a narrow specialist.',
+    })
+    expect(ctx.tools.get('spawn_teammate', personaRun.localAgent)).toBeUndefined()
+    await personaRun.dispose()
+
+    const toolFilterRun = await ctx.subagents.start('fork', {
+      label: 'x', prompt: [{ type: 'text', text: 'x' }], parent: lead, signal: SIGNAL,
+      toolFilter: { allow: ['probe'] },
+    })
+    expect(ctx.tools.get('spawn_teammate', toolFilterRun.localAgent)).toBeUndefined()
+    await toolFilterRun.dispose()
+  })
+
+  it('extends Team tools transitively through a plain fork of a plain fork', async () => {
+    const { ctx, lead, adapter } = await setup([
+      textResponse('lead answer'), textResponse('fork1 answer'), textResponse('fork2 answer'),
+    ])
+    await runTurn(lead, 'Lead task')
+    const fork1Run = await ctx.subagents.start('fork', {
+      label: 'fork1', prompt: [{ type: 'text', text: 'fork1 task' }], parent: lead, signal: SIGNAL,
+    })
+    const fork1 = fork1Run.localAgent!
+    await fork1Run.result
+    // fork1 is a plain fork of the member Lead, so it gets Team tools, but it
+    // is not itself a member — the roster still rejects it as a caller.
+    expect(ctx.tools.get('spawn_teammate', fork1)).toBeDefined()
+    expect(() => ctx.agentTeams.membership(fork1)).toThrow(expect.objectContaining({ code: 'TEAM_NOT_MEMBER' }))
+    const fork1Request = serializeRequest(adapter.requests[1]!)
+
+    const fork2Run = await ctx.subagents.start('fork', {
+      label: 'fork2', prompt: [{ type: 'text', text: 'fork2 task' }], parent: fork1, signal: SIGNAL,
+    })
+    const fork2 = fork2Run.localAgent!
+    await fork2Run.result
+    // fork2's immediate parent (fork1) is not itself a Team member, so only a
+    // transitive walk through fork1's own plain-fork parent (the member Lead)
+    // extends the section and tools here; a one-hop check would stop at
+    // fork1 and drop them, missing the provider prompt cache on fork2's
+    // first request.
+    expect(ctx.tools.get('spawn_teammate', fork2)).toBeDefined()
+    const fork2Request = serializeRequest(adapter.requests[2]!)
+    expect(fork2Request.tools).toEqual(fork1Request.tools)
+    expect(fork2Request.system).toEqual(fork1Request.system)
+    const denied = await execute(ctx, fork2, 'spawn_teammate', {
+      name: 'rogue', description: 'unauthorized', prompt: 'act as the lead',
+    })
+    expect(denied.isError).toBe(true)
+    expect(denied.error?.info?.code).toBe('TEAM_NOT_MEMBER')
+
+    await fork2Run.dispose()
+    await fork1Run.dispose()
+  })
+
+  it('does not extend Team tools through a plain fork chain whose root is not a member', async () => {
+    const { ctx, lead } = await setup([
+      textResponse('lead answer'), textResponse('fresh answer'), textResponse('fork-of-fresh answer'),
+    ])
+    await runTurn(lead, 'Lead task')
+    const freshRun = await ctx.subagents.start('spawn', {
+      label: 'fresh', prompt: [{ type: 'text', text: 'fresh task' }], parent: lead, signal: SIGNAL,
+    })
+    const freshChild = freshRun.localAgent!
+    await freshRun.result
+    // A fresh child is not seeded, so plainForkParentOf never resolves a
+    // parent for it: it terminates the lineage walk, and it is not a Team
+    // member.
+    expect(ctx.tools.get('spawn_teammate', freshChild)).toBeUndefined()
+
+    const forkOfFreshRun = await ctx.subagents.start('fork', {
+      label: 'fork-of-fresh', prompt: [{ type: 'text', text: 'fork of fresh task' }], parent: freshChild, signal: SIGNAL,
+    })
+    const forkOfFresh = forkOfFreshRun.localAgent!
+    // forkOfFresh's plain-fork walk reaches freshChild and stops there:
+    // freshChild is neither a member nor itself a plain fork, so the
+    // lineage's root is not a member and the walk finds nothing to inherit.
+    expect(ctx.tools.get('spawn_teammate', forkOfFresh)).toBeUndefined()
+
+    await forkOfFreshRun.dispose()
+    await freshRun.dispose()
+  })
+
+  it('re-installs Team tools after a cold resume of a continuable plain fork of the Lead', async () => {
+    const { ctx, lead } = await setup([textResponse('lead answer'), textResponse('fork answer'), textResponse('resumed answer')])
+    await runTurn(lead, 'Lead task')
+    const childId = SessionId('lead-plain-fork-cold')
+    await ctx.subagents.startContinuable({
+      childId,
+      provider: 'fork',
+      label: 'fork task',
+      request: { prompt: [{ type: 'text', text: 'fork task' }], parent: lead },
+      signal: SIGNAL,
+    })
+    await vi.waitFor(() => { expect(ctx.agents.get(childId)).toBeUndefined() }, { timeout: 5_000 })
+    await queueHostSubagentPrompt(
+      ctx.subagents, lead, childId, [{ type: 'text', text: 'continue' }], { kind: 'user' }, SIGNAL,
+    )
+    const resumed = await waitRunning(ctx, childId)
+    expect((await assembly(ctx, resumed)).tools.map(schema => schema.name)
+      .filter(name => TOOL_NAMES.includes(name)).sort()).toEqual(TOOL_NAMES)
+    await ctx.subagents.drainContinuableChildren(lead, [childId])
   })
 })

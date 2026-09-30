@@ -1,0 +1,46 @@
+# The summary output cap inherits the 1,800-token headroom. A 1,000-token
+# request output reservation lowers the proactive trigger to 6,900 tokens.
+# The mounted pruner's default preview margin cannot clear that gap from the
+# two moderate bulk tool results alone, so compaction runs first. A single
+# retry (compactionRetries: 0 disables it) would otherwise attempt one more
+# unlogged real summarization call after a landed prune, which keyless replay
+# cannot reconstruct.
+
+- id: llm-deepseek
+  name: '@deepseek-ai/dsh-llm-deepseek-api-key'
+  disabled: true
+
+- id: session-persistence-jsonl
+  name: '@deepseek-ai/dsh-session-persistence-jsonl'
+  config:
+    root: !!js dshHomePath('sessions')
+    compression: none
+
+- id: compaction-basic
+  name: '@deepseek-ai/dsh-compaction-basic'
+  config:
+    thresholdRatio: 0.8
+    headroomTokens: 1800
+    retainTokens: 20
+    compactionRetries: 0
+
+- id: tool-result-pruner
+  name: '@deepseek-ai/dsh-compaction-tool-result-pruner'
+  config:
+    thresholdChars: 200
+    headChars: 80
+    tailChars: 40
+
+- insert:
+    - id: llm-replay
+      name: '@deepseek-ai/dsh-llm-replay'
+      config:
+        providers:
+          - id: deepseek-official
+            name: DeepSeek
+            models:
+              - id: deepseek-v4-flash
+                contextWindow: 9700
+                defaultMaxTokens: 1000
+                reasoningEfforts: [off, high]
+                defaultReasoningEffort: off

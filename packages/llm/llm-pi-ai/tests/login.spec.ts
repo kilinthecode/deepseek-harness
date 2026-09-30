@@ -20,7 +20,7 @@ vi.mock('../src/models.ts', async importOriginal => ({
 }))
 
 const { credentialStoreFrom, authContextFrom, recordKeyFor } = await import('../src/auth.ts')
-const { registerPiAiFlows } = await import('../src/login.ts')
+const { authorizationFor, registerPiAiFlows } = await import('../src/login.ts')
 
 const CODEX = recordKeyFor('openai-codex')
 const dirs: string[] = []
@@ -81,6 +81,17 @@ afterEach(async () => {
 })
 
 describe('pi-ai login flows', () => {
+  it('answers the sign-in one catalog provider offers a route, and whether the route needs it', () => {
+    // The directory and the flows both read this one predicate: `oauth`-only
+    // `openai-codex` has no api-key auth to fall back on, while a provider that
+    // also collects a key still authenticates without a stored sign-in.
+    expect(authorizationFor('openai-codex')).toEqual({ key: CODEX, required: true })
+    expect(authorizationFor('openai')).toEqual({ key: recordKeyFor('openai'), required: false })
+    // pi-ai ships nothing under a hand-declared key, so there is no login to
+    // run and no record a flow could write.
+    expect(authorizationFor('acme-gateway')).toBeUndefined()
+  })
+
   it('offers one flow per installed provider, with the methods that provider ships', async () => {
     const ctx = await harness()
     const offered = ctx.authorization.list()
