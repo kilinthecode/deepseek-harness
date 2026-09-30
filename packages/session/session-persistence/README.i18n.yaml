@@ -27,8 +27,8 @@
   en: 16d4abbb05a67360
   zh: fc91863169570795
 /deepseek-ai-dsh-session-persistence/use-this-package/the-live-write-path-and-shutdown-drain:
-  en: 282c5bc8a391159f
-  zh: 96682e345ef301f6
+  en: 5ce49023db959914
+  zh: de685764ac9997da
 /deepseek-ai-dsh-session-persistence/use-this-package/resuming-and-crash-recovery:
   en: 08b09dce0bcf47c8
   zh: b6c5926d6e440a7b
@@ -48,8 +48,8 @@
   en: 3868942fde28ff0a
   zh: 865208afd7d04b49
 /deepseek-ai-dsh-session-persistence/understand-the-implementation/the-write-path-at-a-glance:
-  en: c920cf9262f4a563
-  zh: 0f8e3ff17e39c861
+  en: 9520979e7f4bcfa6
+  zh: 760ec21a6a9e6a3d
 /deepseek-ai-dsh-session-persistence/understand-the-implementation/stored-record-validation:
   en: b93ec8187f7f86b0
   zh: 578aa5c6cadafd5a

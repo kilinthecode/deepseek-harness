@@ -45,6 +45,12 @@ const readTally = vi.hoisted(() => ({
   enabled: false,
 }))
 
+const openTally = vi.hoisted(() => ({
+  /** Physical open() calls per path; a header decode costs exactly one. */
+  byPath: new Map<string, number>(),
+  enabled: false,
+}))
+
 const readFailure = vi.hoisted(() => ({
   path: undefined as string | undefined,
   error: undefined as Error | undefined,
@@ -73,6 +79,13 @@ vi.mock('node:fs/promises', async (importOriginal) => {
       if (statRace.reads < 3) return identity
       return { ...identity, mtimeNs: identity.mtimeNs + 1n }
     }) as typeof actual.stat,
+    open: (async (...args: Parameters<typeof actual.open>) => {
+      const path = typeof args[0] === 'string' ? args[0] : undefined
+      if (openTally.enabled && path !== undefined) {
+        openTally.byPath.set(path, (openTally.byPath.get(path) ?? 0) + 1)
+      }
+      return actual.open(...args)
+    }),
     readFile: (async (...args: Parameters<typeof actual.readFile>) => {
       const path = typeof args[0] === 'string' ? args[0] : undefined
       if (path === readFailure.path && readFailure.error !== undefined) throw readFailure.error
@@ -286,6 +299,8 @@ afterEach(async () => {
   statRace.mode = 'settle'
   readTally.bySuffix.clear()
   readTally.enabled = false
+  openTally.byPath.clear()
+  openTally.enabled = false
   const pausedReadDone = pausedRead.active ? pausedRead.done : undefined
   readFailure.path = undefined
   readFailure.error = undefined
@@ -2045,6 +2060,157 @@ describe('JsonlSessionPersistence: durability and crash semantics', () => {
 
     await expect(pending).rejects.toBe(reason)
     expect(discovery).toHaveBeenCalledWith(controller.signal)
+  })
+})
+
+describe('JsonlSessionPersistence: stored-header memo', () => {
+  let ctx: Context
+  beforeEach(async () => {
+    root = await freshRoot()
+    ctx = new Context()
+    await ctx.plugin(JsonlSessionPersistence, { root, compression: 'none' })
+  })
+  afterEach(async () => { await ctx.fiber.dispose() })
+
+  it('opens each stored header once across repeated listings', async () => {
+    const first = meta('memo-a', '/work')
+    const second = meta('memo-b', '/work')
+    await writeLog(ctx.sessionPersistence, first, oneTurnLog())
+    await writeLog(ctx.sessionPersistence, second, oneTurnLog())
+    const paths = [rawLogPath(root, '/work', first.id), rawLogPath(root, '/work', second.id)]
+    openTally.enabled = true
+
+    const expectListed = async (): Promise<void> => {
+      expect((await ctx.sessionPersistence.list()).map(snapshot => snapshot.header.id).sort())
+        .toEqual([first.id, second.id].sort())
+    }
+    await expectListed()
+    expect(paths.map(path => openTally.byPath.get(path))).toEqual([1, 1])
+    // An append-only artifact never rewrites its header line, so the second
+    // listing must reuse the identity-checked header instead of re-opening and
+    // re-decoding every stored session.
+    await expectListed()
+    expect(paths.map(path => openTally.byPath.get(path))).toEqual([1, 1])
+  })
+
+  it('retries a corrupt header instead of memoizing its verdict', async () => {
+    const id = SessionId('memo-corrupt-retry')
+    const path = rawLogPath(root, undefined, id)
+    await mkdir(sessionDir(root, undefined, id), { recursive: true })
+    await writeFile(path, 'not json at all\n')
+    expect(await ctx.sessionPersistence.list()).toEqual([])
+
+    // Same path, same inode: only a successful decode is memoized, so the
+    // repaired header is read on the next listing.
+    const repaired = meta('memo-corrupt-retry')
+    await writeFile(path, `${JSON.stringify(toHeaderLine(repaired))}\n`)
+    expect((await ctx.sessionPersistence.list()).map(snapshot => snapshot.header.id))
+      .toEqual([repaired.id])
+  })
+
+  it('serves a detached header copy and drops it once the artifact is gone', async () => {
+    const m = meta('memo-detached', '/work')
+    await writeLog(ctx.sessionPersistence, m, oneTurnLog())
+
+    const [first] = await ctx.sessionPersistence.list()
+    expect(first?.header.createdAt).toBe(m.createdAt)
+    mutableHeader(first!.header).createdAt = 999
+
+    const [second] = await ctx.sessionPersistence.list()
+    expect(second?.header.createdAt).toBe(m.createdAt)
+    expect(second?.sizeBytes).toBe(first?.sizeBytes)
+
+    await rm(rawLogPath(root, '/work', m.id))
+    expect(await ctx.sessionPersistence.list()).toEqual([])
+  })
+})
+
+/** The backend's batch writer, which live-persistence tests observe or fail. */
+interface BatchWriter {
+  persistBatch: (header: SessionHeader, events: readonly SessionEvent[], ...rest: unknown[]) => Promise<void>
+}
+
+/**
+ * Reach the batch writer the routed live path drains into.
+ * @param persistence - the mounted JSONL backend.
+ * @returns the backend viewed through its batch writer.
+ */
+function batchWriter(persistence: unknown): BatchWriter {
+  return persistence as BatchWriter
+}
+
+describe('JsonlSessionPersistence: routed live persistence sharing', () => {
+  let ctx: Context
+  beforeEach(async () => {
+    root = await freshRoot()
+    ctx = new Context()
+    await ctx.plugin(SessionStore)
+    await ctx.plugin(JsonlSessionPersistence, { root, compression: 'none' })
+  })
+  afterEach(async () => { await ctx.fiber.dispose() })
+
+  it('drains the committed frozen events themselves, in order', async () => {
+    const session = ctx.sessions.create(SessionId('live-shared-events'))
+    const handle = await ctx.sessionPersistence.create(session.header)
+    const host = batchWriter(ctx.sessionPersistence)
+    const real = host.persistBatch.bind(host)
+    const batches: SessionEvent[][] = []
+    const persist = vi.spyOn(host, 'persistBatch').mockImplementation(async (header, events, ...rest) => {
+      batches.push([...events])
+      return real(header, events, ...rest)
+    })
+
+    const first = session.append('turn/start', { turn: 1 })
+    const second = session.append('turn/end', { turn: 1, reason: { kind: 'completed' } })
+    await ctx.sessions.flush(session)
+
+    expect(Object.isFrozen(first)).toBe(true)
+    expect(Object.isFrozen(second)).toBe(true)
+    expect(batches).toHaveLength(1)
+    // The committed, deep-frozen events reach the durable write unchanged: the
+    // routed path adds no second or third copy of the same graph.
+    expect(batches[0]![0]).toBe(first)
+    expect(batches[0]![1]).toBe(second)
+    persist.mockRestore()
+    await handle.close()
+  })
+
+  it('never clones a committed live event on the persistence path', async () => {
+    const session = ctx.sessions.create(SessionId('live-no-clone'))
+    const handle = await ctx.sessionPersistence.create(session.header)
+    const appended = session.append('turn/start', { turn: 1 })
+
+    const clone = vi.spyOn(globalThis, 'structuredClone')
+    await ctx.sessions.flush(session)
+    expect(clone).not.toHaveBeenCalledWith(appended)
+    clone.mockRestore()
+    await handle.close()
+  })
+
+  it('retains the same committed events after a failed drain and re-persists them', async () => {
+    const session = ctx.sessions.create(SessionId('live-retain-failed-drain'))
+    const handle = await ctx.sessionPersistence.create(session.header)
+    const host = batchWriter(ctx.sessionPersistence)
+    const real = host.persistBatch.bind(host)
+    const failure = new Error('first drain refused')
+    const persist = vi.spyOn(host, 'persistBatch').mockRejectedValueOnce(failure)
+
+    const first = session.append('turn/start', { turn: 1 })
+    const second = session.append('turn/end', { turn: 1, reason: { kind: 'completed' } })
+    await expect(ctx.sessions.flush(session)).rejects.toBe(failure)
+
+    const retried: SessionEvent[][] = []
+    persist.mockImplementation(async (header, events, ...rest) => {
+      retried.push([...events])
+      return real(header, events, ...rest)
+    })
+    await ctx.sessions.flush(session)
+
+    expect(retried[0]).toEqual([first, second])
+    expect(retried[0]![0]).toBe(first)
+    expect(retried[0]![1]).toBe(second)
+    persist.mockRestore()
+    await handle.close()
   })
 })
 

@@ -86,7 +86,11 @@ export class JsonlSessionHandle implements SessionHandle {
   private chain: Promise<unknown> = Promise.resolve()
   private closing: Promise<void> | undefined
   private observedLength = 0
-  /** Routed live events awaiting their batching deadline (persistence-owned copies). */
+  /**
+   * Routed live events awaiting their batching deadline. `Session.append`
+   * publishes an already detached deep-frozen snapshot, so the buffer retains
+   * the committed event itself rather than a second persistence-owned copy.
+   */
   private buffered: SessionEvent[] = []
   private batchTimer: ReturnType<typeof setTimeout> | undefined
   /** Set when a drain failed; the automatic timer stays quiet until the next drain. */
@@ -266,13 +270,16 @@ export class JsonlSessionHandle implements SessionHandle {
 
   /**
    * Buffer one published live session event and arm the bounded batching
-   * window when it is idle. The routing installer is the only caller.
-   * @param event - the live event, retained as a persistence-owned copy.
+   * window when it is idle. The routing installer is the only caller, and the
+   * only production emitter of `session/event` is `Session.append`, which
+   * publishes a detached deep-frozen lossless-JSON snapshot — the buffer keeps
+   * that committed event, so one graph walk is not repeated per event.
+   * @param event - the committed live event; the buffer retains it by reference.
    * @param reportBackgroundFailure - observes a deadline-driven drain failure
    *   (the events stay buffered; the next {@link drainLive} retries loudly).
    */
   enqueueLive(event: SessionEvent, reportBackgroundFailure: (error: unknown) => void): void {
-    this.buffered.push(structuredClone(event))
+    this.buffered.push(event)
     if (this.batchTimer !== undefined || this.drainPaused) return
     this.batchTimer = setTimeout(() => {
       this.batchTimer = undefined
@@ -302,10 +309,12 @@ export class JsonlSessionHandle implements SessionHandle {
       // batch writes coalesce into the next one, in order.
       await this.enqueueChain(async () => {
         // Only this single-flight drain splices the buffer, so the batch the
-        // while-guard saw is still here when the chained turn runs.
+        // while-guard saw is still here when the chained turn runs. The batch
+        // holds the committed frozen events themselves, so it goes to the
+        // encoder unchanged.
         const batch = this.buffered.splice(0)
         try {
-          await this.persistContiguous(materializeAppendBatch(batch))
+          await this.persistContiguous(batch)
         } catch (error: unknown) {
           this.buffered = batch.concat(this.buffered)
           this.drainPaused = true

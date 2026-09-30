@@ -170,6 +170,17 @@ interface ResolvedJsonlGeneration {
   readonly currentPath: string
 }
 
+/** One identity-checked, immutable stored header retained for repeat listings. */
+interface MemoizedHeader {
+  /** Device and inode of the artifact the header was decoded from. */
+  readonly dev: bigint
+  readonly ino: bigint
+  /** Generation version named by that artifact's filename. */
+  readonly sourceVersion: number
+  /** The header the artifact's immutable first line decoded to. */
+  readonly header: SessionHeader
+}
+
 /** One backend-owned historical preparation shared by its current callers. */
 interface MigrationPreparation {
   readonly sourcePath: string
@@ -264,6 +275,16 @@ class JsonlSessionPersistence extends SessionPersistence {
    * revision guard.
    */
   private readonly coldLogMemo = new Map<SessionId, StoredLog>()
+  /**
+   * Identity-checked decoded headers keyed by artifact path. A generation
+   * file's header line is immutable once materialized, and the stat-derived
+   * (device, inode) pair identifies the file itself, so appends keep hitting
+   * the entry while a replacement or a successing generation re-reads. Only
+   * successful decodes are memoized, and every full artifact listing drops the
+   * entries of artifacts that are gone, so the memo stays bounded by the
+   * corpus on disk.
+   */
+  private readonly headerMemo = new Map<string, MemoizedHeader>()
   /** One joinable decode/migration operation per selected historical Session file revision. */
   private readonly migrationPreparations = new Map<SessionId, MigrationPreparation>()
 
@@ -1061,7 +1082,8 @@ class JsonlSessionPersistence extends SessionPersistence {
     signal?.throwIfAborted()
     const artifacts: Array<{ header: SessionHeader; path: string; sourceVersion: number }> = []
     const ids = new Set<SessionId>()
-    for (const selected of await this.listGenerations(signal)) {
+    const generations = await this.listGenerations(signal)
+    for (const selected of generations) {
       signal?.throwIfAborted()
       let header: SessionHeader | undefined
       try {
@@ -1079,6 +1101,12 @@ class JsonlSessionPersistence extends SessionPersistence {
       ids.add(header.id)
       artifacts.push({ header, path: selected.sourcePath, sourceVersion: selected.sourceVersion })
     }
+    // A full pass sees every generation on disk, so it is the natural place to
+    // forget headers whose artifact is gone; nothing else evicts this memo.
+    const present = new Set(generations.map(source => source.sourcePath))
+    for (const path of [...this.headerMemo.keys()]) {
+      if (!present.has(path)) this.headerMemo.delete(path)
+    }
     signal?.throwIfAborted()
     return artifacts
   }
@@ -1089,6 +1117,28 @@ class JsonlSessionPersistence extends SessionPersistence {
     expectedId?: SessionId,
     signal?: AbortSignal,
   ): Promise<SessionHeader | undefined> {
+    signal?.throwIfAborted()
+    // The stat comes first: it is the memo guard, and an artifact that vanished
+    // already reports absence without an open attempt.
+    const identity = await stat(selected.sourcePath, { bigint: true }).catch((error: unknown) => {
+      signal?.throwIfAborted()
+      if (isENOENT(error)) return undefined
+      throw error
+    })
+    signal?.throwIfAborted()
+    if (identity === undefined) return undefined
+    const memoized = this.headerMemo.get(selected.sourcePath)
+    if (memoized !== undefined
+      && memoized.dev === identity.dev
+      && memoized.ino === identity.ino
+      && memoized.sourceVersion === selected.sourceVersion) {
+      // A memo hit already passed the path/cwd identity check when the header
+      // was decoded; the id check stays because it depends on this caller.
+      if (expectedId !== undefined && memoized.header.id !== expectedId) {
+        throw new Error(`corrupt session log "${selected.sourcePath}": requested id "${expectedId}" does not match header id "${memoized.header.id}"`)
+      }
+      return structuredClone(memoized.header)
+    }
     let first: string | undefined
     try {
       first = this.compression === 'zstd'
@@ -1136,6 +1186,12 @@ class JsonlSessionPersistence extends SessionPersistence {
       expectedId,
       signal,
     )
+    this.headerMemo.set(selected.sourcePath, {
+      dev: identity.dev,
+      ino: identity.ino,
+      sourceVersion: selected.sourceVersion,
+      header: structuredClone(header),
+    })
     return header
   }
 
