@@ -1,0 +1,15 @@
+version: 1
+scenario: peer-activity
+profile: headless
+composition: peer-activity
+recording: authored
+header:
+  class: peer-activity
+  pin: true
+  systemPromptSource: peer-message
+  toolSchemasSource: peer-message
+replay:
+  override: true
+platform: posix
+workspace:
+  final: true
