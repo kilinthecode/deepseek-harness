@@ -328,7 +328,10 @@ export class SessionManager {
         if (projections.values().sessionListMetadata?.blank === false) {
           this.sessions.get(sessionId)?.handleBlank(false)
         }
-        this.notifier.markDirty()
+        // Projection values stream: publish them with the frame, so several
+        // frames of one event and of concurrent sessions share one list
+        // rebuild. A structural markDirty still flushes at the next microtask.
+        this.notifier.markFrameDirty()
       })
       this.projectionStores.set(sessionId, store)
     }

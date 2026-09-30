@@ -66,6 +66,9 @@ describe('SessionManager control frames', () => {
     manager.handleControlFrame({ type: 'projection', sessionId: S1, key: 'test/marks', value: 1, seq: 2 })
     manager.handleControlFrame({ type: 'projection', sessionId: S2, key: 'test/marks', value: 2, seq: 2 })
     manager.handleControlFrame({ type: 'projection', sessionId: S1, key: 'test/marks', value: 3, seq: 3 })
+    // The projection stores publish their own changes a microtask later; those
+    // must join the pending frame rather than flush the list on their own.
+    await new Promise(resolve => setTimeout(resolve, 0))
     expect(notifications).toBe(0)
     expect(frames).toHaveLength(1)
     frames.shift()!(0)
