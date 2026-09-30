@@ -553,6 +553,25 @@ describe('peer activity bounds', () => {
     expect((await rendered(narrow)).text).toBe(expected)
   })
 
+  it('drops both the files and the doing line of the last peer when only its name fits', async () => {
+    const wide = await wideProcess()
+    await wide.fixture.write({
+      id: 'peer-b',
+      status: 'running',
+      doing: 'a line of work long enough to pay for dropping the doing line itself',
+      files: ['rel:src/one.ts', 'rel:src/two.ts'],
+    })
+    const expected = [
+      HEADER,
+      '<peer-activity-json>',
+      '{"peers":[{"name":"peer-b","status":"running","checkout":"shared"}],"truncated":true}',
+      '</peer-activity-json>',
+    ].join('\n')
+
+    const narrow = await peerProcess(wide, 'peer-narrow', Buffer.byteLength(expected, 'utf8'))
+    expect((await rendered(narrow)).text).toBe(expected)
+  })
+
   it('counts a multibyte name in bytes, not characters', async () => {
     const wide = await wideProcess()
     await wide.fixture.write({ id: 'peer-b', name: '日本語のピア', status: 'running' })

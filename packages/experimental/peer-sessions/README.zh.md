@@ -56,7 +56,7 @@ kind: "package-reference"
 
 符合对等会话条件且有可用工作目录的会话，会在 `$DSH_HOME/peers/activity/<sha256(sessionId)>.json` 发布一条活动记录，与其存在记录并列。记录包含会话的仓库键、工作目录与检出根目录 `root`；以 `name` 表示的标题；`status`；它正在做什么（`doing`）；它写入过的 `files`；其 pid；以及最近一次发布的时间。subagent 和没有可用工作目录的会话不发布记录。
 
-`status` 取 `idle`、`running`，或在存在未决审批询问时取 `awaiting-user`。`doing` 是该会话自己写下的最新一份 `todo_write` 列表中的第一个 `in_progress` 条目，截断为 120 个字符；没有条目处于进行中时它不存在，subagent 的列表也不会改变它。
+`status` 取 `idle`、`running`，或在存在未决审批询问或用户提问时取 `awaiting-user`。`doing` 是该会话自己写下的最新一份 `todo_write` 列表中的第一个 `in_progress` 条目，截断为 120 个字符；没有条目处于进行中时它不存在，subagent 的列表也不会改变它。
 
 `files` 列出 `write`、`edit` 以及 `str_replace_editor` 中有修改作用的命令成功写入的路径，最新的在前，每个路径一条，最多 `maxActivityFiles` 条。失败的调用、读取，以及参数格式错误或不完整的调用都不会添加条目。位于检出目录内的路径以 `rel:` 加相对于检出根目录的路径（使用 `/` 分隔）作为键；其他路径以 `abs:` 加解析后的路径作为键。工具路径先相对于执行写入的会话自己的工作目录解析，再换算为相对于根目录的路径，因此同一文件在同一仓库的两个 worktree 中只有一个键，在 `packages/x` 中启动的会话也能与在检出目录顶层启动的会话对上。
 

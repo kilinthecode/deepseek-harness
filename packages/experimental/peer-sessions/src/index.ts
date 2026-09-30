@@ -701,7 +701,7 @@ export default class PeerService extends Service {
       const truncated = renderPeerActivity([{ ...only, files }], true)
       if (fits(truncated)) return truncated
     }
-    const trimmed = renderPeerActivity([{ ...only, doing: undefined }], true)
+    const trimmed = renderPeerActivity([{ ...only, files, doing: undefined }], true)
     return fits(trimmed) ? trimmed : undefined
   }
 
@@ -1050,7 +1050,7 @@ export default class PeerService extends Service {
    * Mark a session as waiting for its user while one question is in flight.
    *
    * The listener only observes: it always calls `next()` so the answerer chain
-   * still decides, and it restores the presence row in `finally`.
+   * still decides, and it restores the presence and activity rows in `finally`.
    * @param request - the pending user-question request.
    * @param next - the rest of the answerer chain.
    * @returns the chain's answer.
@@ -1064,13 +1064,15 @@ export default class PeerService extends Service {
     if (agent === undefined || state === undefined) return await next()
     state.questioning = true
     await this.publishIfPeer(agent, state)
+    await this.publishActivity(state)
     try {
       return await next()
     } finally {
-      // `publish` reports its own failures, so it can never replace an answer
-      // that the answerer chain already decided.
+      // Both publishes report their own failures, so neither can replace an
+      // answer that the answerer chain already decided.
       state.questioning = false
       await this.publishIfPeer(agent, state)
+      await this.publishActivity(state)
     }
   }
 
