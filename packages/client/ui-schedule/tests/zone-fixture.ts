@@ -63,3 +63,26 @@ export function zoneDifferingFrom(
   }
   return chosen
 }
+
+/**
+ * First fixture zone whose offset at one instant differs from every excluded
+ * zone's.
+ *
+ * A case that compares a task-zone render with a browser-zone render must
+ * differ from the zone the formatter actually uses, and a case that also
+ * asserts the pinned system zone must differ from that too: the suite pins
+ * `Intl.DateTimeFormat().resolvedOptions()` while the formatter keeps the
+ * runner's own zone, so one exclusion is not enough.
+ * @param instant - ISO instant the fixture formats.
+ * @param excludedZones - zone names the chosen fixture must not share an offset with.
+ * @returns a candidate zone whose offset differs from every excluded zone's at that instant.
+ * @throws Error when no candidate zone differs, so the fixture fails with its reason.
+ */
+export function zoneDifferingFromAll(instant: string, excludedZones: readonly string[]): string {
+  const excluded = excludedZones.map(zone => zoneOffsetMinutes(zone, instant))
+  const chosen = CANDIDATE_ZONES.find(zone => !excluded.includes(zoneOffsetMinutes(zone, instant)))
+  if (chosen === undefined) {
+    throw new Error(`No fixture zone differs from ${excludedZones.join(', ')} at ${instant}; add one to CANDIDATE_ZONES.`)
+  }
+  return chosen
+}
