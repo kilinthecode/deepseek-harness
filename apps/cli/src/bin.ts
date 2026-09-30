@@ -75,10 +75,6 @@ export async function runCli(options: RunCliOptions = {}): Promise<void> {
 
 if (import.meta.main) {
   // The launcher, not any plugin, owns the process-level Node compile cache.
-  // A help or version answer compiles no profile, so those stay cache-free.
-  const [first] = process.argv.slice(2)
-  if (first !== '-V' && first !== '--version' && first !== '-h' && first !== '--help') {
-    await enableDshCompileCache('dsh')
-  }
+  await enableDshCompileCache('dsh', process.argv.slice(2))
   await runCli()
 }

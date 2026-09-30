@@ -18,7 +18,7 @@ import { installOfficeEngineResolution } from './office-engine.ts'
 async function main(): Promise<void> {
   // No CLI launcher runs before this entry, so the Host enables the shared
   // Node compile cache itself, before any profile module is compiled.
-  await enableDshCompileCache('dsh-desktop-host')
+  await enableDshCompileCache('dsh-desktop-host', process.argv.slice(2))
   const runtimeDir = process.argv[2] as string
   const projectDir = process.argv[3] as string
   installOfficeEngineResolution(runtimeDir)

@@ -23,17 +23,25 @@ export const COMPILE_CACHE_DIR_NAME = 'node-compile-cache'
  * choice always wins. Every failure — an unwritable home, a cache volume Node
  * refuses, or a runtime without the API — is reported as one diagnostic line
  * and leaves the launch working without a cache.
+ * A help or version answer compiles no profile, so those invocations stay cache-free.
  * @param executableName - the calling executable's display name for that diagnostic.
+ * @param args - the command-line arguments after the entry script.
  * @returns a promise that settles once the attempt is done; it never rejects.
  */
-export async function enableDshCompileCache(executableName: string): Promise<void> {
+export async function enableDshCompileCache(executableName: string, args: readonly string[]): Promise<void> {
   if (process.env.NODE_COMPILE_CACHE !== undefined || process.env.NODE_DISABLE_COMPILE_CACHE !== undefined) return
+  const [first] = args
+  if (first === '-V' || first === '--version' || first === '-h' || first === '--help') return
   try {
     // A dynamic import keeps this module loadable on a runtime that predates
     // the API, where the property is absent instead of a link-time failure.
-    const { enableCompileCache } = await import('node:module')
+    const { constants, enableCompileCache } = await import('node:module')
     if (typeof enableCompileCache !== 'function') return
-    enableCompileCache(dshCachePath(COMPILE_CACHE_DIR_NAME))
+    // Node reports an unusable cache directory through the returned status, not by throwing.
+    const result = enableCompileCache(dshCachePath(COMPILE_CACHE_DIR_NAME))
+    if (result.status === constants.compileCacheStatus.FAILED) {
+      console.error(`${executableName}: node compile cache disabled (${result.message ?? 'unknown failure'})`)
+    }
   } catch (error) {
     console.error(`${executableName}: node compile cache disabled (${error instanceof Error ? error.message : String(error)})`)
   }
