@@ -2208,10 +2208,7 @@ describe('JsonlSessionPersistence: stored-header memo', () => {
     const stored = (await ctx.sessionPersistence.stat(historical.id))!.revision
     expect(stored).toMatch(/^\d+:\d+:\d+:\d+:\d+:[0-9a-f]{64}$/)
 
-    const persistence = ctx.sessionPersistence as unknown as {
-      listGenerations(signal?: AbortSignal): Promise<readonly unknown[]>
-    }
-    const walks = vi.spyOn(persistence, 'listGenerations')
+    const walks = vi.spyOn(generationWalker(ctx.sessionPersistence), 'listGenerations')
     statTally.enabled = true
     const listed = await ctx.sessionPersistence.list()
 
@@ -2228,6 +2225,20 @@ describe('JsonlSessionPersistence: stored-header memo', () => {
     walks.mockRestore()
   })
 })
+
+/** The backend's corpus walk, which listing tests count. */
+interface GenerationWalker {
+  listGenerations(signal?: AbortSignal): Promise<readonly unknown[]>
+}
+
+/**
+ * Reach the corpus walk a listing performs.
+ * @param persistence - the mounted JSONL backend.
+ * @returns the backend viewed through its corpus walk.
+ */
+function generationWalker(persistence: unknown): GenerationWalker {
+  return persistence as GenerationWalker
+}
 
 /** The backend's batch writer, which live-persistence tests observe or fail. */
 interface BatchWriter {
