@@ -222,7 +222,7 @@ describe('web e2e: fresh round trip through the real assembly', () => {
     const paragraphs = system.split('\n\n')
     expect(paragraphs.slice(0, 2)).toEqual([
       'You are an AI agent powered by DeepSeek Harness.',
-      'You are a coding agent powered by the deepseek-v4-flash model.',
+      'You are a coding agent.',
     ])
     const suffix = paragraphs.slice(-3).join('\n\n')
       .split(REPO_ROOT).join('{{sourceRoot}}')

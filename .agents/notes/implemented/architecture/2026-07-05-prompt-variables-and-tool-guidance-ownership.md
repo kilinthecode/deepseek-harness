@@ -28,7 +28,7 @@ The assembled system prompt had four defects, all of one family: facts the harne
 
 Plugins register `{{name}}` values through `ctx.systemPrompt.variable(name, provider)`. Assembly resolves them into the waterfall-visible variable map. Rendering rejects unknown own-property references, registered providers that return `undefined`, malformed complete references, and unbalanced references that still contain a closing `}}`; a lone unmatched `{{` remains prose, and substituted values are not rescanned. Registration rejects invalid or duplicate variable names, and section names are unique. Sections may set `interpolate: false` to preserve generated documents literally; `tools:sdk` does so because tool descriptions and schemas may document their own `{{…}}` syntax.
 
-`dsh-agent-loop` registers the two built-ins, both pure projections of the context agent: `model` (= `options.model`) and `cwd` (= `session.header.cwd`). The example personas write `powered by the {{model}} model` — the model name is stated once, in the `model:` config key. `{{cwd}}` is demonstrated in the ACP example only: every ACP session carries the client's cwd, while config-pre-created stdio agents have none (a persona claiming `{{cwd}}` there fails the turn — by design). The variables stay on the loop plugin (unlike the sections below): they are runtime facts of the agents THIS loop drives, and a replacement loop supplies its own.
+`dsh-agent-loop` registers the two built-ins, both pure projections of the context agent: `model` (= `options.model`) and `cwd` (= `session.header.cwd`). A persona template may reference `{{model}}` to state the model name once, in the `model:` config key; the shipped personas name no route, so a model switch leaves the rendered prompt unchanged. `{{cwd}}` is demonstrated in the ACP example only: every ACP session carries the client's cwd, while config-pre-created stdio agents have none (a persona claiming `{{cwd}}` there fails the turn — by design). The variables stay on the loop plugin (unlike the sections below): they are runtime facts of the agents THIS loop drives, and a replacement loop supplies its own.
 
 ### Persona as the order-0 section
 
@@ -58,7 +58,7 @@ Per-tool semantics and selection guidance live in tool descriptions. Prompt sect
 
 ## Shipped invariants
 
-- The tui-agent prompt renders identity, persona with the interpolated model, then fs/shell/web guidance through one assembly path.
+- The tui-agent prompt renders identity, persona, then fs/shell/web guidance through one assembly path.
 - Fork and fresh subagent descriptions reflect whether the provider inherits completed conversation turns; the tool appears, disappears, and is reworded with provider lifecycle changes.
 - In interpolated sections, unknown, valueless, malformed, or unbalanced variable references name the section and throw; duplicate section, variable, and tool registrations also throw.
 - Snapshot replay is prompt-independent: it keys recorded chunk streams by turn and step without comparing the outgoing request.

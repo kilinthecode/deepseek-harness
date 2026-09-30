@@ -16,7 +16,8 @@ import {
 } from '@deepseek-ai/dsh-app-boot'
 import { provideCmdline } from '@deepseek-ai/dsh-cmdline'
 import { SessionId, SessionLogOffset } from '@deepseek-ai/dsh-session'
-import type { Agent } from '@deepseek-ai/dsh-agent'
+import { assembleContextFor, type Agent } from '@deepseek-ai/dsh-agent'
+import { renderPrompt } from '@deepseek-ai/dsh-system-prompt'
 import type { PatchOptions } from '@deepseek-ai/cordis-plugin-include'
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest'
 import { dump, load } from 'js-yaml'
@@ -398,6 +399,40 @@ describe('the shipped Web composition', () => {
       await handle.dispose()
     }
   })
+
+  it.each(['standard', 'ptc', 'cordis'] as const)(
+    'renders an identical `%s` system prompt across a model switch',
+    async (presetId) => {
+      // The shipped persona names no route (packages/bundle/web-app/presets/
+      // {standard,ptc,cordis}.patch.yml): rendering it under two different
+      // resolved models must produce byte-identical text, so surface node 0
+      // stays cache-stable across a model switch instead of forcing a
+      // provider-prefix miss on every request that follows one.
+      const flash = await ctx.agents.create({
+        sessionId: SessionId(`preset-${presetId}-route-flash`),
+        meta: { cwd: process.cwd() },
+        agentOptions: { provider: 'deepseek-official', model: 'deepseek-v4-flash' },
+        setup: agentCtx => ctx.agentPresets.mount(agentCtx, presetId).then(() => undefined),
+      })
+      const pro = await ctx.agents.create({
+        sessionId: SessionId(`preset-${presetId}-route-pro`),
+        meta: { cwd: process.cwd() },
+        agentOptions: { provider: 'deepseek-official', model: 'deepseek-v4-pro' },
+        setup: agentCtx => ctx.agentPresets.mount(agentCtx, presetId).then(() => undefined),
+      })
+      try {
+        const flashPrompt = renderPrompt(await ctx.systemPrompt.assemble(assembleContextFor(flash.agent)))
+        const proPrompt = renderPrompt(await ctx.systemPrompt.assemble(assembleContextFor(pro.agent)))
+        expect(flashPrompt).toBe(proPrompt)
+        expect(flashPrompt).toContain('You are a coding agent.')
+        expect(flashPrompt).not.toContain('deepseek-v4-flash')
+        expect(flashPrompt).not.toContain('deepseek-v4-pro')
+      } finally {
+        await pro.dispose()
+        await flash.dispose()
+      }
+    },
+  )
 
   it('presents `ptc` as PTC mode without disturbing a native session beside it', async () => {
     const coded = await ctx.agents.create({
