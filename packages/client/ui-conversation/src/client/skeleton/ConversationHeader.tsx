@@ -1,7 +1,7 @@
 /** Resident conversation navigation and Session-specific header content. */
 import clsx from 'clsx'
 import type { ConversationHeaderProps } from '../contract/slots.ts'
-import { conversationPhase } from '../contract/snapshot.ts'
+import { conversationPhase, sameConversationActivity } from '../contract/snapshot.ts'
 import css from './ConversationRoot.module.css'
 
 /**
@@ -11,7 +11,7 @@ import css from './ConversationRoot.module.css'
  */
 export function ConversationHeader({ sessionId, useSession, useConversation, renderSlot }: ConversationHeaderProps) {
   const session = useSession(s => s)
-  const conversation = useConversation(s => s)
+  const conversation = useConversation(s => s, sameConversationActivity)
   const blank = session === undefined || conversation === undefined
     || (session.blank && conversationPhase(session, conversation) === 'blank')
   return (

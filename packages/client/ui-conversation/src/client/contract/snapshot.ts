@@ -32,3 +32,21 @@ export function conversationPhase(
     || session.running
   return active ? 'active' : session.promptAttempted ? 'engaging' : 'blank'
 }
+
+/**
+ * Equality for Conversation subscriptions whose only read is the shell phase.
+ * `conversationPhase` consults whether any target is active and nothing else in
+ * the Conversation snapshot, and its callers branch on an absent Conversation
+ * before calling it — so a publication that keeps both facts re-renders
+ * nothing, while either fact changing still re-renders.
+ * @param left - previously selected Conversation snapshot.
+ * @param right - newly published Conversation snapshot.
+ * @returns whether both agree on presence and on target activity.
+ */
+export function sameConversationActivity(
+  left: ConversationSnapshot | undefined,
+  right: ConversationSnapshot | undefined,
+): boolean {
+  if (left === undefined || right === undefined) return left === right
+  return (left.activeTargets.size > 0) === (right.activeTargets.size > 0)
+}

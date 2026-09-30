@@ -130,8 +130,11 @@ export function ConversationSlotPanel({
   sessionId, useSession, useConversation, useSessions, renderFactorySlot,
 }: ConversationSlotPanelProps) {
   const session = useSession(value => value)
-  const conversation = useConversation(value => value)
-  const active = conversation.activeTargets.size > 0
+  // Only target activity reaches the shell phase, so the subscription selects
+  // that one fact: the target set's identity churns on every assembly
+  // publication, and an identity selector would re-render this panel with it.
+  const conversationActive = useConversation(value => value.activeTargets.size > 0)
+  const active = conversationActive
     || (!session.blank && !session.awaitingFirstTurn)
     || session.running
   const shellPhase = active ? 'active' : session.promptAttempted ? 'engaging' : 'blank'

@@ -183,6 +183,7 @@ function mount(
   const stop = vi.fn()
   const open = vi.fn()
   const slotCalls: string[] = []
+  const factoryCalls: string[] = []
   const lineageOwners: ConversationHeaderLineageOwnerProps[] = []
   const viewTabs = options.viewTabs ?? [
     { id: 'chat', label: 'Chat' },
@@ -320,9 +321,11 @@ function mount(
       : (opts?.fallback ?? null)
   )) as ConversationContentProps['renderSlotChain']
   const SessionProvider: ConversationContentProps['SessionProvider'] = ({ children }) => children
-  const renderFactorySlot = ((_name: string, input: ConversationContentInputProps, factoryOptions?: {
+  const renderFactorySlot = ((name: string, input: ConversationContentInputProps, factoryOptions?: {
     slots?: Record<string, (props: never) => ReactNode>
   }) => {
+    // One call per shell render: the render count the streaming cases assert on.
+    factoryCalls.push(name)
     const common: ConversationViewsProps = {
       sessionId: SID,
       SessionProvider,
@@ -373,7 +376,7 @@ function mount(
   const props: ConversationSlotProps = { ...runtimeProps, renderSlot, renderFactorySlot }
   const view = render(<ConversationMainPanel {...props} />)
   return {
-    view, store, wiring, sink, retargetWorkspace, session, conversation, slotCalls, lineageOwners, seatOwners, open,
+    view, store, wiring, sink, retargetWorkspace, session, conversation, slotCalls, factoryCalls, lineageOwners, seatOwners, open,
     pickerOwner: () => pickerOwner,
     rerender: () => { view.rerender(<ConversationMainPanel {...props} />) },
   }
@@ -424,6 +427,55 @@ describe('ConversationRoot resident composer', () => {
     })
 
     expect(dispatchCount()).toBe(before)
+  })
+
+  it('does not re-render the shell for a Conversation publication that keeps target activity', () => {
+    const b = mount(sessionSnapshotOf())
+    // Per-render slot traffic, one entry per render of the layer that owns the
+    // slot: the main panel's factory call, the resident header's leading slot,
+    // and the default views' view slot. Counting the slot each layer renders
+    // keeps that layer's own Conversation subscription under test, not only the
+    // root's.
+    const shellRenders = () => ({
+      mainPanel: b.factoryCalls.length,
+      header: b.slotCalls.filter(key => key === 'conversation.header.leading').length,
+      views: b.slotCalls.filter(key => key === 'conversation.view').length,
+    })
+    const initial = shellRenders()
+    // Every layer rendered on mount, so a later unchanged count is a real
+    // bail-out rather than a layer that never rendered at all.
+    expect(initial.mainPanel).toBeGreaterThan(0)
+    expect(initial.header).toBeGreaterThan(0)
+    expect(initial.views).toBeGreaterThan(0)
+
+    // Entering the active phase is a real phase edge: this render is expected.
+    act(() => {
+      b.conversation.set({ ...b.conversation.getSnapshot(), activeTargets: new Set(['alpha']) })
+    })
+    const rendered = shellRenders()
+    expect(rendered.mainPanel).toBeGreaterThan(initial.mainPanel)
+    expect(rendered.header).toBeGreaterThan(initial.header)
+    expect(rendered.views).toBeGreaterThan(initial.views)
+
+    // Same activity in a fresh snapshot and a fresh target set: the only
+    // Conversation fact the shell phase reads is unchanged, so no shell layer
+    // renders — an identity selector in any of the three would re-render here,
+    // which is exactly what the base revisions of ConversationHeader.tsx and
+    // DefaultConversationViews.tsx do.
+    act(() => {
+      b.conversation.set({ ...b.conversation.getSnapshot(), activeTargets: new Set(['beta']) })
+    })
+    expect(shellRenders()).toEqual(rendered)
+
+    // The activity edge itself must still reach every shell layer: an equality
+    // that ignored publications outright would leave the shell stale.
+    act(() => {
+      b.conversation.set({ ...b.conversation.getSnapshot(), activeTargets: new Set() })
+    })
+    const after = shellRenders()
+    expect(after.mainPanel).toBeGreaterThan(rendered.mainPanel)
+    expect(after.header).toBeGreaterThan(rendered.header)
+    expect(after.views).toBeGreaterThan(rendered.views)
   })
 
   it('renders the composer inert with the blocker\u2019s own reason', () => {

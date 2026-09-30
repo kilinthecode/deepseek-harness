@@ -728,8 +728,10 @@ export class Session implements SessionFace {
       if (result.retireAttemptId !== undefined) this.eventSource.settleAssistant(result.retireAttemptId)
       if (changed || result.retireAttemptId !== undefined) this.notifier.markDirty()
     } else if (result?.type === 'transient') {
+      // Feed-only publication: no SessionSnapshot field derives from transient
+      // rows, so notifying here would rebuild and republish an unchanged
+      // snapshot, re-rendering every identity selector once per streamed chunk.
       this.eventSource.append(result.entry)
-      this.notifier.markDirty()
     }
   }
 
