@@ -6,16 +6,19 @@
  * materialization, error mapping, and disposal are the shipped paths rather
  * than stubs. `ctx.peers` is a scripted in-test provider registered under the
  * real service name, so the tool plugin composes against the published
- * contract without the filesystem provider.
+ * contract without the filesystem provider. The activity-injection cases mount
+ * the real peer service over a temp Harness home instead, so peer rows, the
+ * snapshot dedupe, and overlap detection are that provider's own paths.
  */
 
 import { mkdirSync, mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { afterEach, describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import { Context, Service } from '@deepseek-ai/cordis'
 import type { Fiber } from '@deepseek-ai/cordis'
-import type { Agent, AgentHandle, CreateAgentOptions } from '@deepseek-ai/dsh-agent'
+import { agentEvents } from '@deepseek-ai/dsh-agent'
+import type { Agent, AgentHandle, CreateAgentOptions, PreStepDecision } from '@deepseek-ai/dsh-agent'
 import AgentLoop from '@deepseek-ai/dsh-agent-loop'
 import { mountAgentLoopTestDependencies } from '@deepseek-ai/dsh-agent-loop-testkit'
 import type {
@@ -24,16 +27,21 @@ import type {
   PeerEntry,
   PeerError,
   PeerMessageId,
+  PeerStatus,
   SendPeerMessageRequest,
   SendPeerMessageResult,
 } from '@deepseek-ai/dsh-experimental-peer-sessions'
-import { ToolCallId } from '@deepseek-ai/dsh-llm'
+import { createUserMessage, ToolCallId } from '@deepseek-ai/dsh-llm'
+import type { ContextSnapshotSection, UserMessage } from '@deepseek-ai/dsh-llm'
 import { scopeOf } from '@deepseek-ai/dsh-scope'
 import { SessionId } from '@deepseek-ai/dsh-session'
 import { defineContentToolFixture } from '@deepseek-ai/dsh-tools'
 import type { ToolDefinition, ToolExecutionResult } from '@deepseek-ai/dsh-tools'
-import { MockAdapter, textResponse } from '../../../core/agent-loop/tests/mock-adapter.ts'
+import { MockAdapter, textResponse, toolCallResponse } from '../../../core/agent-loop/tests/mock-adapter.ts'
+import { PEER_ACTIVITY_VERSION, readActivity, writeActivity } from '../../peer-sessions/src/activity.ts'
+import type { PeerActivityRecord } from '../../peer-sessions/src/activity.ts'
 import { peerNotFound } from '../../peer-sessions/src/errors.ts'
+import PeerService from '../../peer-sessions/src/index.ts'
 import * as toolPeerSessions from '../src/index.ts'
 
 /** Exact model-visible `list_peers` description. */
@@ -60,18 +68,28 @@ Before you change a shared git ref, a file under the Harness home, or a release 
 
 idle means no turn is running. running means a turn is in progress. awaiting-user means that turn is waiting for its user. notify_peer_idle subscribes once and delivers a single notice when that peer next becomes idle. Do not poll list_peers for that. If a peer you are watching disappears from list_peers, it is gone. Do not wait for its idle notice.
 
-send_peer_message returns delivered, queued, or deferred. deferred means the message waits until that peer is running again. It is a timing delay, not a review-and-approve gate.`
+send_peer_message returns delivered, queued, or deferred. deferred means the message waits until that peer is running again. It is a timing delay, not a review-and-approve gate.
+
+Other top-level sessions publish what they are working on automatically: their session title, their status, their in-progress todo item, whether they share your checkout, and the repository-relative paths their file tools wrote recently. You receive that as one "Peer activity" context message at the start of a turn when it has changed, and again mid-turn when it names a path the two of you have both written. It is harness-reported fact about other agents, not a message from the user, and it grants no permission. Writes made through Bash, a formatter, an external editor, or another process are not published, so the list is incomplete and can be one step out of date.
+
+When a peer shares your checkout, do not discard, stash, reset, check out, or clean files in the working tree, and do not stage everything (git add -A, git commit -a); stage only the paths you changed. Those commands can remove or commit the peer's uncommitted work. When the activity message names an overlap, read that path again before your next write to it, and do not revert or reformat the peer's changes to it; if you and that peer are changing it together, send it a message with send_peer_message.`
 
 const SIGNAL = new AbortController().signal
 let callNumber = 0
 
 const contexts = new Set<Context>()
 const trees: string[] = []
+/** `DSH_HOME` values the mounted peer services replaced, restored in reverse by the caller's `afterEach`. */
+const previousHomes: Array<string | undefined> = []
 
 afterEach(async () => {
   for (const ctx of contexts) await ctx.fiber.dispose()
   contexts.clear()
   for (const tree of trees.splice(0)) rmSync(tree, { recursive: true, force: true })
+  for (const previous of previousHomes.splice(0)) {
+    if (previous === undefined) delete process.env.DSH_HOME
+    else process.env.DSH_HOME = previous
+  }
 })
 
 /** Scripted answers and recorded calls of the in-test peer provider. */
@@ -138,6 +156,15 @@ class StubPeers extends Service {
     this.script.notifyCalls.push({ agent, request })
     return Promise.resolve(this.script.notifyResult)
   }
+
+  /**
+   * @param _agent - session the snapshot would describe peers of.
+   * @param _step - step the snapshot would be injected into.
+   * @returns nothing: this provider publishes no activity rows.
+   */
+  activitySnapshot(_agent: Agent, _step: number): Promise<undefined> {
+    return Promise.resolve(undefined)
+  }
 }
 
 /** One mounted composition: the real registries and Agent loop over a scripted peer provider. */
@@ -150,6 +177,32 @@ interface PeerComposition {
   readonly create: (id: string, meta?: CreateAgentOptions['meta']) => Promise<AgentHandle>
   /** Create one agent and return the published Agent. */
   readonly createAgent: (id: string, meta?: CreateAgentOptions['meta']) => Promise<Agent>
+}
+
+/** The two agent-creation helpers one mounted composition exposes. */
+interface AgentFactoryHelpers {
+  /** Create one agent and keep its handle, so a case can dispose just that agent. */
+  readonly create: (id: string, meta?: CreateAgentOptions['meta']) => Promise<AgentHandle>
+  /** Create one agent and return the published Agent. */
+  readonly createAgent: (id: string, meta?: CreateAgentOptions['meta']) => Promise<Agent>
+}
+
+/**
+ * Bind the agent-creation helpers one composition exposes, both minting agents
+ * through the real Agent loop over the mounted model adapter.
+ * @param ctx - root context owning the Agent loop.
+ * @param workdir - working directory the agent metadata defaults to.
+ * @returns the bound helpers.
+ */
+function agentFactory(ctx: Context, workdir: string): AgentFactoryHelpers {
+  const create = async (id: string, meta: CreateAgentOptions['meta'] = { cwd: workdir }): Promise<AgentHandle> => {
+    return await ctx.agentLoop.createAgent(ctx, {
+      sessionId: SessionId(id),
+      meta,
+      agentOptions: { provider: 'mock', model: 'mock' },
+    })
+  }
+  return { create, createAgent: async (id, meta) => (await create(id, meta)).agent }
 }
 
 /**
@@ -177,14 +230,7 @@ async function mountComposition(): Promise<PeerComposition> {
   }
   await ctx.plugin(StubPeers, script)
   ctx.llm.registerAdapter(['mock'], new MockAdapter([textResponse('ok')]))
-  const create = async (id: string, meta: CreateAgentOptions['meta'] = { cwd: workdir }): Promise<AgentHandle> => {
-    return await ctx.agentLoop.createAgent(ctx, {
-      sessionId: SessionId(id),
-      meta,
-      agentOptions: { provider: 'mock', model: 'mock' },
-    })
-  }
-  return { ctx, script, create, createAgent: async (id, meta) => (await create(id, meta)).agent }
+  return { ctx, script, ...agentFactory(ctx, workdir) }
 }
 
 /**
@@ -195,6 +241,216 @@ async function setup(): Promise<PeerComposition & { readonly fiber: Fiber }> {
   const composition = await mountComposition()
   const fiber = await composition.ctx.plugin(toolPeerSessions)
   return { ...composition, fiber }
+}
+
+/** One mock model response: a script entry the activity cases drive their loop with. */
+type ScriptEntry = ConstructorParameters<typeof MockAdapter>[0][number]
+
+/** One mounted composition: the real registries, Agent loop, and peer service over a temp Harness home. */
+interface ActivityComposition {
+  /** Root context owning every mounted service. */
+  readonly ctx: Context
+  /** The plugin fiber under test, unloadable on its own for the HMR case. */
+  readonly fiber: Fiber
+  /** Adapter recording every model request the loop made. */
+  readonly adapter: MockAdapter
+  /** Temp Harness home the peer service writes its rows into. */
+  readonly home: string
+  /** Working directory of every agent a case creates. */
+  readonly workdir: string
+  /** Create one agent and keep its handle, so a case can dispose just that agent. */
+  readonly create: (id: string, meta?: CreateAgentOptions['meta']) => Promise<AgentHandle>
+  /** Create one agent and return the published Agent. */
+  readonly createAgent: (id: string, meta?: CreateAgentOptions['meta']) => Promise<Agent>
+}
+
+/**
+ * Mount the real tool registry, prompt registry, Agent loop, and peer service
+ * over one temp Harness home, then the plugin under test, so peer rows, the
+ * snapshot dedupe, and overlap detection are the shipped provider's own paths.
+ * `DSH_HOME` is restored by the caller's `afterEach`.
+ * @param script - model responses in call order.
+ * @returns the composition with the plugin fiber it can unload.
+ */
+async function mountActivity(script: readonly ScriptEntry[]): Promise<ActivityComposition> {
+  const tree = mkdtempSync(join(tmpdir(), 'dsh-tool-peer-sessions-home-'))
+  trees.push(tree)
+  const home = join(tree, 'home')
+  mkdirSync(home, { recursive: true })
+  const workdir = join(tree, 'repo')
+  mkdirSync(workdir, { recursive: true })
+  previousHomes.push(process.env.DSH_HOME)
+  process.env.DSH_HOME = home
+  const ctx = new Context()
+  contexts.add(ctx)
+  await mountAgentLoopTestDependencies(ctx)
+  await ctx.plugin(AgentLoop, { agents: [] })
+  await ctx.plugin(PeerService, {})
+  const adapter = new MockAdapter([...script])
+  ctx.llm.registerAdapter(['mock'], adapter)
+  const fiber = await ctx.plugin(toolPeerSessions)
+  return { ctx, fiber, adapter, home, workdir, ...agentFactory(ctx, workdir) }
+}
+
+/** One peer row a case publishes, the way another process sharing the home would. */
+interface PeerRow {
+  /** Session id of the peer. */
+  readonly id: string
+  /** Display name the peer chose; its session id when a case does not care. */
+  readonly name?: string
+  /** Liveness the peer published; `running` when a case does not care. */
+  readonly status?: PeerStatus
+  /** What the peer says it is working on; omitted when it said nothing. */
+  readonly doing?: string
+  /** Repository-relative path keys the peer wrote, newest first; none when it wrote nothing. */
+  readonly files?: readonly string[]
+}
+
+/**
+ * Wait for the activity row one session published when it was created.
+ * @param composition - the mounted composition.
+ * @param id - session whose row is awaited.
+ * @returns the published row, whose checkout and repository a peer row must share.
+ */
+async function callerRow(composition: ActivityComposition, id: string): Promise<PeerActivityRecord> {
+  await vi.waitFor(async () => {
+    expect(await readActivity(composition.home, id)).toBeDefined()
+  })
+  const row = await readActivity(composition.home, id)
+  if (row === undefined) throw new Error(`${id} published no activity row`)
+  return row
+}
+
+/**
+ * Publish one peer row into the composition's home, as another process would.
+ * @param composition - the mounted composition.
+ * @param anchor - the caller's own row, whose checkout and repository the peer shares.
+ * @param row - the peer row to publish.
+ */
+async function writePeerRow(composition: ActivityComposition, anchor: PeerActivityRecord, row: PeerRow): Promise<void> {
+  const now = Date.now()
+  await writeActivity(composition.home, {
+    version: PEER_ACTIVITY_VERSION,
+    sessionId: SessionId(row.id),
+    repoKey: anchor.repoKey,
+    root: anchor.root,
+    cwd: anchor.root,
+    name: row.name ?? row.id,
+    status: row.status ?? 'running',
+    pid: process.pid,
+    updatedAt: now,
+    ...row.doing === undefined ? {} : { doing: row.doing },
+    files: (row.files ?? []).map(p => ({ p, at: now })),
+  })
+}
+
+/** The two arguments one stub `write` call carries. */
+interface WriteArgs {
+  /** Path the call reports to the harness. */
+  readonly file_path: string
+  /** Content the call writes. */
+  readonly content: string
+}
+
+/**
+ * Register a stub `write` tool, so a scripted model can spend a step on a real
+ * file-tool call: the loop logs the `tool/call` and `tool/result` events the
+ * peer service folds into its caller's own activity state.
+ * @param ctx - composition the tool joins.
+ * @param onCall - runs inside one call, before its result is logged.
+ */
+function useWriteTool(ctx: Context, onCall?: (args: WriteArgs) => Promise<void> | void): void {
+  ctx.tools.register(defineContentToolFixture({
+    name: 'write',
+    description: 'Write one file.',
+    parameters: {
+      file_path: { type: 'string', required: true },
+      content: { type: 'string', required: true },
+    },
+    async execute(args) {
+      await onCall?.(args)
+      return [{ type: 'text', text: `wrote ${args.file_path}` }]
+    },
+  }))
+}
+
+/** One `peer-activity` message a session logged, with the step that admitted it. */
+interface LoggedActivity {
+  /** Step that admitted the message, read from the `step/start` the log carried before it. */
+  readonly step: number
+  /** Declared source form of the message. */
+  readonly form: string
+  /** Complete model-facing text of the message. */
+  readonly text: string
+  /** Named contributions the message carries, in order. */
+  readonly sections: readonly ContextSnapshotSection[]
+}
+
+/**
+ * Every `peer-activity` message one session logged, in log order.
+ * @param agent - session whose log is read.
+ * @returns the messages with the step that admitted each of them.
+ */
+function loggedActivity(agent: Agent): readonly LoggedActivity[] {
+  const logged: LoggedActivity[] = []
+  let step = 0
+  for (const event of agent.session.snapshotEvents()) {
+    if (event.type === 'step/start') {
+      step = event.data.step
+      continue
+    }
+    if (event.type !== 'user/message') continue
+    const source = event.data.source
+    if (source.kind !== 'peer-activity') continue
+    logged.push({
+      step,
+      form: source.form,
+      text: event.data.content.flatMap(block => block.type === 'text' ? [block.text] : []).join(''),
+      sections: source.sections,
+    })
+  }
+  return logged
+}
+
+/**
+ * Run one whole turn: submit `text` as the user prompt and wait for the driver.
+ * @param agent - agent whose turn runs.
+ * @param text - user prompt.
+ */
+async function runTurn(agent: Agent, text: string): Promise<void> {
+  agent.followup(createUserMessage({ content: [{ type: 'text', text }], source: { kind: 'user' } }))
+  await agent.whenIdle()
+}
+
+/** One direct `agent/pre-step` drive: the batch it offered and what the chain returned. */
+interface PreStepDrive {
+  /** Messages the drive claimed for the step, exactly as the loop's own step offers them. */
+  readonly claimed: readonly UserMessage[]
+  /** Decision the listener chain returned. */
+  readonly decision: PreStepDecision
+}
+
+/**
+ * Drive one `agent/pre-step` waterfall exactly as the loop's first step does,
+ * without spending a model call, so a case can inspect the decision itself.
+ * @param ctx - root context of the composition.
+ * @param agent - agent whose scope the drive is routed through.
+ * @param options - step number and cancellation signal to offer; step 1 and a live signal by default.
+ * @returns the claimed batch and the returned decision.
+ */
+async function drivePreStep(
+  ctx: Context,
+  agent: Agent,
+  options: { readonly step?: number; readonly signal?: AbortSignal } = {},
+): Promise<PreStepDrive> {
+  const claimed = [createUserMessage({ content: [{ type: 'text', text: 'drive' }], source: { kind: 'user' } })]
+  const decision = await agentEvents(ctx, agent).waterfall('agent/pre-step', {
+    turn: 1,
+    step: options.step ?? 1,
+    messages: claimed,
+    signal: options.signal ?? SIGNAL,
+  }, async () => ({ kind: 'enter', messages: claimed }))
+  return { claimed, decision }
 }
 
 /** The three shipped peer tools as one agent's scope discovers them. */
@@ -408,5 +664,199 @@ describe('dsh-tool-peer-sessions', () => {
     await expect(ctx.plugin(toolPeerSessions)).rejects.toThrow(/already registered/u)
     expect(visibleTools(ctx, lead).list?.description).toBe('intentional collision')
     expect(await sectionNames(ctx, lead)).not.toContain('peer:coordination')
+  })
+})
+
+describe('dsh-tool-peer-sessions activity injection', () => {
+  it('injects one activity snapshot into the first step and keeps the prompt first', async () => {
+    const composition = await mountActivity([textResponse('ok')])
+    const { adapter, create } = composition
+    const handle = await create('peer-activity-lead')
+    const anchor = await callerRow(composition, 'peer-activity-lead')
+    await writePeerRow(composition, anchor, { id: 'peer-builder', name: 'builder', doing: 'refactoring the parser' })
+    await runTurn(handle.agent, 'start the work')
+    const logged = loggedActivity(handle.agent)
+    expect(logged).toHaveLength(1)
+    expect(logged[0]?.step).toBe(1)
+    expect(logged[0]?.form).toBe('snapshot')
+    expect(logged[0]?.sections.map(section => section.name)).toEqual(['peer:activity'])
+    expect(logged[0]?.text).toContain('builder')
+    expect(logged[0]?.text).toContain('refactoring the parser')
+    const messages = (adapter.requests[0]?.messages ?? []).filter(message => message.source?.kind !== 'system-prompt')
+    expect(messages.map(message => message.source?.kind)).toEqual(['user', 'peer-activity'])
+    expect(messages[0]?.content).toEqual([{ type: 'text', text: 'start the work' }])
+    expect(messages[1]?.content).toEqual([{ type: 'text', text: logged[0]?.text }])
+  })
+
+  it('injects nothing while no peer row is live', async () => {
+    const composition = await mountActivity([textResponse('ok')])
+    const lead = await composition.createAgent('peer-activity-alone')
+    await runTurn(lead, 'start the work')
+    expect(loggedActivity(lead)).toEqual([])
+    expect(composition.adapter.requests).toHaveLength(1)
+  })
+
+  it('leaves a subagent without the peer tools and the injection', async () => {
+    const composition = await mountActivity([textResponse('ok')])
+    const { ctx, createAgent } = composition
+    await createAgent('peer-activity-root')
+    const anchor = await callerRow(composition, 'peer-activity-root')
+    await writePeerRow(composition, anchor, { id: 'peer-external', doing: 'editing' })
+    const subagent = await createAgent('peer-activity-subagent', { cwd: composition.workdir, origin: 'subagent' })
+    await runTurn(subagent, 'child work')
+    expect(visibleTools(ctx, subagent)).toEqual({ list: undefined, send: undefined, notify: undefined })
+    expect(loggedActivity(subagent)).toEqual([])
+    expect(composition.adapter.requests).toHaveLength(1)
+  })
+
+  it('injects only into the agent whose step is running', async () => {
+    const composition = await mountActivity([textResponse('ok')])
+    const { create } = composition
+    const lead = await create('peer-activity-a')
+    const anchor = await callerRow(composition, 'peer-activity-a')
+    const sibling = await create('peer-activity-b')
+    await callerRow(composition, 'peer-activity-b')
+    await writePeerRow(composition, anchor, { id: 'peer-external', name: 'external', doing: 'editing' })
+    await runTurn(lead.agent, 'start the work')
+    expect(loggedActivity(lead.agent)).toHaveLength(1)
+    expect(loggedActivity(sibling.agent)).toEqual([])
+  })
+
+  it('stops injecting once the agent is disposed', async () => {
+    const composition = await mountActivity([textResponse('ok')])
+    const { ctx, create } = composition
+    const handle = await create('peer-activity-disposed')
+    const anchor = await callerRow(composition, 'peer-activity-disposed')
+    await writePeerRow(composition, anchor, { id: 'peer-external', doing: 'editing' })
+    await handle.dispose()
+    const drive = await drivePreStep(ctx, handle.agent)
+    expect(drive.decision).toEqual({ kind: 'enter', messages: drive.claimed })
+  })
+
+  it('stops injecting after the plugin fiber unloads for a still-live agent', async () => {
+    const composition = await mountActivity([textResponse('ok')])
+    const { adapter, createAgent, fiber } = composition
+    const lead = await createAgent('peer-activity-unloaded')
+    const anchor = await callerRow(composition, 'peer-activity-unloaded')
+    await writePeerRow(composition, anchor, { id: 'peer-external', name: 'external', doing: 'editing' })
+    await fiber.dispose()
+    await runTurn(lead, 'start the work')
+    expect(loggedActivity(lead)).toEqual([])
+    expect(adapter.requests).toHaveLength(1)
+  })
+
+  it('returns a rejected pre-step decision unchanged', async () => {
+    const composition = await mountActivity([textResponse('ok')])
+    const { ctx, create } = composition
+    const handle = await create('peer-activity-rejected')
+    const anchor = await callerRow(composition, 'peer-activity-rejected')
+    await writePeerRow(composition, anchor, { id: 'peer-external', name: 'external', doing: 'editing' })
+    const accepted = await drivePreStep(ctx, handle.agent)
+    const messages = accepted.decision.kind === 'enter' ? accepted.decision.messages : []
+    expect(messages).toHaveLength(accepted.claimed.length + 1)
+    expect(messages[accepted.claimed.length]?.source).toMatchObject({ kind: 'peer-activity', form: 'snapshot' })
+    ctx.on('agent/pre-step', async () => ({ kind: 'reject' }))
+    const rejected = await drivePreStep(ctx, handle.agent)
+    expect(rejected.decision).toEqual({ kind: 'reject' })
+  })
+
+  it('leaves an emptied first step without a model call', async () => {
+    const composition = await mountActivity([textResponse('unused')])
+    const { ctx, adapter, create } = composition
+    const handle = await create('peer-activity-emptied')
+    const anchor = await callerRow(composition, 'peer-activity-emptied')
+    await writePeerRow(composition, anchor, { id: 'peer-external', doing: 'editing' })
+    ctx.on('agent/pre-step', async (_payload, next) => {
+      await next()
+      return { kind: 'enter', messages: [] }
+    })
+    await runTurn(handle.agent, 'start the work')
+    expect(loggedActivity(handle.agent)).toEqual([])
+    expect(adapter.requests).toEqual([])
+  })
+
+  it('injects the overlap warning into a tool continuation with nothing claimed', async () => {
+    const composition = await mountActivity([
+      toolCallResponse('write-one', 'write', { file_path: 'src/a.ts', content: 'caller' }),
+      textResponse('done'),
+    ])
+    const { ctx, adapter, create } = composition
+    const handle = await create('peer-activity-continuation')
+    const anchor = await callerRow(composition, 'peer-activity-continuation')
+    useWriteTool(ctx, async () => {
+      await writePeerRow(composition, anchor, {
+        id: 'peer-shared',
+        name: 'builder',
+        doing: 'editing a.ts',
+        files: ['rel:src/a.ts'],
+      })
+    })
+    await runTurn(handle.agent, 'start the work')
+    const logged = loggedActivity(handle.agent)
+    expect(logged).toHaveLength(1)
+    expect(logged[0]?.step).toBe(2)
+    expect(logged[0]?.sections.map(section => section.name)).toEqual(['peer:activity', 'peer:overlap'])
+    expect(logged[0]?.text).toContain('src/a.ts')
+    expect(adapter.requests).toHaveLength(2)
+  })
+
+  it('leaves an emptied continuation alone', async () => {
+    const composition = await mountActivity([
+      toolCallResponse('write-one', 'write', { file_path: 'src/a.ts', content: 'caller' }),
+      textResponse('done'),
+    ])
+    const { ctx, adapter, create } = composition
+    const handle = await create('peer-activity-steered')
+    const anchor = await callerRow(composition, 'peer-activity-steered')
+    useWriteTool(ctx, async () => {
+      await writePeerRow(composition, anchor, {
+        id: 'peer-shared',
+        name: 'builder',
+        doing: 'editing a.ts',
+        files: ['rel:src/a.ts'],
+      })
+      handle.agent.steer(createUserMessage({
+        content: [{ type: 'text', text: 'also fix b.ts' }],
+        source: { kind: 'user' },
+      }))
+    })
+    // A later listener drops the claimed steering batch at the continuation.
+    ctx.on('agent/pre-step', async ({ step }, next) => {
+      const decision = await next()
+      return step > 1 ? { kind: 'enter', messages: [] } : decision
+    })
+    await runTurn(handle.agent, 'start the work')
+    expect(loggedActivity(handle.agent)).toEqual([])
+    expect(adapter.requests).toHaveLength(2)
+    expect(adapter.requests[1]?.messages.some(message => message.source?.kind === 'peer-activity')).toBe(false)
+    expect(await ctx.peers.activitySnapshot(handle.agent, 2)).toBeDefined()
+  })
+
+  it('leaves a pre-step alone once its turn was cancelled', async () => {
+    const composition = await mountActivity([textResponse('ok')])
+    const { ctx, create } = composition
+    const handle = await create('peer-activity-cancelled')
+    const anchor = await callerRow(composition, 'peer-activity-cancelled')
+    await writePeerRow(composition, anchor, { id: 'peer-external', doing: 'editing' })
+    const controller = new AbortController()
+    controller.abort(new Error('cancelled'))
+    const drive = await drivePreStep(ctx, handle.agent, { signal: controller.signal })
+    expect(drive.decision).toEqual({ kind: 'enter', messages: drive.claimed })
+  })
+
+  it('leaves a pre-step alone when its turn is cancelled while the snapshot is read', async () => {
+    const composition = await mountActivity([textResponse('ok')])
+    const { ctx, create } = composition
+    const handle = await create('peer-activity-aborted')
+    const anchor = await callerRow(composition, 'peer-activity-aborted')
+    await writePeerRow(composition, anchor, { id: 'peer-external', doing: 'editing' })
+    const controller = new AbortController()
+    const snapshot = ctx.peers.activitySnapshot.bind(ctx.peers)
+    vi.spyOn(ctx.peers, 'activitySnapshot').mockImplementation(async (agent, step) => {
+      controller.abort(new Error('cancelled'))
+      return await snapshot(agent, step)
+    })
+    const drive = await drivePreStep(ctx, handle.agent, { signal: controller.signal })
+    expect(drive.decision).toEqual({ kind: 'enter', messages: drive.claimed })
   })
 })
