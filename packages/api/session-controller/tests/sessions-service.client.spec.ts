@@ -110,6 +110,40 @@ describe('list store projection', () => {
     expect(b.svc.list.getSnapshot().byId[sid('s1')]?.projectionValues?.agentPreset).toBe('minimal')
   })
 
+  it('reuses every unchanged row and drops a stale frame without republishing the list', async ({ bench }) => {
+    const b = bench()
+    await feedList(b, [{ id: 's1' }, { id: 's2' }])
+    const before = b.svc.list.getSnapshot()
+    const notifications = vi.fn()
+    const stop = b.svc.list.subscribe(notifications)
+
+    b.svc.handleControlFrame({
+      type: 'projection', sessionId: sid('s1'), key: 'test/marks', value: { marks: ['live'] }, seq: 2,
+    })
+    await Promise.resolve()
+    await Promise.resolve()
+
+    const after = b.svc.list.getSnapshot()
+    expect(after).not.toBe(before)
+    // The framed session's row is republished; every other row keeps its object.
+    expect(after.byId[sid('s1')]?.projectionValues).not.toBe(before.byId[sid('s1')]?.projectionValues)
+    expect(after.byId[sid('s2')]).toBe(before.byId[sid('s2')])
+    expect(notifications).toHaveBeenCalledTimes(1)
+
+    // A replayed frame at or below the accepted watermark changes nothing:
+    // no rebuild, no store publication, and the same snapshot reference.
+    const settled = b.svc.list.getSnapshot()
+    notifications.mockClear()
+    b.svc.handleControlFrame({
+      type: 'projection', sessionId: sid('s1'), key: 'test/marks', value: { marks: ['stale'] }, seq: 2,
+    })
+    await Promise.resolve()
+    await Promise.resolve()
+    expect(b.svc.list.getSnapshot()).toBe(settled)
+    expect(notifications).not.toHaveBeenCalled()
+    stop()
+  })
+
   it('reflects live increments (host stream via manager) into the store', async ({ bench }) => {
     const b = bench()
     await feedList(b, [{ id: 's1' }])

@@ -47,6 +47,43 @@ function makeManager(
   return new SessionManager(remote as unknown as SessionRemotes)
 }
 
+describe('SessionManager control frames', () => {
+  it('publishes one cumulative frame publication and reuses unchanged projection snapshots', async ({ mock, remote }) => {
+    const manager = makeManager(mock, remote)
+    onTestFinished(() => manager.dispose())
+    remote.session.list.mockResolvedValueOnce(ok({ items: [summary(S1), summary(S2)] }))
+    await manager.refreshList()
+    const frames: FrameRequestCallback[] = []
+    vi.stubGlobal('requestAnimationFrame', (callback: FrameRequestCallback) => {
+      frames.push(callback)
+      return frames.length
+    })
+    onTestFinished(() => { vi.unstubAllGlobals() })
+    let notifications = 0
+    onTestFinished(manager.subscribe(() => { notifications++ }))
+
+    // Several frames of one event and of concurrent sessions coalesce.
+    manager.handleControlFrame({ type: 'projection', sessionId: S1, key: 'test/marks', value: 1, seq: 2 })
+    manager.handleControlFrame({ type: 'projection', sessionId: S2, key: 'test/marks', value: 2, seq: 2 })
+    manager.handleControlFrame({ type: 'projection', sessionId: S1, key: 'test/marks', value: 3, seq: 3 })
+    expect(notifications).toBe(0)
+    expect(frames).toHaveLength(1)
+    frames.shift()!(0)
+    expect(notifications).toBe(1)
+
+    const first = manager.getListSnapshot().projectionsBySession
+    manager.handleControlFrame({ type: 'projection', sessionId: S1, key: 'test/marks', value: 4, seq: 4 })
+    // A stale frame is dropped by the watermark: it dirties nothing.
+    manager.handleControlFrame({ type: 'projection', sessionId: S1, key: 'test/marks', value: 5, seq: 4 })
+    frames.shift()!(0)
+
+    const second = manager.getListSnapshot().projectionsBySession
+    expect(second).not.toBe(first)
+    expect(second[S1]).not.toBe(first[S1])
+    expect(second[S2]).toBe(first[S2])
+  })
+})
+
 describe('SessionManager instances', () => {
   it.for(['event', 'list'] as const)(
     'forgets running when an unretained identity disappears through a %s',

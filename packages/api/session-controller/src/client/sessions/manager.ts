@@ -118,6 +118,10 @@ export class SessionManager {
    *  must be recovered by value or every SessionListItem memo misses on every refresh. */
   private entryCache = new Map<SessionId, SessionListEntry>()
   private itemsCache: readonly SessionListEntry[] = []
+  /** Published per-session projection snapshot reused while its inputs are unchanged. */
+  private readonly projectionSnapshotCache = new Map<SessionId, SessionProjectionSnapshot>()
+  /** Last published projectionsBySession record (reused while every entry is reused). */
+  private projectionsBySessionCache: Readonly<Record<SessionId, SessionProjectionSnapshot>> = {}
   private readonly notifier = new Notifier(() => {
     this.listSnapshotCache = this.buildListSnapshot()
   })
@@ -614,6 +618,12 @@ export class SessionManager {
 
   /**
    * Apply a complete control baseline or one later replacement frame.
+   *
+   * Live frames publish cumulatively: one committed event emits several frames
+   * (one per changed unit) and concurrent sessions emit concurrently, so they
+   * mark the list dirty for the next animation frame instead of rebuilding
+   * once per frame. A frame the store rejects as stale (seq at or below the
+   * accepted watermark) changes nothing and must not dirty the list either.
    * @param frame - baseline or live control replacement from Session Controller.
    */
   handleControlFrame(frame: SessionControlFrame): void {
@@ -621,8 +631,12 @@ export class SessionManager {
       this.replaceControlBaseline(frame.value)
       return
     }
-    this.projectionStore(frame.sessionId).apply(frame.key, frame.value, SessionSeq(frame.seq))
-    this.notifier.markDirty()
+    const store = this.projectionStore(frame.sessionId)
+    const seq = SessionSeq(frame.seq)
+    const accepted = store.seqOf(frame.key)
+    if (accepted !== undefined && seq <= accepted) return
+    store.apply(frame.key, frame.value, seq)
+    this.notifier.markFrameDirty()
   }
 
   private replaceControlBaseline(baseline: SessionControlBaseline): void {
@@ -790,11 +804,51 @@ export class SessionManager {
       state: this.listState,
       phase: this.listPhase,
       error: this.listError,
-      projectionsBySession: Object.fromEntries([...this.projectionStores].map(([sessionId, store]) => [
-        sessionId,
-        { values: store.values(), state: 'idle', error: null, ...this.projectionLoads.get(sessionId) },
-      ])),
+      projectionsBySession: this.buildProjectionsBySession(),
     }
+  }
+
+  /**
+   * Per-session projection snapshots for every resident store. One session's
+   * entry keeps its identity while its store values reference and its
+   * explicit-read state and error are unchanged; the whole record keeps its
+   * identity while no entry changed, so a publication that touched one session
+   * leaves every other session's selection stable.
+   * @returns the current projection snapshots by Session.
+   */
+  private buildProjectionsBySession(): Readonly<Record<SessionId, SessionProjectionSnapshot>> {
+    let reused = true
+    const next: Record<SessionId, SessionProjectionSnapshot> = {}
+    for (const [sessionId, store] of this.projectionStores) {
+      const load = this.projectionLoads.get(sessionId)
+      const values = store.values()
+      // An absent load entry reads as the idle/no-error baseline.
+      const state = load?.state ?? 'idle'
+      const error = load?.error ?? null
+      const cached = this.projectionSnapshotCache.get(sessionId)
+      const entry = cached !== undefined && cached.values === values
+        && cached.state === state && cached.error === error
+        ? cached
+        : { values, state, error }
+      if (entry !== cached) {
+        this.projectionSnapshotCache.set(sessionId, entry)
+        reused = false
+      }
+      next[sessionId] = entry
+    }
+    // A store that left the map since the last rebuild must not keep the
+    // published record from ever being reusable again.
+    if (this.projectionSnapshotCache.size !== this.projectionStores.size) {
+      reused = false
+      for (const sessionId of [...this.projectionSnapshotCache.keys()]) {
+        if (!this.projectionStores.has(sessionId)) this.projectionSnapshotCache.delete(sessionId)
+      }
+    }
+    if (reused && this.projectionSnapshotCache.size === this.projectionStores.size) {
+      return this.projectionsBySessionCache
+    }
+    this.projectionsBySessionCache = next
+    return next
   }
 }
 

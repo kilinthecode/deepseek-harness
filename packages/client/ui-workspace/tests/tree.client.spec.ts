@@ -8,7 +8,7 @@ import type { SessionId } from '@deepseek-ai/dsh-session/types'
 import type { SessionProjectionSnapshot } from '@deepseek-ai/dsh-api-session-controller/client'
 import {
   type ArchivedFilter,
-  deriveFlat, deriveGroups, deriveSearchResults, orderByRecency, owningGroupKey, owningParentFolder,
+  deriveFlat, deriveGroups, deriveSearchResults, equalTreeList, orderByRecency, owningGroupKey, owningParentFolder,
   pinCurrentBlank, reconcileManualOrder, sessionMemberIds, visibleSessionIds, workspaceLabel, UNGROUPED_KEY,
 } from '../src/client/tree.ts'
 import { createWorkspaceViewStore } from '../src/client/stores.ts'
@@ -884,4 +884,24 @@ it('leaves unnamed history titles empty for locale-owned row labels', () => {
   item.displayTitle = 'Default workspace'
   const sessions = list(item)
   expect(deriveFlat(sessions, [item.id], noRows, noAttention)[0]?.title).toBe('')
+})
+
+describe('equalTreeList', () => {
+  it('ignores republished snapshots whose tree inputs are unchanged', () => {
+    const parent = summary('parent', 2)
+    const child = summary('child', 1)
+    const before = { ...list(parent, child), projectionsBySession: { [parent.id]: catalog('child') } }
+    const tokenFrame = { ...parent, projectionValues: {} }
+    expect(equalTreeList(before, { ...before, byId: { ...before.byId, [parent.id]: tokenFrame } })).toBe(true)
+  })
+
+  it('re-derives when a row field or a subagent catalog the tree reads changes', () => {
+    const parent = summary('parent', 2)
+    const child = summary('child', 1)
+    const before = { ...list(parent, child), projectionsBySession: { [parent.id]: catalog('child') } }
+    expect(equalTreeList(before, {
+      ...before, byId: { ...before.byId, [child.id]: { ...child, running: true } },
+    })).toBe(false)
+    expect(equalTreeList(before, { ...before, projectionsBySession: { [parent.id]: catalog() } })).toBe(false)
+  })
 })

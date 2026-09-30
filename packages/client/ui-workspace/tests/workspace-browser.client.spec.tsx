@@ -83,6 +83,25 @@ function hook<T>(snapshot: T) {
   return function select<S>(selector: (state: T) => S): S { return selector(snapshot) }
 }
 
+/** Mutable Session-list source: the production selector binding needs a real observable. */
+function listSource(initial: SessionListState) {
+  let value = initial
+  const listeners = new Set<() => void>()
+  return {
+    source: {
+      getSnapshot: () => value,
+      subscribe: (listener: () => void) => {
+        listeners.add(listener)
+        return () => { listeners.delete(listener) }
+      },
+    },
+    publish(next: SessionListState) {
+      value = next
+      for (const listener of [...listeners]) listener()
+    },
+  }
+}
+
 /** jsdom lacks DragEvent — the fireEvent fallback drops clientY, so pin it on the built event. */
 function fireDrag(row: HTMLElement, kind: 'dragOver' | 'drop', clientY: number): void {
   const event = kind === 'dragOver' ? createEvent.dragOver(row) : createEvent.drop(row)
@@ -1968,6 +1987,79 @@ describe('WorkspaceBrowser', () => {
     fireEvent.dragStart(one, { dataTransfer })
     fireDrag(one, 'drop', 130)
     expect(b.store.getSnapshot().sessionOrderByAccount.alpha).toEqual(['two', 'one', 'three'])
+  })
+
+  /** A row-action Slot renderer that counts renders per Session row. */
+  function countingRowActions() {
+    const rowRenders = new Map<string, number>()
+    const renderSlot: WorkspaceBrowserProps['renderSlot'] = (name: string, owner: object) => {
+      if (name === 'sidebar.workspaces.session.row.action') {
+        const { sessionId } = owner as { sessionId: SessionId }
+        rowRenders.set(sessionId, (rowRenders.get(sessionId) ?? 0) + 1)
+      }
+      return null
+    }
+    return { rowRenders, renderSlot }
+  }
+
+  it('leaves the drag marker state untouched when a dragover repeats the same row and half', () => {
+    const sessions = sessionState([summary('one', 2), summary('two', 1)])
+    const { rowRenders, renderSlot } = countingRowActions()
+    mount({
+      useSessions: hook(sessions),
+      useWorkspaces: hook(workspaceState([workspace('alpha', ['one', 'two'])])),
+      renderSlot,
+    })
+    fireEvent.click(screen.getByText('alpha'))
+    const one = screen.getByText('one').closest('[role="treeitem"]') as HTMLElement
+    const two = screen.getByText('two').closest('[role="treeitem"]') as HTMLElement
+    for (const row of [one, two]) {
+      row.getBoundingClientRect = () => ({
+        top: 100, bottom: 134, left: 0, right: 200, width: 200, height: 34, x: 0, y: 100, toJSON: () => ({}),
+      })
+    }
+    fireEvent.dragStart(one, { dataTransfer: dragData() })
+    fireDrag(one, 'dragOver', 105)
+    const afterFirstHover = new Map(rowRenders)
+
+    // The pointer resting on the same half repeats dragover: the marker is
+    // already there, so no row may re-render.
+    fireDrag(one, 'dragOver', 105)
+    expect(rowRenders).toEqual(afterFirstHover)
+
+    // Moving to the other half still moves the marker.
+    fireDrag(one, 'dragOver', 130)
+    expect(rowRenders.get('one')).toBe((afterFirstHover.get('one') ?? 0) + 1)
+    expect(rowRenders.get('two')).toBe((afterFirstHover.get('two') ?? 0) + 1)
+  })
+
+  it('keeps the tree derivation when a publication changes no row field the tree reads', () => {
+    const { rowRenders, renderSlot } = countingRowActions()
+    const source = listSource(sessionState([summary('one', 2), summary('two', 1)]))
+    mount({
+      useSessions: bindSnapshotSelector(source.source),
+      useWorkspaces: hook(workspaceState([workspace('alpha', ['one', 'two'])])),
+      renderSlot,
+    })
+    fireEvent.click(screen.getByText('alpha'))
+    const baseline = new Map(rowRenders)
+
+    // Another session's projection frame replaces projection snapshots only:
+    // nothing the tree renders changed, so no row re-renders.
+    act(() => {
+      source.publish({
+        ...sessionState([summary('one', 2), summary('two', 1)]),
+        projectionsBySession: { [sid('one')]: { values: {}, state: 'idle', error: null } },
+      })
+    })
+    expect(rowRenders).toEqual(baseline)
+
+    // A real field change still reaches the affected row.
+    act(() => {
+      source.publish(sessionState([summary('one', 2, { title: 'Renamed' }), summary('two', 1)]))
+    })
+    expect(rowRenders.get('one')).toBe((baseline.get('one') ?? 0) + 1)
+    expect(screen.getByText('Renamed')).toBeTruthy()
   })
 
   it('drags a pinned row by moving its position in the complete Session sequence', () => {
