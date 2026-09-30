@@ -1,7 +1,7 @@
 /** Resident conversation navigation and Session-specific header content. */
 import clsx from 'clsx'
 import type { ConversationHeaderProps } from '../contract/slots.ts'
-import { conversationPhase, sameConversationActivity } from '../contract/snapshot.ts'
+import { conversationPhase, sameConversationActivity, sameShellSession } from '../contract/snapshot.ts'
 import css from './ConversationRoot.module.css'
 
 /**
@@ -10,7 +10,9 @@ import css from './ConversationRoot.module.css'
  * @returns The persistent header with any selected Session's title and views.
  */
 export function ConversationHeader({ sessionId, useSession, useConversation, renderSlot }: ConversationHeaderProps) {
-  const session = useSession(s => s)
+  // The header reads `blank` and the shell phase and nothing else, so an
+  // unrelated Session publication must not rebuild it.
+  const session = useSession(s => s, sameShellSession)
   const conversation = useConversation(s => s, sameConversationActivity)
   const blank = session === undefined || conversation === undefined
     || (session.blank && conversationPhase(session, conversation) === 'blank')

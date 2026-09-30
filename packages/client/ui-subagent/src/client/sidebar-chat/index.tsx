@@ -129,21 +129,22 @@ export type ConversationSlotPanelProps = PropsRuntime<'sidebar.chat.conversation
 export function ConversationSlotPanel({
   sessionId, useSession, useConversation, useSessions, renderFactorySlot,
 }: ConversationSlotPanelProps) {
-  const session = useSession(value => value)
+  // The embedded phase depends on a few Session facts; selecting each as a
+  // primitive keeps unrelated Session publications from re-rendering the panel.
+  const sessionActive = useSession(value => (!value.blank && !value.awaitingFirstTurn) || value.running)
+  const promptAttempted = useSession(value => value.promptAttempted)
+  const openState = useSession(value => value.openState)
+  const parentAvailabilityPending = useSession(value => value.subagent?.address.mode === 'continuable'
+    && value.subagent.parentAvailable === undefined)
   // Only target activity reaches the shell phase, so the subscription selects
   // that one fact: the target set's identity churns on every assembly
   // publication, and an identity selector would re-render this panel with it.
   const conversationActive = useConversation(value => value.activeTargets.size > 0)
-  const active = conversationActive
-    || (!session.blank && !session.awaitingFirstTurn)
-    || session.running
-  const shellPhase = active ? 'active' : session.promptAttempted ? 'engaging' : 'blank'
+  const shellPhase = conversationActive || sessionActive ? 'active' : promptAttempted ? 'engaging' : 'blank'
   const summaryBlank = useSessions(state => state.byId[sessionId]?.blank)
-  const parentAvailabilityPending = session.subagent?.address.mode === 'continuable'
-    && session.subagent.parentAvailable === undefined
-  const settling = (shellPhase === 'blank' && session.openState === 'loading' && summaryBlank !== true)
+  const settling = (shellPhase === 'blank' && openState === 'loading' && summaryBlank !== true)
     || parentAvailabilityPending
-  const hero = shellPhase === 'blank' && (session.openState === 'open' || summaryBlank === true)
+  const hero = shellPhase === 'blank' && (openState === 'open' || summaryBlank === true)
   const phase = settling ? 'settling' : hero ? 'hero' : 'active'
   return renderFactorySlot('conversation.content', { variant: 'embedded', phase, hero }, {
     slots: { views: FixedChatConversationView },
