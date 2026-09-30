@@ -353,6 +353,9 @@ export class LocalPtySession implements TerminalBackendSession {
     }
     this.activeDeadlineTimer = setTimeout(() => {
       if (this.active === operation) {
+        // A deadline also ends the observation window, so descendants forked since
+        // the last throttled scan are adopted before the send settles.
+        void this.forceDescendantAdoption()
         this.settleActive('timeout', this.activeWrite !== undefined
           || this.interrupting === operation
           || this.protocolWorkPending())
@@ -551,10 +554,6 @@ export class LocalPtySession implements TerminalBackendSession {
     this.polling = true
     try {
       if (this.statusValue.kind === 'exited') {
-        // A shell that exited before this poll cannot be identity-scanned anymore;
-        // the scan is still attempted so the exit path never depends on the
-        // readiness cadence.
-        await this.forceDescendantAdoption()
         this.settleActive('session_exit')
         return
       }

@@ -278,6 +278,7 @@ describe('BashTerminalBackend startup rollback', () => {
       rows: 24,
       cwd: '/work',
       graceMs: 10,
+      descendantScanIntervalMs: 250,
       env: {
         TERM: 'dumb', PAGER: 'cat', GIT_PAGER: 'cat', PS1: 'dsh> ', BASH_SILENCE_DEPRECATION_WARNING: '1',
         PROMPT_COMMAND: 'printf "\\033]133;D;%s\\007" "$?"; PS1=\'dsh> \'',

@@ -535,6 +535,26 @@ describe('LocalPtySession readiness and output', () => {
     await session.close('adoption scan cleanup')
   })
 
+  it('forces one descendant-adoption scan when the send deadline settles it', async () => {
+    vi.useFakeTimers()
+    const terminal = new FakeTerminal()
+    const inspector = new FakeInspector()
+    const session = makeSession(terminal, inspector, config({ descendantScanIntervalMs: 60_000, timeoutMs: 100, idleSilenceMs: 10_000 }))
+    await initialize(session, terminal)
+
+    const forces: Array<boolean | undefined> = []
+    const inspect = terminal.inspectForeground.bind(terminal)
+    terminal.inspectForeground = async (forceAdoption?: boolean) => {
+      forces.push(forceAdoption)
+      return await inspect()
+    }
+    const operation = session.startSend({ text: 'sleep 60', submit: true })
+    await vi.advanceTimersByTimeAsync(150)
+    expect((await operation.done).waitReason).toBe('timeout')
+    expect(forces).toContain(true)
+    await session.close('deadline adoption cleanup')
+  })
+
   it('discards prompt readiness observed during asynchronous pre-write inspection', async () => {
     vi.useFakeTimers()
     const terminal = new FakeTerminal()
