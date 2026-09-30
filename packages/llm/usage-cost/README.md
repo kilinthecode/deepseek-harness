@@ -50,7 +50,7 @@ declare const records: Iterable<UsageIndexRecord>
 const rollup = rollupUsageCost(records, { from: Date.UTC(2026, 8, 21), to: Date.UTC(2026, 8, 26) }, rates)
 ```
 
-Success returns the window's token buckets, one priced rollup per route in key order, and the `sessions` and `pricedSessions` coverage counts. `parseUsageCostRates` throws on a malformed entry, and `rollupUsageCost` throws when the window carries usage for a route the table does not price, so a misconfigured price table fails instead of producing an undercounted report.
+Success returns the window's token buckets, one priced rollup per route in key order, and the `sessions` and `pricedSessions` coverage counts. `parseUsageCostRates` throws on a malformed entry, and `rollupUsageCost` throws when the window billed usage for a route the table does not price, so a misconfigured price table fails instead of producing an undercounted report. A route the window left without billable usage needs no price and takes no rollup line.
 
 -----
 
@@ -60,7 +60,7 @@ Success returns the window's token buckets, one priced rollup per route in key o
 <details>
 <summary>Implementation internals — click to expand</summary>
 
-The rollup is a pure function over `UsageIndexRecord` values: projection-cache rows carrying `tokenUsage` whole-session totals and `usageByRoute` per-route buckets, both folded from the durable log by token-meter. A record belongs to a window when its `identity.createdAt` falls inside the half-open interval. Pricing multiplies each token bucket against its per-million-token rate and rounds each product to whole micros, so every priced sum stays an integer.
+The rollup is a pure function over `UsageIndexRecord` values: projection-cache rows carrying `tokenUsage` whole-session totals and `usageByRoute` per-route buckets, both folded from the durable log by token-meter. Those rows report what each session itself billed, so the inherited prefix of a forked session is counted in its parent's record alone. A record belongs to a window when its `identity.createdAt` falls inside the half-open interval. Pricing multiplies each token bucket against its per-million-token rate and rounds each product to whole micros, so every priced sum stays an integer; a route whose window buckets are all zero is priced at nothing and omitted.
 
 | Source | Role |
 | --- | --- |

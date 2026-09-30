@@ -50,7 +50,7 @@ declare const records: Iterable<UsageIndexRecord>
 const rollup = rollupUsageCost(records, { from: Date.UTC(2026, 8, 21), to: Date.UTC(2026, 8, 26) }, rates)
 ```
 
-成功时返回窗口的用量桶、按路由键顺序排列的分路由计价汇总，以及 `sessions` 与 `pricedSessions` 覆盖计数。`parseUsageCostRates` 遇到畸形条目即抛错；`rollupUsageCost` 在窗口含有价格表未计价路由的用量时抛错，使错误配置的价格表立即失败，而不是产出被低估的报告。
+成功时返回窗口的用量桶、按路由键顺序排列的分路由计价汇总，以及 `sessions` 与 `pricedSessions` 覆盖计数。`parseUsageCostRates` 遇到畸形条目即抛错；`rollupUsageCost` 在窗口内某路由确有计费用量而价格表未提供其价格时抛错，使错误配置的价格表立即失败，而不是产出被低估的报告。窗口内没有任何计费用量的路由不需要价格，也不会产生汇总行。
 
 -----
 
@@ -60,7 +60,7 @@ const rollup = rollupUsageCost(records, { from: Date.UTC(2026, 8, 21), to: Date.
 <details>
 <summary>实现细节——点击展开</summary>
 
-汇总是对 `UsageIndexRecord` 值的纯函数：这些投影缓存行带有 `tokenUsage` 全会话合计与 `usageByRoute` 分路由桶，两者都由 token-meter 从持久日志折叠而来。当记录的 `identity.createdAt` 落在半开区间内时，它属于该窗口。计价把每个用量桶乘以其每百万词元费率，并把每项乘积取整到整微，使每个计价合计保持整数。
+汇总是对 `UsageIndexRecord` 值的纯函数：这些投影缓存行带有 `tokenUsage` 全会话合计与 `usageByRoute` 分路由桶，两者都由 token-meter 从持久日志折叠而来。这些行报告各会话自身计费的用量，因此被 fork 会话继承的前缀只计入其父会话的记录。当记录的 `identity.createdAt` 落在半开区间内时，它属于该窗口。计价把每个用量桶乘以其每百万词元费率，并把每项乘积取整到整微，使每个计价合计保持整数；窗口内桶全为零的路由不计价，也不出现在汇总中。
 
 | Source | Role |
 | --- | --- |
