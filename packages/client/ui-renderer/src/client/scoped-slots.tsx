@@ -341,6 +341,74 @@ function localeSubscription(face: LocaleFace): { subscribe: (fn: () => void) => 
   return cached
 }
 
+/** One cached uSES closure pair: subscribe plus the host version read. */
+interface VersionSubscription {
+  readonly subscribe: (fn: () => void) => () => void
+  readonly getVersion: () => number
+}
+
+/**
+ * Per-(host, axis, key) subscribe/getVersion pair. uSES re-runs its subscribe
+ * effect whenever the subscribe reference changes and pushes a store-instance
+ * effect when getSnapshot changes, so fresh closures per render would churn one
+ * unsubscribe/subscribe pair per outlet render for inputs that never vary (the
+ * same hazard localeSubscriptionCache documents on the locale face).
+ */
+const versionSubscriptionCache = new WeakMap<SlotRendererHost, Map<string, VersionSubscription>>()
+
+/**
+ * Resolve the identity-stable version pair for one host version axis.
+ * @param host - installed renderer host.
+ * @param axis - host version axis; slot keys and factory names are separate namespaces.
+ * @param key - slot key or factory name within that axis.
+ * @returns the cached pair reading that axis entry.
+ */
+function versionSubscription(host: SlotRendererHost, axis: 'slot' | 'factory', key: string): VersionSubscription {
+  let perAxisKey = versionSubscriptionCache.get(host)
+  if (perAxisKey === undefined) {
+    perAxisKey = new Map()
+    versionSubscriptionCache.set(host, perAxisKey)
+  }
+  const cacheKey = `${axis}:${key}`
+  let subscription = perAxisKey.get(cacheKey)
+  if (subscription === undefined) {
+    subscription = axis === 'slot'
+      ? { subscribe: fn => host.subscribe(key, fn), getVersion: () => host.getVersion(key) }
+      : { subscribe: fn => host.subscribeFactory(key, fn), getVersion: () => host.getFactoryVersion(key) }
+    perAxisKey.set(cacheKey, subscription)
+  }
+  return subscription
+}
+
+/**
+ * Per-source subscribe/getSnapshot pair for a scope binding source (the
+ * per-source counterpart of {@link versionSubscription}).
+ */
+const bindingSourceSubscriptionCache = new WeakMap<object, {
+  subscribe: (fn: () => void) => () => void
+  getSnapshot: () => StandardSourceBinding
+}>()
+
+/**
+ * Resolve the identity-stable pair for one scope binding source.
+ * @param source - binding source resolved for the current scope target.
+ * @returns the cached pair reading that source.
+ */
+function bindingSourceSubscription(source: HostObservable<StandardSourceBinding>): {
+  subscribe: (fn: () => void) => () => void
+  getSnapshot: () => StandardSourceBinding
+} {
+  let cached = bindingSourceSubscriptionCache.get(source)
+  if (cached === undefined) {
+    cached = {
+      subscribe: fn => source.subscribe(fn),
+      getSnapshot: () => source.getSnapshot(),
+    }
+    bindingSourceSubscriptionCache.set(source, cached)
+  }
+  return cached
+}
+
 /**
  * Subscribe an outlet to the installed locale face's revision (0 while none
  * is installed — exactly one uSES call either way, keeping hook order
@@ -511,10 +579,11 @@ function scopeAreaProvider(adapter: SlotScopeAdapter): SessionProviderComponent 
     const inherited = useScopeBinding()
     const explicit = Object.hasOwn(props, 'session')
     const source = adapter.bindingSource(props.session)
+    const subscription = bindingSourceSubscription(source)
     const resolved = useSyncExternalStore(
-      listener => source.subscribe(listener),
-      () => source.getSnapshot(),
-      () => source.getSnapshot(),
+      subscription.subscribe,
+      subscription.getSnapshot,
+      subscription.getSnapshot,
     )
     const binding = explicit ? resolved : inherited
     return (
@@ -984,10 +1053,8 @@ function FactoryOutlet({ name, inputProps, slots: selected = EMPTY_FACTORY_SELEC
   const ancestors = useContext(FactoryAncestryContext)
   const binding = useScopeBinding()
   const maybeEpoch = useMaybeIncarnation(binding)
-  const version = useSyncExternalStore(
-    listener => host.subscribeFactory(name, listener),
-    () => host.getFactoryVersion(name),
-  )
+  const subscription = versionSubscription(host, 'factory', name)
+  const version = useSyncExternalStore(subscription.subscribe, subscription.getVersion)
   const definition = host.factoryOf(name)
   const nextAncestors = useMemo(() => new Set(ancestors).add(name), [ancestors, name])
   if (definition === undefined) return <>{fallback ?? null}</>
@@ -1069,11 +1136,11 @@ function SlotOutlet({ slotKey, ownerProps, opts }: {
   opts?: (RenderOpts & ChainRenderOpts) | undefined
 }) {
   const host = useHost()
-  // Version tick drives entries() re-read; the host batches per microtask.
-  useSyncExternalStore(
-    fn => host.subscribe(slotKey, fn),
-    () => host.getVersion(slotKey),
-  )
+  // Version tick drives entries() re-read; the host batches per microtask. The
+  // pair is cached per (host, key): fresh closures would resubscribe the outlet
+  // on every render.
+  const subscription = versionSubscription(host, 'slot', slotKey)
+  useSyncExternalStore(subscription.subscribe, subscription.getVersion)
   // Locale revision tick: a locale switch re-renders every outlet, and entry
   // bodies re-derive their `t` seat at the new revision (fresh identity).
   useLocaleRevision(host.locale)
@@ -1267,10 +1334,8 @@ function renderChainResult(
 /** Root outlet: the shell's single ctx-level render entry — an unregistered 'root' is a boot-order failure, never a silent blank. */
 function RootOutlet({ ownerProps }: { ownerProps: object }) {
   const host = useHost()
-  useSyncExternalStore(
-    fn => host.subscribe('root', fn),
-    () => host.getVersion('root'),
-  )
+  const subscription = versionSubscription(host, 'slot', 'root')
+  useSyncExternalStore(subscription.subscribe, subscription.getVersion)
   useLocaleRevision(host.locale)
   const entry = host.entriesOfSlot('root')[0]
   if (!entry) {
