@@ -14,7 +14,7 @@ import type { PluginInstallFailureKind } from '@deepseek-ai/dsh-api-remotes/clie
 import {
   Button, IconCheckOutline16, IconChevronDownOutline14, IconChevronLeftOutline14, IconChevronRightOutline14, IconCloseOutline16,
   IconCordisPluginOutline14, IconPluginPinwheelOutline16, IconPlusOutline16, IconRefreshOutline16, IconTrashOutline16,
-  IconWarningOutline16, Input, Modal, StateDot, Switch, Tag, TerminalBlock, Toast,
+  IconWarningOutline16, Input, Modal, StateDot, Switch, Tag, TesseractSpinner, TerminalBlock, Toast,
   type StateDotState, type TerminalBlockLabels,
 } from '@deepseek-ai/dsh-client-ui-primitives'
 import type { InjectFace, PropsLocale, PropsRenderSlots, PropsRuntime } from '@deepseek-ai/dsh-client-ui-slots'
@@ -628,7 +628,7 @@ function InstallDialog({
         className={css.installDialog as string}
         footer={(
           <Button variant="primary" className={css.wide} disabled={checking || empty} aria-busy={checking} onClick={onRun}>
-            {checking ? <span className={css.spinner} aria-hidden="true" /> : null}
+            {checking ? <TesseractSpinner size={14} /> : null}
             {t(checking ? 'installChecking' : 'installRun')}
           </Button>
         )}
@@ -734,7 +734,7 @@ function InstallDialog({
           <div className={css.wizardHero}>
             <span className={css.wizardIcon} data-tone={pending ? 'pending' : phase} aria-hidden="true">
               {pending
-                ? <span className={css.spinnerLarge} />
+                ? <TesseractSpinner size={28} />
                 : phase === 'done' ? <IconCheckOutline16 size={28} /> : <IconWarningOutline16 size={28} />}
             </span>
             <h2 className={css.wizardTitle} role={phase === 'failed' ? 'alert' : 'status'}>{heading}</h2>

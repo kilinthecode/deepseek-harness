@@ -4,13 +4,14 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import { cleanup, render } from '@testing-library/react'
 import { LocaleRuntime } from '@deepseek-ai/dsh-client-locale/client'
 import { SlotRegistry } from '@deepseek-ai/dsh-client-ui-renderer/client'
-import { PortalBrandMark, PortalBrandName, PortalHeroBrandMark } from '../src/client/Brand.tsx'
+import { PortalBrandMark, PortalBrandName, PortalDevBrandName, PortalHeroBrandMark } from '../src/client/Brand.tsx'
 import type { PortalBrandNameProps } from '../src/client/Brand.tsx'
-import { apply, inject, PORTAL_BRAND_PROFILE } from '../src/client/index.ts'
+import { apply, inject, PORTAL_BRAND_PROFILE, PORTAL_DEV_BRAND_PROFILE } from '../src/client/index.ts'
 import { apply as hostApply } from '../src/index.ts'
 
-/** Translate stub for the one key the brand name reads. */
-const brandT: PortalBrandNameProps['t'] = key => (key === 'portal' ? 'PORTAL' : key)
+/** Translate stub for the keys the brand names read. */
+const brandT: PortalBrandNameProps['t'] = key =>
+  (key === 'portal' ? 'PORTAL' : key === 'devBadge' ? 'Dev' : key)
 
 afterEach(() => {
   cleanup()
@@ -28,10 +29,26 @@ function brandLocale(ctx: Context): void {
   ctx.provide('locale', new LocaleRuntime(ctx))
 }
 
-async function bench(declare = true) {
+/** Theme service stand-in recording the override layers it stacks and releases. */
+function themeStub() {
+  const layers: { source: string; tokens: unknown; disposed: boolean }[] = []
+  return {
+    layers,
+    service: {
+      overrideTokens(source: string, tokens: unknown) {
+        const layer = { source, tokens, disposed: false }
+        layers.push(layer)
+        return () => { layer.disposed = true }
+      },
+    },
+  }
+}
+
+async function bench(declare = true, theme?: unknown) {
   const ctx = new Context()
   await ctx.plugin(SlotRegistry).await()
   brandLocale(ctx)
+  if (theme !== undefined) ctx.provide('theme', theme as never)
   const slots = ctx.get('slots') as SlotRegistry
   const declareHoles = () => slots.register({
     name: 'root',
@@ -81,6 +98,43 @@ describe('Portal browser-brand plugin', () => {
     for (const hole of HOLES) expect(after.slots.entries(hole)).toHaveLength(1)
   })
 
+  it('registers the production name and no accent layer under the portal profile', async () => {
+    vi.stubEnv('DSH_CLIENT_BUILD_PROFILE', PORTAL_BRAND_PROFILE)
+    const theme = themeStub()
+    const subject = await bench(true, theme.service)
+    await subject.ctx.plugin({ inject: [...inject], apply }).await()
+    expect(subject.slots.entries('sidebar.brand.name')[0]!.component).toBe(PortalBrandName)
+    expect(theme.layers).toHaveLength(0)
+  })
+
+  it('registers the dev name and stacks the dev accent layer under the dev profile', async () => {
+    vi.stubEnv('DSH_CLIENT_BUILD_PROFILE', PORTAL_DEV_BRAND_PROFILE)
+    const theme = themeStub()
+    const subject = await bench(true, theme.service)
+    const fiber = subject.ctx.plugin({ inject: [...inject], apply })
+    await fiber.await()
+    for (const hole of HOLES) expect(subject.slots.entries(hole)).toHaveLength(1)
+    expect(subject.slots.entries('sidebar.brand.name')[0]!.component).toBe(PortalDevBrandName)
+    expect(theme.layers).toHaveLength(1)
+    expect(theme.layers[0]!.source).toBe('portal-brand.dev')
+    expect(theme.layers[0]!.tokens).toEqual({
+      '--dsw-alias-brand-primary': { light: 'rgb(124, 58, 237)', dark: 'rgb(167, 139, 250)' },
+      '--dsw-alias-link': { light: 'rgb(124, 58, 237)', dark: 'rgb(167, 139, 250)' },
+    })
+
+    await fiber.dispose()
+    expect(theme.layers[0]!.disposed).toBe(true)
+    for (const hole of HOLES) expect(subject.slots.entries(hole)).toHaveLength(0)
+  })
+
+  it('marks the build with the dev name even when a dev composition has no theme service', async () => {
+    vi.stubEnv('DSH_CLIENT_BUILD_PROFILE', PORTAL_DEV_BRAND_PROFILE)
+    const subject = await bench()
+    await subject.ctx.plugin({ inject: [...inject], apply }).await()
+    for (const hole of HOLES) expect(subject.slots.entries(hole)).toHaveLength(1)
+    expect(subject.slots.entries('sidebar.brand.name')[0]!.component).toBe(PortalDevBrandName)
+  })
+
   it('keeps the sidebar brand when a composition declares no Conversation hero', async () => {
     vi.stubEnv('DSH_CLIENT_BUILD_PROFILE', PORTAL_BRAND_PROFILE)
     const ctx = new Context()
@@ -119,5 +173,15 @@ describe('Portal browser-brand plugin', () => {
     expect(heroSvg.getAttribute('viewBox')).toBe('160 160 704 704')
     expect(heroSvg.getAttribute('width')).toBe('34')
     expect(heroSvg.getAttribute('class')).toBe('heroMark')
+  })
+
+  it('renders the dev name with the dev chip after the wordmark and nameplate', () => {
+    const name = render(<PortalDevBrandName t={brandT} />)
+    expect(name.container.textContent).toBe('PORTALDev')
+    const row = [...name.container.children]
+    expect(row.map(element => element.tagName.toLowerCase())).toEqual(['span', 'svg', 'span'])
+    expect(row[2]!.textContent).toBe('Dev')
+    expect(row[2]!.getAttribute('aria-hidden')).toBe('true')
+    name.unmount()
   })
 })

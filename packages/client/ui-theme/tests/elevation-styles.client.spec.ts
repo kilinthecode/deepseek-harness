@@ -144,7 +144,6 @@ describe('neutral solid borders are hairlines', () => {
    */
   const RING_TRACKS = new Set([
     'boot-page.module.css .spinner',
-    'TrajectoryTable.module.css .historyLoadingSpinner',
   ])
 
   it('rejects a wide neutral border and a wide filled divider', () => {

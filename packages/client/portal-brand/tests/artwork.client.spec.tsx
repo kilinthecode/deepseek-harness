@@ -1,6 +1,7 @@
 // @vitest-environment jsdom
 import { cleanup, render } from '@testing-library/react'
 import { afterEach, describe, expect, it } from 'vitest'
+import { DevBadge } from '../src/client/DevBadge.tsx'
 import { HarnessNameplate } from '../src/client/HarnessNameplate.tsx'
 import { PortalMark } from '../src/client/PortalMark.tsx'
 import { PortalWordmark } from '../src/client/PortalWordmark.tsx'
@@ -56,11 +57,26 @@ describe('HarnessNameplate', () => {
     expect(svg.getAttribute('width')).toBe('52')
     expect(svg.getAttribute('height')).toBe('24')
     expect(svg.getAttribute('viewBox')).toBe('129.348 0 52 24')
-    expect(view.container.querySelectorAll('path')).toHaveLength(7)
+    expect(view.container.querySelectorAll('g[clip-path="url(#dsh-wordmark-badge-clip)"] path')).toHaveLength(7)
 
     view.rerender(<HarnessNameplate size={12} className="tight" />)
     expect(svg.getAttribute('width')).toBe('26')
     expect(svg.getAttribute('height')).toBe('12')
     expect(svg.getAttribute('class')).toBe('tight')
+  })
+})
+
+describe('DevBadge', () => {
+  it('renders the caller-supplied chip text as decorative art', () => {
+    const { container } = render(<DevBadge label="Dev" />)
+    const span = container.querySelector('span')!
+    expect(span.textContent).toBe('Dev')
+    expect(span.getAttribute('aria-hidden')).toBe('true')
+  })
+
+  it('takes a layout class', () => {
+    const { container } = render(<DevBadge label="Dev" className="chip" />)
+    const span = container.querySelector('span')!
+    expect(span.getAttribute('class')).toContain('chip')
   })
 })

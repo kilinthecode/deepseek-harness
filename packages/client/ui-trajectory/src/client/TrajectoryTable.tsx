@@ -18,6 +18,7 @@ import {
   IconUserOutline16,
   JsonTree,
   MarkdownText,
+  TesseractSpinner,
   Tooltip,
   writeClipboard,
 } from '@deepseek-ai/dsh-client-ui-primitives'
@@ -2603,7 +2604,7 @@ export function TrajectoryTable({
         {showInitialLoading && (
           <div className={css.historyLoading} role="status" aria-live="polite">
             <span className={css.historyLoadingBar}>
-              <span className={css.historyLoadingSpinner} aria-hidden="true" />
+              <TesseractSpinner size={12} />
               {t('history.loadingTrajectory')}
             </span>
           </div>
@@ -2638,7 +2639,7 @@ export function TrajectoryTable({
                     }}
                   >
                     {olderBusy && (
-                      <span className={css.historyLoadingSpinner} aria-hidden="true" />
+                      <TesseractSpinner size={12} />
                     )}
                     <span aria-hidden="true">
                       {olderBusy ? t('history.loadingEarlier') : t('history.loadEarlier')}

@@ -88,5 +88,10 @@ describe('BrandWordmark', () => {
     view.rerender(<primitives.BrandWordmark includeMark={false} />)
     expect(svg.getAttribute('width')).toBe('156')
     expect(svg.getAttribute('viewBox')).toBe('26 0 156 24')
+
+    view.rerender(<primitives.BrandWordmark nameplateOnly />)
+    expect(svg.getAttribute('width')).toBe('52')
+    expect(svg.getAttribute('viewBox')).toBe('129.348 0 52 24')
+    expect(svg.querySelectorAll('g[clip-path="url(#dsh-wordmark-badge-clip)"] path')).toHaveLength(7)
   })
 })

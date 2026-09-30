@@ -86,20 +86,6 @@
   object-fit: contain;
 }
 
-.spinner {
-  animation: spinner-rotate 0.9s linear infinite;
-}
-
-@keyframes spinner-rotate {
-  to { transform: rotate(360deg); }
-}
-
-@media (prefers-reduced-motion: reduce) {
-  .spinner {
-    animation: none;
-  }
-}
-
 .frame:focus-visible,
 .error:focus-visible {
   outline: 2px solid var(--dsw-alias-state-business-primary);
