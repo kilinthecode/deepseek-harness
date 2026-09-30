@@ -136,25 +136,28 @@ export const peerDeliveryProjection: ProjectionDefinition<'peerDelivery', PeerDe
 /**
  * One session's peer-activity dedupe state.
  *
- * The two fields are the two questions a later step asks: has this session
- * already been shown this exact block, and has it already been warned about
- * the same overlap. Both are remembered from the logged snapshot rather than
- * held in memory, so a resumed session does not re-show a block its earlier
- * steps already saw.
+ * The fields are the three questions a step asks: has this session already been
+ * shown this exact block, has it already been warned about the same overlap,
+ * and has it already been shown each peer the block would list. All three are
+ * remembered from the logged snapshot rather than held in memory, so a resumed
+ * session does not re-show a block its earlier steps already saw.
  */
 export interface PeerActivityState {
   /** Complete text of the last `peer-activity` message this session logged. */
   readonly lastText: string
   /** That message's `peer:overlap` section texts joined by a line feed, `''` when it warned about nothing. */
   readonly lastOverlap: string
+  /** Session ids of the peers that message listed, in block order; empty while this session was shown no block. */
+  readonly lastPeerIds: readonly string[]
 }
 
 const activitySchema = z.object({
   lastText: z.string(),
   lastOverlap: z.string(),
+  lastPeerIds: z.array(z.string()).readonly(),
 }).readonly()
 
-const EMPTY_ACTIVITY: PeerActivityState = { lastText: '', lastOverlap: '' }
+const EMPTY_ACTIVITY: PeerActivityState = { lastText: '', lastOverlap: '', lastPeerIds: [] }
 
 declare module '@deepseek-ai/dsh-session-projection/types' {
   interface SessionProjectionStateMap {
@@ -173,19 +176,23 @@ declare module '@deepseek-ai/dsh-session-projection/types' {
  */
 export const peerActivityProjection: ProjectionDefinition<'peerActivity', PeerActivityState> = {
   key: 'peerActivity',
-  stateVersion: 1,
+  stateVersion: 2,
   stateSchema: activitySchema,
   init: () => EMPTY_ACTIVITY,
   apply: (state, event) => {
     if (event.type === 'user/message') {
       const source = event.data.source
       if (source.kind === 'peer-activity') {
-        return { lastText: messageText(event.data.content), lastOverlap: overlapText(source.sections) }
+        return {
+          lastText: messageText(event.data.content),
+          lastOverlap: overlapText(source.sections),
+          lastPeerIds: source.peerIds,
+        }
       }
       return state
     }
     if (event.type === 'compaction/end' && event.data.error === undefined) {
-      return state.lastText === '' && state.lastOverlap === '' ? state : EMPTY_ACTIVITY
+      return state.lastText === '' && state.lastOverlap === '' && state.lastPeerIds.length === 0 ? state : EMPTY_ACTIVITY
     }
     return state
   },

@@ -50,6 +50,8 @@ export interface SeededSnapshot {
   readonly text: string
   /** Its named sections; the `peer:overlap` ones drive the later-step dedupe. */
   readonly sections: readonly ContextSnapshotSection[]
+  /** Ids of the peers that message listed; a later step lists any peer outside them. */
+  readonly peerIds: readonly SessionId[]
 }
 
 /** One peer as the block's JSON carries it. */
@@ -165,7 +167,7 @@ export async function snapshotFixture(
     seed: async (message) => {
       caller.followup(createUserMessage({
         content: [{ type: 'text', text: message.text }],
-        source: { kind: 'peer-activity', form: 'snapshot', sections: message.sections },
+        source: { kind: 'peer-activity', form: 'snapshot', sections: message.sections, peerIds: message.peerIds },
       }))
       await caller.whenIdle()
     },
@@ -213,15 +215,17 @@ export function overlapSections(snapshot: PeerActivitySnapshot): readonly string
 const turns = new WeakMap<Agent, number>()
 
 /**
- * Append one whole successful file-writing tool call, the way the loop logs it.
+ * Append one whole file-writing tool call and its result, the way the loop logs
+ * them.
  *
- * The append is synchronous, so the service records the write in its in-process
+ * The append is synchronous, so the service records the call in its in-process
  * state before the returned call yields: a test can then observe state that the
  * queued row publish has not carried to disk yet.
  * @param agent - the session whose log receives the call.
  * @param path - the model-facing path the write reports.
+ * @param failed - whether the tool reports an error, as a file tool does for a write to a file changed since it was read.
  */
-export function writeTurn(agent: Agent, path: string): void {
+function appendWriteTurn(agent: Agent, path: string, failed: boolean): void {
   const turn = (turns.get(agent) ?? 0) + 1
   turns.set(agent, turn)
   const callId = `activity-${agent.id}-${turn}`
@@ -239,10 +243,28 @@ export function writeTurn(agent: Agent, path: string): void {
     step: 1,
     message: createToolResultMessage({
       callId: ToolCallId(callId),
-      content: [{ type: 'text', text: 'done' }],
-      isError: false,
+      content: [{ type: 'text', text: failed ? 'file changed since it was read' : 'done' }],
+      isError: failed,
     }),
   }, { surfaceOp: 'append' })
   agent.session.append('step/end', { turn, step: 1 })
   agent.session.append('turn/end', { turn, reason: { kind: 'completed' } })
+}
+
+/**
+ * Append one whole successful file-writing tool call.
+ * @param agent - the session whose log receives the call.
+ * @param path - the model-facing path the write reports.
+ */
+export function writeTurn(agent: Agent, path: string): void {
+  appendWriteTurn(agent, path, false)
+}
+
+/**
+ * Append one whole file-writing tool call whose result is an error.
+ * @param agent - the session whose log receives the call.
+ * @param path - the model-facing path the rejected write named.
+ */
+export function rejectedWriteTurn(agent: Agent, path: string): void {
+  appendWriteTurn(agent, path, true)
 }

@@ -12,11 +12,11 @@ import type { CompactionId } from '@deepseek-ai/dsh-compaction'
 // Type-only: the `compaction/end` event this spec appends, and the session-event
 // augmentation the id's module declares.
 import type {} from '@deepseek-ai/dsh-compaction/types'
-import { SessionLogOffset } from '@deepseek-ai/dsh-session'
+import { SessionId, SessionLogOffset } from '@deepseek-ai/dsh-session'
 import type { Session } from '@deepseek-ai/dsh-session'
 import { afterEach, describe, expect, it } from 'vitest'
 import { mountPeerHarness, type PeerHarness } from './harness.ts'
-import { overlapSections, snapshotFixture, writeTurn, type SnapshotFixture } from './activity-fixture.ts'
+import { overlapSections, peerNames, snapshotFixture, writeTurn, type SnapshotFixture } from './activity-fixture.ts'
 
 const harnesses: PeerHarness[] = []
 
@@ -98,7 +98,7 @@ describe('peer activity dedupe', () => {
     const warned = await fixture.snapshot(2)
     if (warned === undefined) throw new Error('the later step rendered nothing')
     expect(overlapSections(warned)).toEqual([
-      'Overlap with peer "peer-b": you and it have both written "src/shared.ts", "src/shared-too.ts". Read each again before your next write to it and keep the peer\'s changes; if you are changing it together, send it a message with send_peer_message. Writes made outside file tools are not published.',
+      'Overlap with peer "peer-b": it wrote "src/shared.ts", "src/shared-too.ts", which you also wrote or tried to write. Read each again before your next write to it and keep the peer\'s changes; if you are changing it together, send it a message with send_peer_message. Writes made outside file tools are not published.',
     ])
   })
 
@@ -107,12 +107,68 @@ describe('peer activity dedupe', () => {
     harnesses.push(harness)
     const fixture = await snapshotFixture(harness, 'peer-empty-overlap')
     await fixture.write({ id: 'peer-b', status: 'running', files: ['rel:src/a.ts'] })
-    // An earlier step showed a different block, so only the empty overlap can
-    // keep this step silent.
-    await fixture.seed({ text: 'an earlier block', sections: [{ name: 'peer:activity', text: 'an earlier block' }] })
+    // An earlier step showed a different block that listed the same peer, so
+    // only the empty overlap can keep this step silent.
+    await fixture.seed({
+      text: 'an earlier block',
+      sections: [{ name: 'peer:activity', text: 'an earlier block' }],
+      peerIds: [SessionId('peer-b')],
+    })
 
     expect(await fixture.snapshot(2)).toBeUndefined()
     expect(await rendered(fixture)).toContain('peer-b')
+  })
+})
+
+describe('peer activity new peers', () => {
+  it('lists a peer the last logged block did not list, and then stays silent', async () => {
+    const harness = await mountPeerHarness({ peer: { pollMs: 60_000 } })
+    harnesses.push(harness)
+    const fixture = await snapshotFixture(harness, 'peer-new-peer')
+    await fixture.write({ id: 'peer-b', status: 'running', files: ['rel:src/a.ts'], updatedAgoMs: 5000 })
+    const first = await fixture.snapshot(1)
+    if (first === undefined) throw new Error('the snapshot rendered nothing')
+    await fixture.seed(first)
+    // Every live peer is in the last logged block and none shares a path.
+    expect(await fixture.snapshot(2)).toBeUndefined()
+
+    await fixture.write({ id: 'peer-c', name: 'latecomer', status: 'running', doing: 'starting on the parser' })
+    const second = await fixture.snapshot(2)
+    if (second === undefined) throw new Error('the later step rendered nothing')
+    expect(second.peerIds).toEqual(['peer-c', 'peer-b'])
+    expect(peerNames(second)).toEqual(['latecomer', 'peer-b'])
+    expect(overlapSections(second)).toEqual([])
+    await fixture.seed(second)
+    expect(await fixture.snapshot(3)).toBeUndefined()
+  })
+
+  it('lists a peer that appeared mid-turn to a session that was shown nothing before', async () => {
+    const harness = await mountPeerHarness({ peer: { pollMs: 60_000 } })
+    harnesses.push(harness)
+    const fixture = await snapshotFixture(harness, 'peer-first')
+    // No peer existed at step 1, so this session logged no block.
+    expect(await fixture.snapshot(1)).toBeUndefined()
+    await fixture.write({ id: 'peer-late', name: 'latecomer', status: 'running', doing: 'starting on the parser' })
+
+    const snapshot = await fixture.snapshot(2)
+    if (snapshot === undefined) throw new Error('the later step rendered nothing')
+    expect(peerNames(snapshot)).toEqual(['latecomer'])
+    expect(overlapSections(snapshot)).toEqual([])
+  })
+
+  it('compares against the peers the block lists, not against every live peer', async () => {
+    const harness = await mountPeerHarness({ peer: { pollMs: 60_000, maxActivityPeers: 1 } })
+    harnesses.push(harness)
+    const fixture = await snapshotFixture(harness, 'peer-capped')
+    await fixture.write({ id: 'peer-listed', status: 'running' })
+    await fixture.write({ id: 'peer-cut', status: 'running', updatedAgoMs: 5000 })
+    const first = await fixture.snapshot(1)
+    if (first === undefined) throw new Error('the snapshot rendered nothing')
+    expect(first.peerIds).toEqual(['peer-listed'])
+    await fixture.seed(first)
+
+    // The cap keeps the second peer out of every block, so it is never a new one.
+    expect(await fixture.snapshot(2)).toBeUndefined()
   })
 })
 
@@ -143,6 +199,32 @@ describe('peer activity compaction', () => {
     endCompaction(fixture.caller, 'summarization failed')
     expect(await fixture.snapshot(1)).toBeUndefined()
   })
+
+  it('forgets the listed peers after a successful compaction and not after a failed one', async () => {
+    const harness = await mountPeerHarness({ peer: { pollMs: 60_000 } })
+    harnesses.push(harness)
+    const fixture = await snapshotFixture(harness, 'peer-compaction-peers')
+    const listed = (): readonly string[] | undefined =>
+      harness.ctx.sessionProjections.stateOf(fixture.caller.session, 'peerActivity')?.lastPeerIds
+    await fixture.write({ id: 'peer-b', status: 'running', files: ['rel:src/a.ts'] })
+    const first = await fixture.snapshot(1)
+    if (first === undefined) throw new Error('the snapshot rendered nothing')
+    expect(listed()).toEqual([])
+
+    await fixture.seed(first)
+    expect(listed()).toEqual(['peer-b'])
+    expect(await fixture.snapshot(2)).toBeUndefined()
+
+    // A failed attempt leaves the context as it was, so the peer stays shown.
+    endCompaction(fixture.caller, 'summarization failed')
+    expect(listed()).toEqual(['peer-b'])
+    expect(await fixture.snapshot(2)).toBeUndefined()
+
+    // A compaction drops the block from the context, so the peer is new again.
+    endCompaction(fixture.caller)
+    expect(listed()).toEqual([])
+    expect((await fixture.snapshot(2))?.peerIds).toEqual(['peer-b'])
+  })
 })
 
 describe('peer activity resume', () => {
@@ -163,5 +245,7 @@ describe('peer activity resume', () => {
       inheritedEventCount: SessionLogOffset(prefix.length),
     })
     expect(await harness.ctx.peers.activitySnapshot(resumed, 1)).toBeUndefined()
+    // The peers that block listed are recovered from the log too, so a later step lists none as new.
+    expect(await harness.ctx.peers.activitySnapshot(resumed, 2)).toBeUndefined()
   })
 })

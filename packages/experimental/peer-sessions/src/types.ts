@@ -109,6 +109,12 @@ export interface PeerActivitySource {
   readonly form: 'snapshot'
   /** Named contributions in assembly order: the peer block, then one overlap warning per peer. */
   readonly sections: readonly ContextSnapshotSection[]
+  /**
+   * Session ids of the peers the block lists, in block order. The rendered text
+   * never carries them: a later step compares them with the peers it would list
+   * to tell whether one appeared since this message.
+   */
+  readonly peerIds: readonly SessionId[]
 }
 
 /** One rendered activity snapshot of the caller's peers, ready to become a `peer-activity` message. */
@@ -117,6 +123,8 @@ export interface PeerActivitySnapshot {
   readonly text: string
   /** The named sections {@link PeerActivitySnapshot.text} assembles, in order. */
   readonly sections: readonly ContextSnapshotSection[]
+  /** Session ids of the peers the block lists, in block order; the message carries them as {@link PeerActivitySource.peerIds}. */
+  readonly peerIds: readonly SessionId[]
 }
 
 declare module '@deepseek-ai/dsh-llm' {

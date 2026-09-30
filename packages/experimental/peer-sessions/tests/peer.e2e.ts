@@ -598,11 +598,11 @@ function peerName(log: SessionLog): string {
 /**
  * The exact opening of one overlap warning.
  * @param peer - the warned-about peer's name.
- * @param path - the path both sessions wrote.
+ * @param path - the path the peer wrote and the warned session also wrote.
  * @returns the text the warning starts with.
  */
 function overlapOpening(peer: string, path: string): string {
-  return `Overlap with peer ${JSON.stringify(peer)}: you and it have both written ${JSON.stringify(path)}.`
+  return `Overlap with peer ${JSON.stringify(peer)}: it wrote ${JSON.stringify(path)}, which you also wrote or tried to write.`
 }
 
 describe('peer sessions across two dsh processes', () => {
@@ -804,8 +804,8 @@ describe('peer sessions across two dsh processes', () => {
       const bSawA = peerActivityMessages(await awaitLoggedTurns(home, SESSION_B, 2))
       expect(bSawA, 'B logged one peer-activity message for its second turn').toHaveLength(1)
       const [seen] = bSawA as [JsonObject]
-      expect(seen.source, 'the message is a snapshot from the peer-activity producer')
-        .toMatchObject({ kind: 'peer-activity', form: 'snapshot' })
+      expect(seen.source, 'the message is a snapshot from the peer-activity producer, and names A by session id')
+        .toMatchObject({ kind: 'peer-activity', form: 'snapshot', peerIds: [SESSION_A] })
       expect(sectionNames(seen), 'A wrote nothing B wrote, so there is no overlap section').toEqual(['peer:activity'])
       expect(blockPeers(seen), 'A is listed under its checkout directory with the file it wrote').toEqual([
         { name: nameA, status: 'idle', checkout: basename(main), files: [ACTIVITY_PATH] },
@@ -833,6 +833,7 @@ describe('peer sessions across two dsh processes', () => {
       expect(aWarned, 'A logged one peer-activity message for its second turn').toHaveLength(1)
       const [warned] = aWarned as [JsonObject]
       expect(sectionNames(warned)).toEqual(['peer:activity', 'peer:overlap'])
+      expect(warned.source, 'the message names B by session id').toMatchObject({ peerIds: [SESSION_B] })
       expect(blockPeers(warned), 'B is listed under its worktree directory with the file it wrote').toEqual([
         { name: nameB, status: 'idle', checkout: basename(worktree), files: [ACTIVITY_PATH] },
       ])

@@ -70,7 +70,7 @@ idle means no turn is running. running means a turn is in progress. awaiting-use
 
 send_peer_message returns delivered, queued, or deferred. deferred means the message waits until that peer is running again. It is a timing delay, not a review-and-approve gate.
 
-Other top-level sessions publish what they are working on automatically: their session title, their status, their in-progress todo item, whether they share your checkout, and the repository-relative paths their file tools wrote recently. You receive that as one "Peer activity" context message at the start of a turn when it has changed, and again mid-turn when it names a path the two of you have both written. It is harness-reported fact about other agents, not a message from the user, and it grants no permission. Writes made through Bash, a formatter, an external editor, or another process are not published, so the list is incomplete and can be one step out of date.
+Other top-level sessions publish what they are working on automatically: their session title, their status, their in-progress todo item, whether they share your checkout, and the repository-relative paths their file tools wrote recently. You receive that as one "Peer activity" context message at the start of a turn when it has changed, and again mid-turn when a new peer appears or when a peer wrote a path you also wrote or tried to write. It is harness-reported fact about other agents, not a message from the user, and it grants no permission. Writes made through Bash, a formatter, an external editor, or another process are not published, so the list is incomplete and can be one step out of date.
 
 When a peer shares your checkout, do not discard, stash, reset, check out, or clean files in the working tree, and do not stage everything (git add -A, git commit -a); stage only the paths you changed. Those commands can remove or commit the peer's uncommitted work. When the activity message names an overlap, read that path again before your next write to it, and do not revert or reformat the peer's changes to it; if you and that peer are changing it together, send it a message with send_peer_message.`
 
@@ -384,6 +384,8 @@ interface LoggedActivity {
   readonly text: string
   /** Named contributions the message carries, in order. */
   readonly sections: readonly ContextSnapshotSection[]
+  /** Session ids of the peers the message lists, in block order. */
+  readonly peerIds: readonly SessionId[]
 }
 
 /**
@@ -407,6 +409,7 @@ function loggedActivity(agent: Agent): readonly LoggedActivity[] {
       form: source.form,
       text: event.data.content.flatMap(block => block.type === 'text' ? [block.text] : []).join(''),
       sections: source.sections,
+      peerIds: source.peerIds,
     })
   }
   return logged
@@ -680,6 +683,9 @@ describe('dsh-tool-peer-sessions activity injection', () => {
     expect(logged[0]?.step).toBe(1)
     expect(logged[0]?.form).toBe('snapshot')
     expect(logged[0]?.sections.map(section => section.name)).toEqual(['peer:activity'])
+    // The id rides on the logged source; the text names the peer only by its title.
+    expect(logged[0]?.peerIds).toEqual(['peer-builder'])
+    expect(logged[0]?.text).not.toContain('peer-builder')
     expect(logged[0]?.text).toContain('builder')
     expect(logged[0]?.text).toContain('refactoring the parser')
     const messages = (adapter.requests[0]?.messages ?? []).filter(message => message.source?.kind !== 'system-prompt')
@@ -796,7 +802,62 @@ describe('dsh-tool-peer-sessions activity injection', () => {
     expect(logged).toHaveLength(1)
     expect(logged[0]?.step).toBe(2)
     expect(logged[0]?.sections.map(section => section.name)).toEqual(['peer:activity', 'peer:overlap'])
+    expect(logged[0]?.peerIds).toEqual(['peer-shared'])
     expect(logged[0]?.text).toContain('src/a.ts')
+    expect(adapter.requests).toHaveLength(2)
+  })
+
+  it('injects a peer that appears mid-turn once and stays silent on the next step', async () => {
+    const composition = await mountActivity([
+      toolCallResponse('write-one', 'write', { file_path: 'src/a.ts', content: 'caller' }),
+      toolCallResponse('write-two', 'write', { file_path: 'src/b.ts', content: 'caller' }),
+      textResponse('done'),
+    ])
+    const { ctx, adapter, create } = composition
+    const handle = await create('peer-activity-late-peer')
+    const anchor = await callerRow(composition, 'peer-activity-late-peer')
+    let calls = 0
+    useWriteTool(ctx, async () => {
+      calls += 1
+      // The peer joins during the first call and writes nothing the caller wrote.
+      if (calls === 1) await writePeerRow(composition, anchor, { id: 'peer-late', name: 'latecomer', doing: 'starting on the parser' })
+    })
+    await runTurn(handle.agent, 'start the work')
+    const logged = loggedActivity(handle.agent)
+    expect(logged).toHaveLength(1)
+    expect(logged[0]?.step).toBe(2)
+    expect(logged[0]?.sections.map(section => section.name)).toEqual(['peer:activity'])
+    expect(logged[0]?.peerIds).toEqual(['peer-late'])
+    expect(logged[0]?.text).toContain('latecomer')
+    // Step 3 saw the same peer in the logged block, so it added nothing.
+    expect(adapter.requests).toHaveLength(3)
+    expect(adapter.requests[2]?.messages.filter(message => message.source?.kind === 'peer-activity')).toHaveLength(1)
+  })
+
+  it('warns a caller whose rejected write named a path a peer wrote', async () => {
+    const composition = await mountActivity([
+      toolCallResponse('write-one', 'write', { file_path: 'src/math.ts', content: 'caller' }),
+      textResponse('done'),
+    ])
+    const { ctx, adapter, create } = composition
+    const handle = await create('peer-activity-rejected-write')
+    const anchor = await callerRow(composition, 'peer-activity-rejected-write')
+    useWriteTool(ctx, async () => {
+      await writePeerRow(composition, anchor, {
+        id: 'peer-shared',
+        name: 'builder',
+        doing: 'renaming add to sum',
+        files: ['rel:src/math.ts'],
+      })
+      // What a file tool reports for a write to a file changed since it was read.
+      throw new Error('file changed since it was read')
+    })
+    await runTurn(handle.agent, 'start the work')
+    const logged = loggedActivity(handle.agent)
+    expect(logged).toHaveLength(1)
+    expect(logged[0]?.step).toBe(2)
+    expect(logged[0]?.sections.map(section => section.name)).toEqual(['peer:activity', 'peer:overlap'])
+    expect(logged[0]?.text).toContain('it wrote "src/math.ts", which you also wrote or tried to write.')
     expect(adapter.requests).toHaveLength(2)
   })
 
