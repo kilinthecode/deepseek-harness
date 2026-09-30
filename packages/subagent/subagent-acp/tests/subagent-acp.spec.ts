@@ -1700,6 +1700,11 @@ describe('dsh-subagent-acp', () => {
       toolFilter: false,
       persona: false,
     })
+    expect(provider.inheritsParentContext).toBe(false)
+    // The prompt mapping to ACP's protocol carries no image blocks at all
+    // (`toAcpPrompt` drops every non-text block); distinct from dsh-sdk's own
+    // attachment-store reason and Claude Code/Codex's text-only CLI task.
+    expect(provider.imageInput).toBe(false)
   })
 
   it('unregisters the provider when its fiber is disposed (HMR safety)', async () => {

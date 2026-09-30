@@ -4,7 +4,7 @@
  * `approval/policy: never`.
  */
 
-import { afterEach, beforeEach, describe, expect, it } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { mkdtemp, readFile, realpath, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -66,6 +66,23 @@ function spawnRequest(parent: Agent) {
       provider: 'spawn',
       label: 'child task',
     }),
+  }
+}
+
+/** One image-bearing prompt, distinct from every text-only `spawnRequest` fixture above. */
+function imageSpawnRequest(parent: Agent): Omit<ReturnType<typeof spawnRequest>, 'prompt'> & { prompt: ContentBlock[] } {
+  return {
+    ...spawnRequest(parent),
+    prompt: [{
+      type: 'image' as const,
+      attachment: {
+        attachmentId: 'att-driver-ordering' as never,
+        mediaType: 'image/png' as const,
+        bytes: 1,
+        width: 1,
+        height: 1,
+      },
+    }],
   }
 }
 
@@ -253,6 +270,40 @@ describe('in-process policy inheritance', () => {
     } finally {
       await run.dispose()
     }
+  })
+
+  it('captures policy before the image route check\'s await, not after it', async () => {
+    const script: Script = [textResponse('child done')]
+    const { ctx, parent } = await setupWalled(script)
+    setSandboxMode(parent.session, 'read-only')
+    const routeCheck = Promise.withResolvers<{ inputModalities: string[] }>()
+    vi.spyOn(ctx.llm, 'resolveModelInfo').mockReturnValue(routeCheck.promise as never)
+
+    const starting = startInProcessRun(imageSpawnRequest(parent), {})
+    // The route check above is the run's first await; the parent switch below
+    // lands while it is still pending. A capture that ran after this await
+    // instead of before it would pick up this later value.
+    setSandboxMode(parent.session, 'danger-full-access')
+    routeCheck.resolve({ inputModalities: ['text', 'image'] })
+    const run = await starting
+    try {
+      await run.result
+      const child = run.localAgent as Agent
+      expect(ctx.sandboxPolicy.overrideOf(parent.session)).toBe('danger-full-access')
+      expect(ctx.sandboxPolicy.overrideOf(child.session)).toBe('read-only')
+    } finally {
+      await run.dispose()
+    }
+  })
+
+  it('creates no child when the resolved route refuses image input', async () => {
+    const { ctx, parent } = await setupWalled([])
+    vi.spyOn(ctx.llm, 'resolveModelInfo').mockResolvedValue({ inputModalities: ['text'] } as never)
+
+    await expect(startInProcessRun(imageSpawnRequest(parent), {}))
+      .rejects.toMatchObject({ code: 'MODEL_DOES_NOT_SUPPORT_IMAGES' })
+
+    expect(ctx.agents.list()).toEqual([parent])
   })
 
   it('leaves an unswitched sandbox on the deployment default while still pinning approval', async () => {

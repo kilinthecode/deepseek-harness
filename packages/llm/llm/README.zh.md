@@ -49,7 +49,7 @@ kind: "package-reference"
 ```text
 for await (const chunk of ctx.llm.stream({
   provider: 'deepseek-official',
-  model: 'deepseek-v4-flash',
+  model: 'deepseek-flash',
   messages: [{ role: 'user', content: [{ type: 'text', text: 'Hello' }] }],
 })) {
   // chunks: block-start, text-delta, ..., usage, finish
@@ -99,13 +99,13 @@ for await (const chunk of ctx.llm.stream({
 | [`src/call-config.ts`](src/call-config.ts) | 调用配置校验、适配器默认值填入与请求冻结 |
 | [`src/retry-policy.ts`](src/retry-policy.ts) | 提供方自有重试策略解析（normal 与 always 模式） |
 | [`src/error.ts`](src/error.ts) | `HarnessError`/`LlmError` 分类体系与提供方无关失败 code |
-| [`src/content.ts`](src/content.ts) | 共享文件与图片辅助函数：内容遍历、文件投影、图片卸载计数与已卸载图片投影 |
+| [`src/content.ts`](src/content.ts) | 共享内容辅助函数：附件访问映射、内容遍历、图片输入支持判断、会话图片 id 解析、文件投影、图片卸载计数、已卸载图片投影与工具更新投影。`resolveImageAttachmentRefs()` 返回用户内容与工具结果图片中被引用 id 的引用（首次出现者优先），以及没有任何图片携带的 id；`resolveDelegationImages()` 校验委派工具的 `images` 参数（非空、无重复、不超过每条消息上限、每个 id 均已知），并返回不含 `offloaded` 的新图片块。 |
 | [`src/api-key.ts`](src/api-key.ts) | 每个适配器共享的凭据格式校验 |
 | [`src/adapter-failure.ts`](src/adapter-failure.ts) | 把失败归一化为终止 finish 分片 |
 
 ### 主流程
 
-请求会对照其精确模型的能力校验，包括上下文窗口、输出默认值、推理强度、输入模态与 `systemPromptUpdate` 模式，并填入任何适配器配置的默认值。运行时保留已冻结输入的冻结状态；手动构建请求的调用方负责保证输入不可变。`prepareCall()` 把这些事实、分离的上下文与重试策略绑定到执行最终分发的精确适配器代次，因此 HMR（热模块替换）或动态设置无法把一个代次的图片能力与另一代次的端点混用。支持图片的适配器把持久引用投影为路由专用请求版本；`resolveImageAttachmentAccess()` 会单独把附件提供方的可选宿主对象映射进当前工具执行世界，而不改变请求图片或其 `variantId`。纯文本路由接收确定性的逐图片占位符，包括 tool-role 结果图片，而不会改写仅追加会话历史。持久 `FileBlock` 引用永远不会到达任何适配器：请求组装把每个引用（包括 tool-role 结果中的出现）替换为确定性句柄文本，指出文件与其只读保存路径，路径经由挂载的附件与文件系统提供方解析。`ctx.llm.fileRequestText(ref)` 向请求计量公开相同的同步投影。派生后带有 `offloaded: true` 的图片出现位置，经 `projectOffloadedImages()` 以占位文本到达每条路由。支持图片的路由在保留的出现位置按精确字节超过其 `LlmImageRequestBudget` 时，以 `IMAGE_OFFLOAD_REQUIRED` 失败并说明还需省略多少最老的出现位置（`requiredImageOffload()`），绝不发送未记录的投影；`dsh-compaction-image-offload` 用一条 `image/offload` 事件记录所选位置并重试。对视觉 token 收费的适配器声明按路由的 `imageRequestPricing`，`ctx.llm.imageRequestPricing(provider, model)` 为 token meter 同步解析它。分发经过 `llm/stream` waterfall（瀑布式事件），随后分片以 token 级增量返回，每个适配器结果都以唯一一个终止 `finish` 分片到达消费方。
+请求会对照其精确模型的能力校验，包括上下文窗口、输出默认值、推理强度、输入模态与 `systemPromptUpdate` 模式，并填入任何适配器配置的默认值。运行时保留已冻结输入的冻结状态；手动构建请求的调用方负责保证输入不可变。`prepareCall()` 把这些事实、分离的上下文与重试策略绑定到执行最终分发的精确适配器代次，因此 HMR（热模块替换）或动态设置无法把一个代次的图片能力与另一代次的端点混用。支持图片的适配器把持久引用投影为路由专用请求版本；`resolveImageAttachmentAccess()` 会单独把附件提供方的可选宿主对象映射进当前工具执行世界，而不改变请求图片或其 `variantId`。纯文本路由接收确定性的逐图片占位符，包括 tool-role 结果图片，并携带完整附件身份以及（在访问可解析时）当前执行世界的只读路径，而不会改写仅追加会话历史。`imageInputSupport()` 把某个已解析模型声明的 `inputModalities` 映射为 `'supported'`、`'unsupported'` 或 `'undeclared'`；消费方据此结果构建自己的能力门控，而不必重新读取该字段。持久 `FileBlock` 引用永远不会到达任何适配器：请求组装把每个引用（包括 tool-role 结果中的出现）替换为确定性句柄文本，指出文件与其只读保存路径，路径经由挂载的附件与文件系统提供方解析。`ctx.llm.fileRequestText(ref)` 向请求计量公开相同的同步投影。派生后带有 `offloaded: true` 的图片出现位置，经 `projectOffloadedImages()` 以占位文本到达每条路由。支持图片的路由在保留的出现位置按精确字节超过其 `LlmImageRequestBudget` 时，以 `IMAGE_OFFLOAD_REQUIRED` 失败并说明还需省略多少最老的出现位置（`requiredImageOffload()`），绝不发送未记录的投影；`dsh-compaction-image-offload` 用一条 `image/offload` 事件记录所选位置并重试。对视觉 token 收费的适配器声明按路由的 `imageRequestPricing`，`ctx.llm.imageRequestPricing(provider, model)` 为 token meter 同步解析它。分发经过 `llm/stream` waterfall（瀑布式事件），随后分片以 token 级增量返回，每个适配器结果都以唯一一个终止 `finish` 分片到达消费方。
 
 文件检测在每次请求时读取当前内容，包括 tool-role 结果内容，不缓存消息身份或冻结状态。[文件扫描决策](../../../.agents/notes/implemented/simplification/2026-09-07-file-content-scan.zh.md)记录了实测遍历成本。
 
@@ -114,7 +114,7 @@ for await (const chunk of ctx.llm.stream({
 - **模型可见 ⟺ 已记录**——调用方必须确保每个提供方请求中的模型可见输入都可以从会话日志重建；loop 构建的请求以深度冻结状态到达，不可改写。
 - **回放状态只在同一适配器内流动**——仅当同一适配器实例同时拥有历史路由与目标路由时，assistant 回放状态才会随行；否则在分发前被丢弃。
 - **已准备调用是一次性的**——已准备调用只能分发一次，且其调用配置字段必须与准备好的配置一致。
-- **图片投影遵循捕获的路由**——只有支持图片的模型会把持久 `ImageBlock` 引用转换为路由专用请求版本；纯文本模型接收稳定占位符。
+- **图片投影遵循捕获的路由**——只有支持图片的模型会把持久 `ImageBlock` 引用转换为路由专用请求版本；纯文本模型接收稳定占位符，其中包含完整附件身份，并在访问可解析时包含只读路径。
 - **文件投影无条件进行**——没有任何提供方会收到文件字节；每条路由对每个 `FileBlock` 都得到一行确定性句柄文本，模型在需要时用文件工具读取保存的副本。
 - **协议顺序**——`usage` 先于 `finish`，工具参数保持原始 JSON 字符串，终止 `finish` 之后不再有任何内容。
 - **注册表变更具有原子性**——路由与目录注册会在任何变动前整体校验候选集合，因此被拒绝的变更会让此前状态继续服务。

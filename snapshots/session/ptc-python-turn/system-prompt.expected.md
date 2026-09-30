@@ -375,6 +375,8 @@ class SendMessageArgs(TypedDict):
     agent_id: str
     # The message to deliver to the agent.
     message: str
+    # Attachment ids of images already shown in this conversation, appended to the message.
+    images: NotRequired[list[str]]
     # Additional keys beyond those declared are allowed.
 
 class SendMessageOutput(TypedDict):
@@ -408,6 +410,8 @@ class SubagentArgs(TypedDict):
     description: str
     # The complete, self-contained task for the subagent. It does not share this conversation's context, so include everything it needs.
     prompt: str
+    # Attachment ids of images already shown in this conversation, appended to the prompt.
+    images: NotRequired[list[str]]
     # Defaults to true. Set false only when your next action depends on the result.
     run_in_background: NotRequired[bool]
     # Additional keys beyond those declared are allowed.
@@ -430,6 +434,8 @@ class SubagentForkArgs(TypedDict):
     description: str
     # The task for the subagent. It already sees this conversation's completed turns, so build on them freely and state only what is new.
     prompt: str
+    # Attachment ids of images already shown in this conversation, appended to the prompt.
+    images: NotRequired[list[str]]
     # Additional keys beyond those declared are allowed.
 
 class SubagentForkOutput1(TypedDict):

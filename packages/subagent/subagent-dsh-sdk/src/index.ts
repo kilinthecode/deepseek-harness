@@ -53,7 +53,7 @@ export interface Config {
   cwd?: string
   /** Provider route the child runtime initializes with (default `deepseek-official`). */
   provider: string
-  /** Model the child runtime initializes with (default `deepseek-v4-flash`). */
+  /** Model the child runtime initializes with (default `deepseek-flash`). */
   model: string
   /** Optional per-request output-token cap for the child runtime. */
   maxTokens?: number
@@ -84,7 +84,7 @@ export const Config: z<Config> = z.object({
   dshHome: z.string().required(),
   cwd: z.string(),
   provider: z.string().default('deepseek-official'),
-  model: z.string().default('deepseek-v4-flash'),
+  model: z.string().default('deepseek-flash'),
   maxTokens: z.number().step(1).min(1).max(Number.MAX_SAFE_INTEGER),
   env: z.dict(z.string()).default({}),
   shutdownTimeoutMs: z.number().default(DEFAULT_SHUTDOWN_TIMEOUT_MS),
@@ -136,6 +136,8 @@ class SdkSubagentProvider implements SubagentProvider {
   readonly agentRouteDefaults: Readonly<{ provider: string; model: string }>
   // Context contract: an out-of-process SDK child starts fresh — no parent conversation crosses the process boundary.
   readonly inheritsParentContext = false
+  // The child process has its own attachment store; byte encoding across the boundary is deferred.
+  readonly imageInput = false
 
   constructor(readonly name: string, private readonly ctx: Context, private readonly config: ResolvedConfig) {
     this.agentRouteDefaults = Object.freeze({ provider: config.provider, model: config.model })

@@ -5,9 +5,12 @@ import z from '@deepseek-ai/schemastery'
 import type { Agent } from '@deepseek-ai/dsh-agent'
 import { TeamTaskId } from '@deepseek-ai/dsh-experimental-agent-team'
 import type { TeamMemberView } from '@deepseek-ai/dsh-experimental-agent-team'
+import type { ImageInputSupport } from '@deepseek-ai/dsh-llm'
 import { plainForkParentOf } from '@deepseek-ai/dsh-subagent'
 import { defineTool } from '@deepseek-ai/dsh-tools'
 import type { InferValue, ValueSchemaSpec } from '@deepseek-ai/dsh-tools'
+import { resolveDelegationImages } from '@deepseek-ai/dsh-llm'
+import type {} from '@deepseek-ai/dsh-attachment'
 
 /** Cordis plugin name. */
 export const name = 'tool-agent-team'
@@ -56,9 +59,13 @@ const MEMBER_VIEW_SCHEMA = {
     provider: { type: 'string' },
     context: { type: 'string', enum: ['fresh', 'fork'] },
     model: { type: 'string' },
+    acceptsImages: { type: 'string', enum: ['supported', 'unsupported', 'undeclared'] },
     diagnostics: { type: 'array', required: true, items: { type: 'string' } },
   },
 } as const
+
+/** One `list_agents` result row: the roster view plus listing-time image-input support. */
+type ListedMember = TeamMemberView & { acceptsImages?: ImageInputSupport }
 
 /** Expose the member name as its model-facing target. */
 function modelMember(member: TeamMemberView): InferValue<typeof MEMBER_VIEW_SCHEMA> {
@@ -180,6 +187,11 @@ function install(agent: Agent, ctx: Context, config: Required<Config>): () => vo
         name: { type: 'string', required: true, description: 'Unique lower-kebab-case teammate name.' },
         description: { type: 'string', required: true, description: 'Short description of the delegated responsibility.' },
         prompt: { type: 'string', required: true, description: 'Complete initial task for the teammate.' },
+        images: {
+          type: 'array',
+          items: { type: 'string' },
+          description: 'Attachment ids of images already shown in this conversation, appended to the prompt.',
+        },
         context: {
           type: 'string',
           enum: ['fresh', 'fork'],
@@ -189,6 +201,11 @@ function install(agent: Agent, ctx: Context, config: Required<Config>): () => vo
       output: jsonOutput(SPAWN_VALUE_SCHEMA),
       async execute(args, exec) {
         const agent = callingAgent(exec.agent, 'spawn_teammate')
+        const imageBlocks = resolveDelegationImages(
+          agent.session.deriveMessages(),
+          args.images,
+          ctx.get('attachments')?.imageLimits.maxImagesPerMessage,
+        )
         const context = args.context ?? 'fresh'
         const result = await ctx.agentTeams.spawnTeammate(agent, {
           name: args.name,
@@ -204,6 +221,7 @@ To message another teammate, use send_message({ target: "<teammate name>", messa
 
 ` },
             { type: 'text', text: args.prompt },
+            ...imageBlocks,
           ],
           context,
           provider: context === 'fork' ? config.forkProvider : config.freshProvider,
@@ -219,12 +237,22 @@ To message another teammate, use send_message({ target: "<teammate name>", messa
       parameters: {
         target: { type: 'string', required: true, description: 'Member target returned by spawn_teammate or list_agents, including lead.' },
         message: { type: 'string', required: true, description: 'Self-contained message for the target.' },
+        images: {
+          type: 'array',
+          items: { type: 'string' },
+          description: 'Attachment ids of images already shown in this conversation, appended to the message.',
+        },
       },
       output: jsonOutput(SEND_VALUE_SCHEMA),
       execute(args, exec) {
-        return ctx.agentTeams.sendMessage(callingAgent(exec.agent, 'send_message'), {
+        const agent = callingAgent(exec.agent, 'send_message')
+        return ctx.agentTeams.sendMessage(agent, {
           target: args.target,
-          content: [{ type: 'text', text: args.message }],
+          content: [{ type: 'text', text: args.message }, ...resolveDelegationImages(
+            agent.session.deriveMessages(),
+            args.images,
+            ctx.get('attachments')?.imageLimits.maxImagesPerMessage,
+          )],
           signal: exec.signal,
         })
       },
@@ -232,11 +260,18 @@ To message another teammate, use send_message({ target: "<teammate name>", messa
 
     register(scoped.tools.register(defineTool({
       name: 'list_agents',
-      description: 'List the Lead and every durable teammate with an addressable target and current availability. inactive means no turn is executing, not a task result. provisioning and failed describe member creation.',
+      description: 'List the Lead and every durable teammate with an addressable target, current availability, and image-input support. inactive means no turn is executing, not a task result. provisioning and failed describe member creation.',
       parameters: {},
       output: jsonOutput(MEMBER_LIST_VALUE_SCHEMA),
-      execute(_args, exec) {
-        return Promise.resolve(ctx.agentTeams.listMembers(callingAgent(exec.agent, 'list_agents')).map(modelMember))
+      async execute(_args, exec) {
+        const caller = callingAgent(exec.agent, 'list_agents')
+        const members = ctx.agentTeams.listMembers(caller)
+        const imageSupport = await ctx.agentTeams.resolveMemberImageSupport(caller, exec.signal)
+        return members.map((member) => {
+          const view = modelMember(member)
+          const acceptsImages: ListedMember['acceptsImages'] = imageSupport.get(member.id)
+          return acceptsImages === undefined ? view : { ...view, acceptsImages }
+        })
       },
     })))
 

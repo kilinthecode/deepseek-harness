@@ -104,7 +104,7 @@ workspace = Path("/absolute/path/to/disposable-workspace").resolve()
 dsh_home = Path("/absolute/path/to/example-dsh-home").resolve()
 with DeepSeekHarness(
     provider="deepseek-official",
-    model="deepseek-v4-flash",
+    model="deepseek-flash",
     max_tokens=49_152,
     cwd=str(workspace),
     dsh_home=str(dsh_home),
@@ -171,7 +171,7 @@ dsh plugin --profile sdk-minimal add file:C:/work/my-plugin-bundle
 | 属性 | 值 |
 |---|---|
 | 系统提示词 | `DSH_SYSTEM_PROMPT`，未设置时为 `You are a helpful software engineer assistant.` |
-| `minimal.py` 的模型 | `--model`，然后是 `DSH_MODEL`，最后是 `deepseek-v4-flash` |
+| `minimal.py` 的模型 | `--model`，然后是 `DSH_MODEL`，最后是 `deepseek-flash` |
 | 面向模型的工具 | Linux／macOS 上的持久 `bash` 或 Windows 上的 `pwsh` |
 | Shell 超时 | 300 秒 |
 | 运行时上下文与 compaction | 不存在 |

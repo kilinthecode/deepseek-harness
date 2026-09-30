@@ -4,7 +4,8 @@ import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { Context } from '@deepseek-ai/cordis'
 import Loader from '@deepseek-ai/cordis-plugin-loader'
-import { ToolCallId, ReasoningEffortId } from '@deepseek-ai/dsh-llm'
+import { ToolCallId, ReasoningEffortId, createUserMessage, createToolResultMessage } from '@deepseek-ai/dsh-llm'
+import { AttachmentId } from '@deepseek-ai/dsh-attachment'
 import SystemPrompt from '@deepseek-ai/dsh-system-prompt'
 import ToolRuntime, { TOOL_ABORTED_BEFORE_DISPATCH } from '@deepseek-ai/dsh-tools'
 import { assembleContextFor, type Agent } from '@deepseek-ai/dsh-agent'
@@ -39,6 +40,8 @@ async function projectedContext(): Promise<Context> {
   await ctx.plugin(SessionProjectionRegistry)
   return ctx
 }
+
+const IMAGES_DESCRIPTION = 'Attachment ids of images already shown in this conversation, appended to the prompt.'
 
 /**
  * Drives the REAL plugin body: mounts `dsh-tool-subagent` on a real
@@ -95,6 +98,7 @@ describe('dsh-tool-subagent', () => {
     const props = (schema!.parameters as { properties?: Record<string, unknown> }).properties ?? {}
     expect(Object.keys(props).sort()).toEqual([
       'description',
+      'images',
       'prompt',
     ])
     expect(schema!.description).not.toContain('job_output')
@@ -223,6 +227,7 @@ describe('dsh-tool-subagent', () => {
       name: 'weird',
       capabilities: { agentOptions: false, outputSchema: false, depthLimit: false, toolFilter: false, persona: false },
       inheritsParentContext: false,
+      imageInput: false,
       start: async () => ({
         id: SessionId('weird-child'),
         localAgent: undefined,
@@ -312,6 +317,7 @@ describe('dsh-tool-subagent', () => {
       name: 'bare',
       capabilities: { agentOptions: false, outputSchema: false, depthLimit: false, toolFilter: false, persona: false },
       inheritsParentContext: false,
+      imageInput: false,
       start: async (request) => {
         seen = request
         return {
@@ -402,6 +408,7 @@ describe('dsh-tool-subagent', () => {
       name: 'continuable',
       capabilities: { agentOptions: false, outputSchema: false, depthLimit: false, toolFilter: false, persona: false },
       inheritsParentContext: false,
+      imageInput: false,
       start: async () => { throw new Error('lifecycle test does not start a child') },
       prepareContinuable: async () => ({}),
     })
@@ -461,6 +468,14 @@ describe('dsh-tool-subagent', () => {
     expect(schema.description).not.toContain('can prevent provider-side reuse of the inherited conversation prefix')
     const props = (schema.parameters as { properties: Record<string, { description: string }> }).properties
     expect(props['prompt']!.description).toContain('completed turns')
+    expect(props['images']!.description).toBe(IMAGES_DESCRIPTION)
+  })
+
+  it('documents the images parameter on a fresh-conversation provider', async () => {
+    const ctx = await setup({ provider: 'mock' })
+    const schema = ctx.tools.schemas().find(s => s.name === 'subagent')!
+    const props = (schema.parameters as { properties: Record<string, { description: string }> }).properties
+    expect(props['images']!.description).toBe(IMAGES_DESCRIPTION)
   })
 
   it('disposes the run on the success path (no leaked child)', async () => {
@@ -475,6 +490,7 @@ describe('dsh-tool-subagent', () => {
       name: 'spy',
       capabilities: { agentOptions: false, outputSchema: false, depthLimit: false, toolFilter: false, persona: false },
       inheritsParentContext: false,
+      imageInput: false,
       start: async () => ({
         id: SessionId('spy-child'),
         localAgent: undefined,
@@ -498,6 +514,7 @@ describe('dsh-tool-subagent', () => {
       name: 'spy',
       capabilities: { agentOptions: false, outputSchema: false, depthLimit: false, toolFilter: false, persona: false },
       inheritsParentContext: false,
+      imageInput: false,
       start: async () => ({
         id: SessionId('spy-child'),
         localAgent: undefined,
@@ -522,6 +539,7 @@ describe('dsh-tool-subagent', () => {
       name: 'spy',
       capabilities: { agentOptions: false, outputSchema: false, depthLimit: false, toolFilter: false, persona: false },
       inheritsParentContext: false,
+      imageInput: false,
       start: async () => ({
         id: SessionId('spy-child'),
         localAgent: undefined,
@@ -550,6 +568,7 @@ describe('dsh-tool-subagent', () => {
       name: 'spy',
       capabilities: { agentOptions: false, outputSchema: false, depthLimit: false, toolFilter: false, persona: false },
       inheritsParentContext: false,
+      imageInput: false,
       start: async () => ({
         id: SessionId('spy-child'),
         localAgent: undefined,
@@ -577,6 +596,7 @@ describe('dsh-tool-subagent', () => {
       name: 'spy',
       capabilities: { agentOptions: false, outputSchema: false, depthLimit: false, toolFilter: false, persona: false },
       inheritsParentContext: false,
+      imageInput: false,
       start: async (request) => {
         if (request.signal.aborted) throw new Error('start aborted')
         let resolveResult: (r: { output: never[]; stopReason: 'aborted' }) => void
@@ -616,6 +636,7 @@ describe('dsh-tool-subagent', () => {
       name: 'spy',
       capabilities: { agentOptions: false, outputSchema: false, depthLimit: false, toolFilter: false, persona: false },
       inheritsParentContext: false,
+      imageInput: false,
       start: async (request) => {
         if (request.signal.aborted) sawAborted()
         throw new Error('start aborted')
@@ -680,6 +701,7 @@ describe('dsh-tool-subagent', () => {
       name: 'capture2',
       capabilities: { agentOptions: false, outputSchema: false, depthLimit: true, toolFilter: true, persona: true },
       inheritsParentContext: false,
+      imageInput: false,
       start: async (request) => {
         seen = request
         return {
@@ -737,6 +759,7 @@ describe('dsh-tool-subagent', () => {
       name: 'capture3',
       capabilities: { agentOptions: false, outputSchema: false, depthLimit: false, toolFilter: true, persona: false },
       inheritsParentContext: false,
+      imageInput: false,
       start: async (request) => {
         seen = request
         return {
@@ -767,6 +790,7 @@ describe('dsh-tool-subagent', () => {
       name: 'capture4',
       capabilities: { agentOptions: false, outputSchema: false, depthLimit: false, toolFilter: false, persona: false },
       inheritsParentContext: false,
+      imageInput: false,
       start: async (request) => {
         seen = request
         return {
@@ -792,6 +816,7 @@ describe('dsh-tool-subagent', () => {
       name: 'p',
       capabilities: { agentOptions: false, outputSchema: false, depthLimit: false, toolFilter: true, persona: false },
       inheritsParentContext: false,
+      imageInput: false,
       start: () => { throw new Error('unreachable') },
     })
     const fiber = ctx.plugin(tool, { provider: 'p', toolFilter: {} })
@@ -831,6 +856,7 @@ describe('dsh-tool-subagent background mode', () => {
       name: 'resumable',
       capabilities: { agentOptions: false, outputSchema: false, depthLimit: false, toolFilter: false, persona: false },
       inheritsParentContext: false,
+      imageInput: false,
       start: async request => ({
         id: SessionId('one-shot-child'),
         localAgent: undefined,
@@ -1007,6 +1033,7 @@ describe('dsh-tool-subagent background mode', () => {
       name: 'mock',
       capabilities: { agentOptions: true, outputSchema: false, depthLimit: false, toolFilter: false, persona: false },
       inheritsParentContext: false,
+      imageInput: false,
       agentRouteDefaults: { provider: 'beta', model: 'replacement-model' },
       start: replacementStart,
     })
@@ -1026,6 +1053,7 @@ describe('dsh-tool-subagent background mode', () => {
       name: 'broken-start',
       capabilities: { agentOptions: false, outputSchema: false, depthLimit: false, toolFilter: false, persona: false },
       inheritsParentContext: false,
+      imageInput: false,
       start: async () => { throw new Error('setup failed') },
     })
     tool.apply(ctx, { maxDepth: 'provider-managed', provider: 'broken-start', toolName: 'subagent_broken' })
@@ -1055,6 +1083,7 @@ describe('dsh-tool-subagent background mode', () => {
       name: 'pending-start',
       capabilities: { agentOptions: false, outputSchema: false, depthLimit: false, toolFilter: false, persona: false },
       inheritsParentContext: false,
+      imageInput: false,
       start: request => new Promise((_resolve, reject) => {
         request.signal.addEventListener('abort', () => { reject(new Error('startup aborted')) }, { once: true })
       }),
@@ -1093,6 +1122,7 @@ describe('dsh-tool-subagent background mode', () => {
       name: 'broken-start-rollback',
       capabilities: { agentOptions: false, outputSchema: false, depthLimit: false, toolFilter: false, persona: false },
       inheritsParentContext: false,
+      imageInput: false,
       start: request => new Promise((_resolve, reject) => {
         request.signal.addEventListener('abort', () => {
           reject(new AggregateError(
@@ -1138,6 +1168,7 @@ describe('dsh-tool-subagent background mode', () => {
       name: 'hanging',
       capabilities: { agentOptions: false, outputSchema: false, depthLimit: false, toolFilter: false, persona: false },
       inheritsParentContext: false,
+      imageInput: false,
       start: async (request) => {
         let settle!: (value: { output: { type: 'text'; text: string }[]; stopReason: 'aborted' }) => void
         const id = SessionId(`hang-${++starts}`)
@@ -1286,6 +1317,7 @@ describe('dsh-tool-subagent continuable background mode', () => {
       name: 'gated',
       capabilities: { agentOptions: false, outputSchema: true, depthLimit: true, toolFilter: true, persona: true },
       inheritsParentContext: false,
+      imageInput: false,
       start: async () => { throw new Error('continuable policy must not start a one-shot child') },
       prepareContinuable: async (request) => {
         preparationCount += 1
@@ -1361,6 +1393,7 @@ describe('background preflight failure (no orphaned child, by construction)', ()
       name: 'probe',
       capabilities: { agentOptions: false, outputSchema: false, depthLimit: false, toolFilter: false, persona: false },
       inheritsParentContext: false,
+      imageInput: false,
       start: async () => {
         starts += 1
         return {
@@ -1399,6 +1432,7 @@ describe('depth budget configuration', () => {
       name: 'capture',
       capabilities: { agentOptions: false, outputSchema: true, depthLimit: true, toolFilter: true, persona: true },
       inheritsParentContext: false,
+      imageInput: false,
       start: async (request) => {
         requests.push(request)
         return {
@@ -1437,6 +1471,7 @@ describe('depth budget configuration', () => {
       name: 'no-depth',
       capabilities: { agentOptions: false, outputSchema: false, depthLimit: false, toolFilter: false, persona: false },
       inheritsParentContext: false,
+      imageInput: false,
       start: async () => { throw new Error('unreachable') },
     })
     await expect(ctx.plugin(tool, { provider: 'no-depth' }))
@@ -1453,6 +1488,7 @@ describe('depth budget configuration', () => {
       name: 'external',
       capabilities: { agentOptions: false, outputSchema: false, depthLimit: false, toolFilter: false, persona: false },
       inheritsParentContext: false,
+      imageInput: false,
       start: async (request) => {
         requests.push(request)
         return {
@@ -1467,5 +1503,145 @@ describe('depth budget configuration', () => {
     await callSubagent(ctx, { description: 'd', prompt: 'p' })
     expect(requests[0]?.maxDepth).toBeUndefined()
     expect(requests[0]?.toolFilter).toBeUndefined()
+  })
+})
+
+describe('image handoff to the child', () => {
+  const IMAGE_ID = `sha256:${'f'.repeat(64)}`
+  const UNKNOWN_IMAGE_ID = `sha256:${'0'.repeat(64)}`
+  const imageRef = {
+    attachmentId: AttachmentId(IMAGE_ID),
+    mediaType: 'image/png' as const,
+    bytes: 75,
+    width: 8,
+    height: 8,
+    name: 'image-1.png',
+  }
+
+  const USER_IMAGE_ID = `sha256:${'a'.repeat(64)}`
+  const TOOL_IMAGE_ID = `sha256:${'b'.repeat(64)}`
+  const userImageRef = {
+    attachmentId: AttachmentId(USER_IMAGE_ID),
+    mediaType: 'image/png' as const,
+    bytes: 75,
+    width: 8,
+    height: 8,
+    name: 'user.png',
+  }
+  const toolImageRef = {
+    attachmentId: AttachmentId(TOOL_IMAGE_ID),
+    mediaType: 'image/png' as const,
+    bytes: 75,
+    width: 8,
+    height: 8,
+    name: 'tool.png',
+  }
+
+  /** A parent whose derived history shows the image once, with an offload mark that must not travel. */
+  function parentShowingImage(): Agent {
+    const parent = fakeAgent('parent-showing-image')
+    parent.session.append('user/message', createUserMessage({
+      content: [
+        { type: 'text', text: 'the reference image' },
+        { type: 'image', attachment: imageRef, offloaded: true as const },
+      ],
+      source: { kind: 'user' },
+    }), { surfaceOp: 'append' })
+    return parent
+  }
+
+  /** User-message image plus a nested tool-result image; citing one must not copy the other. */
+  function parentShowingUserAndToolResultImages(): Agent {
+    const parent = fakeAgent('parent-two-images')
+    parent.session.append('user/message', createUserMessage({
+      content: [
+        { type: 'text', text: 'the user image' },
+        { type: 'image', attachment: userImageRef },
+      ],
+      source: { kind: 'user' },
+    }), { surfaceOp: 'append' })
+    parent.session.append('tool/result', {
+      turn: 1,
+      step: 1,
+      message: createToolResultMessage({
+        callId: ToolCallId('history-image'),
+        content: [{ type: 'image', attachment: toolImageRef }],
+        isError: false,
+      }),
+    }, { surfaceOp: 'append' })
+    return parent
+  }
+
+  it('hands cited conversation images to the child after the text, without the history offload mark', async () => {
+    let seen: SubagentStartRequest | undefined
+    const ctx = await setup({ provider: 'mock' }, { onStart: (request) => { seen = request } })
+    const result = await callSubagent(ctx, {
+      description: 'd',
+      prompt: 'describe it',
+      images: [IMAGE_ID],
+      run_in_background: false,
+    }, { agent: parentShowingImage() })
+    if (result.isError) throw new Error(text(result))
+    expect(seen?.prompt).toEqual([
+      { type: 'text', text: 'describe it' },
+      { type: 'image', attachment: imageRef },
+    ])
+  })
+
+  it('hands only the cited tool-result image when the conversation also shows a user image', async () => {
+    let seen: SubagentStartRequest | undefined
+    const ctx = await setup({ provider: 'mock' }, { onStart: (request) => { seen = request } })
+    const result = await callSubagent(ctx, {
+      description: 'd',
+      prompt: 'describe the tool image',
+      images: [TOOL_IMAGE_ID],
+      run_in_background: false,
+    }, { agent: parentShowingUserAndToolResultImages() })
+    if (result.isError) throw new Error(text(result))
+    expect(seen?.prompt).toEqual([
+      { type: 'text', text: 'describe the tool image' },
+      { type: 'image', attachment: toolImageRef },
+    ])
+  })
+
+  it('rejects an image id the conversation never showed before any provider work', async () => {
+    let started = 0
+    const ctx = await setup({ provider: 'mock' }, { onStart: () => { started += 1 } })
+    const result = await callSubagent(ctx, { description: 'd', prompt: 'p', images: [UNKNOWN_IMAGE_ID] })
+    expect(result.isError).toBe(true)
+    expect(text(result)).toContain(`"${UNKNOWN_IMAGE_ID}" is not an image shown in this conversation`)
+    expect(started).toBe(0)
+  })
+
+  it('rejects duplicated image ids before any provider work', async () => {
+    let started = 0
+    const ctx = await setup({ provider: 'mock' }, { onStart: () => { started += 1 } })
+    const result = await callSubagent(ctx, {
+      description: 'd', prompt: 'p', images: [IMAGE_ID, IMAGE_ID],
+    }, { agent: parentShowingImage() })
+    expect(result.isError).toBe(true)
+    expect(text(result)).toContain(`images lists attachment id "${IMAGE_ID}" more than once`)
+    expect(started).toBe(0)
+  })
+
+  it('enforces the deployment per-message image limit when the attachments service is present', async () => {
+    let started = 0
+    const ctx = await setup({ provider: 'mock' }, { onStart: () => { started += 1 } })
+    ctx.provide('attachments', { imageLimits: { maxImagesPerMessage: 1 } } as never)
+    const result = await callSubagent(ctx, {
+      description: 'd', prompt: 'p', images: [IMAGE_ID, UNKNOWN_IMAGE_ID],
+    }, { agent: parentShowingImage() })
+    expect(result.isError).toBe(true)
+    expect(text(result)).toContain('images lists 2 attachments, over the per-message image limit of 1')
+    expect(started).toBe(0)
+  })
+
+  it('surfaces the provider image-transport refusal unchanged', async () => {
+    const ctx = await setup({ provider: 'mock' }, { imageInput: false })
+    const result = await callSubagent(ctx, {
+      description: 'd', prompt: 'p', images: [IMAGE_ID], run_in_background: false,
+    }, { agent: parentShowingImage() })
+    expect(result.isError).toBe(true)
+    expect(text(result)).toContain('subagent provider "mock" does not accept image input')
   })
 })

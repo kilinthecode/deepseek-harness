@@ -1,6 +1,17 @@
-/** Content-block structure helpers. @module @deepseek-ai/dsh-llm/content */
+/**
+ * Model content helpers:
+ * - attachment access mapping from an attachment provider's host path into the tool execution world;
+ * - content-block walks, and the text projections and handle text that stand in for image and file blocks;
+ * - image-input support mapped from a resolved model's declared input modalities;
+ * - delegation image resolution: model-cited attachment ids matched in the caller's own history and returned as image blocks;
+ * - the count of image occurrences a route's image budget still requires offloading;
+ * - tool-update projection of one route's provider declarations and developer messages.
+ * @module @deepseek-ai/dsh-llm/content
+ */
 
-import type { ContentBlock, ImageBlock, LlmImageRequestBudget, ToolSchema, ToolUpdate, ToolHistory } from './types.ts'
+import type {
+  ContentBlock, ImageBlock, LlmImageRequestBudget, LlmModelInfo, ToolSchema, ToolUpdate, ToolHistory,
+} from './types.ts'
 import type { RequestMessage } from './types.ts'
 import type { Message } from './message.ts'
 import type {
@@ -70,12 +81,18 @@ function normalizedAccessText(ref: ImageAttachmentRef, access: ImageAttachmentAc
 
 /**
  * Stable text shown to a model that cannot accept one durable image reference.
+ * Includes the full attachment identity and, when access resolves, the same
+ * read-only execution-world path the offload placeholder uses.
  * @param ref - durable normalized attachment omitted from the request.
+ * @param access - optional path resolved for the current tool execution world.
  * @returns deterministic text-only placeholder.
  */
-export function textOnlyImageText(ref: ImageAttachmentRef): string {
-  const digest = String(ref.attachmentId).slice('sha256:'.length, 'sha256:'.length + 8)
-  return `[image omitted because this model accepts text only; attachment sha256:${digest}]`
+export function textOnlyImageText(ref: ImageAttachmentRef, access?: ImageAttachmentAccess): string {
+  const identity = `image omitted because this model accepts text only; ${imageIdentity(ref)}.`
+  if (access === undefined) {
+    return `[${identity}]`
+  }
+  return `[${identity}${normalizedAccessText(ref, access)}]`
 }
 
 /**
@@ -117,14 +134,112 @@ export function offloadedImageText(
 }
 
 /**
- * True when typed model content contains an image block. This is the one image
+ * True when a content-block list contains an image block. This is the one image
  * walk shared by every image policy (capability gating, text-only
  * serialization, compaction survey), so a consumer cannot silently diverge.
- * @param content - typed model content blocks.
+ * It reads only each block's `type` tag, so it also accepts wire block lists
+ * whose images still await admission, such as SDK prompt input.
+ * @param content - typed model content blocks, or any `type`-tagged block list.
  * @returns whether any block is an image.
  */
-export function contentHasImage(content: readonly ContentBlock[]): boolean {
+export function contentHasImage(content: readonly { readonly type: string }[]): boolean {
   return content.some(block => block.type === 'image')
+}
+
+/** Three-way image-input capability read off one resolved model's declared modalities. */
+export type ImageInputSupport = 'supported' | 'unsupported' | 'undeclared'
+
+/**
+ * Map one resolved model's declared input modalities to image-input support.
+ * `inputModalities` absent means the route never disclosed its accepted
+ * modalities ({@link LlmModelInfo.inputModalities}), which is distinct from a
+ * disclosed list that omits `image`. Callers resolve the model info themselves
+ * and choose their own policy for the `'undeclared'` case.
+ * @param info - the fields of one resolved model's info the mapping reads.
+ * @returns `'supported'` when the declared modalities include `image`,
+ *   `'unsupported'` when a declared list omits it, `'undeclared'` when no list was disclosed.
+ */
+export function imageInputSupport(info: Pick<LlmModelInfo, 'inputModalities'>): ImageInputSupport {
+  if (info.inputModalities === undefined) return 'undeclared'
+  return info.inputModalities.includes('image') ? 'supported' : 'unsupported'
+}
+
+/** Resolution of model-cited attachment ids against one derived conversation history. */
+export interface ImageAttachmentRefResolution {
+  /** Matched durable references in requested order. */
+  readonly refs: ImageAttachmentRef[]
+  /** Requested ids no eligible image block carries, in request order. */
+  readonly missing: string[]
+}
+
+/**
+ * Resolve model-cited attachment ids to durable image references from one
+ * derived conversation history. Only user content and image blocks nested in
+ * tool-result content are eligible, and the first occurrence in message order
+ * wins when several blocks carry one id. The complete reference always comes
+ * from the history block; model-supplied metadata is never trusted.
+ * @param messages - the caller's own derived conversation history.
+ * @param attachmentIds - attachment ids cited by the model, in request order.
+ * @returns the matched references in requested order and the unmatched ids.
+ */
+export function resolveImageAttachmentRefs(
+  messages: readonly Message[],
+  attachmentIds: readonly string[],
+): ImageAttachmentRefResolution {
+  const found = new Map<string, ImageAttachmentRef>()
+  for (const message of messages) {
+    if (message.role !== 'user' && message.role !== 'tool') continue
+    visitImageBlocks(message.content, (block) => {
+      const id = String(block.attachment.attachmentId)
+      if (!found.has(id)) found.set(id, block.attachment)
+    })
+  }
+  const refs: ImageAttachmentRef[] = []
+  const missing: string[] = []
+  for (const id of attachmentIds) {
+    const ref = found.get(id)
+    if (ref === undefined) missing.push(id)
+    else refs.push(ref)
+  }
+  return { refs, missing }
+}
+
+/**
+ * Validate and resolve one delegation tool's model-supplied `images`
+ * parameter into the image blocks the tool appends after its text blocks.
+ * Entries must be non-empty and duplicate-free, stay within the deployment's
+ * per-message image limit when the caller resolved one, and every id must
+ * resolve against the caller's own history; each failure is a
+ * model-correctable error raised before any child or message work. Returned
+ * blocks are fresh and never carry `offloaded`, even when the history block
+ * they resolved from does — offload is the receiver's own request decision.
+ * @param messages - the calling agent's derived conversation history.
+ * @param images - the tool call's raw `images` argument, when supplied.
+ * @param maxImagesPerMessage - the deployment's per-message image limit when the attachments service is present.
+ * @returns one fresh image block per cited id, in cited order.
+ * @throws {Error} a model-correctable validation or unknown-id error.
+ */
+export function resolveDelegationImages(
+  messages: readonly Message[],
+  images: readonly string[] | undefined,
+  maxImagesPerMessage?: number,
+): ImageBlock[] {
+  if (images === undefined || images.length === 0) return []
+  const seen = new Set<string>()
+  for (const id of images) {
+    if (id.length === 0) throw new Error('images entries must be non-empty attachment id strings')
+    if (seen.has(id)) throw new Error(`images lists attachment id ${JSON.stringify(id)} more than once`)
+    seen.add(id)
+  }
+  if (maxImagesPerMessage !== undefined && images.length > maxImagesPerMessage) {
+    throw new Error(`images lists ${images.length} attachments, over the per-message image limit of ${maxImagesPerMessage}`)
+  }
+  const { refs, missing } = resolveImageAttachmentRefs(messages, images)
+  const firstMissing = missing.length === 0 ? undefined : missing[0]
+  if (firstMissing !== undefined) {
+    throw new Error(`${JSON.stringify(firstMissing)} is not an image shown in this conversation`)
+  }
+  return refs.map(attachment => ({ type: 'image', attachment }))
 }
 
 /**
@@ -332,12 +447,15 @@ export function requiredImageOffload(
 }
 
 /** Replace every image occurrence for a text-only model. */
-function replaceImagesForTextModel(blocks: readonly ContentBlock[]): ContentBlock[] {
+function replaceImagesForTextModel(
+  blocks: readonly ContentBlock[],
+  resolveAccess?: ImageAttachmentAccessResolver,
+): ContentBlock[] {
   let next: ContentBlock[] | undefined
   for (const [index, block] of blocks.entries()) {
     if (block.type === 'image') {
       next ??= blocks.slice(0, index)
-      next.push({ type: 'text', text: textOnlyImageText(block.attachment) })
+      next.push({ type: 'text', text: textOnlyImageText(block.attachment, resolveAccess?.(block.attachment)) })
       continue
     }
     next?.push(block)
@@ -348,19 +466,30 @@ function replaceImagesForTextModel(blocks: readonly ContentBlock[]): ContentBloc
 /**
  * Project request image content into deterministic text for an exact text-only model.
  * @param messages - complete request history.
+ * @param resolveAccess - optional resolver for execution-world paths.
  * @returns the original list without images, otherwise shallow message copies with stable placeholders.
  */
-export function projectImagesForTextModel(messages: readonly Message[]): readonly Message[]
+export function projectImagesForTextModel(
+  messages: readonly Message[],
+  resolveAccess?: ImageAttachmentAccessResolver,
+): readonly Message[]
 /**
  * Project image content in mixed durable and request-only inputs for a text-only model.
  * @param messages - complete request inputs.
+ * @param resolveAccess - optional resolver for execution-world paths.
  * @returns original inputs without images, otherwise copies with stable placeholders.
  */
-export function projectImagesForTextModel(messages: readonly RequestMessage[]): readonly RequestMessage[]
-export function projectImagesForTextModel(messages: readonly RequestMessage[]): readonly RequestMessage[] {
+export function projectImagesForTextModel(
+  messages: readonly RequestMessage[],
+  resolveAccess?: ImageAttachmentAccessResolver,
+): readonly RequestMessage[]
+export function projectImagesForTextModel(
+  messages: readonly RequestMessage[],
+  resolveAccess?: ImageAttachmentAccessResolver,
+): readonly RequestMessage[] {
   if (!messages.some(message => contentHasImage(message.content))) return messages
   return messages.map((message) => {
-    const content = replaceImagesForTextModel(message.content)
+    const content = replaceImagesForTextModel(message.content, resolveAccess)
     return content === message.content ? message : { ...message, content }
   })
 }

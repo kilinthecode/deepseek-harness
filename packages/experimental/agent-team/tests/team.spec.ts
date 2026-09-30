@@ -83,6 +83,13 @@ function content(text: string) {
   return [{ type: 'text' as const, text }]
 }
 
+const imageBlock = {
+  type: 'image' as const,
+  attachment: {
+    attachmentId: 'att-1' as never, mediaType: 'image/png' as const, bytes: 1, width: 1, height: 1,
+  },
+}
+
 interface TeamServiceInternals {
   readonly roster: {
     readonly inFlightCreations: Set<Promise<unknown>>
@@ -548,6 +555,135 @@ describe('Team identity and provisioning', () => {
     expect(second.ctx.agentTeams.tryMembership(child.agent)).toBeUndefined()
     journal.state = state
     await child.dispose()
+  })
+
+  it('refuses a spawn image prompt against the inherited route before any team/member append, then reuses the name', async () => {
+    const { ctx, lead } = await setup([])
+    const resolve = vi.spyOn(ctx.llm, 'resolveModelInfo').mockResolvedValue({ inputModalities: ['text'] } as never)
+
+    await expect(ctx.agentTeams.spawnTeammate(lead, {
+      name: 'img-worker',
+      description: 'img worker responsibility',
+      prompt: [imageBlock],
+      context: 'fresh',
+      provider: 'spawn',
+      signal: SIGNAL,
+    })).rejects.toMatchObject({ code: 'TEAM_IMAGES_UNSUPPORTED' })
+
+    expect(resolve).toHaveBeenCalledWith('mock', 'mock', expect.any(AbortSignal))
+    expect(durable(lead).members).toEqual([])
+
+    resolve.mockRestore()
+    const retried = await spawn(ctx, lead, 'img-worker')
+    await waitNoAgent(ctx, retried.member.id)
+    expect(durable(lead).members[0]?.name).toBe('img-worker')
+  })
+
+  it('does not provision a spawn whose caller aborts during the image-route read', async () => {
+    const { ctx, lead } = await setup([])
+    const controller = new AbortController()
+    const routeRead = Promise.withResolvers<{ inputModalities: ['text', 'image'] }>()
+    const resolve = vi.spyOn(ctx.llm, 'resolveModelInfo').mockReturnValue(routeRead.promise as never)
+
+    const spawning = ctx.agentTeams.spawnTeammate(lead, {
+      name: 'cancelled-worker',
+      description: 'cancelled worker responsibility',
+      prompt: [imageBlock],
+      context: 'fresh',
+      provider: 'spawn',
+      signal: controller.signal,
+    })
+    await vi.waitFor(() => { expect(resolve).toHaveBeenCalled() })
+    controller.abort()
+    // The route lookup ignores the abort and succeeds anyway.
+    routeRead.resolve({ inputModalities: ['text', 'image'] })
+
+    await expect(spawning).rejects.toMatchObject({ name: 'AbortError' })
+    expect(durable(lead).members).toEqual([])
+    resolve.mockRestore()
+    const retried = await spawn(ctx, lead, 'cancelled-worker')
+    await waitNoAgent(ctx, retried.member.id)
+    expect(durable(lead).members[0]?.name).toBe('cancelled-worker')
+  })
+
+  it('provisions a spawn image prompt when the inherited route accepts image input', async () => {
+    const { ctx, lead } = await setup([textResponse('image worker answer')])
+    vi.spyOn(ctx.llm, 'resolveModelInfo').mockResolvedValue({ inputModalities: ['text', 'image'] } as never)
+
+    const started = await ctx.agentTeams.spawnTeammate(lead, {
+      name: 'img-capable-worker',
+      description: 'img capable worker responsibility',
+      prompt: [imageBlock],
+      context: 'fresh',
+      provider: 'spawn',
+      signal: SIGNAL,
+    })
+
+    expect(durable(lead).members).toEqual([expect.objectContaining({ name: 'img-capable-worker', phase: 'active' })])
+    await waitNoAgent(ctx, started.member.id)
+  })
+
+  it('strips offloaded from the child\'s persisted initial prompt image block', async () => {
+    const { ctx, lead } = await setup([textResponse('image worker answer')])
+    vi.spyOn(ctx.llm, 'resolveModelInfo').mockResolvedValue({ inputModalities: ['text', 'image'] } as never)
+    const offloadedImage = { ...imageBlock, offloaded: true as const }
+
+    const started = await ctx.agentTeams.spawnTeammate(lead, {
+      name: 'img-offload-worker',
+      description: 'img offload worker responsibility',
+      prompt: [offloadedImage],
+      context: 'fresh',
+      provider: 'spawn',
+      signal: SIGNAL,
+    })
+    await waitNoAgent(ctx, started.member.id)
+
+    const stored = await storedEvents(ctx, started.member.id)
+    const initial = stored.find(event => event.type === 'user/message' && event.data.source.kind === 'user')
+    expect(initial?.type === 'user/message' && initial.data.content).toEqual([imageBlock])
+  })
+
+  it('checks the Lead\'s live delegation route, not its creation-time options, before a spawn image preflight', async () => {
+    const { ctx, lead } = await setup([])
+    const resolve = vi.spyOn(ctx.llm, 'resolveModelInfo').mockImplementation(async (_provider, model) =>
+      (model === 'switched-model' ? { inputModalities: ['text'] } : { inputModalities: ['text', 'image'] }) as never)
+    // The Lead's logged request header names a different model than its
+    // creation options, e.g. after a mid-session model switch.
+    vi.spyOn(lead.session, 'requestHeader').mockReturnValue({
+      config: { provider: 'mock', model: 'switched-model' },
+    })
+
+    await expect(ctx.agentTeams.spawnTeammate(lead, {
+      name: 'switched-worker',
+      description: 'switched worker responsibility',
+      prompt: [imageBlock],
+      context: 'fresh',
+      provider: 'spawn',
+      signal: SIGNAL,
+    })).rejects.toMatchObject({ code: 'TEAM_IMAGES_UNSUPPORTED', message: 'Model "switched-model" does not support image input.' })
+
+    expect(resolve).toHaveBeenCalledWith('mock', 'switched-model', expect.any(AbortSignal))
+    expect(durable(lead).members).toEqual([])
+  })
+
+  it('rejects a spawn image prompt with an already-used name before any route check', async () => {
+    const { ctx, lead } = await setup([textResponse('img-worker answer')])
+    const started = await spawn(ctx, lead, 'img-worker')
+    await waitNoAgent(ctx, started.member.id)
+    const resolve = vi.spyOn(ctx.llm, 'resolveModelInfo').mockResolvedValue({ inputModalities: ['text'] } as never)
+
+    await expect(ctx.agentTeams.spawnTeammate(lead, {
+      name: 'img-worker',
+      description: 'duplicate responsibility',
+      prompt: [imageBlock],
+      context: 'fresh',
+      provider: 'spawn',
+      signal: SIGNAL,
+    })).rejects.toMatchObject({ code: 'TEAM_MEMBER_NAME_TAKEN' })
+
+    // A name conflict is cheap and synchronous; it must fail before the
+    // route preflight spends an LLM round trip on a doomed request.
+    expect(resolve).not.toHaveBeenCalled()
   })
 })
 
@@ -1792,5 +1928,246 @@ describe('Team mailbox and waiting', () => {
     expect(durable(second.lead).members[0]).toMatchObject({
       phase: 'failed', error: 'settled elsewhere',
     })
+  })
+
+  it('refuses an image message to a text-only teammate before it queues, then still accepts a following text send', async () => {
+    const { ctx, lead } = await setup(['hang'])
+    const started = await spawn(ctx, lead, 'img-target')
+    const target = await waitRunning(ctx, started.member.id)
+    const resolve = vi.spyOn(ctx.llm, 'resolveModelInfo').mockResolvedValue({ inputModalities: ['text'] } as never)
+
+    await expect(ctx.agentTeams.sendMessage(lead, {
+      target: 'img-target', content: [imageBlock], signal: SIGNAL,
+    })).rejects.toMatchObject({ code: 'TEAM_IMAGES_UNSUPPORTED' })
+
+    expect(resolve).toHaveBeenCalledWith('mock', 'mock', expect.any(AbortSignal))
+    expect(durable(lead).pendingMessages).toEqual([])
+
+    // A stuck head from the refused image must not leave the target's queue full.
+    resolve.mockRestore()
+    const text = await ctx.agentTeams.sendMessage(lead, {
+      target: 'img-target', content: content('text after refusal'), signal: SIGNAL,
+    })
+    expect(text.status).toBe('accepted')
+
+    target.cancel({ kind: 'parent' })
+    await target.whenIdle()
+  })
+
+  it('refuses an image message to the Lead before it queues', async () => {
+    const { ctx, lead } = await setup(['hang'])
+    const started = await spawn(ctx, lead, 'reporter')
+    const reporter = await waitRunning(ctx, started.member.id)
+    const resolve = vi.spyOn(ctx.llm, 'resolveModelInfo').mockResolvedValue({ inputModalities: ['text'] } as never)
+
+    await expect(ctx.agentTeams.sendMessage(reporter, {
+      target: 'lead', content: [imageBlock], signal: SIGNAL,
+    })).rejects.toMatchObject({ code: 'TEAM_IMAGES_UNSUPPORTED' })
+
+    expect(resolve).toHaveBeenCalledWith('mock', 'mock', expect.any(AbortSignal))
+    expect(durable(lead).pendingMessages).toEqual([])
+
+    reporter.cancel({ kind: 'parent' })
+    await reporter.whenIdle()
+  })
+
+  it('checks the Lead\'s live delegation route, not its creation-time options, before it queues', async () => {
+    const { ctx, lead } = await setup(['hang'])
+    const started = await spawn(ctx, lead, 'reporter')
+    const reporter = await waitRunning(ctx, started.member.id)
+    const resolve = vi.spyOn(ctx.llm, 'resolveModelInfo').mockImplementation(async (_provider, model) =>
+      (model === 'switched-model' ? { inputModalities: ['text'] } : { inputModalities: ['text', 'image'] }) as never)
+    // The Lead's logged request header names a different model than its
+    // creation options, e.g. after a mid-session model switch.
+    vi.spyOn(lead.session, 'requestHeader').mockReturnValue({
+      config: { provider: 'mock', model: 'switched-model' },
+    })
+
+    await expect(ctx.agentTeams.sendMessage(reporter, {
+      target: 'lead', content: [imageBlock], signal: SIGNAL,
+    })).rejects.toMatchObject({ code: 'TEAM_IMAGES_UNSUPPORTED', message: 'Model "switched-model" does not support image input.' })
+
+    expect(resolve).toHaveBeenCalledWith('mock', 'switched-model', expect.any(AbortSignal))
+    expect(durable(lead).pendingMessages).toEqual([])
+
+    reporter.cancel({ kind: 'parent' })
+    await reporter.whenIdle()
+  })
+
+  it('refuses a self-addressed image message as TEAM_SELF_MESSAGE, not an image refusal', async () => {
+    const { ctx, lead } = await setup(['hang'])
+    // A route that would otherwise refuse the image, so a wrong check order
+    // would report TEAM_IMAGES_UNSUPPORTED instead of the self-message error.
+    vi.spyOn(ctx.llm, 'resolveModelInfo').mockResolvedValue({ inputModalities: ['text'] } as never)
+
+    await expect(ctx.agentTeams.sendMessage(lead, {
+      target: 'lead', content: [imageBlock], signal: SIGNAL,
+    })).rejects.toMatchObject({ code: 'TEAM_SELF_MESSAGE' })
+  })
+
+  it('delivers an image message to a teammate whose route never declared image support', async () => {
+    const { ctx, lead } = await setup(['hang'])
+    const started = await spawn(ctx, lead, 'undeclared-target')
+    const target = await waitRunning(ctx, started.member.id)
+
+    const result = await ctx.agentTeams.sendMessage(lead, {
+      target: 'undeclared-target', content: [imageBlock], signal: SIGNAL,
+    })
+
+    expect(result.status).toBe('accepted')
+    expect(target.inbox.nextStep.some(item => item.source.kind === 'team-message'
+      && item.source.messageId === result.messageId)).toBe(true)
+
+    target.cancel({ kind: 'parent' })
+    await target.whenIdle()
+  })
+
+  it('strips offloaded from a queued image message while keeping its normalized dimensions', async () => {
+    const { ctx, lead } = await setup(['hang'])
+    const started = await spawn(ctx, lead, 'dimension-target')
+    const target = await waitRunning(ctx, started.member.id)
+    const sentImage = {
+      type: 'image' as const,
+      attachment: {
+        attachmentId: 'att-dim' as never, mediaType: 'image/png' as const, bytes: 4, width: 2, height: 2,
+        originalDimensions: { width: 8, height: 8 },
+      },
+      offloaded: true as const,
+    }
+
+    const result = await ctx.agentTeams.sendMessage(lead, {
+      target: 'dimension-target', content: [sentImage], signal: SIGNAL,
+    })
+
+    const persisted = await storedEvents(ctx, lead.id)
+    const queued = persisted.find(event => event.type === 'team/message/queued'
+      && event.data.message.id === result.messageId)
+    expect(queued?.type === 'team/message/queued' && queued.data.message.content).toEqual([
+      {
+        type: 'image',
+        attachment: {
+          attachmentId: 'att-dim', mediaType: 'image/png', bytes: 4, width: 2, height: 2,
+          originalDimensions: { width: 8, height: 8 },
+        },
+      },
+    ])
+
+    target.cancel({ kind: 'parent' })
+    await target.whenIdle()
+  })
+
+  it('refuses an image message to an inactive teammate resolved from its persisted descriptor', async () => {
+    const { ctx, lead } = await setup([textResponse('worker done')])
+    const started = await spawn(ctx, lead, 'cold-target')
+    await waitNoAgent(ctx, started.member.id)
+    const resolve = vi.spyOn(ctx.llm, 'resolveModelInfo').mockResolvedValue({ inputModalities: ['text'] } as never)
+
+    await expect(ctx.agentTeams.sendMessage(lead, {
+      target: 'cold-target', content: [imageBlock], signal: SIGNAL,
+    })).rejects.toMatchObject({ code: 'TEAM_IMAGES_UNSUPPORTED' })
+
+    expect(resolve).toHaveBeenCalledWith('mock', 'mock', expect.any(AbortSignal))
+    expect(durable(lead).pendingMessages).toEqual([])
+  })
+
+  it('does not queue an image message whose caller aborts during the target route read', async () => {
+    const { ctx, lead } = await setup(['hang'])
+    const started = await spawn(ctx, lead, 'abort-target')
+    const target = await waitRunning(ctx, started.member.id)
+    const controller = new AbortController()
+    const routeRead = Promise.withResolvers<{ inputModalities: string[] }>()
+    const resolve = vi.spyOn(ctx.llm, 'resolveModelInfo').mockReturnValue(routeRead.promise as never)
+
+    const sending = ctx.agentTeams.sendMessage(lead, {
+      target: 'abort-target', content: [imageBlock], signal: controller.signal,
+    })
+    await vi.waitFor(() => { expect(resolve).toHaveBeenCalled() })
+    controller.abort()
+    // The route lookup ignores the abort and succeeds anyway.
+    routeRead.resolve({ inputModalities: ['text', 'image'] })
+
+    await expect(sending).rejects.toMatchObject({ name: 'AbortError' })
+    expect(lead.session.snapshotEvents().some(event => event.type === 'team/message/queued')).toBe(false)
+
+    target.cancel({ kind: 'parent' })
+    await target.whenIdle()
+  })
+})
+
+describe('Team member image-input discovery', () => {
+  it.each([
+    [{ inputModalities: ['text', 'image'] }, 'supported'],
+    [{ inputModalities: ['text'] }, 'unsupported'],
+    [{}, 'undeclared'],
+  ] as const)('maps the Lead live delegation route to %s', async (info, expected) => {
+    const { ctx, lead } = await setup([])
+    vi.spyOn(ctx.llm, 'resolveModelInfo').mockResolvedValue(info as never)
+    const support = await ctx.agentTeams.resolveMemberImageSupport(lead, SIGNAL)
+    expect([...support]).toEqual([[lead.id, expected]])
+  })
+
+  it('reads the Lead live delegation route rather than its creation-time options', async () => {
+    const { ctx, lead } = await setup([])
+    const resolve = vi.spyOn(ctx.llm, 'resolveModelInfo').mockResolvedValue({ inputModalities: ['text'] } as never)
+    vi.spyOn(lead.session, 'requestHeader').mockReturnValue({
+      config: { provider: 'mock', model: 'switched-model' },
+    })
+    const support = await ctx.agentTeams.resolveMemberImageSupport(lead, SIGNAL)
+    expect(support.get(lead.id)).toBe('unsupported')
+    expect(resolve).toHaveBeenCalledWith('mock', 'switched-model', SIGNAL)
+  })
+
+  it('resolves a live teammate route from the Team Lead even when a teammate lists', async () => {
+    const { ctx, lead } = await setup(['hang'])
+    const started = await spawn(ctx, lead, 'reviewer')
+    const child = await waitRunning(ctx, started.member.id)
+    vi.spyOn(lead.session, 'requestHeader').mockReturnValue({
+      config: { provider: 'mock', model: 'lead-model' },
+    })
+    const resolve = vi.spyOn(ctx.llm, 'resolveModelInfo').mockImplementation(async (_provider, model) => (
+      model === 'lead-model'
+        ? { inputModalities: ['text', 'image'] }
+        : { inputModalities: ['text'] }
+    ) as never)
+    const fromLead = await ctx.agentTeams.resolveMemberImageSupport(lead, SIGNAL)
+    const fromTeammate = await ctx.agentTeams.resolveMemberImageSupport(child, SIGNAL)
+    expect(fromLead.get(lead.id)).toBe('supported')
+    expect(fromLead.get(child.id)).toBe('unsupported')
+    expect([...fromTeammate]).toEqual([...fromLead])
+    expect(resolve).toHaveBeenCalledWith('mock', 'lead-model', SIGNAL)
+    expect(resolve).toHaveBeenCalledWith('mock', 'mock', SIGNAL)
+    child.cancel({ kind: 'parent' })
+    await child.whenIdle()
+  })
+
+  it('omits a member whose model-info resolution fails and keeps resolved peers', async () => {
+    const { ctx, lead } = await setup(['hang'])
+    const started = await spawn(ctx, lead, 'reviewer')
+    const child = await waitRunning(ctx, started.member.id)
+    vi.spyOn(lead.session, 'requestHeader').mockReturnValue({
+      config: { provider: 'mock', model: 'lead-model' },
+    })
+    vi.spyOn(ctx.llm, 'resolveModelInfo').mockImplementation(async (_provider, model) => {
+      if (model === 'mock') throw new Error('child catalog miss')
+      return { inputModalities: ['text', 'image'] } as never
+    })
+    const support = await ctx.agentTeams.resolveMemberImageSupport(child, SIGNAL)
+    expect([...support]).toEqual([[lead.id, 'supported']])
+    child.cancel({ kind: 'parent' })
+    await child.whenIdle()
+  })
+
+  it('omits the Lead when its route has no provider or model', async () => {
+    const ctx = new Context()
+    contexts.push(ctx)
+    await mountAgentLoopTestDependencies(ctx)
+    const storageRoot = mkdtempSync(join(tmpdir(), 'dsh-team-noroute-'))
+    roots.push(storageRoot)
+    await ctx.plugin(JsonlSessionPersistence, { root: storageRoot })
+    await ctx.plugin(AgentLoop, { agents: [] })
+    await ctx.plugin(SubagentService)
+    const lead = await ctx.agentLoop.create(SessionId('lead-no-route'), {})
+    const service = new TeamService(ctx)
+    expect([...(await service.resolveMemberImageSupport(lead, SIGNAL))]).toEqual([])
   })
 })

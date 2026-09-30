@@ -34,6 +34,8 @@ export interface Config {
   capabilities?: Partial<SubagentCapabilities>
   /** Whether tool descriptions say the child inherits completed turns. */
   inheritsParentContext?: boolean
+  /** Whether the provider accepts image content in its prompt. Defaults to `true`. */
+  imageInput?: boolean
   /** Provider-owned child route defaults. */
   agentRouteDefaults?: Readonly<{ provider: string; model: string }>
   /** Structured value returned when the request asks for one. */
@@ -46,6 +48,7 @@ export interface Config {
 class ScriptedSubagentProvider implements SubagentProvider {
   readonly capabilities: SubagentCapabilities
   readonly inheritsParentContext: boolean
+  readonly imageInput: boolean
 
   constructor(
     readonly name: string,
@@ -53,6 +56,7 @@ class ScriptedSubagentProvider implements SubagentProvider {
   ) {
     this.capabilities = { ...DEFAULT_CAPABILITIES, ...config.capabilities }
     this.inheritsParentContext = config.inheritsParentContext ?? false
+    this.imageInput = config.imageInput ?? true
   }
 
   async start(request: SubagentStartRequest): Promise<SubagentRun> {

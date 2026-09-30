@@ -1176,7 +1176,7 @@ export interface Config {
 ## `@deepseek-ai/dsh-experimental-tool-agent-team`
 
 - `inject`: `agents` · `agentTeams` · `tools` · `systemPrompt`
-- `source`: [`packages/experimental/tool-agent-team/src/index.ts:18`](../packages/experimental/tool-agent-team/src/index.ts)
+- `source`: [`packages/experimental/tool-agent-team/src/index.ts:21`](../packages/experimental/tool-agent-team/src/index.ts)
 
 ```ts config-catalog
 /** Tool routing configuration. */
@@ -1274,7 +1274,7 @@ export interface Config {
 ## `@deepseek-ai/dsh-headless`
 
 - `inject`: `agentDefaultModel` · `agents` · `sessions`
-- `source`: [`packages/bundle/headless/src/index.ts:42`](../packages/bundle/headless/src/index.ts)
+- `source`: [`packages/bundle/headless/src/index.ts:46`](../packages/bundle/headless/src/index.ts)
 
 ```ts config-catalog
 /** Plugin config: the task and run options resolved from this app's injected provider service. */
@@ -1285,6 +1285,8 @@ export interface Config {
   sessionId?: string
   /** Whether stdout carries the machine-readable event stream instead of final text. */
   json?: boolean
+  /** Image file paths to attach to the task, in invocation order; absent or empty attaches none. */
+  images?: string[]
 }
 ```
 <!-- END GENERATED config-catalog:@deepseek-ai/dsh-headless -->
@@ -3134,7 +3136,7 @@ export type JournalMode = 'wal' | 'delete' | 'truncate' | 'persist'
 ## `@deepseek-ai/dsh-subagent`
 
 - `refs`: `Volatile` (`@deepseek-ai/cordis`)
-- `source`: [`packages/subagent/subagent/src/index.ts:193`](../packages/subagent/subagent/src/index.ts)
+- `source`: [`packages/subagent/subagent/src/index.ts:194`](../packages/subagent/subagent/src/index.ts)
 
 ```ts config-catalog
 /** Host configuration for continuable subagent capacity. */
@@ -3303,7 +3305,7 @@ export interface Config {
   cwd?: string
   /** Provider route the child runtime initializes with (default `deepseek-official`). */
   provider: string
-  /** Model the child runtime initializes with (default `deepseek-v4-flash`). */
+  /** Model the child runtime initializes with (default `deepseek-flash`). */
   model: string
   /** Optional per-request output-token cap for the child runtime. */
   maxTokens?: number
@@ -3863,7 +3865,7 @@ export interface Config {
 
 - `inject`: `tools` · `subagents` · `systemPrompt` · `sessionProjections`
 - `refs`: [`AgentOptions`](subsystems/core.zh.md)
-- `source`: [`packages/subagent/tool-subagent/src/index.ts:48`](../packages/subagent/tool-subagent/src/index.ts)
+- `source`: [`packages/subagent/tool-subagent/src/index.ts:49`](../packages/subagent/tool-subagent/src/index.ts)
 
 ```ts config-catalog
 /** Config: which registered provider this tool delegates to, plus child defaults. */

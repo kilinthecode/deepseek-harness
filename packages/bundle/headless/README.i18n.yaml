@@ -18,11 +18,14 @@
   en: 4447012f4c84100d
   zh: faf579ae9f04c096
 /deepseek-ai-dsh-headless/use-this-package/running-a-one-shot-task:
-  en: 76a22e98d2b3cc2f
-  zh: c9eb624609b8cc32
+  en: 924bb3f0ce1b6dd1
+  zh: 455db76ee873f4f3
 /deepseek-ai-dsh-headless/use-this-package/choosing-the-session-identity:
   en: dbaa2fac63910a4c
   zh: 4fd5c17815ca444b
+/deepseek-ai-dsh-headless/use-this-package/attaching-images:
+  en: e0f261db0602c2e0
+  zh: b54c980c4b91945c
 /deepseek-ai-dsh-headless/use-this-package/machine-readable-output:
   en: 2804a96e88857b16
   zh: fe20dc0fb9962785
@@ -36,17 +39,17 @@
   en: be1b73a6d0ee3902
   zh: bdba099685d68b27
 /deepseek-ai-dsh-headless/understand-the-implementation/run-flow:
-  en: 2f2adf0c346c6c1b
-  zh: f1e988c7e597a852
+  en: a2147f61877e5150
+  zh: e7392ef2220b0a20
 /deepseek-ai-dsh-headless/understand-the-implementation/patch-surface-over-base:
-  en: a22752c052878579
-  zh: 1e42c946d8673eeb
+  en: 99292897761dd52c
+  zh: 89a26bb3aa6e7df6
 /deepseek-ai-dsh-headless/understand-the-implementation/exit-mapping:
-  en: cc6c485a42d40d28
-  zh: c57775d9319d8dfd
+  en: d0d46f14cd4c4a4b
+  zh: 3362ebaf5314edb0
 /deepseek-ai-dsh-headless/understand-the-implementation/source-map:
-  en: 20a37f62e58b3ddb
-  zh: ede1fb8cfbae7a0e
+  en: 5a5c2c5bc56ef786
+  zh: 422323a1b3055659
 /deepseek-ai-dsh-headless/understand-the-implementation/invariant-ownership:
   en: 329f170dec4b2279
   zh: bb40f8beda5b3a1c
@@ -54,14 +57,14 @@
   en: 65aebf0f8ab3047c
   zh: 85616d3859073c4b
 /deepseek-ai-dsh-headless/model-experience:
-  en: c5a0991833f64dd7
-  zh: 46f9feb255778f11
+  en: e687e9a5202d0054
+  zh: cbedeadbdf1af26b
 /deepseek-ai-dsh-headless/model-experience/kv-cache-effect:
-  en: 0b0f74b412c7c6d8
-  zh: 6e8f918d0c4bf342
+  en: 754a3b879986820b
+  zh: a05ba1c9fbe1d7de
 /deepseek-ai-dsh-headless/known-limitations-and-deferred-work:
-  en: b2df65836d53ba03
-  zh: 82a56dc1255a0c3b
+  en: d24e0b6652682daf
+  zh: 24e68076be0f94ca
 /deepseek-ai-dsh-headless/known-limitations-and-deferred-work/dev-note:
   en: e67f633dc6fe7773
   zh: 3bb0c20c93f16f98

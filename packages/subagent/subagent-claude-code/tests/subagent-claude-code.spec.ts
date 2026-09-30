@@ -427,6 +427,7 @@ describe('task admission and package contracts', () => {
         persona: false,
       },
       inheritsParentContext: false,
+      imageInput: false,
     })
     expect(ctx.subagents.list()).toEqual(['claude-code'])
     await fiber.dispose()

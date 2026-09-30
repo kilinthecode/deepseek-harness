@@ -54,10 +54,12 @@ This section explains the driver's lifecycle contract and the structured-output 
 The driver follows this sequence:
 
 1. Validate the parent depth and optional absolute `maxDepth`, then derive child depth as parent depth plus one and persist it in the child session header.
-2. Create the child through the host agent factory with the caller's required signal threaded into the creation transaction.
-3. During that transaction's unpublished setup window, install the requested persona, tool restriction, and structured-output runtime.
-4. Publish the child, retain the returned handle, and drive one task.
-5. Read the child's own output — its last non-empty assistant message, or its accumulated assistant text when none exists — and the final durable turn reason from the complete owned run, excluding any fork seed.
+2. Before the first await, capture the parent's delegated sandbox and approval overrides and resolve the child's Agent options once; a parent switch after this point does not reach the child.
+3. When the prompt has an image block, check that resolved child route before `ctx.agents.create()`: a route whose declared input modalities omit `image` rejects with `SubagentError` code `MODEL_DOES_NOT_SUPPORT_IMAGES` and no child is created, while a missing provider, model, or `llm` service, or a route that never disclosed its modalities, proceeds. The subagent service has already refused an image prompt for a provider that declares `imageInput: false` before calling the provider.
+4. Create the child through the host agent factory with the same resolved Agent options and the caller's required signal threaded into the creation transaction.
+5. During that transaction's unpublished setup window, install the requested persona, tool restriction, and structured-output runtime.
+6. Publish the child, retain the returned handle, and drive one task.
+7. Read the child's own output — its last non-empty assistant message, or its accumulated assistant text when none exists — and the final durable turn reason from the complete owned run, excluding any fork seed.
 
 ### Cancellation and ownership
 

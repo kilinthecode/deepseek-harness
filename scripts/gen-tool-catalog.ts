@@ -125,6 +125,7 @@ function registerCatalogSubagentProvider(ctx: Context, name: string): void {
     name,
     capabilities: { agentOptions: true, outputSchema: true, depthLimit: true, toolFilter: true, persona: true },
     inheritsParentContext: false,
+    imageInput: true,
     start: () => Promise.reject(new Error('tool-catalog provider cannot start a child')),
     // Declared so consumers configured for continuable background mode mount.
     prepareContinuable: () => Promise.reject(new Error('tool-catalog provider cannot prepare a child')),

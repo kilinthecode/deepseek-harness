@@ -44,7 +44,7 @@ kind: "package-reference"
 | `dshHome` | 必填 | 每个嵌套子进程的绝对隔离 Harness home |
 | `cwd` | 父会话 cwd | 子进程及其 SDK 会话的工作目录覆盖值 |
 | `provider` | `deepseek-official` | 写入子进程 `initialize` 的提供方路由 |
-| `model` | `deepseek-v4-flash` | 写入子进程 `initialize` 的模型 |
+| `model` | `deepseek-flash` | 写入子进程 `initialize` 的模型 |
 | `maxTokens` | 适配器／提供方路由默认值 | 写入子进程 `initialize` 的单次请求输出 token 上限 |
 | `env` | `{}` | 叠加在已清理凭据的父环境之上的显式子环境 |
 | `shutdownTimeoutMs` | `1000` | dispose（资源释放）期间协议 `shutdown` 交换的时限 |
@@ -171,6 +171,7 @@ kind: "package-reference"
 
 - **每次运行都使用全新的运行时进程**——不使用进程池；harness 运行时需要启动完整的插件树，因此每次运行的 spawn 成本高于 ACP 后端通常使用的子进程。
 - **不支持路由之外的启动时能力**——父级可以选择子 agent 路由，但无法在子进程内强制执行 `outputSchema`、深度限制、工具过滤或 persona；应改为配置所选子 profile 及其有序 patch。
+- **不支持图片提示词**——本提供方声明 `imageInput: false`；由于子运行时拥有自己的附件存储，且跨 SDK 协议的字节编码尚未实现，seam 会在子进程启动之前拒绝带图片的提示词。
 - **子进程的 transcript（文本记录）保留在其自身的会话根目录中**——父级日志只记录委派工具调用与结果；流式 `session.event` 通道只用于提取输出，不会桥接到父级日志中。
 - **仅支持本地子进程**——解析出的工作目录是本地路径；远程运行时需要独立的后端。
 
