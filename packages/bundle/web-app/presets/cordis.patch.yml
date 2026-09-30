@@ -68,6 +68,18 @@
             config:
               - id: compaction-basic
                 name: '@deepseek-ai/dsh-compaction-basic'
+                config:
+                  # DeepSeek routes condense at their measured cost optimum rather than
+                  # the 80% default: 25% of the Flash window and 19% of V4 Pro's.
+                  modelPolicies:
+                    - provider: deepseek-official
+                      model: deepseek-flash
+                      thresholdRatio: 0.25
+                      retainTokens: 64000
+                    - provider: deepseek-official
+                      model: deepseek-v4-pro
+                      thresholdRatio: 0.19
+                      retainTokens: 48000
               - id: command-compact
                 name: '@deepseek-ai/dsh-command-compact'
               - id: tool-result-pruner

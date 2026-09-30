@@ -305,6 +305,7 @@ export class BasicCompactionEngine extends CompactionEngine {
     const targetKey = `${target.provider}/${target.model}`
     if (info.context === undefined) {
       throw new TargetPressureConfigError(
+        targetKey,
         `compaction-basic: no context capacity for ${targetKey}; `
         + 'configure contextWindow on that adapter model',
       )

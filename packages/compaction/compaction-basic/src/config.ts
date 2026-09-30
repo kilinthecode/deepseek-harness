@@ -49,8 +49,16 @@ const MODEL_POLICY_KEYS: ReadonlySet<string> = new Set([
   ...POLICY_CONFIG_KEYS,
 ])
 
-/** Pressure configuration failure for one routed target. */
-export class TargetPressureConfigError extends Error {}
+/** Target-specific pressure configuration failure eligible for warning suppression. */
+export class TargetPressureConfigError extends Error {
+  /**
+   * @param targetKey - exact provider/model route used as the warning key.
+   * @param message - actionable configuration failure detail.
+   */
+  constructor(readonly targetKey: string, message: string) {
+    super(message)
+  }
+}
 
 /**
  * Resolve and validate service defaults plus exact-target partial overrides.
@@ -150,6 +158,7 @@ export function resolveCompactSpec(
   const targetKey = `${policy.target.provider}/${policy.target.model}`
   if (!Number.isInteger(contextWindow) || contextWindow <= 0) {
     throw new TargetPressureConfigError(
+      targetKey,
       `BasicCompactionConfig: ${targetKey} contextWindow (${contextWindow}) must be a positive integer`,
     )
   }
@@ -188,6 +197,7 @@ export function resolveCompactSpec(
     : policy.retainTokens
   if (retainTokens >= thresholdTokens) {
     throw new TargetPressureConfigError(
+      `${policy.target.provider}/${policy.target.model}`,
       `BasicCompactionConfig: ${policy.target.provider}/${policy.target.model} retainTokens `
       + `(${retainTokens}) must be less than threshold tokens ${thresholdTokens}`,
     )

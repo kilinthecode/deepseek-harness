@@ -12,6 +12,8 @@ import {
 } from '../scripts/package-macos.ts'
 import { desktopElectronBuilderArguments, resolveDesktopPackageTarget } from '../scripts/package-target.ts'
 import { writeMacOSAppUpdateConfig } from '../scripts/macos-app-update-config.mjs'
+import { desktopUpdateMetadataFilename } from '../scripts/desktop-auto-update-environment.mjs'
+import { resolveDesktopEdition } from '../scripts/desktop-release-environment.mjs'
 
 const environment = {
   DSH_DESKTOP_MACOS_SIGNING_IDENTITY: 'Example Company (TEAMID1234)',
@@ -26,18 +28,20 @@ function barrier() {
   return { promise, release }
 }
 
-async function fixture(arch: 'arm64' | 'x64' = 'arm64') {
+async function fixture(arch: 'arm64' | 'x64' = 'arm64', edition = 'portal') {
   const root = await mkdtemp(join(tmpdir(), 'desktop-parallel-notarization-'))
   const artifactsRoot = join(root, 'artifacts')
-  const appPath = join(artifactsRoot, arch === 'arm64' ? 'mac-arm64' : 'mac', 'Portal.app')
+  const config = resolveDesktopEdition({ DSH_DESKTOP_EDITION: edition })
+  const appPath = join(artifactsRoot, arch === 'arm64' ? 'mac-arm64' : 'mac', `${config.productName}.app`)
   await mkdir(join(appPath, 'Contents', 'Resources'), { recursive: true })
   await writeFile(join(appPath, 'payload'), 'signed content')
   await writeMacOSAppUpdateConfig(join(appPath, 'Contents', 'Resources'), {
     publicUrl: `https://desktop-updates.example.com/dsh-desk/0123456789abcdef0123456789abcdef/feeds/mac-${arch}/`,
-  }, 'deepseek-harness-updater')
+    channel: config.updateChannel,
+  }, `${config.artifactNamePrefix}-updater`)
   const version = '1.2.3-alpha.1'
-  const base = `deepseek-harness-${version}-mac-${arch}`
-  const request = { arch, artifactsRoot, version, environment }
+  const base = `${config.artifactNamePrefix}-${version}-mac-${arch}`
+  const request = { arch, artifactsRoot, version, environment: { ...environment, DSH_DESKTOP_EDITION: config.edition } }
   const apple: MacOSArtifactOperations = {
     copyApp: async (source, destination) => {
       await cp(source, destination, { recursive: true, verbatimSymlinks: true })
@@ -57,7 +61,7 @@ async function fixture(arch: 'arm64' | 'x64' = 'arm64') {
     await writeFile(join(artifact.output, `${base}.${artifact.format}`), contents)
     if (artifact.format === 'zip') {
       await writeFile(join(artifact.output, `${base}.zip.blockmap`), 'blockmap')
-      await writeFile(join(artifact.output, 'nightly-mac.yml'), 'update metadata')
+      await writeFile(join(artifact.output, desktopUpdateMetadataFilename(version, 'darwin', config.edition)), 'update metadata')
     }
   }
   return { root, appPath, request, apple, build, base }
@@ -117,6 +121,20 @@ describe('parallel macOS artifacts', () => {
       await Promise.allSettled([operation])
       await rm(f.root, { recursive: true, force: true })
     }
+  })
+
+  it('packages Portal Dev with distinct bundle, artifact, and update metadata names', async () => {
+    const f = await fixture('arm64', 'portal-dev')
+    try {
+      await packageMacOSArtifacts(f.request, f.build, f.apple)
+      expect((await readdir(f.request.artifactsRoot)).sort()).toEqual([
+        'mac-arm64', 'portal-dev-1.2.3-alpha.1-mac-arm64.dmg', 'portal-dev-1.2.3-alpha.1-mac-arm64.zip',
+        'portal-dev-1.2.3-alpha.1-mac-arm64.zip.blockmap', 'dev-mac.yml',
+      ].sort())
+      expect(f.appPath).toContain('Portal Dev.app')
+      expect(await readFile(join(f.appPath, 'Contents', 'Resources', 'app-update.yml'), 'utf8'))
+        .toContain('channel: dev')
+    } finally { await rm(f.root, { recursive: true, force: true }) }
   })
 
   it('collects both failures after both lanes release their copies and publishes neither payload', async () => {

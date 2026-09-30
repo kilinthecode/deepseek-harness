@@ -18,7 +18,7 @@ import {
   IconPlusOutlineRegular, IconRefreshOutlineRegular, IconTrashOutlineRegular,
   IconWarningOutlineRegular, Input, Modal,
   PluginArtworkDefault, PluginArtworkLoop, PluginArtworkSearch, PluginArtworkSubagent, PluginArtworkTerminal,
-  StateDot, Switch, Tag, TerminalBlock, Toast, useAnchoredPosition, useDismissOnOutsidePointer,
+  StateDot, Switch, Tag, TesseractSpinner, TerminalBlock, Toast, useAnchoredPosition, useDismissOnOutsidePointer,
   type IconProps, type StateDotState, type TerminalBlockLabels,
 } from '@deepseek-ai/dsh-client-ui-primitives'
 import type { InjectFace, PropsLocale, PropsRenderSlots, PropsRuntime, PropsStore } from '@deepseek-ai/dsh-client-ui-slots'
@@ -832,7 +832,7 @@ function InstallDialog({
         contentClassName={css.installContent as string}
         footer={(
           <Button variant="primary" className={css.wide} disabled={checking || empty} aria-busy={checking} onClick={onRun}>
-            {checking ? <StateDot state="ongoing" /> : null}
+            {checking ? <TesseractSpinner size={14} /> : null}
             {t(checking ? 'installChecking' : 'installRun')}
           </Button>
         )}
@@ -1022,7 +1022,7 @@ function InstallDialog({
           <div className={css.wizardHero}>
             <span className={css.wizardIcon} data-state={pending ? 'ongoing' : phase === 'done' ? 'done' : 'error'} aria-hidden="true">
               {pending
-                ? <StateDot state="ongoing" size={28} />
+                ? <TesseractSpinner size={28} />
                 : phase === 'done'
                   ? <IconCheckCircleFillRegular size={28} />
                   : <IconWarningOutlineRegular size={28} />}

@@ -6,7 +6,7 @@ import type { Agent, AgentOptions } from '@deepseek-ai/dsh-agent'
 import { ReasoningEffortId } from '@deepseek-ai/dsh-llm'
 import { TeamTaskId } from '@deepseek-ai/dsh-experimental-agent-team'
 import type { TeamMemberView } from '@deepseek-ai/dsh-experimental-agent-team'
-import { applyAgentScopedTools, callingAgent, defineTool, jsonOutput } from '@deepseek-ai/dsh-tools'
+import { applyAgentScopedTools, callingAgent, defineTool, jsonOutput, type InferValue } from '@deepseek-ai/dsh-tools'
 
 /** Cordis plugin name. */
 export const name = 'tool-agent-team'

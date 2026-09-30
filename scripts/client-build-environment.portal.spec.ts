@@ -1,10 +1,11 @@
 /**
- * Fork-owned coverage for the Portal client build profile.
+ * Fork-owned coverage for the Portal client build profiles.
  *
  * `client-build-environment.client.spec.ts` is upstream-owned and covers the
- * `official` profile only. This spec owns the fork's profile so an upstream
- * sync never has to merge the two, and so the fork's values are asserted
- * exactly where they are defined.
+ * `official` profile only. This spec owns the fork's profiles (`portal` and
+ * its dev-channel sibling `portal-dev`) so an upstream sync never has to merge
+ * the two, and so the fork's values are asserted exactly where they are
+ * defined.
  */
 
 import { describe, expect, it } from 'vitest'
@@ -26,6 +27,20 @@ describe('Portal client build profile', () => {
     })
   })
 
+  it('pins the dev-channel profile title beside the production one', () => {
+    // The dev build is a distinct product identity: the dev desktop edition
+    // and the brand package's dev variant key off this exact profile name.
+    expect(resolveClientBuildEnvironment({
+      DSH_CLIENT_COMMIT_HASH: COMMIT_HASH,
+      DSH_CLIENT_VERSION: VERSION,
+    }, 'portal-dev')).toEqual({
+      DSH_CLIENT_COMMIT_HASH: COMMIT_HASH,
+      DSH_CLIENT_VERSION: VERSION,
+      DSH_CLIENT_BUILD_PROFILE: 'portal-dev',
+      DSH_CLIENT_TITLE: 'Portal Dev',
+    })
+  })
+
   it('keeps the upstream official values untouched', () => {
     // The fork's identity lives in its own profile precisely so this stays
     // upstream's answer; if a sync overwrites it, this fails loudly.
@@ -38,15 +53,19 @@ describe('Portal client build profile', () => {
     })
   })
 
-  it('requires the same completeness from the fork profile as the official one', () => {
+  it('requires the same completeness from the fork profiles as the official one', () => {
     expect(() => { resolveClientBuildEnvironment({ DSH_CLIENT_VERSION: VERSION }, 'portal') })
       .toThrow(/DSH_CLIENT_COMMIT_HASH/u)
     expect(() => { resolveClientBuildEnvironment({ DSH_CLIENT_COMMIT_HASH: COMMIT_HASH }, 'portal') })
       .toThrow(/DSH_CLIENT_VERSION/u)
+    expect(() => { resolveClientBuildEnvironment({ DSH_CLIENT_VERSION: VERSION }, 'portal-dev') })
+      .toThrow(/DSH_CLIENT_COMMIT_HASH/u)
+    expect(() => { resolveClientBuildEnvironment({ DSH_CLIENT_COMMIT_HASH: COMMIT_HASH }, 'portal-dev') })
+      .toThrow(/DSH_CLIENT_VERSION/u)
   })
 
-  it('names both known profiles in the unknown-profile diagnostic', () => {
+  it('names every known profile in the unknown-profile diagnostic', () => {
     expect(() => { resolveClientBuildEnvironment({}, 'other') })
-      .toThrow(/expected "official" or "portal"/u)
+      .toThrow(/expected "official", "portal", "portal-dev"/u)
   })
 })

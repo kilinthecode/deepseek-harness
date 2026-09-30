@@ -138,7 +138,7 @@ export class TeamTaskBoard {
           break
         case 'release':
           authorizeOwner()
-          if (this.awaitingVerification(current)) {
+          if (awaitingVerification(current)) {
             throw new TeamError(
               `team task "${current.id}" is awaiting verification; wait for its verdict`,
               'TEAM_TASK_INVALID_TRANSITION',
@@ -171,7 +171,7 @@ export class TeamTaskBoard {
           break
         case 'submit':
           authorizeOwner()
-          if (this.awaitingVerification(current)) {
+          if (awaitingVerification(current)) {
             throw new TeamError(
               `team task "${current.id}" is awaiting verification; wait for its verdict`,
               'TEAM_TASK_INVALID_TRANSITION',
@@ -223,7 +223,7 @@ export class TeamTaskBoard {
           break
         case 'reassign': {
           if (!lead) throw new TeamError('only the Team Lead can reassign tasks', 'TEAM_LEAD_REQUIRED')
-          if (this.awaitingVerification(current)) {
+          if (awaitingVerification(current)) {
             throw new TeamError(
               `team task "${current.id}" is awaiting verification; wait for its verdict`,
               'TEAM_TASK_INVALID_TRANSITION',
@@ -253,7 +253,7 @@ export class TeamTaskBoard {
           if (dependent !== undefined) {
             throw new TeamError(`team task "${current.id}" still blocks "${dependent.id}"`, 'TEAM_TASK_HAS_DEPENDENTS')
           }
-          next = this.awaitingVerification(current)
+          next = awaitingVerification(current)
             ? this.withoutVerification({ ...current, status: 'deleted' })
             : { ...current, status: 'deleted' }
           break
