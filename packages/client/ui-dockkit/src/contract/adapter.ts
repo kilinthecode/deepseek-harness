@@ -45,7 +45,10 @@ export interface DockLabels {
 
 /**
  * Renders one tab's body. The embedder dispatches on `tab.kind`, which is the
- * only place that string carries meaning.
+ * only place that string carries meaning. A tab host reuses the returned body
+ * element while the renderer, the tab record, and the host's visibility are
+ * unchanged, so a renderer whose output depends on other values must change
+ * identity with them.
  */
 export type TabRenderer = (tab: TabRecord) => ReactNode
 
