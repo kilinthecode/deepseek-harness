@@ -89,6 +89,16 @@ declare module '@deepseek-ai/cordis' {
 }
 
 /**
+ * Provider method key reporting whether ranked full-text search is refused.
+ *
+ * A provider that refuses search rejects `searchSessions` and `searchEvents`
+ * with `SESSION_QUERY_SEARCH_DISABLED` before it observes any source, so a
+ * consumer may skip work whose result that rejection discards. The key is a
+ * symbol because the answer is provider plumbing, not a service operation.
+ */
+export const sessionQuerySearchDisabled = Symbol.for('dsh.sessionQuery.searchDisabled')
+
+/**
  * Unified live-preferred session query service.
  *
  * Exact reads, filters, and traces are backend-independent concrete behavior.
@@ -165,6 +175,21 @@ export abstract class SessionQueryEngine extends Service {
     request: SessionEventSearchRequest,
     exec?: SessionSearchExecContext,
   ): Promise<SessionEventSearchPage>
+
+  /**
+   * Report whether this provider refuses every full-text search.
+   *
+   * A provider that refuses search rejects `searchSessions` and `searchEvents`
+   * with `SESSION_QUERY_SEARCH_DISABLED` before observing any source, so a
+   * consumer may call this to skip work whose result that rejection discards.
+   * A provider that implements search answers `false`; a deployment that
+   * disables search answers `true` from the same configuration its own search
+   * methods check.
+   * @returns whether this provider refuses full-text search.
+   */
+  [sessionQuerySearchDisabled](): boolean {
+    return false
+  }
 
   /**
    * List the complete logical corpus using live-preferred records.

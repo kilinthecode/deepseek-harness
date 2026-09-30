@@ -24,6 +24,7 @@ import SessionQueryEngine, {
   assertSessionHeadersCompatible,
   buildSessionEventSearchDocuments,
   readColdSessionLog,
+  sessionQuerySearchDisabled,
 } from '@deepseek-ai/dsh-session-query'
 import type {
   Config as SessionQueryConfig,
@@ -336,11 +337,20 @@ export class SqliteSessionQueryEngine extends SessionQueryEngine {
    * node:sqlite, opens the index, or observes sources.
    */
   private _assertSearchEnabled(): void {
-    if (this.config.openAt !== 'never') return
+    if (!this[sessionQuerySearchDisabled]()) return
     throw new SessionQueryError(
       'session search is disabled: this deployment configures the session-query index with openAt "never"',
       'SESSION_QUERY_SEARCH_DISABLED',
     )
+  }
+
+  /**
+   * Report the configured opening policy to the provider seam, so a consumer
+   * can skip a corpus listing this deployment's search calls would discard.
+   * @returns whether this deployment refuses every full-text search.
+   */
+  override [sessionQuerySearchDisabled](): boolean {
+    return this.config.openAt === 'never'
   }
 
   private async _close(): Promise<void> {
