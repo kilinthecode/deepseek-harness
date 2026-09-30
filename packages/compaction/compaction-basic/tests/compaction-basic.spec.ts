@@ -13,18 +13,19 @@ import {
   resolveTargetPolicy,
 } from '@deepseek-ai/dsh-compaction-basic/src/config.ts'
 import type { CompactionResult } from '@deepseek-ai/dsh-compaction'
-import LlmRuntime, { createUserMessage, ToolCallId, CONTEXT_WINDOW_EXCEEDED_CODE, createSystemMessage, createToolResultMessage, LlmAdapter , createMessage } from '@deepseek-ai/dsh-llm'
+import LlmRuntime, { createUserMessage, ToolCallId, CONTEXT_WINDOW_EXCEEDED_CODE, createSystemMessage, createToolResultMessage, LlmAdapter , createMessage, ReasoningEffortId } from '@deepseek-ai/dsh-llm'
 import type { ContextFormed } from '@deepseek-ai/dsh-llm'
 import type {
   ContentBlock,
   GenerateOptions,
   LlmFailure,
+  LlmModelReasoningInfo,
   LlmResolvedModelInfo,
   Message,
   StreamChunk,
   TokenUsage,
 } from '@deepseek-ai/dsh-llm'
-import SessionStore, { Session, SessionId, SessionSeq } from '@deepseek-ai/dsh-session'
+import SessionStore, { SESSION_FORMAT_VERSION, Session, SessionId, SessionSeq } from '@deepseek-ai/dsh-session'
 import SessionProjectionRegistry from '@deepseek-ai/dsh-session-projection'
 import TokenMeter from '@deepseek-ai/dsh-token-meter'
 import { agentEvents, type Agent, type RequestErrorAction } from '@deepseek-ai/dsh-agent'
@@ -38,6 +39,14 @@ declare module '@deepseek-ai/dsh-llm' {
 
 const SIGNAL = new AbortController().signal
 const MODEL = 'test-model'
+
+/** Declares 'low' and 'max' as the route's selectable reasoning efforts. */
+const REASONING_EFFORTS: LlmModelReasoningInfo = {
+  efforts: [
+    { id: ReasoningEffortId('low'), name: 'Low' },
+    { id: ReasoningEffortId('max'), name: 'Max' },
+  ],
+}
 
 class ContextAdapter extends LlmAdapter {
   constructor(private readonly contextWindow: number) {
@@ -89,10 +98,17 @@ function createContext(contextWindow = 1_000): Context {
   return ctx
 }
 
-function agent(session: Session, model?: string): Agent {
+/**
+ * `ancestors` fakes the live session registry `delegationTreeRoot` consults
+ * while stamping `GenerateOptions.cacheKey`; omitting it leaves every lookup
+ * unresolved, which is correct for every fixture session below (none carry a
+ * `parentSession`, so the lookup is never actually called).
+ */
+function agent(session: Session, model?: string, ancestors: ReadonlyMap<SessionId, Session> = new Map()): Agent {
   return {
     session,
     options: model === undefined ? {} : { provider: model, model },
+    ctx: { sessions: { get: (id: SessionId) => ancestors.get(id) } },
   } as Agent
 }
 
@@ -159,9 +175,9 @@ function conversation(turns = 4, text = 'fixture '.repeat(40).trim(), system?: s
   return session
 }
 
-function toolConversation(): Session {
-  const session = Session.create(SessionId('tools'))
-  for (let turn = 1; turn <= 3; turn += 1) {
+function toolConversation(turns = 3): Session {
+  const session = Session.create(SessionId(`tools-${turns}`))
+  for (let turn = 1; turn <= turns; turn += 1) {
     const callId = ToolCallId(`call-${turn}`)
     session.append('turn/start', { turn })
     session.append('user/message', createUserMessage({
@@ -204,7 +220,7 @@ function toolConversation(): Session {
     session.append('step/end', { turn, step: 1 })
     session.append('turn/end', { turn, reason: { kind: 'completed' } })
   }
-  session.append('turn/start', { turn: 4 })
+  session.append('turn/start', { turn: turns + 1 })
   return session
 }
 
@@ -319,6 +335,7 @@ describe('compact configuration and defaults', () => {
       maxTokens: 65_536,
       compactionRetries: 1,
       maxOverflowRetries: 1,
+      pruneHeadroomRatio: 0.2,
       modelPolicies: [],
       auto: true,
     })
@@ -427,6 +444,38 @@ describe('compact configuration and defaults', () => {
     })
   })
 
+  it('floors pruneHeadroomTokens from the threshold ratio and lets a modelPolicies override win over the top-level value', () => {
+    // Both targets resolve the same 800-token threshold (window 1_000 at the
+    // default 0.8 thresholdRatio). Fractional ratios against that threshold
+    // make the raw product a non-integer (98.72, 365.36), so a dropped
+    // Math.floor (rounding instead, or leaving it fractional) would diverge
+    // from the expected floored token counts below.
+    const config = resolveConfig({
+      headroomTokens: 0,
+      maxTokens: 8192,
+      pruneHeadroomRatio: 0.1234,
+      modelPolicies: [{
+        provider: 'override-provider',
+        model: 'override-model',
+        pruneHeadroomRatio: 0.4567,
+      }],
+    })
+    const defaulted = resolveTargetPolicy(config, { provider: MODEL, model: MODEL })
+    const overridden = resolveTargetPolicy(config, {
+      provider: 'override-provider',
+      model: 'override-model',
+    })
+
+    expect(resolveCompactSpec(defaulted, 1_000, 0)).toMatchObject({
+      thresholdTokens: 800,
+      pruneHeadroomTokens: 98,
+    })
+    expect(resolveCompactSpec(overridden, 1_000, 0)).toMatchObject({
+      thresholdTokens: 800,
+      pruneHeadroomTokens: 365,
+    })
+  })
+
   it.each([
     [1_048_576, 256_000, 727_040, 126_812],
     [1_000_000, 0, 800_000, 160_000],
@@ -525,6 +574,14 @@ describe('compact configuration and defaults', () => {
       [{ thresholdRatio: 0.1 }, /retainRatio \(0.16\) must be less than the resolved thresholdRatio \(0.1\)/],
       [{ retainTokens: -1 }, /non-negative integer/],
       [{ retainRatio: 0.2, retainTokens: 100 }, /mutually exclusive/],
+      [{ pruneHeadroomRatio: -0.1 }, /pruneHeadroomRatio \(-0.1\) must be a number in \[0, 1\)/],
+      [{ pruneHeadroomRatio: 1 }, /pruneHeadroomRatio \(1\) must be a number in \[0, 1\)/],
+      [{ pruneHeadroomRatio: Number.NaN }, /pruneHeadroomRatio \(NaN\) must be a number in \[0, 1\)/],
+      [{ pruneHeadroomRatio: '0.2' }, /pruneHeadroomRatio \(0\.2\) must be a number in \[0, 1\)/],
+      [
+        { modelPolicies: [{ provider: MODEL, model: MODEL, pruneHeadroomRatio: 1.5 }] },
+        /modelPolicies\[0\]\.pruneHeadroomRatio \(1\.5\) must be a number in \[0, 1\)/,
+      ],
       [{ modelPolicies: {} }, /modelPolicies must be an array/],
       [{ modelPolicies: [1] }, /modelPolicies\[0\] must be an object/],
       [{ modelPolicies: [null] }, /modelPolicies\[0\] must be an object/],
@@ -945,6 +1002,55 @@ describe('pressure measurement and retention', () => {
 describe('optional model-free tool-result pruning', () => {
   const pruneConfig = { thresholdChars: 100, headChars: 20, tailChars: 10 }
 
+  it('prunes after each compaction attempt, not only the first, when a retry is needed', async () => {
+    // A gentler budget than pruneConfig: the tool results here carry the
+    // retry, not the pruning, so only a small span is removed each time.
+    const gentlePrune = { thresholdChars: 2_650, headChars: 2_500, tailChars: 100 }
+    const ctx = createContext(50_000)
+    const prune = new ToolResultPruner(ctx, gentlePrune)
+    const compact = new TestCompactionEngine(ctx, {
+      headroomTokens: 0,
+      maxTokens: 8192,
+      auto: false,
+      compactionRetries: 1,
+      thresholdRatio: 4_550 / 50_000,
+      retainTokens: 3_900,
+    })
+    // A first checkpoint large enough that, together with the retained tail,
+    // pressure stays above threshold after attempt 0 alone, forcing a second
+    // attempt. The second call's checkpoint shrinks so a second range that
+    // reshadows only the first checkpoint still shrinks — the fixed fallback
+    // text would otherwise tie with itself and fail the "must shrink" check.
+    compact.summary = [{ type: 'text', text: 'first checkpoint padding '.repeat(20) }]
+    compact.mutateDuringSummary = () => {
+      if (compact.calls.length === 2) compact.summary = [{ type: 'text', text: 'x' }]
+    }
+    const session = toolConversation(6)
+
+    // Spy while still calling through to the real pruner, and record the log
+    // length visible to each call: the log-position proof that a prune call
+    // lands after each compaction/end, not just the first.
+    const realPruneSession = prune.pruneSession.bind(prune)
+    const eventCountAtCall: number[] = []
+    const pruneSpy = vi.spyOn(prune, 'pruneSession').mockImplementation((target) => {
+      eventCountAtCall.push(session.snapshotEvents().length)
+      return realPruneSession(target)
+    })
+
+    const result = await compactIfNeeded(compact, session)
+
+    expect(result).not.toBeNull()
+    expect(compact.calls).toHaveLength(2)
+    // Gating the post-compaction prune call to the first attempt only would
+    // drop this to 1.
+    expect(pruneSpy).toHaveBeenCalledTimes(2)
+    const events = session.snapshotEvents()
+    const compactionEndsBefore = (eventCount: number): number =>
+      events.slice(0, eventCount).filter(event => event.type === 'compaction/end').length
+    expect(compactionEndsBefore(eventCountAtCall[0]!)).toBe(1)
+    expect(compactionEndsBefore(eventCountAtCall[1]!)).toBe(2)
+  })
+
   it('does not prune a below-pressure session opportunistically', async () => {
     const ctx = createContext(10_000)
     const prune = new ToolResultPruner(ctx, pruneConfig)
@@ -956,15 +1062,17 @@ describe('optional model-free tool-result pruning', () => {
       retainTokens: 100,
     })
     const session = oversizedToolResult()
+    const projectTokenSavings = vi.spyOn(prune, 'projectTokenSavings')
     const pruneSession = vi.spyOn(prune, 'pruneSession')
 
     expect(await compactIfNeeded(compact, session)).toBeNull()
+    expect(projectTokenSavings).not.toHaveBeenCalled()
     expect(pruneSession).not.toHaveBeenCalled()
     expect(compact.calls).toHaveLength(0)
     expect(session.surface.replaceGeneration).toBe(0)
   })
 
-  it('skips LLM summarization when pruning alone clears pressure', async () => {
+  it('lands a prune-only reduction when the preview clears the pressure headroom, skipping summarization', async () => {
     const ctx = createContext(1_000)
     void new ToolResultPruner(ctx, pruneConfig)
     const compact = new TestCompactionEngine(ctx, {
@@ -976,6 +1084,10 @@ describe('optional model-free tool-result pruning', () => {
     })
     const session = oversizedToolResult()
 
+    // The default pruneHeadroomRatio (0.2, i.e. 100 tokens of this session's
+    // 500-token pressure threshold) is comfortably cleared: pruning alone
+    // drops estimated pressure from >=500 to under 50, so the preview
+    // qualifies for the prune-only path.
     expect(ctx.tokenMeter.measure(session).totalTokens).toBeGreaterThanOrEqual(500)
     expect(await compactIfNeeded(compact, session)).toBeNull()
     expect(ctx.tokenMeter.measure(session).totalTokens).toBeLessThan(500)
@@ -983,7 +1095,25 @@ describe('optional model-free tool-result pruning', () => {
     expect(session.surface.replaceGeneration).toBe(1)
   })
 
-  it('summarizes the pruned surface when pruning is insufficient', async () => {
+  it('proceeds to compaction when a preview finds no prune candidates', async () => {
+    const ctx = createContext(1_000)
+    const prune = new ToolResultPruner(ctx, pruneConfig)
+    const projectTokenSavings = vi.spyOn(prune, 'projectTokenSavings')
+    const compact = new TestCompactionEngine(ctx, {
+      headroomTokens: 0,
+      maxTokens: 8192,
+      auto: false,
+      thresholdRatio: 0.5,
+      retainTokens: 180,
+    })
+    const session = conversation(4)
+
+    expect(await compactIfNeeded(compact, session)).not.toBeNull()
+    expect(projectTokenSavings).toHaveReturnedWith(0)
+    expect(compact.calls).toHaveLength(1)
+  })
+
+  it('compacts the original surface first, then prunes the retained tail for free, when pruning alone is insufficient', async () => {
     const ctx = createContext(2_000)
     void new ToolResultPruner(ctx, pruneConfig)
     const compact = new TestCompactionEngine(ctx, {
@@ -997,8 +1127,245 @@ describe('optional model-free tool-result pruning', () => {
 
     expect(await compactIfNeeded(compact, session)).not.toBeNull()
     expect(compact.calls).toHaveLength(1)
+    // Pruning has not landed when compaction reads the surface, so the
+    // summarizer sees the original oversized text, not the prune marker.
+    expect(summarizedText(compact.calls[0]!.input)).toContain('result 1 '.repeat(300))
+    expect(summarizedText(compact.calls[0]!.input)).not.toContain('tool result middle pruned')
+
+    // After compaction, the retained tail's own oversized tool result is
+    // pruned for free, since the replacement already broke the provider cache.
+    const finalToolResult = session.snapshotEvents().findLast(event => event.type === 'tool/result')
+    expect(JSON.stringify(finalToolResult)).toContain('tool result middle pruned')
+    expect(JSON.stringify(finalToolResult)).not.toContain('result 3 '.repeat(300))
+  })
+
+  it('falls through to the compaction loop when a landed prune does not clear the threshold despite a qualifying preview', async () => {
+    const ctx = createContext(2_000)
+    const prune = new ToolResultPruner(ctx, pruneConfig)
+    // Over-report tokensSaved so the qualifying check lands the prune; the
+    // real prune it drives still only saves what the fixture actually
+    // allows, which is not enough to clear the threshold on its own.
+    vi.spyOn(prune, 'projectTokenSavings').mockReturnValue(1_000_000)
+    const compact = new TestCompactionEngine(ctx, {
+      headroomTokens: 0,
+      maxTokens: 8192,
+      auto: false,
+      thresholdRatio: 0.5,
+      retainTokens: 50,
+    })
+    const session = toolConversation()
+
+    const result = await compactIfNeeded(compact, session)
+    expect(result).not.toBeNull()
+    expect(compact.calls).toHaveLength(1)
+    // The prune landed for real before the recheck found it insufficient, so
+    // compaction reads the already-pruned surface instead of returning null.
     expect(summarizedText(compact.calls[0]!.input)).toContain('tool result middle pruned')
-    expect(summarizedText(compact.calls[0]!.input)).not.toContain('result 1 '.repeat(300))
+  })
+
+  it('lands the prune-only pass at an exact tie against the headroom bar', async () => {
+    const ctx = createContext(2_000)
+    const prune = new ToolResultPruner(ctx, pruneConfig)
+    const compact = new TestCompactionEngine(ctx, {
+      headroomTokens: 0,
+      maxTokens: 8192,
+      auto: false,
+      thresholdRatio: 0.5,
+      retainTokens: 50,
+      // Default pruneHeadroomRatio (0.2): pruneHeadroomTokens > 0.
+    })
+    // A leading compactable user message PLUS an oversized tool result kept in
+    // the retained tail: real pruning alone comfortably clears the threshold
+    // (this session shape's "lean" case below), so an exact tie is
+    // distinguishable from a fall-through — a skipped qualifying branch would
+    // instead compact the leading message for real.
+    const session = oversizedToolResult(3_000, true)
+    const measured = ctx.tokenMeter.measure(session).totalTokens
+    const spec = resolveCompactSpec(
+      resolveTargetPolicy(compact.config, { provider: MODEL, model: MODEL }),
+      2_000,
+      0,
+    )
+    expect(spec.pruneHeadroomTokens).toBeGreaterThan(0)
+    // Craft an exact tie: the mocked preview reports savings that put the
+    // projected total precisely on the headroom bar (thresholdTokens -
+    // pruneHeadroomTokens). Mutating the qualifying `<=` to `<` would reject
+    // this exact value and fall through to compaction instead of landing the
+    // prune-only pass.
+    const tokensSaved = measured - (spec.thresholdTokens - spec.pruneHeadroomTokens)
+    vi.spyOn(prune, 'projectTokenSavings').mockReturnValue(tokensSaved)
+
+    expect(await compactIfNeeded(compact, session)).toBeNull()
+    expect(compact.calls).toHaveLength(0)
+    expect(session.surface.replaceGeneration).toBe(1)
+  })
+
+  it('does not land the prune-only pass at an exact tie against the threshold itself when pruneHeadroomRatio is 0', async () => {
+    const ctx = createContext(2_000)
+    const prune = new ToolResultPruner(ctx, pruneConfig)
+    const compact = new TestCompactionEngine(ctx, {
+      headroomTokens: 0,
+      maxTokens: 8192,
+      auto: false,
+      thresholdRatio: 0.5,
+      retainTokens: 50,
+      pruneHeadroomRatio: 0,
+    })
+    const session = oversizedToolResult(3_000, true)
+    const measured = ctx.tokenMeter.measure(session).totalTokens
+    const spec = resolveCompactSpec(
+      resolveTargetPolicy(compact.config, { provider: MODEL, model: MODEL }),
+      2_000,
+      0,
+    )
+    expect(spec.pruneHeadroomTokens).toBe(0)
+    // Craft an exact tie against the threshold itself: at pruneHeadroomRatio
+    // 0, thresholdTokens - pruneHeadroomTokens equals thresholdTokens, so
+    // dropping the `< thresholdTokens` guard would let this tie qualify and
+    // prune before compaction instead of leaving the surface untouched.
+    const tokensSaved = measured - spec.thresholdTokens
+    vi.spyOn(prune, 'projectTokenSavings').mockReturnValue(tokensSaved)
+
+    // A tie against the threshold itself must fall through to compaction
+    // instead of landing the prune-only pass, so the leading message is
+    // genuinely summarized and the surviving oversized tool result is only
+    // pruned afterward, as the ordinary non-qualifying order requires.
+    expect(await compactIfNeeded(compact, session)).not.toBeNull()
+    expect(compact.calls).toHaveLength(1)
+    const finalToolResult = session.snapshotEvents().findLast(event => event.type === 'tool/result')
+    expect(JSON.stringify(finalToolResult)).toContain('tool result middle pruned')
+  })
+
+  it('does not restore the former prune-before-compaction order at pruneHeadroomRatio 0', async () => {
+    const ctx = createContext(2_000)
+    void new ToolResultPruner(ctx, pruneConfig)
+    const compact = new TestCompactionEngine(ctx, {
+      headroomTokens: 0,
+      maxTokens: 8192,
+      auto: false,
+      thresholdRatio: 0.5,
+      retainTokens: 50,
+      pruneHeadroomRatio: 0,
+    })
+    const session = toolConversation()
+
+    expect(await compactIfNeeded(compact, session)).not.toBeNull()
+    expect(compact.calls).toHaveLength(1)
+    // Ratio 0 only restores skipping summarization when the prune alone
+    // reaches the threshold; it does not restore pruning before compaction
+    // when the prune alone is insufficient, so the summarizer still sees the
+    // original oversized text.
+    expect(summarizedText(compact.calls[0]!.input)).toContain('result 1 '.repeat(300))
+    expect(summarizedText(compact.calls[0]!.input)).not.toContain('tool result middle pruned')
+  })
+
+  it('still lands a prune when no compactable range exists, and declines without summarizing', async () => {
+    const ctx = createContext(1_000)
+    void new ToolResultPruner(ctx, pruneConfig)
+    const compact = new TestCompactionEngine(ctx, {
+      headroomTokens: 0,
+      maxTokens: 8192,
+      auto: false,
+      thresholdRatio: 0.5,
+      retainTokens: 50,
+      // A headroom requirement above this fixture's reachable margin keeps
+      // the prune-only path from landing on its own, so the only range in
+      // this indivisible single tool-call/result pair is never compactable
+      // either, and the fallback prune before decline is what lands it.
+      pruneHeadroomRatio: 0.95,
+    })
+    const session = oversizedToolResult()
+
+    // Pin the precondition this test's name claims: at this retainTokens
+    // budget, the fixture's single indivisible tool-call/result pair leaves
+    // no compactable range, so the prune-before-decline fallback — not real
+    // compaction — is what lands the prune. If the fixture ever grows a
+    // compactable range, this fails before the outcome assertions below could
+    // pass for the wrong reason.
+    expect(selectCompactableRange(session, ctx.tokenMeter.measure(session), compact.config.retainTokens!))
+      .toBeNull()
+
+    expect(await compactIfNeeded(compact, session)).toBeNull()
+    expect(compact.calls).toHaveLength(0)
+    expect(session.surface.replaceGeneration).toBe(1)
+    expect(JSON.stringify(session.snapshotEvents().findLast(event => event.type === 'tool/result')))
+      .toContain('tool result middle pruned')
+  })
+
+  it('takes a different path under a small vs. a large pruneHeadroomRatio for the same session shape', async () => {
+    const base = {
+      headroomTokens: 0,
+      maxTokens: 8192,
+      auto: false,
+      thresholdRatio: 0.5,
+      retainTokens: 50,
+    } as const
+
+    const leanCtx = createContext(2_000)
+    void new ToolResultPruner(leanCtx, pruneConfig)
+    const leanCompact = new TestCompactionEngine(leanCtx, { ...base, pruneHeadroomRatio: 0 })
+    expect(await compactIfNeeded(leanCompact, oversizedToolResult(3_000, true))).toBeNull()
+    expect(leanCompact.calls).toHaveLength(0)
+
+    const strictCtx = createContext(2_000)
+    void new ToolResultPruner(strictCtx, pruneConfig)
+    const strictCompact = new TestCompactionEngine(strictCtx, { ...base, pruneHeadroomRatio: 0.9 })
+    expect(await compactIfNeeded(strictCompact, oversizedToolResult(3_000, true))).not.toBeNull()
+    expect(strictCompact.calls).toHaveLength(1)
+  })
+
+  it('does not land a post-compaction prune when pressure summarization fails', async () => {
+    const ctx = createContext(2_000)
+    const prune = new ToolResultPruner(ctx, pruneConfig)
+    const pruneSpy = vi.spyOn(prune, 'pruneSession')
+    const compact = new TestCompactionEngine(ctx, {
+      headroomTokens: 0,
+      maxTokens: 8192,
+      auto: false,
+      thresholdRatio: 0.5,
+      retainTokens: 50,
+      // High enough that the preview never qualifies alone, so this reaches
+      // the compaction loop's own post-compaction prune step.
+      pruneHeadroomRatio: 0.9,
+    })
+    compact.error = new Error('summary unavailable')
+    const session = oversizedToolResult(3_000, true)
+    const generation = session.surface.replaceGeneration
+
+    await expect(compactIfNeeded(compact, session)).rejects.toThrow('summary unavailable')
+
+    expect(pruneSpy).not.toHaveBeenCalled()
+    expect(session.surface.replaceGeneration).toBe(generation)
+    const toolResult = session.snapshotEvents().find(event => event.type === 'tool/result')
+    expect(JSON.stringify(toolResult)).toContain('X'.repeat(3_000))
+    expect(JSON.stringify(toolResult)).not.toContain('tool result middle pruned')
+  })
+
+  it('does not land a post-compaction prune when pressure summarization is cancelled', async () => {
+    const ctx = createContext(2_000)
+    const prune = new ToolResultPruner(ctx, pruneConfig)
+    const pruneSpy = vi.spyOn(prune, 'pruneSession')
+    const compact = new TestCompactionEngine(ctx, {
+      headroomTokens: 0,
+      maxTokens: 8192,
+      auto: false,
+      thresholdRatio: 0.5,
+      retainTokens: 50,
+      pruneHeadroomRatio: 0.9,
+    })
+    const session = oversizedToolResult(3_000, true)
+    const generation = session.surface.replaceGeneration
+    const controller = new AbortController()
+    controller.abort()
+
+    await expect(compact.compactIfNeeded(agent(session, MODEL), 'pressure', controller.signal))
+      .rejects.toThrow()
+
+    expect(pruneSpy).not.toHaveBeenCalled()
+    expect(session.surface.replaceGeneration).toBe(generation)
+    const toolResult = session.snapshotEvents().find(event => event.type === 'tool/result')
+    expect(JSON.stringify(toolResult)).toContain('X'.repeat(3_000))
+    expect(JSON.stringify(toolResult)).not.toContain('tool result middle pruned')
   })
 
   it('retains the original compaction-basic behavior without the optional plugin', async () => {
@@ -1329,8 +1696,18 @@ class ScriptedAdapter extends LlmAdapter {
   constructor(
     private readonly blocks: readonly ContentBlock[],
     private readonly finish: (StreamChunk & { type: 'finish' })['reason'] = { kind: 'stop' },
+    private readonly reasoning?: LlmModelReasoningInfo,
   ) {
     super()
+  }
+
+  override resolveModel(provider: string, model: string): Promise<LlmResolvedModelInfo> {
+    return Promise.resolve({
+      provider,
+      id: model,
+      name: model,
+      ...this.reasoning === undefined ? {} : { reasoning: this.reasoning },
+    })
   }
 
   override async * stream(options: GenerateOptions): AsyncIterable<StreamChunk> {
@@ -1372,12 +1749,13 @@ async function summarizerHarness(
   finish?: (StreamChunk & { type: 'finish' })['reason'],
   model = MODEL,
   config: BasicCompactionConfig = { auto: false },
+  reasoning?: LlmModelReasoningInfo,
 ): Promise<{ ctx: Context; adapter: ScriptedAdapter; compact: ExposedCompactionEngine }> {
   const ctx = new Context()
   await ctx.plugin(LlmRuntime)
   await ctx.plugin(SessionProjectionRegistry)
   void new TokenMeter(ctx)
-  const adapter = new ScriptedAdapter(blocks, finish)
+  const adapter = new ScriptedAdapter(blocks, finish, reasoning)
   ctx.llm.registerAdapter([model], adapter)
   const compact = new ExposedCompactionEngine(ctx, config)
   return { ctx, adapter, compact }
@@ -1453,11 +1831,33 @@ describe('default one-shot summarizer', () => {
       maxTokens: 321,
       signal: SIGNAL,
       sessionId: session.id,
+      cacheKey: session.id,
       toolHistory: session.toolHistory(),
       purpose: 'compaction',
     })
     const instruction = adapter.lastOptions?.messages.at(-1)?.content[0]
     expect(instruction?.type === 'text' ? instruction.text : '').toContain('## Primary Request and Intent')
+  })
+
+  it('stamps a delegated child session\'s cacheKey with its live parent\'s id, not its own', async () => {
+    const { adapter, compact } = await summarizerHarness([{ type: 'text', text: 'child summary' }], undefined, MODEL, {
+      auto: false,
+      summarizationProvider: MODEL,
+      summarizationModel: MODEL,
+      maxTokens: 64,
+    })
+    const parent = conversation(2)
+    const child = Session.create(SessionId('delegated-child'), undefined, {
+      version: SESSION_FORMAT_VERSION,
+      id: SessionId('delegated-child'),
+      createdAt: 0,
+      isSeeded: false,
+      parentSession: parent.id,
+      origin: 'subagent',
+      delegationDepth: 1,
+    })
+    await compact.runSummarize(promptInput('transcript'), agent(child, undefined, new Map([[parent.id, parent]])), SIGNAL)
+    expect(adapter.lastOptions).toMatchObject({ sessionId: child.id, cacheKey: parent.id })
   })
 
   it('replays the conversation prefix and appends the instruction as the final message', async () => {
@@ -1553,6 +1953,68 @@ describe('default one-shot summarizer', () => {
     expect(adapter.lastOptions?.model).toBe('routed')
   })
 
+  it('carries the latest routed header effort when the target route matches, regardless of the adapter-filled marker', async () => {
+    const { adapter, compact } = await summarizerHarness(
+      [{ type: 'text', text: 'summary' }], undefined, MODEL, { auto: false }, REASONING_EFFORTS,
+    )
+    const session = conversation(1)
+    session.append('request/header', {
+      header: {
+        config: { provider: MODEL, model: MODEL, reasoningEffort: ReasoningEffortId('max') },
+        adapterDefaults: { reasoningEffort: true },
+      },
+      reason: 'change',
+    })
+
+    await compact.runSummarize(promptInput('history'), agent(session, MODEL))
+
+    expect(adapter.lastOptions?.reasoningEffort).toBe(ReasoningEffortId('max'))
+  })
+
+  it('omits reasoning effort for a configured summarization route whose model differs from the latest route', async () => {
+    const { adapter, compact } = await summarizerHarness([{ type: 'text', text: 'summary' }], undefined, MODEL, {
+      auto: false,
+      summarizationProvider: MODEL,
+      summarizationModel: 'summary-model',
+    })
+    const session = conversation(1)
+    session.append('request/header', {
+      header: { config: { provider: MODEL, model: MODEL, reasoningEffort: ReasoningEffortId('max') } },
+      reason: 'change',
+    })
+
+    await compact.runSummarize(promptInput('history'), agent(session, MODEL))
+
+    expect(adapter.lastOptions?.model).toBe('summary-model')
+    expect(adapter.lastOptions).not.toHaveProperty('reasoningEffort')
+  })
+
+  it('carries the header effort for a configured summarization route equal to the latest route', async () => {
+    const { adapter, compact } = await summarizerHarness([{ type: 'text', text: 'summary' }], undefined, MODEL, {
+      auto: false,
+      summarizationProvider: MODEL,
+      summarizationModel: MODEL,
+    }, REASONING_EFFORTS)
+    const session = conversation(1)
+    session.append('request/header', {
+      header: { config: { provider: MODEL, model: MODEL, reasoningEffort: ReasoningEffortId('low') } },
+      reason: 'change',
+    })
+
+    await compact.runSummarize(promptInput('history'), agent(session, MODEL))
+
+    expect(adapter.lastOptions?.reasoningEffort).toBe(ReasoningEffortId('low'))
+  })
+
+  it('omits reasoning effort when the latest routed header carries none', async () => {
+    const { adapter, compact } = await summarizerHarness([{ type: 'text', text: 'summary' }])
+    const session = conversation(1)
+
+    await compact.runSummarize(promptInput('history'), agent(session, MODEL))
+
+    expect(adapter.lastOptions).not.toHaveProperty('reasoningEffort')
+  })
+
   it('records the model actually dispatched after one-shot stream routing', async () => {
     const { ctx, compact } = await summarizerHarness([{ type: 'text', text: 'unused' }])
     const routedAdapter = new ScriptedAdapter([{ type: 'text', text: 'routed summary' }])
@@ -1595,6 +2057,18 @@ describe('default one-shot summarizer', () => {
       model: MODEL,
     })
     expect(adapter.lastOptions).toMatchObject({ provider: MODEL, model: MODEL })
+  })
+
+  it('omits reasoning effort for the AgentOptions fallback target even when agent.options sets one', async () => {
+    const { adapter, compact } = await summarizerHarness([{ type: 'text', text: 'summary' }])
+    const owner = {
+      session: Session.create(SessionId('agent-options-effort-fallback')),
+      options: { provider: MODEL, model: MODEL, reasoningEffort: ReasoningEffortId('low') },
+    } as Agent
+
+    await compact.runSummarize(promptInput('history'), owner)
+
+    expect(adapter.lastOptions).not.toHaveProperty('reasoningEffort')
   })
 
   it.each([

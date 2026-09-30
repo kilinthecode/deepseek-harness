@@ -9,18 +9,26 @@ import type { ComponentProps } from 'react'
 import type { ModelDirectoryState } from '../src/client/directory.ts'
 import { ModelSelect } from '../src/client/ModelSelect.tsx'
 import { en, zh } from '../src/client/locales.ts'
+import { en as commonEn } from '@deepseek-ai/dsh-client-locale/src/locales/en.ts'
 import { zh as commonZh } from '@deepseek-ai/dsh-client-locale/src/locales/zh.ts'
 
 // The seat's key domain is model ∪ common; the stub mirrors the real lookup
 // chain: package dictionary, then common vocabulary, then the key.
-const t: ComponentProps<typeof ModelSelect>['t'] = (key, params) => {
-  const template = (zh as Record<string, string>)[key]
-    ?? (commonZh as Record<string, string>)[key]
-    ?? key
-  return params === undefined
-    ? template
-    : template.replace(/\{(\w+)\}/g, (match, name: string) => name in params ? String(params[name]) : match)
+function translator(
+  dictionary: typeof zh | typeof en,
+  common: typeof commonZh | typeof commonEn,
+): ComponentProps<typeof ModelSelect>['t'] {
+  return (key, params) => {
+    const template = (dictionary as Record<string, string>)[key]
+      ?? (common as Record<string, string>)[key]
+      ?? key
+    return params === undefined
+      ? template
+      : template.replace(/\{(\w+)\}/g, (match, name: string) => name in params ? String(params[name]) : match)
+  }
 }
+
+const t = translator(zh, commonZh)
 
 const reasoning = {
   efforts: [
@@ -597,4 +605,76 @@ it('restores the account model name after login without changing the saved route
   act(() => { directory.update((snapshot) => { snapshot.groups = groups; snapshot.routable = true }) })
   expect(screen.getByRole('button', { name: /选择模型，当前/ }).textContent).toBe('DeepSeek FlashHigh')
   expect(directory.getSnapshot().current).toEqual(selected)
+})
+
+describe('ModelSelect image capability', () => {
+  it.each([
+    { locale: 'zh', dictionary: zh, common: commonZh },
+    { locale: 'en', dictionary: en, common: commonEn },
+  ])('captions only an image-capable row as its accessible description, keeping the model name as its accessible name ($locale)', ({ dictionary, common }) => {
+    const directory = createSnapshotStore(state({
+      groups: [{
+        id: 'deepseek-official',
+        name: 'DeepSeek',
+        models: [
+          { id: 'deepseek-v4-flash', name: 'DeepSeek-V4-Flash', inputModalities: ['text', 'image'] },
+          { id: 'deepseek-v4-pro', name: 'DeepSeek-V4-Pro', inputModalities: ['text'] },
+          { id: 'external-model', name: 'External Model' },
+        ],
+      }],
+      current: { provider: 'deepseek-official', model: 'deepseek-v4-flash' },
+    }))
+    render(<ModelSelect
+      locked={false}
+      available
+      directory={directory}
+      load={vi.fn()}
+      select={vi.fn().mockResolvedValue({ ok: true, value: undefined })}
+      t={translator(dictionary, common)}
+    />)
+    fireEvent.click(screen.getByRole('button', { name: dictionary['trigger.aria'].replace('{model}', 'DeepSeek-V4-Flash') }))
+    fireEvent.click(screen.getByRole('menuitem', { name: new RegExp(`^${dictionary['menu.model']}`) }))
+
+    const rows = screen.getAllByRole('menuitemradio')
+    expect(rows.map(row => row.textContent)).toEqual([
+      `DeepSeek-V4-Flash${dictionary['capability.image']}`, 'DeepSeek-V4-Pro', 'External Model',
+    ])
+    // Accessible names stay the model names; only the image-capable row is described by the caption.
+    const imageRow = screen.getByRole('menuitemradio', { name: 'DeepSeek-V4-Flash' })
+    const describedBy = imageRow.getAttribute('aria-describedby')
+    expect(describedBy === null ? undefined : document.getElementById(describedBy)?.textContent).toBe(dictionary['capability.image'])
+    expect(screen.getByRole('menuitemradio', { name: 'DeepSeek-V4-Pro' }).getAttribute('aria-describedby')).toBeNull()
+    expect(screen.getByRole('menuitemradio', { name: 'External Model' }).getAttribute('aria-describedby')).toBeNull()
+  })
+
+  it('switches models with no extra confirm step regardless of image capability', async () => {
+    const directory = createSnapshotStore(state({
+      groups: [{
+        id: 'deepseek-official',
+        name: 'DeepSeek',
+        models: [
+          { id: 'deepseek-v4-flash', name: 'DeepSeek-V4-Flash', inputModalities: ['text', 'image'] },
+          { id: 'deepseek-v4-pro', name: 'DeepSeek-V4-Pro', inputModalities: ['text'] },
+        ],
+      }],
+      current: { provider: 'deepseek-official', model: 'deepseek-v4-flash' },
+    }))
+    const select = vi.fn(async (selection: ModelSelection) => {
+      directory.set(state({ current: selection }))
+      return { ok: true as const, value: undefined }
+    })
+    render(<ModelSelect
+      locked={false}
+      available
+      directory={directory}
+      load={vi.fn()}
+      select={select}
+      t={t}
+    />)
+    fireEvent.click(screen.getByRole('button', { name: /选择模型/ }))
+    fireEvent.click(screen.getByRole('menuitem', { name: /^模型/ }))
+    fireEvent.click(screen.getByRole('menuitemradio', { name: 'DeepSeek-V4-Pro' }))
+    expect(select).toHaveBeenCalledWith({ provider: 'deepseek-official', model: 'deepseek-v4-pro' })
+    await waitFor(() => { expect(screen.queryByRole('menu')).toBeNull() })
+  })
 })

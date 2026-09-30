@@ -6,7 +6,9 @@
 // one composer error banner and everything retained; a declaring command
 // consumes the images — serialized through the real draft-image chain into
 // the commands/execute payload — and clears the composer on success, including
-// when the image is the whole `/plan` task.
+// when the image is the whole `/plan` task. Once the Session route turns
+// text-only, the declaring command's submit refuses the image instead and
+// executes nothing.
 import { fireEvent, screen, waitFor } from '@testing-library/react'
 import { expect, it } from 'vitest'
 import { installAssembledBootEnv, mountAssembledApp } from './assembled-boot.ts'
@@ -111,4 +113,37 @@ it('submits a bare /plan with an image as an image-only plan request', async () 
   }, { timeout: 5_000 })
   expect([...document.querySelectorAll('[role="alert"]')]
     .some(candidate => candidate.textContent?.includes('/plan') ?? false)).toBe(false)
+})
+
+it('refuses an image-carrying /goal once the Session route turns text-only, keeping draft and image', async () => {
+  const remote = mountAssembledApp()
+  const textarea = await freshComposer()
+  await pasteImage(textarea, 'goal-ref.png')
+  const refusal = 'The current model does not support images; switch to a model that does'
+
+  // An adapter update leaves the current route text-only while the image waits in the rail.
+  remote.setInputModalities('deepseek-official', 'deepseek-v4-flash', ['text'])
+  await waitFor(() => {
+    expect([...document.querySelectorAll('[role="alert"]')].map(el => el.textContent)).toContain(refusal)
+  }, { timeout: 5_000 })
+
+  // The unclaimed line reaches adjudication; its /goal claim would carry the
+  // image, so the command submit refuses it. The composer settles editable
+  // again with the retained claim disabling Send (adjudication and submission
+  // keep it read-only).
+  await pasteText(textarea, '/goal rebuild the cathedral')
+  const send = screen.getByRole('button', { name: 'Send message' })
+  expect(send).toHaveProperty('disabled', false)
+  fireEvent.keyDown(textarea, { key: 'Enter' })
+  expect(textarea.getAttribute('contenteditable')).toBe('false')
+  await waitFor(() => {
+    expect(textarea.getAttribute('contenteditable')).toBe('true')
+    expect(send).toHaveProperty('disabled', true)
+  }, { timeout: 5_000 })
+
+  expect(remote.mock.log.calls('commands/execute')).toHaveLength(0)
+  expect(remote.mock.log.calls('session/prompt')).toHaveLength(0)
+  expect(textarea.textContent).toBe('/goal rebuild the cathedral')
+  const rail = document.querySelector('[role="group"][aria-label="Pending attachments"]')
+  expect([...(rail?.querySelectorAll('img') ?? [])].map(img => img.getAttribute('alt'))).toEqual(['goal-ref.png'])
 })

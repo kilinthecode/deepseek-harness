@@ -504,6 +504,14 @@ interface LlmConfigurableProvider {
    * from outside.
    */
   declared?: boolean
+  /**
+   * The sign-in this route's adapter offers: the credential record a registered
+   * authorization flow writes, and whether that stored sign-in is the only way
+   * the route can authenticate when it names no credential reference — a
+   * provider serving no api-key auth has nothing else to fall back on. Absent
+   * when the adapter registers no flow for the route.
+   */
+  readonly authorization?: { readonly key: CredentialKey; readonly required: boolean }
   /** Configuration diagnostic for repair; unaffected models may remain serviceable. */
   error?: string
 }
@@ -638,6 +646,18 @@ interface GenerateOptions {
    * to separate cursors; adapters may map it to model-hidden transport metadata.
    */
   sessionId?: Branded<'SessionId'>
+  /**
+   * The session id whose provider-side cached prefix this request shares:
+   * the request's own session for a top-level session, or its delegation
+   * tree's root for a delegated child. It is transport metadata and never
+   * model-visible, so the session log does not record it — the
+   * `request/header` event carries only `config`, `adapterDefaults`, and
+   * `tools`. The loop recomputes it for each request from the live session
+   * registry. An adapter whose provider supports prompt-prefix cache routing
+   * may map it to that provider's cache-routing field, and an adapter
+   * without such a mechanism ignores it.
+   */
+  cacheKey?: Branded<'SessionId'>
   /**
    * Provider-neutral classification for an auxiliary model call. Adapters may
    * map the purpose to model-hidden transport metadata or purpose-specific

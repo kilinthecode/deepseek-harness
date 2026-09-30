@@ -11,6 +11,7 @@ import type {
   ContentBlock, FinishReason, GenerateOptions, Message, RequestMessage, TokenUsage, ToolSchema,
 } from '@deepseek-ai/dsh-llm'
 import type { Agent } from '@deepseek-ai/dsh-agent'
+import { delegationTreeRoot } from '@deepseek-ai/dsh-session'
 
 interface SummaryConfig {
   readonly summarizationProvider: string
@@ -109,7 +110,16 @@ export type SummaryResult = {
 /**
  * Run the default cache-reusing `ctx.llm.stream()` summarization call: replay
  * the conversation prefix, then append the compaction instruction as the final
- * user message so the provider's warm prefix cache is reused.
+ * user message so the provider's warm prefix cache is reused. Because this
+ * request replays `agent.session`'s own prefix, it carries that session's own
+ * delegation-tree `cacheKey` (not a fixed or session-title-style value), so a
+ * provider that routes on it lands this call on the same cached prefix as the
+ * session's ordinary requests. When the resolved provider and model equal the
+ * session's latest logged request route, the call also carries that request's
+ * logged `reasoningEffort`, explicit or adapter-filled, because some providers
+ * partition prefix caching by reasoning effort. A different configured
+ * summarization route, or the `AgentOptions` fallback used before any request
+ * is routed, carries no effort.
  * @param ctx - context providing the LLM service.
  * @param config - resolved backend configuration.
  * @param input - replayed conversation prefix (system, tools, and leading messages) to condense.
@@ -140,6 +150,11 @@ export async function summarizeWithLlm(
       'no provider/model available for summarization: set both BasicCompactionConfig summarization fields, route one request, or set both AgentOptions fields',
     )
   }
+  const reasoningEffort = latest !== undefined
+    && latest.provider === target.provider
+    && latest.model === target.model
+    ? latest.reasoningEffort
+    : undefined
 
   const assembler = new BlockAssembler()
   const messages: RequestMessage[] = [
@@ -157,7 +172,9 @@ export async function summarizeWithLlm(
     ...input.tools === undefined ? {} : { tools: [...input.tools] },
     maxTokens: config.maxTokens,
     sessionId: agent.session.id,
+    cacheKey: delegationTreeRoot(agent.session.header, id => agent.ctx.sessions.get(id)?.header),
     purpose: 'compaction',
+    ...reasoningEffort === undefined ? {} : { reasoningEffort },
     ...signal === undefined ? {} : { signal },
   }
   for await (const chunk of ctx.llm.stream(options)) assembler.push(chunk)

@@ -44,7 +44,7 @@ SDK 使用 base 默认提供的 `read`、`write` 和 `edit`。要添加 `str_rep
 
 #### 模型看到什么
 
-profile 在第一方指导之前提供 `You are a coding agent powered by the {{model}} model.`，并在独立的 persona 后缀中提供 `Your working directory is {{cwd}}.`。确切的 SDK 初始化路由与会话 cwd 会解析其中的占位符。默认文件工具 schema 包含 `read`、`write` 和 `edit`，不包含 `str_replace_editor`。
+profile 在第一方指导之前提供 `You are a coding agent.`，并在独立的 persona 后缀中提供 `Your working directory is {{cwd}}.`。该 persona 不指定路由，因此无论 SDK 初始化路由为何都渲染相同；会话 cwd 会解析剩余的占位符。默认文件工具 schema 包含 `read`、`write` 和 `edit`，不包含 `str_replace_editor`。
 
 #### Token 影响
 
@@ -52,7 +52,7 @@ profile 在第一方指导之前提供 `You are a coding agent powered by the {{
 
 #### KV Cache 影响
 
-对固定 profile、提供方、模型与工具清单保持稳定。由于随附 SDK profile 使用仅启动时 patch，profile 变化会在下一个进程生效。
+对固定 profile、提供方、模型与工具清单保持稳定。由于随附 SDK profile 使用仅启动时 patch，profile 变化会在下一个进程生效。会话中途的模型切换不会改变 persona 文本，因此不会仅因此触发系统提示词重写。
 
 ## 已知限制与延期工作
 

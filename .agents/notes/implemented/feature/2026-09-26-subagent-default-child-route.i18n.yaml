@@ -1,0 +1,22 @@
+# Bilingual-pair consistency record for 2026-09-26-subagent-default-child-route.md (docs/i18n/README.md): per heading
+# section, a hash of its English and Chinese blocks outside code blocks and generated regions.
+# After editing either side, bring the other along and re-record with:
+#   pnpm run verify-translation-pairing --write .agents/notes/implemented/feature/2026-09-26-subagent-default-child-route.md
+/agent-note-subagent-default-child-route:
+  en: a5e7f179c7fa9bad
+  zh: 1168e565ffffe929
+/agent-note-subagent-default-child-route/problem:
+  en: 022b67592eef34f2
+  zh: 0d0623271795ac05
+/agent-note-subagent-default-child-route/decision:
+  en: 478e7b852b69a39e
+  zh: caeeff87ef4b7bc1
+/agent-note-subagent-default-child-route/alternatives-considered:
+  en: 8c9f7ce98c69183a
+  zh: c58227034a44f26b
+/agent-note-subagent-default-child-route/consequences:
+  en: a39fb53bc46f47e7
+  zh: a7a0da56fb363299
+/agent-note-subagent-default-child-route/related-decisions:
+  en: b7e33814b2daaf43
+  zh: 03195ad62f142229

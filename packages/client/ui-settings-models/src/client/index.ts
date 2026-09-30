@@ -15,6 +15,7 @@ import type {} from '@deepseek-ai/dsh-client-ui-renderer/client'
 // Type-only: pulls the ctx.remote merge and the forwarded-event key face
 // (settings/credentials invalidations ride the allowlist) into this program.
 import type {} from '@deepseek-ai/dsh-api-remotes/client'
+import type { AuthorizationView } from '@deepseek-ai/dsh-api-authorization-controller/types'
 import { ModelsSection } from './ModelsSection.tsx'
 import type { ModelsSectionInjected } from './ModelsSection.tsx'
 import { DeepSeekOnboardingDialog } from './DeepSeekOnboardingDialog.tsx'
@@ -64,8 +65,8 @@ export function refreshIfLoaded(controller: ModelsSettingsStore): void {
  * constrained; registration depends on each slot through `slots.inject()`.
  */
 export const inject = [
-  'slots', 'locale', 'remote', 'remote.credentials', 'remote.llm', 'remote.settings', 'remote.session',
-  'configForms', 'settingsSchema',
+  'slots', 'locale', 'remote', 'remote.authorization', 'remote.credentials', 'remote.llm', 'remote.settings',
+  'remote.session', 'configForms', 'settingsSchema',
 ]
 
 /**
@@ -132,6 +133,35 @@ export function apply(ctx: ClientContext): void {
       for (const dispose of disposers) dispose()
     }
   }, 'ui-settings-models: pushed invalidations')
+
+  // The live sign-in view: one subscription for the whole page, since every
+  // row's declared flow and the page's single attempt ride the same stream. A
+  // started sign-in develops entirely on it — the notice carrying the URL and
+  // code, a raised prompt, and the authorized transition when the browser
+  // callback wins — so an open dialog and the row behind it follow without
+  // re-reading the directory. A terminal end reports itself, keeping the last
+  // known state instead of reading as current.
+  ctx.effect(() => {
+    const stream = ctx.remote.$stream<AuthorizationView>({
+      name: 'authorization',
+      open: signal => ctx.remote.authorization.watch(signal),
+      ended: () => new Error('authorization stream ended'),
+    })
+    const observing = (async () => {
+      try {
+        for await (const frame of stream) {
+          controller.mergeAuthorization(frame.value)
+          frame.accept()
+        }
+      } catch (error) {
+        controller.failAuthorization(error)
+      }
+    })()
+    return async () => {
+      await stream.dispose()
+      await observing
+    }
+  }, 'ui-settings-models: authorization stream')
 
   ctx.slots.inject('settings.section', () => ctx.slots.register({
     name: 'settings.section',

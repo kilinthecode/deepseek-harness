@@ -20,6 +20,8 @@ export type SubagentSettingsLocaleKey =
   | 'subagentModelSelectionPartial' | 'subagentModelSelectionUnavailable'
   | 'subagentModelSelectionUnavailableGroup' | 'subagentModelSelectionEmpty'
   | 'subagentModelSelectionRequired' | 'subagentModelSelectionConflict' | 'subagentModelSelectionOff'
+  | 'subagentModelSelectionDefaultLabel' | 'subagentModelSelectionDefaultSameAsCaller'
+  | 'subagentModelSelectionDefaultEffortLabel' | 'subagentModelSelectionDefaultEffortModelDefault'
 
 /** English copy. */
 export const en: Record<SubagentSettingsLocaleKey, string> = {
@@ -58,6 +60,10 @@ export const en: Record<SubagentSettingsLocaleKey, string> = {
   subagentModelSelectionRequired: 'Select at least one model before saving.',
   subagentModelSelectionConflict: 'Settings changed elsewhere. Discard your draft and try again.',
   subagentModelSelectionOff: 'Subagents use configured defaults or inherit the parent agent\'s model. Saved model choices are retained.',
+  subagentModelSelectionDefaultLabel: 'Default model for Subagents',
+  subagentModelSelectionDefaultSameAsCaller: 'Same as the calling agent',
+  subagentModelSelectionDefaultEffortLabel: 'Reasoning effort',
+  subagentModelSelectionDefaultEffortModelDefault: 'Model default',
 }
 
 /** Simplified Chinese copy. */
@@ -97,6 +103,10 @@ export const zh: Record<SubagentSettingsLocaleKey, string> = {
   subagentModelSelectionRequired: '保存前请至少选择一个模型。',
   subagentModelSelectionConflict: '设置已在其他位置更新。请放弃修改后重试。',
   subagentModelSelectionOff: '关闭后，子智能体使用配置的默认模型或继承父 Agent 的模型；已选模型会保留。',
+  subagentModelSelectionDefaultLabel: '子智能体默认模型',
+  subagentModelSelectionDefaultSameAsCaller: '与调用方 Agent 相同',
+  subagentModelSelectionDefaultEffortLabel: '推理强度',
+  subagentModelSelectionDefaultEffortModelDefault: '模型默认',
 }
 
 /**

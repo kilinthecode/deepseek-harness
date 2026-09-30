@@ -16,7 +16,8 @@ import {
 } from '@deepseek-ai/dsh-app-boot'
 import { provideCmdline } from '@deepseek-ai/dsh-cmdline'
 import { SessionId, SessionLogOffset } from '@deepseek-ai/dsh-session'
-import type { Agent } from '@deepseek-ai/dsh-agent'
+import { assembleContextFor, type Agent } from '@deepseek-ai/dsh-agent'
+import { renderPrompt } from '@deepseek-ai/dsh-system-prompt'
 import type { PatchOptions } from '@deepseek-ai/cordis-plugin-include'
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest'
 import { dump, load } from 'js-yaml'
@@ -308,6 +309,36 @@ describe('the shipped Web composition', () => {
     }
   })
 
+  it('reaches a settings-recorded default child route through the real preset composition', async () => {
+    await ctx.settings.update(SUBAGENT_MODEL_SELECTION_SETTINGS_NAMESPACE, {
+      enabled: true,
+      allowedModels: [{ provider: 'deepseek-official', model: 'deepseek-v4-flash' }],
+      defaultModel: { provider: 'deepseek-official', model: 'deepseek-v4-flash', reasoningEffort: 'max' },
+    })
+    const defaulted = await ctx.agents.create({
+      sessionId: SessionId('preset-model-selection-default'),
+      setup: agentCtx => ctx.agentPresets.mount(agentCtx, 'standard').then(() => undefined),
+    })
+    try {
+      // The tool's own description states the effect of omitting provider/model.
+      const schema = ctx.tools.schemas(defaulted.agent).find(entry => entry.name === 'subagent')!
+      expect(schema.description).toContain(
+        'Omit `provider` and `model` to run the child on `deepseek-official/deepseek-v4-flash` at reasoning effort `max`.',
+      )
+      // The durable Session policy — what a real delegation call would resolve
+      // its child route from — carries the same recorded default.
+      const projections = ctx.get('sessionProjections')
+      if (projections === undefined) throw new Error('the Web composition must compose a projection registry')
+      expect(projections.stateOf(defaulted.agent.session, 'subagentModelSelectionPolicy')).toEqual({
+        allowedModels: [{ provider: 'deepseek-official', model: 'deepseek-v4-flash' }],
+        defaultModel: { provider: 'deepseek-official', model: 'deepseek-v4-flash', reasoningEffort: 'max' },
+      })
+    } finally {
+      await ctx.settings.update(SUBAGENT_MODEL_SELECTION_SETTINGS_NAMESPACE, { enabled: false, defaultModel: null })
+      await defaulted.dispose()
+    }
+  })
+
   it('composes the exact RL prompt and persistent shell from `minimal`', async () => {
     const handle = await ctx.agents.create({
       sessionId: SessionId('preset-minimal'),
@@ -398,6 +429,40 @@ describe('the shipped Web composition', () => {
       await handle.dispose()
     }
   })
+
+  it.each(['standard', 'ptc', 'cordis'] as const)(
+    'renders an identical `%s` system prompt across a model switch',
+    async (presetId) => {
+      // The shipped persona names no route (packages/bundle/web-app/presets/
+      // {standard,ptc,cordis}.patch.yml): rendering it under two different
+      // resolved models must produce byte-identical text, so surface node 0
+      // stays cache-stable across a model switch instead of forcing a
+      // provider-prefix miss on every request that follows one.
+      const flash = await ctx.agents.create({
+        sessionId: SessionId(`preset-${presetId}-route-flash`),
+        meta: { cwd: process.cwd() },
+        agentOptions: { provider: 'deepseek-official', model: 'deepseek-v4-flash' },
+        setup: agentCtx => ctx.agentPresets.mount(agentCtx, presetId).then(() => undefined),
+      })
+      const pro = await ctx.agents.create({
+        sessionId: SessionId(`preset-${presetId}-route-pro`),
+        meta: { cwd: process.cwd() },
+        agentOptions: { provider: 'deepseek-official', model: 'deepseek-v4-pro' },
+        setup: agentCtx => ctx.agentPresets.mount(agentCtx, presetId).then(() => undefined),
+      })
+      try {
+        const flashPrompt = renderPrompt(await ctx.systemPrompt.assemble(assembleContextFor(flash.agent)))
+        const proPrompt = renderPrompt(await ctx.systemPrompt.assemble(assembleContextFor(pro.agent)))
+        expect(flashPrompt).toBe(proPrompt)
+        expect(flashPrompt).toContain('You are a coding agent.')
+        expect(flashPrompt).not.toContain('deepseek-v4-flash')
+        expect(flashPrompt).not.toContain('deepseek-v4-pro')
+      } finally {
+        await pro.dispose()
+        await flash.dispose()
+      }
+    },
+  )
 
   it('presents `ptc` as PTC mode without disturbing a native session beside it', async () => {
     const coded = await ctx.agents.create({
