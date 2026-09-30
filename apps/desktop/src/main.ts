@@ -2,6 +2,8 @@ import { WINDOWS_TITLEBAR_HEIGHT } from './windows-layout.ts'
 /** Electron shell: desktop project ownership, custom protocol, windows, and lifecycle. */
 
 import { readFile, writeFile } from 'node:fs/promises'
+import { resolveDshHome } from '@deepseek-ai/dsh-home-paths'
+import { DESKTOP_EDITION_ENV, resolveDesktopEdition } from '../scripts/desktop-release-environment.mjs'
 import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import {
@@ -44,16 +46,25 @@ let focusPrimaryWindow = (): void => {}
 let stopForRecovery = async (): Promise<void> => {}
 let shuttingDown = false
 let windowsLanguage: string | undefined
+let desktopDisplayName: string | undefined
+let activeDshHome: string | undefined
+
+/**
+ * Deadline after which the primary window is revealed even though its page has
+ * not reported a first paint, so a stalled load stays visible and closeable
+ * instead of leaving a running process with no window.
+ */
+const FIRST_PAINT_TIMEOUT_MS = 15_000
 
 function currentDesktopLocale(): ReturnType<typeof resolveDesktopLocale> {
-  return resolveDesktopLocale(windowsLanguage ?? app.getLocale())
+  return resolveDesktopLocale(windowsLanguage ?? app.getLocale(), desktopDisplayName)
 }
 const recovery = new DesktopFatalRecovery({
   messages: () => currentDesktopLocale().messages,
   show: options => dialog.showMessageBox(options),
   stop: () => { shuttingDown = true; return stopForRecovery() },
   disablePlugins: async () => {
-    const manager = new DesktopProjectManager(resolveDesktopPaths(), runtimeResources())
+    const manager = new DesktopProjectManager(resolveDesktopPaths(activeDshHome), runtimeResources())
     const backupPath = await manager.disableAllPlugins()
     console.info('Desktop profile recovery completed:', { profilePatchBackup: backupPath ?? null, homePatch: 'unchanged' })
   },
@@ -183,10 +194,23 @@ function createWindow(preload: string, show = false, primary = false): BrowserWi
 }
 
 async function main(): Promise<void> {
+  const manifestValue: unknown = JSON.parse(await readFile(join(app.getAppPath(), 'package.json'), 'utf8'))
+  if (typeof manifestValue !== 'object' || manifestValue === null) throw new Error('desktop policy: invalid application manifest')
+  const manifest = manifestValue as Record<string, unknown>
+  const editionValue = app.isPackaged ? manifest.dshDesktopEdition : process.env[DESKTOP_EDITION_ENV]
+  if (editionValue !== undefined && typeof editionValue !== 'string') {
+    throw new Error(`desktop policy: ${DESKTOP_EDITION_ENV} must be a string`)
+  }
+  const edition = resolveDesktopEdition({ [DESKTOP_EDITION_ENV]: editionValue })
+  const configuredHome = process.env.DSH_HOME
+  const dshHome = resolveDshHome(configuredHome === undefined || configuredHome.trim() === ''
+    ? `~/${edition.defaultDshHomeDirectoryName}` : undefined)
+  desktopDisplayName = edition.displayName
+  activeDshHome = dshHome
   const journalDirectory = process.env.DSH_DESKTOP_UPDATE_JOURNAL_DIR
   const updateJournal = journalDirectory === undefined ? undefined : new DesktopUpdateJournal(journalDirectory, app.getVersion())
   const resources = runtimeResources()
-  const paths = resolveDesktopPaths()
+  const paths = resolveDesktopPaths(dshHome)
   const development = !app.isPackaged
   const activeProject = paths.profile
   const manager = new DesktopProjectManager(paths, resources)
@@ -205,7 +229,7 @@ async function main(): Promise<void> {
   const isQuitting = (): boolean => quitting
   const currentMainWindow = (): BrowserWindow | undefined => mainWindow
   const ordinaryDialogs = new Set<AbortController>()
-  const locale = resolveDesktopLocale(app.getLocale())
+  const locale = resolveDesktopLocale(app.getLocale(), edition.displayName)
   const messages = locale.messages
   const updateDialog = new DesktopUpdateDialog(fileURLToPath(new URL('./preload-update-dialog.cjs', import.meta.url)), locale)
   const isMandatory = (): boolean => mandatoryPolicy?.state.blocking === true
@@ -248,7 +272,7 @@ async function main(): Promise<void> {
   const backend = new DesktopBackendController((onFailure) => {
     const hostInspectPort = developmentHostInspectPort(development)
     const host = new DesktopHostProcess(resources.node, resources.dsh, activeProject,
-      hostInspectPort, process.env, onFailure,
+      hostInspectPort, { ...process.env, DSH_HOME: dshHome }, onFailure,
       development ? join(app.getAppPath(), '.desktop-build', 'targets', `${process.platform === 'darwin' ? 'mac' : 'win'}-${process.arch}`, 'runtime', 'primary-runtime')
         : join(process.resourcesPath, 'runtime', 'primary-runtime'),
       development ? 'link' : 'runtime', resources)
@@ -579,7 +603,7 @@ async function main(): Promise<void> {
   // development launch lacks; carry the product icon on the Dock instead.
   if (development && process.platform === 'darwin') app.dock?.setIcon(join(app.getAppPath(), 'resources', 'icon-macos.png'))
   app.setAboutPanelOptions({
-    applicationName: 'Portal',
+    applicationName: edition.displayName,
     applicationVersion: app.getVersion(),
     // The release has no separate build number; omit Electron's bundle version.
     version: '',
@@ -662,10 +686,20 @@ async function main(): Promise<void> {
     // Hidden until the first paint so the window never shows an empty
     // transparent frame before the boot page renders.
     const window = createWindow(appPreload, false, true)
-    window.once('ready-to-show', () => { if (!window.isDestroyed()) window.show() })
+    // A page that never paints would otherwise leave the process running with no
+    // visible window and no dialog, so the deadline reveals it regardless. The
+    // load failures below still report through reportFatal.
+    const firstPaint = setTimeout(() => { if (!window.isDestroyed()) window.show() }, FIRST_PAINT_TIMEOUT_MS)
+    window.once('ready-to-show', () => {
+      clearTimeout(firstPaint)
+      if (!window.isDestroyed()) window.show()
+    })
     mainWindow = window
     window.on('focus', automaticCheck)
-    window.on('closed', () => { if (mainWindow === window) mainWindow = undefined })
+    window.on('closed', () => {
+      clearTimeout(firstPaint)
+      if (mainWindow === window) mainWindow = undefined
+    })
     window.webContents.on('did-fail-load', (_event, code, description, url, isMainFrame) => {
       if (isMainFrame && code !== -3 && !quitting && !window.isDestroyed()) {
         reportFatal(new Error(`Desktop page failed to load: ${url} (${String(code)}: ${description})`))
@@ -722,8 +756,6 @@ async function main(): Promise<void> {
   })
 
   mainWindow = createMainWindow()
-  const manifest: unknown = JSON.parse(await readFile(join(app.getAppPath(), 'package.json'), 'utf8'))
-  if (typeof manifest !== 'object' || manifest === null) throw new Error('desktop policy: invalid application manifest')
   const developmentPolicy = app.isPackaged ? undefined : process.env.DSH_DESKTOP_MANDATORY_UPDATE_CONFIG
   const policyInput: unknown = app.isPackaged
     ? ('dshMandatoryUpdatePolicy' in manifest ? manifest.dshMandatoryUpdatePolicy : undefined)

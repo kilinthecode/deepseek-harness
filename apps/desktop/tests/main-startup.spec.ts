@@ -3,12 +3,12 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { IpcMainInvokeEvent } from 'electron'
 import { join } from 'node:path'
 import { mkdtempSync, readFileSync, readdirSync, rmSync } from 'node:fs'
-import { tmpdir } from 'node:os'
+import { homedir, tmpdir } from 'node:os'
 import type { MenuItemConstructorOptions, MessageBoxOptions } from 'electron'
 import { DESKTOP_IPC, type DesktopUpdateState } from '../src/ipc.ts'
 import { MANDATORY_IPC } from '../src/mandatory-update-ipc.ts'
 import { DesktopHostUncleanExitError } from '../src/host-process.ts'
-import { en } from '../src/locale.ts'
+import { en, resolveDesktopLocale } from '../src/locale.ts'
 import { DesktopUpdatePreparationError } from '../src/update-error.ts'
 
 type InvokeEvent = { sender?: unknown; senderFrame: { url: string } }
@@ -40,6 +40,8 @@ const harness = await vi.hoisted(async () => {
   let quitCompleted = deferred()
   let policyBlocked = deferred()
   let embeddedPolicy: unknown
+  let manifestEdition: unknown
+  let resolvedDshHome: string | undefined
   let closeWindowsOnQuit = false
   let updateState: DesktopUpdateState = { phase: 'idle' }
   const updateCheck = vi.fn(async (_manual?: boolean): Promise<DesktopUpdateState> => updateState)
@@ -158,6 +160,10 @@ const harness = await vi.hoisted(async () => {
     get policyBlocked() { return policyBlocked },
     get embeddedPolicy() { return embeddedPolicy },
     set embeddedPolicy(value: unknown) { embeddedPolicy = value },
+    get manifestEdition() { return manifestEdition },
+    set manifestEdition(value: unknown) { manifestEdition = value },
+    get resolvedDshHome() { return resolvedDshHome },
+    set resolvedDshHome(value: string | undefined) { resolvedDshHome = value },
     nextNavigation() { navigated = deferred(); return navigated.promise },
     nextHostStart() { hostStarted = deferred(); return hostStarted.promise },
     get pluginsEnabled() { return pluginsEnabled },
@@ -180,6 +186,8 @@ const harness = await vi.hoisted(async () => {
       navigated = deferred(); dialogShown = deferred(); quitCompleted = deferred()
       policyBlocked = deferred()
       embeddedPolicy = undefined
+      manifestEdition = undefined
+      resolvedDshHome = undefined
     },
   }
 })
@@ -216,13 +224,17 @@ vi.mock('node:fs/promises', async (importOriginal) => {
   const original = await importOriginal<typeof import('node:fs/promises')>()
   return { ...original, readFile: vi.fn((path: Parameters<typeof original.readFile>[0], encoding?: 'utf8') => {
     if (path === join('desktop-test-app', 'package.json')) {
-      return Promise.resolve(JSON.stringify({ dshDesktopAppId: 'com.deepseek.dsh', dshMandatoryUpdatePolicy: harness.embeddedPolicy }))
+      return Promise.resolve(JSON.stringify({ dshDesktopAppId: 'com.deepseek.dsh', dshDesktopEdition: harness.manifestEdition,
+        dshMandatoryUpdatePolicy: harness.embeddedPolicy }))
     }
     return encoding === undefined ? original.readFile(path) : original.readFile(path, encoding)
   }) }
 })
 vi.mock('../src/runtime-tree.ts', () => ({ readDesktopRuntime: () => ({ release: { version: '1.0.0' } }) }))
-vi.mock('../src/paths.ts', () => ({ resolveDesktopPaths: () => ({ profile: 'desktop-test-profile' }) }))
+vi.mock('../src/paths.ts', () => ({ resolveDesktopPaths: (home?: string) => {
+  harness.resolvedDshHome = home
+  return { profile: 'desktop-test-profile' }
+} }))
 vi.mock('../src/project-manager.ts', () => ({
   DesktopProjectManager: class {
     readonly applyRelease = harness.applyRelease
@@ -290,7 +302,9 @@ beforeEach(() => {
   vi.spyOn(console, 'info').mockImplementation(() => {})
   vi.stubEnv('DSH_DESKTOP_PNPM_ENTRY', 'test-pnpm')
   vi.stubEnv('DSH_DESKTOP_DSH_DIR', 'test-runtime')
-  vi.stubGlobal('process', { ...process, platform: 'win32', resourcesPath: 'desktop-test-resources' })
+  vi.stubEnv('DSH_DESKTOP_EDITION', undefined)
+  vi.stubEnv('DSH_HOME', undefined)
+  vi.stubGlobal('process', { ...process, platform: 'win32', arch: 'x64', resourcesPath: 'desktop-test-resources' })
   vi.stubEnv('DSH_DESKTOP_HOST_INSPECT_PORT', undefined)
   vi.stubEnv('DSH_DESKTOP_MANDATORY_UPDATE_CONFIG', undefined)
   vi.stubEnv('DSH_DESKTOP_UPDATE_JOURNAL_DIR', undefined)
@@ -315,7 +329,7 @@ describe('desktop main startup', () => {
     ['win32', true, 'zh-CN'],
     ['win32', false, 'en-US'],
   ] as const)('offers the native About panel before other commands on %s (packaged=%s, locale=%s)', async (platform, packaged, locale) => {
-    vi.stubGlobal('process', { ...process, platform })
+    vi.stubGlobal('process', { ...process, platform, arch: platform === 'win32' ? 'x64' : process.arch })
     harness.app.isPackaged = packaged
     vi.spyOn(harness.app, 'getLocale').mockReturnValue(locale)
     await readyForUpdate()
@@ -325,6 +339,28 @@ describe('desktop main startup', () => {
     expect({ menu: submenu.slice(0, 2), options: { ...options, iconPath: '<app icon>' } }).toEqual(expected[locale])
     expect(options.iconPath).toBe(packaged ? join('desktop-test-resources', 'icon.png')
       : join('desktop-test-app', 'resources', 'icon-windows.png'))
+  })
+
+  it('uses the packaged Portal Dev name and isolated default home in the Host', async () => {
+    harness.manifestEdition = 'portal-dev'
+    const host = await readyForUpdate()
+    const devHome = join(homedir(), '.dsh-dev')
+    expect(harness.app.setAboutPanelOptions).toHaveBeenCalledWith(expect.objectContaining({ applicationName: 'Portal Dev Harness' }))
+    expect(applicationMenuItems()[0]?.label).toBe('About Portal Dev Harness')
+    expect(host.environment?.DSH_HOME).toBe(devHome)
+    expect(harness.resolvedDshHome).toBe(devHome)
+    expect(process.env.DSH_HOME).toBeUndefined()
+    expect(resolveDesktopLocale('en-US', 'Portal Dev Harness').messages.updateTitle).toBe('Portal Dev Harness Update')
+    expect(resolveDesktopLocale('zh-CN', 'Portal Dev Harness').messages.startupFailed).toBe('Portal Dev Harness 无法使用')
+  })
+
+  it('retains a user-configured home for Portal Dev', async () => {
+    const configuredHome = join(tmpdir(), 'portal-dev-user-home')
+    harness.manifestEdition = 'portal-dev'
+    vi.stubEnv('DSH_HOME', configuredHome)
+    const host = await readyForUpdate()
+    expect(host.environment?.DSH_HOME).toBe(configuredHome)
+    expect(harness.resolvedDshHome).toBe(configuredHome)
   })
 
   it('shows one explained startup login before Host readiness and joins concurrent checks without reopening it', async () => {
@@ -549,7 +585,7 @@ describe('desktop main startup', () => {
     expect(() => handler(event, 'application', NaN, 34)).toThrow('invalid popup request')
     const application = handler(event, 'application', 48, 34)
     expect(harness.menu.buildFromTemplate.mock.lastCall![0].map(item => item.label ?? item.type)).toEqual([
-      '关于 Portal', 'separator', '检查更新…', 'separator', '退出',
+      '关于 Portal Harness', 'separator', '检查更新…', 'separator', '退出',
     ])
     expect(harness.popup.mock.lastCall![0]).toMatchObject({ window, x: 48, y: 34 })
     expect(harness.popup.mock.lastCall![0].callback).toBeTypeOf('function')
@@ -1297,7 +1333,9 @@ describe('desktop main startup', () => {
       profileResolution: 'runtime',
       profile: 'desktop-test-profile',
     })
-    expect(harness.hosts[0]!.environment).toBe(process.env)
+    expect(harness.hosts[0]!.environment).not.toBe(process.env)
+    expect(harness.hosts[0]!.environment?.DSH_HOME).toBe(join(homedir(), '.dsh'))
+    expect(process.env.DSH_HOME).toBeUndefined()
     expect(harness.hosts[0]!.start).toHaveBeenCalledTimes(1)
     expect(harness.windows).toHaveLength(1)
     expect(window.urls).toEqual(['dsh-app://app/'])

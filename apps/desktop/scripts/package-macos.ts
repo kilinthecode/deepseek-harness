@@ -6,6 +6,7 @@ import { basename, dirname, join } from 'node:path'
 import { promisify } from 'node:util'
 import { notarize } from '@electron/notarize'
 import {
+  resolveDesktopEdition,
   resolveMacOSNotarizationEnvironment,
   resolveMacOSSigningEnvironment,
 } from './desktop-release-environment.mjs'
@@ -73,10 +74,11 @@ export async function packageMacOSArtifacts(
   apple: MacOSArtifactOperations = operations,
 ): Promise<void> {
   const { arch, version, artifactsRoot, environment } = request
+  const edition = resolveDesktopEdition(environment)
   const expected = resolveMacOSSigningEnvironment(environment)
   const credentials = resolveMacOSNotarizationEnvironment(environment)
-  const update = resolveDesktopAutoUpdateConfig(environment, 'darwin', arch)
-  const appPath = join(artifactsRoot, arch === 'arm64' ? 'mac-arm64' : 'mac', 'Portal.app')
+  const update = { ...resolveDesktopAutoUpdateConfig(environment, 'darwin', arch), channel: edition.updateChannel }
+  const appPath = join(artifactsRoot, arch === 'arm64' ? 'mac-arm64' : 'mac', `${edition.productName}.app`)
   const root = await mkdtemp(join(dirname(artifactsRoot), 'notarization-'))
   const zipApp = join(root, 'zip', basename(appPath))
   const dmgApp = join(root, 'dmg', basename(appPath))
@@ -108,12 +110,12 @@ export async function packageMacOSArtifacts(
     await verifyMacOSAppUpdateConfig(dmgApp, update)
     apple.verifySignature(zipApp, expected)
     apple.verifySignature(dmgApp, expected)
-    const base = `deepseek-harness-${version}-mac-${arch}`
+    const base = `${edition.artifactNamePrefix}-${version}-mac-${arch}`
     const artifacts = [
       [dmgOutput, `${base}.dmg`],
       [zipOutput, `${base}.zip`],
       [zipOutput, `${base}.zip.blockmap`],
-      [zipOutput, desktopUpdateMetadataFilename(version, 'darwin')],
+      [zipOutput, desktopUpdateMetadataFilename(version, 'darwin', edition.edition)],
     ] as const
     for (const [output, filename] of artifacts) {
       const file = join(output, filename)

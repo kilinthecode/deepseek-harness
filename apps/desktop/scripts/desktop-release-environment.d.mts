@@ -1,6 +1,29 @@
 /** Environment variable that supplies the Electron application identifier. */
 export const DESKTOP_APP_ID_ENV: 'DSH_DESKTOP_APP_ID'
 
+/** Environment variable that selects the packaged Desktop edition. */
+export const DESKTOP_EDITION_ENV: 'DSH_DESKTOP_EDITION'
+
+/** Supported Desktop edition. */
+export type DesktopEditionName = 'portal' | 'portal-dev'
+
+/** Packaging and runtime identities derived from one Desktop edition. */
+export interface DesktopEditionConfiguration {
+  readonly edition: DesktopEditionName
+  readonly productName: 'Portal' | 'Portal Dev'
+  readonly artifactNamePrefix: 'deepseek-harness' | 'portal-dev'
+  readonly updateChannel: 'nightly' | 'dev'
+  readonly defaultDshHomeDirectoryName: '.dsh' | '.dsh-dev'
+  readonly displayName: 'Portal Harness' | 'Portal Dev Harness'
+}
+
+/**
+ * Resolve one validated Desktop edition and its packaging and runtime identities.
+ * @param env Packaging or runtime environment.
+ * @returns Edition identity and derived settings.
+ */
+export function resolveDesktopEdition(env: NodeJS.ProcessEnv): DesktopEditionConfiguration
+
 /** Environment variable that supplies electron-builder's macOS certificate qualifier. */
 export const MACOS_SIGNING_IDENTITY_ENV: 'DSH_DESKTOP_MACOS_SIGNING_IDENTITY'
 

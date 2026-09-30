@@ -4,6 +4,7 @@ import { execFile } from 'node:child_process'
 import { promisify } from 'node:util'
 import {
   resolveDesktopAppId,
+  resolveDesktopEdition,
   resolveMacOSNotarizationEnvironment,
   resolveMacOSSigningEnvironment,
 } from './desktop-release-environment.mjs'
@@ -41,6 +42,7 @@ export function createElectronBuilderConfig(
   preparedRuntime = undefined,
 ) {
   const appId = resolveDesktopAppId(env)
+  const edition = resolveDesktopEdition(env)
   const policy = resolveDesktopPolicyEnvironment(env)
   const targetPlatform = env.DSH_DESKTOP_TARGET_PLATFORM
   const resolvedPlatform = targetPlatform ?? hostPlatform
@@ -77,9 +79,9 @@ export function createElectronBuilderConfig(
   if (preparedRuntime !== undefined) buildPaths.dsh = preparedRuntime
   return {
     appId,
-    extraMetadata: { dshDesktopAppId: appId, dshMandatoryUpdatePolicy: policy },
-    productName: 'Portal',
-    artifactName: 'deepseek-harness-${version}-${os}-${arch}.${ext}',
+    extraMetadata: { dshDesktopAppId: appId, dshDesktopEdition: edition.edition, dshMandatoryUpdatePolicy: policy },
+    productName: edition.productName,
+    artifactName: `${edition.artifactNamePrefix}-\${version}-\${os}-\${arch}.\${ext}`,
     directories: { output: unsigned ? join(buildPaths.root, 'unsigned-artifacts') : buildPaths.artifacts },
     asar: true,
     electronDist: buildPaths.electron,
@@ -100,6 +102,7 @@ export function createElectronBuilderConfig(
     files: [
       'lib/main.js',
       'lib/preload-app.cjs',
+      'scripts/desktop-release-environment.mjs',
       'lib/preload-mandatory.cjs',
       'lib/preload-update-dialog.cjs',
       'renderer/**/*',
@@ -199,6 +202,6 @@ export function createElectronBuilderConfig(
       differentialPackage: true,
     },
     detectUpdateChannel: false,
-    publish: update === undefined ? null : [{ provider: 'generic', url: update.publicUrl, channel: 'nightly' }],
+    publish: update === undefined ? null : [{ provider: 'generic', url: update.publicUrl, channel: edition.updateChannel }],
   }
 }

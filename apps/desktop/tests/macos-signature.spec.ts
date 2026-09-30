@@ -58,6 +58,9 @@ describe('desktop macOS release signature', () => {
     ]))
     expect(config).toMatchObject({
       appId: RELEASE_ENVIRONMENT.DSH_DESKTOP_APP_ID,
+      productName: 'Portal',
+      artifactName: 'deepseek-harness-${version}-${os}-${arch}.${ext}',
+      extraMetadata: { dshDesktopEdition: 'portal' },
       mac: {
         identity: RELEASE_ENVIRONMENT.DSH_DESKTOP_MACOS_SIGNING_IDENTITY,
         forceCodeSigning: true,
@@ -75,6 +78,17 @@ describe('desktop macOS release signature', () => {
       }],
     })
     expect(typeof config.artifactBuildCompleted).toBe('function')
+  })
+
+  it('packages Portal Dev on its distinct product name and update channel', async () => {
+    const { createElectronBuilderConfig } = await import('../electron-builder.config.mjs')
+    const config = createElectronBuilderConfig({ ...RELEASE_ENVIRONMENT, DSH_DESKTOP_EDITION: 'portal-dev' }, 'darwin', 'arm64')
+    expect(config).toMatchObject({
+      productName: 'Portal Dev',
+      artifactName: 'portal-dev-${version}-${os}-${arch}.${ext}',
+      extraMetadata: { dshDesktopEdition: 'portal-dev' },
+      publish: [{ provider: 'generic', channel: 'dev' }],
+    })
   })
 
   it('seals PAK resources with their enclosing bundle while signing executable code', async () => {

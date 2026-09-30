@@ -5,14 +5,19 @@ export interface DesktopElectronBuilderConfig {
     readonly output: string
   }
   readonly files: readonly [
-    string,
-    string,
-    string,
-    string,
+    'lib/main.js',
+    'lib/preload-app.cjs',
+    'scripts/desktop-release-environment.mjs',
+    'lib/preload-mandatory.cjs',
+    'lib/preload-update-dialog.cjs',
+    'renderer/**/*',
+    'package.json',
     { readonly from: string, readonly to: 'dsh', readonly filter: readonly ['**/*'] },
     { readonly from: string, readonly to: 'dsh/node_modules', readonly filter: readonly ['**/*'] },
   ]
-  readonly extraMetadata: { readonly dshDesktopAppId: string }
+  readonly productName: 'Portal' | 'Portal Dev'
+  readonly artifactName: string
+  readonly extraMetadata: { readonly dshDesktopAppId: string, readonly dshDesktopEdition: 'portal' | 'portal-dev' }
   readonly asarUnpack: readonly string[]
   readonly extraResources: readonly [
     { readonly from: string, readonly to: 'runtime' },
@@ -47,7 +52,7 @@ export interface DesktopElectronBuilderConfig {
   readonly beforeBuild: () => Promise<boolean>
   readonly beforePack: (context: { readonly appOutDir: string }) => Promise<void>
   readonly artifactBuildCompleted: (artifact: { readonly file: string }) => Promise<void> | undefined
-  readonly publish: readonly [{ readonly provider: 'generic', readonly url: string }] | null
+  readonly publish: readonly [{ readonly provider: 'generic', readonly url: string, readonly channel: 'nightly' | 'dev' }] | null
 }
 
 /**
