@@ -22,6 +22,9 @@ const DEFAULT_THRESHOLD_RATIO = 0.8
 /** Default verbatim-tail fraction for every routed model. */
 const DEFAULT_RETAIN_RATIO = 0.16
 
+/** Default fraction of the pressure threshold a prune-only pass must leave free below it. */
+const DEFAULT_PRUNE_HEADROOM_RATIO = 0.2
+
 /** Fields shared by top-level defaults and exact-target overrides. */
 const POLICY_CONFIG_KEYS = [
   'thresholdRatio',
@@ -33,6 +36,7 @@ const POLICY_CONFIG_KEYS = [
   'maxTokens',
   'compactionRetries',
   'maxOverflowRetries',
+  'pruneHeadroomRatio',
 ] as const
 
 /** Complete public top-level configuration key set. */
@@ -104,6 +108,7 @@ export function resolveConfig(config: BasicCompactionConfig = {}): ResolvedConfi
     maxTokens,
     compactionRetries: config.compactionRetries ?? 1,
     maxOverflowRetries: config.maxOverflowRetries ?? 1,
+    pruneHeadroomRatio: config.pruneHeadroomRatio ?? DEFAULT_PRUNE_HEADROOM_RATIO,
     modelPolicies,
     auto: config.auto ?? true,
   })
@@ -135,6 +140,7 @@ export function resolveTargetPolicy(
     maxTokens: override?.maxTokens ?? config.maxTokens,
     compactionRetries: override?.compactionRetries ?? config.compactionRetries,
     maxOverflowRetries: override?.maxOverflowRetries ?? config.maxOverflowRetries,
+    pruneHeadroomRatio: override?.pruneHeadroomRatio ?? config.pruneHeadroomRatio,
   })
 }
 
@@ -202,12 +208,15 @@ export function resolveCompactSpec(
       + `(${retainTokens}) must be less than threshold tokens ${thresholdTokens}`,
     )
   }
+  const pruneHeadroomTokens = Math.floor(thresholdTokens * policy.pruneHeadroomRatio)
   return deepFreeze({
     target: { ...policy.target },
     contextWindow,
     thresholdRatio: policy.thresholdRatio,
     thresholdTokens,
     retainTokens,
+    pruneHeadroomRatio: policy.pruneHeadroomRatio,
+    pruneHeadroomTokens,
     summarizationProvider: policy.summarizationProvider,
     summarizationModel: policy.summarizationModel,
     maxTokens: policy.maxTokens,
@@ -285,6 +294,7 @@ function validatePolicy(
   const maxTokens = config.maxTokens
   const compactionRetries = config.compactionRetries
   const maxOverflowRetries = config.maxOverflowRetries
+  const pruneHeadroomRatio = config.pruneHeadroomRatio
   if (thresholdRatio !== undefined) assertRatio(`${name}.thresholdRatio`, thresholdRatio)
   if (headroomTokens !== undefined) assertNonNegativeInteger(`${name}.headroomTokens`, headroomTokens)
   if (retainRatio !== undefined) assertRatio(`${name}.retainRatio`, retainRatio)
@@ -298,6 +308,9 @@ function validatePolicy(
   }
   if (maxOverflowRetries !== undefined) {
     assertNonNegativeInteger(`${name}.maxOverflowRetries`, maxOverflowRetries)
+  }
+  if (pruneHeadroomRatio !== undefined) {
+    assertPruneHeadroomRatio(`${name}.pruneHeadroomRatio`, pruneHeadroomRatio)
   }
 
   validateSummarizationPair(config, name)
@@ -358,5 +371,11 @@ function assertNonNegativeInteger(name: string, value: unknown): asserts value i
 function assertRatio(name: string, value: unknown): asserts value is number {
   if (typeof value !== 'number' || !Number.isFinite(value) || value <= 0 || value > 1) {
     throw new Error(`${name} (${String(value)}) must be a number in (0, 1]`)
+  }
+}
+
+function assertPruneHeadroomRatio(name: string, value: unknown): asserts value is number {
+  if (typeof value !== 'number' || !Number.isFinite(value) || value < 0 || value >= 1) {
+    throw new Error(`${name} (${String(value)}) must be a number in [0, 1)`)
   }
 }

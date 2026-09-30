@@ -72,6 +72,7 @@ All settings are optional. With context window `W`, effective request output cap
 | `maxTokens` | `headroomTokens` (`65536`) | Positive summary output cap, including any provider-counted reasoning tokens. Explicit per-model caps override explicit global caps; otherwise the cap follows the resolved headroom. |
 | `compactionRetries` | `1` | Extra condensation attempts after the first when pressure remains above threshold. |
 | `maxOverflowRetries` | `1` | Maximum retries after a confirmed context-window overflow; `0` disables recovery only. |
+| `pruneHeadroomRatio` | `0.2` | Fraction of the pressure threshold a prune-only pass must clear below the threshold to land alone with no summary; see [Trimming oversized tool outputs](#trimming-oversized-tool-outputs) for the fall-through and no-range cases. |
 | `modelPolicies` | `[]` | Exact `{ provider, model, ...partialPolicy }` overrides for individual model routes. |
 | `auto` | `true` | Enable automatic condensation and overflow recovery; set `false` for manual-only operation. |
 
@@ -79,15 +80,17 @@ Misconfiguration fails fast: unknown settings, duplicate per-model overrides, in
 
 ### What happens when condensation runs
 
-The oldest balanced span is replaced by one summary message and the recent tail stays verbatim; the conversation continues from the summary. The operation reports how many history items were condensed and the estimated tokens freed. If nothing can be condensed safely — for example the whole conversation is one indivisible unit — nothing changes and nothing is written to the session log. If no model is available to write the summary (no configured target and no routed request yet), condensation fails with a clear error telling you to configure the summarization provider and model or route one request.
+The oldest balanced span is replaced by one summary message and the recent tail stays verbatim; the conversation continues from the summary. The operation reports how many history items were condensed and the estimated tokens freed. If nothing can be condensed safely — for example the whole conversation is one indivisible unit — the conversation itself is unchanged. Nothing is written to the session log unless `dsh-compaction-tool-result-pruner` is mounted and this check ran at a pressure or overflow trigger: it still trims oversized tool results before declining, even though nothing was condensed (see [Trimming oversized tool outputs](#trimming-oversized-tool-outputs)); `/compact` never trims. If no model is available to write the summary (no configured target and no routed request yet), condensation fails with a clear error telling you to configure the summarization provider and model or route one request.
 
 ### On-demand condensation with /compact
 
 With `dsh-command-compact` mounted, type `/compact` in a chat UI to condense immediately, even below the pressure threshold. The command reports how many history items were condensed and the estimated tokens saved. While the agent is mid-turn or condensation is already running, `/compact` reports that condensation is unavailable; prompts you send while it runs are accepted and start after it finishes.
 
+<a id="trimming-oversized-tool-outputs"></a>
+
 ### Trimming oversized tool outputs
 
-Mount `dsh-compaction-tool-result-pruner` before this package to trim oversized tool results as part of condensation. Trimming makes no model call and can remove the need to summarize at all: when the trimmed conversation fits within the threshold, condensation skips the summary. Trimming only runs after a condensation trigger qualifies — a below-pressure conversation is never touched.
+Mount `dsh-compaction-tool-result-pruner` before this package to trim oversized tool results as part of condensation. Trimming makes no model call and can remove the need to summarize at all. Once a proactive pressure trigger qualifies, a preview decides the order: when trimming alone would clear pressure below the threshold by at least `pruneHeadroomRatio` of that threshold, trimming lands first, and summarization is skipped entirely only if that landed trim actually clears the threshold — if it falls short, condensation still follows over the now-trimmed surface. When the preview does not clear that headroom, the oldest balanced span is condensed first instead — the request that already invalidates the provider cache — and trimming runs afterward over what remains, for free, after every successful condensation. Even when no balanced span can be condensed at all, a mounted pruner still trims before the check declines. Confirmed context-window overflow always trims first, since the retried request itself must fit. Trimming only runs after a condensation trigger qualifies — a below-pressure conversation is never touched or previewed. A configured `summarizationProvider`/`summarizationModel` that differs from the conversation route cannot reuse the conversation's cached prefix, so this ordering only saves a cache break when summarization shares the conversation's route.
 
 -----
 
@@ -110,7 +113,7 @@ The backend is built on four commitments:
 
 ### Automatic triggers and overflow recovery
 
-With `auto: true`, a serial `agent/pre-step` listener checks pressure before request derivation: it prices the latest durable routed request envelope through `ctx.tokenMeter`, and when pressure crosses the routed model's threshold it prunes, then summarizes the oldest balanced span while keeping a priced recent tail. Every selected range starts at the first surface node that is not a `system/message`, so a system prompt at surface node 0 is never shadowed; a later `system/message` appended by an in-history prompt update is ordinary history that the range may shadow, and the agent loop's projection then replaces node 0 with the current prompt when their text differs ([decision rule](../../core/agent-loop/README.md#understand-the-implementation)). The `agent/request-error` listener reacts to a provider-confirmed `CONTEXT_WINDOW_EXCEEDED`: it bypasses the normal threshold and retention policy, attempts one maximal balanced head reduction, and authorizes a retry only after the surface replacement generation advances. Cancellation stays authoritative throughout.
+With `auto: true`, a serial `agent/pre-step` listener checks pressure before request derivation: it prices the latest durable routed request envelope through `ctx.tokenMeter`, and when pressure crosses the routed model's threshold it decides pruning's order from a preview. When a mounted pruner's preview would clear pressure below the threshold by at least `pruneHeadroomRatio` of that threshold on its own, pruning lands first; summarization is skipped only if that landed prune actually clears the threshold, and otherwise proceeds on that already-pruned surface. When the preview does not clear that headroom, the oldest balanced span is instead summarized first while keeping a priced recent tail — that request already invalidates the provider cache — and any mounted pruner then trims the remaining surface for free after each compaction, still landing a trailing trim even when no compactable range remains. Every selected range starts at the first surface node that is not a `system/message`, so a system prompt at surface node 0 is never shadowed; a later `system/message` appended by an in-history prompt update is ordinary history that the range may shadow, and the agent loop's projection then replaces node 0 with the current prompt when their text differs ([decision rule](../../core/agent-loop/README.md#understand-the-implementation)). The `agent/request-error` listener reacts to a provider-confirmed `CONTEXT_WINDOW_EXCEEDED`: it bypasses the normal threshold and retention policy, attempts one maximal balanced head reduction, and authorizes a retry only after the surface replacement generation advances. Cancellation stays authoritative throughout.
 
 Pressure policy resolves capacity from the adapter that owns the durable route. Missing capacity, output plus headroom exhausting the window, or a retained budget at least as large as the threshold makes the manual pressure path throw a target-specific configuration error. The automatic listener warns once for that exact target and skips proactive compaction until its configuration is corrected; provider-confirmed overflow recovery remains available.
 
@@ -150,7 +153,7 @@ Read these pages when the package-level contract is not enough; they move from t
 
 - [Compaction seam](../compaction/README.md) — the condensation contract this backend implements.
 - [Compaction subsystem reference](../../../docs/subsystems/compaction.md) — the condensation vocabulary, results, and service behavior.
-- [Tool-result pruner](../compaction-tool-result-pruner/README.md) — the optional companion that trims oversized tool outputs first.
+- [Tool-result pruner](../compaction-tool-result-pruner/README.md) — the optional companion that trims oversized tool outputs; [Trimming oversized tool outputs](#trimming-oversized-tool-outputs) states when it runs under pressure and during overflow recovery.
 - [Human /compact command](../command-compact/README.md) — on-demand condensation without waiting for pressure.
 - [Token meter](../../llm/token-meter/README.md) — the measurement service that decides when to condense.
 - [Generated configuration catalog](../../../docs/config-catalog.md#deepseek-aidsh-compaction-basic) — every accepted config field and its source declaration.
@@ -164,7 +167,7 @@ Read these pages when the package-level contract is not enough; they move from t
 
 #### What the model sees
 
-After a successful step crosses the threshold, oversized tool results are first rewritten when the optional pruner is loaded. If summarization remains necessary, the next request receives the checkpoint preamble below, a blank line, `<compacted-summary>`, the data-dependent summary, and `</compacted-summary>`. Overflow recovery rebuilds the immediate retry from whatever replacement advanced the surface. A checkpoint replaces the selected older range and is followed by the retained recent units.
+After a successful step crosses the threshold, a mounted pruner's preview decides the order: oversized tool results are rewritten first only when that alone would clear enough headroom below the threshold, in which case summarization is skipped. Otherwise the next request receives the checkpoint preamble below, a blank line, `<compacted-summary>`, the data-dependent summary, and `</compacted-summary>` — built from the original, unpruned history — and the pruner then rewrites whatever oversized tool results remain in the retained tail. A qualifying preview whose landed rewrite still leaves the surface at or above the threshold falls back to this same otherwise-path, so the summary is built from the already-rewritten history instead; a step with nothing left to summarize still gets its oversized tool results rewritten before compaction declines. Overflow recovery always rewrites oversized tool results first, since the retried request itself must fit, then rebuilds the immediate retry from whatever replacement advanced the surface. A checkpoint replaces the selected older range and is followed by the retained recent units.
 
 ##### Conversation checkpoint preamble
 
@@ -178,7 +181,7 @@ Model-free pruning can avoid the auxiliary call entirely; otherwise it reduces t
 
 #### KV Cache effect
 
-Replacing rather than append-only. Each checkpoint invalidates reuse from the first replaced history token; the unchanged request prefix before that range remains reusable.
+Replacing rather than append-only. Each checkpoint invalidates reuse from the first replaced history token; the unchanged request prefix before that range remains reusable. A prune-only pass that lands without a summary invalidates reuse from its first pruned node instead of a checkpoint boundary.
 
 ### Auxiliary summarizer request
 
@@ -231,7 +234,7 @@ This is a separate model call: the replayed conversation prefix plus the fixed i
 
 #### KV Cache effect
 
-The replayed system prompt, tools, and shadowed-region messages match the conversation's last routed request byte-for-byte, so the provider's warm prefix cache is reused up to the trailing instruction; only that instruction, and the summary output, is uncached. When the resolved summarization provider and model equal that last routed request, the call also carries its logged reasoning effort, since some providers partition prefix caching by effort. A different configured summarization route, or the `AgentOptions` fallback used before any request is routed, carries no effort and starts an independent, uncached request. Compacting a non-head range still carries the matched route's effort; only the prefix reuse is forgone, since the replayed messages no longer start at the original request's byte prefix.
+The replayed system prompt, tools, and shadowed-region messages match the conversation's last routed request byte-for-byte, so the provider's warm prefix cache is reused up to the trailing instruction; only that instruction, and the summary output, is uncached. Because pressure previews a prune-only pass before selecting a range, a summary that runs without one landing first matches the conversation's cached prefix through the entire summarized region; a summary that follows a landed prune matches only up to that prune's first replaced node. When the resolved summarization provider and model equal that last routed request, the call also carries its logged reasoning effort, since some providers partition prefix caching by effort. A different configured summarization route, or the `AgentOptions` fallback used before any request is routed, carries no effort and starts an independent, uncached request. Compacting a non-head range still carries the matched route's effort; only the prefix reuse is forgone, since the replayed messages no longer start at the original request's byte prefix.
 
 ## Known Limitations and Deferred Work
 
@@ -244,8 +247,9 @@ These limits define when automatic condensation is a poor fit or needs special c
 - **Overflow classification is adapter-maintained** — provider wording can change; both DeepSeek adapters normalize recognized context-limit failures to `CONTEXT_WINDOW_EXCEEDED`.
 - **Some indivisible-unit and envelope-only overflow remains outside surface compaction** — recovery cannot shrink system/tools/prefix, split an indivisible non-tool node, or repair a tool unit whose non-prunable remainder still exceeds the window. The optional pruner can shrink text-bearing tool-result bulk inside an otherwise indivisible pair.
 - **`compactRegion` requires an open turn** — a manual call on a fully-closed session throws ("no open turn") rather than compacting.
-- **Summarization failure preserves the latest durable surface** — before any replacement, the auto path logs a warning and proceeds with full over-budget history. If pruning already landed, a later summarization failure proceeds from that durable pruned surface. Summarization truncation at `maxTokens`, which hidden reasoning tokens can consume, follows the same rule.
+- **Summarization failure preserves the latest durable surface** — before any replacement, the auto path logs a warning and proceeds with full over-budget history. Any pruning already durable at that point — a landed prune-only reduction, or overflow's prune-first step — survives the failure untouched; a proactive-pressure compaction that fails is never followed by its own post-compaction trim. Summarization truncation at `maxTokens`, which hidden reasoning tokens can consume, follows the same rule.
 - **The summarizer's hidden reasoning follows the conversation's routed effort** — a high-effort conversation spends more of the summarization call's `maxTokens` (default `headroomTokens`) on hidden reasoning than an adapter-default call would before writing the checkpoint. Raise `maxTokens`, or add a per-model `modelPolicies` entry, for a route whose summaries truncate.
+- **A prune-only pass can be undercut by fast session growth** — measured on one user's MiMo v2.6 Pro sessions (262144-token window): ten prune-only passes each started a new request series and re-sent 40K–180K uncached tokens (about 0.74M in total); pressure returned within 1.4–8.5 minutes in six of the seven measurable cases and after 35 minutes in the seventh. The ratio is configurable because the payoff of a prune-only pass depends on how fast a session grows.
 
 <a id="dev-note"></a>
 ### Dev Note

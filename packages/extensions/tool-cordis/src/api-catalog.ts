@@ -3263,6 +3263,12 @@ export const SERVICE_API: readonly ServiceApiEntry[] = [
         returns: 'landed replacements and aggregate Unicode-code-point savings.',
         throws: ['when the session rejects a replacement; replacements committed earlier in the pass remain durable.'],
       },
+      {
+        signature: 'projectTokenSavings(session: Session): number',
+        description: 'Project the token savings `pruneSession` would land for the current surface, without appending anything. A caller compares the projection against a pressure margin to decide whether a prune-only reduction is worth landing on its own, before paying for a second cache break by also summarizing.',
+        parameters: [{ name: 'session', description: 'session whose current surface is inspected.' }],
+        returns: 'aggregate estimated tokens `pruneSession` would currently remove, summed per candidate as `tokenMeter.estimateMessage(original) - tokenMeter.estimateMessage(replacement)`.',
+      },
     ],
   },
   {
