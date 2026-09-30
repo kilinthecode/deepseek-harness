@@ -109,7 +109,13 @@ export type SummaryResult = {
 /**
  * Run the default cache-reusing `ctx.llm.stream()` summarization call: replay
  * the conversation prefix, then append the compaction instruction as the final
- * user message so the provider's warm prefix cache is reused.
+ * user message so the provider's warm prefix cache is reused. When the
+ * resolved provider and model equal the session's latest logged request
+ * route, the call carries that request's logged `reasoningEffort`, explicit
+ * or adapter-filled, because some providers partition prefix caching by
+ * reasoning effort. A different configured summarization route, or the
+ * `AgentOptions` fallback used before any request is routed, carries no
+ * effort.
  * @param ctx - context providing the LLM service.
  * @param config - resolved backend configuration.
  * @param input - replayed conversation prefix (system, tools, and leading messages) to condense.
@@ -140,6 +146,11 @@ export async function summarizeWithLlm(
       'no provider/model available for summarization: set both BasicCompactionConfig summarization fields, route one request, or set both AgentOptions fields',
     )
   }
+  const reasoningEffort = latest !== undefined
+    && latest.provider === target.provider
+    && latest.model === target.model
+    ? latest.reasoningEffort
+    : undefined
 
   const assembler = new BlockAssembler()
   const messages: RequestMessage[] = [
@@ -158,6 +169,7 @@ export async function summarizeWithLlm(
     maxTokens: config.maxTokens,
     sessionId: agent.session.id,
     purpose: 'compaction',
+    ...reasoningEffort === undefined ? {} : { reasoningEffort },
     ...signal === undefined ? {} : { signal },
   }
   for await (const chunk of ctx.llm.stream(options)) assembler.push(chunk)
