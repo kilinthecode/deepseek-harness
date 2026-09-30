@@ -1058,7 +1058,7 @@ export interface Config {
   readonly maxIdleWatches?: number
   /** Whether an idle target receives a message in a new turn (`steer`) or holds it until it runs again (`deferred`). */
   readonly peerInbound?: 'steer' | 'deferred'
-  /** Age at which a peer's published activity stops counting as current work. */
+  /** Age at which a file write stops counting as current work, whether a peer published it or this session made or attempted it. */
   readonly activityTtlMs?: number
   /** Maximum files one session's activity row keeps, newest first. */
   readonly maxActivityFiles?: number

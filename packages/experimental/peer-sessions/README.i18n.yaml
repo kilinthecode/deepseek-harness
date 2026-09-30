@@ -3,35 +3,41 @@
 # After editing either side, bring the other along and re-record with:
 #   pnpm run verify-translation-pairing --write packages/experimental/peer-sessions/README.md
 /:
-  en: 7e02bbbd8fcc69ce
-  zh: e88610f7c6c3029c
+  en: e222f535ffd5262f
+  zh: 9ed00c8e1bd7b681
 /deepseek-ai-dsh-experimental-peer-sessions:
   en: f95cdd1f2e913518
   zh: 434657ae9e676751
 /deepseek-ai-dsh-experimental-peer-sessions/summary:
-  en: e3137496e817842f
-  zh: d08cabf408120b46
+  en: b454e728a3f064ac
+  zh: 38d77de5a0c038c5
 /deepseek-ai-dsh-experimental-peer-sessions/table-of-contents:
   en: d152484eb41ac6b4
   zh: f12de81680ba13a4
 /deepseek-ai-dsh-experimental-peer-sessions/use-this-package:
-  en: ad6c6b06809aea1d
-  zh: 702f28855342d5c8
+  en: 1598ff05ace156d1
+  zh: 0fc74e2ad1c1a550
 /deepseek-ai-dsh-experimental-peer-sessions/use-this-package/contract:
-  en: 8f867592b66ede13
-  zh: 55cbc7493f24aca2
+  en: 97092faade75d2bb
+  zh: bfa59c726a97c850
 /deepseek-ai-dsh-experimental-peer-sessions/use-this-package/repository-identity:
-  en: 890eb2d72683b2f6
-  zh: 99f01f76dddd553b
+  en: 249ba2098f8689dc
+  zh: 2f54176e7dec430f
+/deepseek-ai-dsh-experimental-peer-sessions/use-this-package/activity-rows:
+  en: 922487d3a7a129c5
+  zh: aa12de1647ffbe70
+/deepseek-ai-dsh-experimental-peer-sessions/use-this-package/activity-snapshot:
+  en: 1a88433faca5ff7d
+  zh: 405f3620cfe8cf24
 /deepseek-ai-dsh-experimental-peer-sessions/use-this-package/configuration:
-  en: e2ff01994ecd9cae
-  zh: 44bf7a9d443860db
+  en: 4c6000df49fa624b
+  zh: 43795339ae506617
 /deepseek-ai-dsh-experimental-peer-sessions/understand-the-implementation:
-  en: 9ef6112df63d52d1
-  zh: faa04f4724dfd3af
+  en: 692800330b341cc5
+  zh: 6687473c36d11576
 /deepseek-ai-dsh-experimental-peer-sessions/further-exploration:
-  en: 01fdabf42203bc6c
-  zh: dd9be00f84e0a3bf
+  en: 2a7f8df274a8659c
+  zh: 929e4cd3acbdf3a7
 /deepseek-ai-dsh-experimental-peer-sessions/model-experience:
   en: 215e7ba838619b7b
   zh: a311da3843709f90
@@ -65,6 +71,24 @@
 /deepseek-ai-dsh-experimental-peer-sessions/model-experience/framed-idle-notice/kv-cache-effect:
   en: 14fd68b5220cdaf2
   zh: dbdbe4a6cd43163b
+/deepseek-ai-dsh-experimental-peer-sessions/model-experience/peer-activity-snapshot:
+  en: 8d1c3fd476525319
+  zh: c691b9e3920aa7e1
+/deepseek-ai-dsh-experimental-peer-sessions/model-experience/peer-activity-snapshot/what-the-model-sees:
+  en: c8ead80d45f401ed
+  zh: c9950fe61b59315f
+/deepseek-ai-dsh-experimental-peer-sessions/model-experience/peer-activity-snapshot/what-the-model-sees/header-and-block:
+  en: d7fae7c99d36dfa1
+  zh: 018e593c3db5ee13
+/deepseek-ai-dsh-experimental-peer-sessions/model-experience/peer-activity-snapshot/what-the-model-sees/overlap-sentence:
+  en: 887048229a8a2b7e
+  zh: b84e2ec774a775f2
+/deepseek-ai-dsh-experimental-peer-sessions/model-experience/peer-activity-snapshot/token-effect:
+  en: 8561f4a957302e73
+  zh: 52a52b54080943a7
+/deepseek-ai-dsh-experimental-peer-sessions/model-experience/peer-activity-snapshot/kv-cache-effect:
+  en: baaac14b168beef2
+  zh: bcc846f126ab42da
 /deepseek-ai-dsh-experimental-peer-sessions/model-experience/peer-error-messages:
   en: 92e2b21874af3b32
   zh: 51b3f8df9286ec58
@@ -81,8 +105,8 @@
   en: 4267b13d4128dab2
   zh: eab86d0a7fad2f61
 /deepseek-ai-dsh-experimental-peer-sessions/known-limitations-and-deferred-work:
-  en: bb7903e100bbb968
-  zh: e9ebb54cd81e90b4
+  en: 37d22a76e1dfcaf1
+  zh: 3c26f9509bfb6025
 /deepseek-ai-dsh-experimental-peer-sessions/known-limitations-and-deferred-work/dev-note:
   en: eb48c2b77fcd6026
   zh: 751ab2919b3c5479
