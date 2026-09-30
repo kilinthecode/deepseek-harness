@@ -473,6 +473,31 @@
       "source": "packages/experimental/agent-team/src/types.ts"
     },
     {
+      "doc": "docs/subsystems/peer-sessions.md",
+      "symbol": "PeerEntry",
+      "source": "packages/experimental/peer-sessions/src/types.ts"
+    },
+    {
+      "doc": "docs/subsystems/peer-sessions.md",
+      "symbol": "SendPeerMessageRequest",
+      "source": "packages/experimental/peer-sessions/src/types.ts"
+    },
+    {
+      "doc": "docs/subsystems/peer-sessions.md",
+      "symbol": "SendPeerMessageResult",
+      "source": "packages/experimental/peer-sessions/src/types.ts"
+    },
+    {
+      "doc": "docs/subsystems/peer-sessions.md",
+      "symbol": "NotifyPeerIdleRequest",
+      "source": "packages/experimental/peer-sessions/src/types.ts"
+    },
+    {
+      "doc": "docs/subsystems/peer-sessions.md",
+      "symbol": "NotifyPeerIdleResult",
+      "source": "packages/experimental/peer-sessions/src/types.ts"
+    },
+    {
       "doc": "docs/subsystems/commands.md",
       "symbol": "CommandInputDescriptor",
       "source": "packages/interaction/commands/src/types.ts"

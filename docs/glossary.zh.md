@@ -43,3 +43,7 @@ DeepSeek Harness 的领域词汇为每个概念规定一个规范术语。各术
 - **Ralph 循环**：一次面向不可变目标的前台全新 agent 工作流运行。它是由工作流和 subagent 原语组合而成的面向模型的工具策略，不是同会话目标、agent loop（智能体循环）模式、调度器或通用工作流脚本功能。<a id="ralph-loop"></a>
 - **Ralph Round**：[Ralph 循环](#ralph-loop)中的一个全新子会话。子会话不接收父会话或此前子会话的对话种子；共享工作区和一份有界的 [Ralph 交接](#ralph-handoff)承载跨 Round 的状态。<a id="ralph-round"></a>
 - **Ralph 交接**：从一个仍需继续的 Ralph Round 传给下一个 Ralph Round 的规范化、有界结构化报告，包含状态、摘要、证据、后续步骤和阻塞说明。它补充共享工作区，而不取代工作区的权威地位。<a id="ralph-handoff"></a>
+
+## 对等会话
+
+- **对等会话（peer session）**：同一个 Harness home 下的另一个*顶层*会话，通过 `ctx.peers` 触达。对等会话按仓库而非目录分组：同一个检出目录的每个 worktree 属于同一组，而任何检出目录之外的目录各自成组。对等会话是 agent，绝不是用户，因此其消息不携带用户授权，其显示名只是标签而非身份。

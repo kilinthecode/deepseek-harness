@@ -1,0 +1,22 @@
+# Bilingual-pair consistency record for 2026-09-29-peer-sessions.md (docs/i18n/README.md): per heading
+# section, a hash of its English and Chinese blocks outside code blocks and generated regions.
+# After editing either side, bring the other along and re-record with:
+#   pnpm run verify-translation-pairing --write .agents/notes/implemented/feature/2026-09-29-peer-sessions.md
+/agent-note-peer-sessions-over-one-shared-harness-home:
+  en: 511782fb963f9cd4
+  zh: 89cdb92143aa9a63
+/agent-note-peer-sessions-over-one-shared-harness-home/problem:
+  en: 1a682acd51083292
+  zh: 0b4dea98ea676b09
+/agent-note-peer-sessions-over-one-shared-harness-home/decision:
+  en: b0a36d5afda73c99
+  zh: f7371cf01863fc27
+/agent-note-peer-sessions-over-one-shared-harness-home/alternatives-considered:
+  en: 79f669a695a9f8e7
+  zh: 77755353ed0d6e8b
+/agent-note-peer-sessions-over-one-shared-harness-home/testing:
+  en: 1175334cb995018c
+  zh: 140b04918204aa5a
+/agent-note-peer-sessions-over-one-shared-harness-home/consequences:
+  en: baae2f829c763817
+  zh: 140dc28d4d45106a

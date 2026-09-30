@@ -1,0 +1,25 @@
+# Bilingual-pair consistency record for peer-sessions.md (docs/i18n/README.md): per heading
+# section, a hash of its English and Chinese blocks outside code blocks and generated regions.
+# After editing either side, bring the other along and re-record with:
+#   pnpm run verify-translation-pairing --write docs/subsystems/peer-sessions.md
+/peer-sessions:
+  en: 2faf28952cf0e2f7
+  zh: 42f83460e2507486
+/peer-sessions/peer-identity:
+  en: 3449a0b029e2d2f5
+  zh: 66598d50d4b9a241
+/peer-sessions/the-file-mailbox:
+  en: c2262285c915db44
+  zh: e3e50df92d3ff41e
+/peer-sessions/idle-watches:
+  en: caed8030189d7691
+  zh: 80884ca92046e2ea
+/peer-sessions/relay-limit-and-safety:
+  en: 5eeb3f1423a7aa80
+  zh: 0e6ee51b9079b609
+/peer-sessions/optional-bundle:
+  en: 8bbdf7b7c13cfb7c
+  zh: 9fc5b3c78a56d624
+/peer-sessions/known-limitations:
+  en: b1e243e6c59deb57
+  zh: 9a6c5f0ac11d5bde

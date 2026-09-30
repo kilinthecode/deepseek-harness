@@ -43,3 +43,7 @@ Domain vocabulary for DeepSeek Harness uses one canonical term per concept. Term
 - **Ralph loop** — one foreground fresh-agent workflow run toward an immutable objective. It is a model-facing tool policy composed from workflow and subagent primitives, not a same-session goal, agent-loop mode, scheduler, or generic workflow-script feature. <a id="ralph-loop"></a>
 - **Ralph round** — one fresh child session in a [Ralph loop](#ralph-loop). The child receives no parent or prior-child conversation seed; the shared workspace and one bounded [Ralph handoff](#ralph-handoff) carry cross-round state. <a id="ralph-round"></a>
 - **Ralph handoff** — the normalized bounded structured report passed from one continuing Ralph round to the next, containing status, summary, evidence, next steps, and blocker text. It supplements the shared workspace rather than replacing it as authority. <a id="ralph-handoff"></a>
+
+## peer session
+
+- **peer session** — another *top-level* session of the same Harness home, addressed through `ctx.peers`. Peers group by repository rather than by directory: every worktree of one checkout is one group, and a directory outside any checkout is a group of its own. A peer session is an agent and never the user, so its messages carry no user authority and its display name is a label rather than an identity.

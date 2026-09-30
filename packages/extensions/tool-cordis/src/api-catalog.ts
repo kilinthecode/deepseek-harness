@@ -1602,6 +1602,34 @@ export const SERVICE_API: readonly ServiceApiEntry[] = [
     ],
   },
   {
+    key: 'peers',
+    summary: '`ctx.peers`: peer discovery, messaging, and idle watches for the top-level sessions one Host process holds.',
+    description: '`ctx.peers`: peer discovery, messaging, and idle watches for the top-level sessions one Host process holds.\n\nOne instance owns the file provider for every live agent in that process; peers in other processes coordinate only through the mailbox files under the Harness home. Methods take the calling agent explicitly, so authorization follows the caller rather than ambient context.',
+    methods: [
+      {
+        signature: 'async list(agent: Agent): Promise<readonly PeerEntry[]>',
+        description: 'List the caller\'s peers: other top-level sessions in its repository with peer coordination enabled, ordered by name and then session id.',
+        parameters: [{ name: 'agent', description: 'calling agent, whose cached repository key selects the listed peers.' }],
+        returns: 'one entry per listed peer, excluding the caller.',
+        throws: ['{PeerError} `PEER_NOT_TOP_LEVEL` for a caller that is not a peer, `PEER_NO_CWD` for a caller with no usable directory.'],
+      },
+      {
+        signature: 'async send(agent: Agent, request: SendPeerMessageRequest): Promise<SendPeerMessageResult>',
+        description: 'Send one message to a peer, queueing it durably when no process holds a live target.',
+        parameters: [{ name: 'agent', description: 'calling agent; the message is attributed to its session.' }, { name: 'request', description: 'target and complete message text.' }],
+        returns: 'the envelope identity and how far delivery got.',
+        throws: ['{PeerError} for an unresolved, ambiguous, unauthorized, oversized, or relay-limited send.'],
+      },
+      {
+        signature: 'async notifyIdle(agent: Agent, request: NotifyPeerIdleRequest): Promise<NotifyPeerIdleResult>',
+        description: 'Subscribe once to a peer\'s next idle transition.',
+        parameters: [{ name: 'agent', description: 'calling agent, which receives the notice in its own mailbox.' }, { name: 'request', description: 'target to watch.' }],
+        returns: 'whether this call added a subscription, or a notice was already due.',
+        throws: ['{PeerError} for an unresolved, unauthorized, full, or idle-turn-limited watch.'],
+      },
+    ],
+  },
+  {
     key: 'permissionPresets',
     summary: 'Owns the deployment\'s configured permission presets, the fixed Auto integration hook, and their write path.',
     description: 'Owns the deployment\'s configured permission presets, the fixed Auto integration hook, and their write path. Requires a confining `ctx.shell` executor and `ctx.approval`; unmatched knob values are reported as CUSTOM_PRESET, not an error.',
@@ -5838,6 +5866,14 @@ export const TYPE_API: readonly TypeApiEntry[] = [
     declaration: 'export interface NotFutureError {\n    readonly code: \'not_future\';\n    readonly message: string;\n}',
   },
   {
+    name: 'NotifyPeerIdleRequest',
+    declaration: 'export interface NotifyPeerIdleRequest {\n    readonly to: string;\n}',
+  },
+  {
+    name: 'NotifyPeerIdleResult',
+    declaration: 'export interface NotifyPeerIdleResult {\n    readonly status: \'watching\' | \'delivered\' | \'queued\';\n}',
+  },
+  {
     name: 'ObjectJsonSchema',
     declaration: 'export type ObjectJsonSchema = JsonSchemaNode & {\n    type: \'object\';\n};',
   },
@@ -5902,12 +5938,24 @@ export const TYPE_API: readonly TypeApiEntry[] = [
     declaration: 'export type PeerAdmission = {\n    readonly peer: PeerScope;\n} | {\n    readonly rejection: 401 | 403;\n};',
   },
   {
+    name: 'PeerEntry',
+    declaration: 'export interface PeerEntry {\n    readonly kind: \'session\';\n    readonly id: SessionId;\n    readonly name: string;\n    readonly status: PeerStatus;\n    readonly cwd: string;\n    readonly provider?: string;\n    readonly model?: string;\n}',
+  },
+  {
     name: 'PeerId',
     declaration: 'export type PeerId = Branded<\'PeerId\'>;',
   },
   {
+    name: 'PeerMessageId',
+    declaration: 'export type PeerMessageId = Branded<\'PeerMessageId\'>;',
+  },
+  {
     name: 'PeerScope',
     declaration: 'export interface PeerScope {\n    readonly id: PeerId;\n    readonly ctx: Context;\n    dispose(): Promise<void>;\n}',
+  },
+  {
+    name: 'PeerStatus',
+    declaration: 'export type PeerStatus = \'idle\' | \'running\' | \'awaiting-user\';',
   },
   {
     name: 'PermissionCatalog',
@@ -6468,6 +6516,14 @@ export const TYPE_API: readonly TypeApiEntry[] = [
   {
     name: 'SearchResultView',
     declaration: 'export type SearchResultView = SearchMatchesResultView | SearchPathsResultView;',
+  },
+  {
+    name: 'SendPeerMessageRequest',
+    declaration: 'export interface SendPeerMessageRequest {\n    readonly to: string;\n    readonly message: string;\n}',
+  },
+  {
+    name: 'SendPeerMessageResult',
+    declaration: 'export interface SendPeerMessageResult {\n    readonly messageId: PeerMessageId;\n    readonly status: \'delivered\' | \'queued\' | \'deferred\';\n}',
   },
   {
     name: 'SendTeamMessageRequest',

@@ -735,6 +735,14 @@ const SERVICE_ROLES: ServiceRole[] = [
     note: 'Owns the implicit-root roster, durable peer mailbox, shared task DAG, shared room, continuable-child lifecycle, and generated room Remote methods; tool-agent-team and tool-agent-room contribute model controls and client-ui-agent-team mounts the room Remote contribution.',
   },
   {
+    key: 'peers',
+    pkg: 'experimental-peer-sessions',
+    title: 'Peer session coordination',
+    mode: 'core',
+    consumers: ['experimental-tool-peer-sessions'],
+    note: 'Owns presence, repository grouping, the file mailbox that only the process holding the target drains, idle watches, and the relay limit for top-level sessions that share a Harness home; tool-peer-sessions contributes the model-facing tools and prompt section.',
+  },
+  {
     key: 'inspector',
     pkg: 'inspector',
     title: 'Cross-realm runtime inspection',
