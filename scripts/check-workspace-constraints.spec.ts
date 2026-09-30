@@ -335,6 +335,7 @@ describe('package payload constraints', () => {
   })
 
   it.each([
+    'packages/client/ui-settings-account',
     'packages/client/ui-sidebar-documentpreview',
     'packages/client/ui-sidebar-terminal',
   ])('accepts package-local Client chunks from %s', (dir) => {

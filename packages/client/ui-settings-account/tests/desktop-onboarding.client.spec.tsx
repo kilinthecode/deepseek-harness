@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { act, cleanup, fireEvent, render, screen } from '@testing-library/react'
+import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { useState } from 'react'
 import { afterEach, expect, it, vi } from 'vitest'
 import { DesktopOnboarding } from '../src/client/DesktopOnboarding.tsx'
@@ -368,4 +368,17 @@ it('reports closing the skip-settings popup', () => {
   b.track.mockClear()
   fireEvent.click(screen.getByRole('button', { name: zh.close }))
   expect(b.track).toHaveBeenCalledExactlyOnceWith('onboarding_popup_click', { popup_name: 'skip_setting', button_name: 'close' })
+})
+
+it.each([
+  ['welcome', 'zh', zh],
+  ['welcome', 'en', en],
+  ['credit', 'zh', zh],
+  ['credit', 'en', en],
+] as const)('loads the deferred %s %s artwork chunk as a light and dark pair', async (step, _locale, copy) => {
+  mount(step, 'positive', 'ready', copy)
+  await waitFor(() => { expect(document.querySelectorAll('[class*="illustration"] img')).toHaveLength(2) }, { timeout: 5000 })
+  const sources = [...document.querySelectorAll('[class*="illustration"] img')].map(image => image.getAttribute('src'))
+  expect(sources.filter(source => source !== null)).toHaveLength(2)
+  expect(new Set(sources).size).toBe(2)
 })
