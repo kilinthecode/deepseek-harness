@@ -37,7 +37,10 @@ export class SdkLoad<Sdk> {
     })
   }
 
-  /** @returns settlement of the in-flight import, or an already resolved promise; never rejects. */
+  /**
+   * Await the import this reporter started, if any.
+   * @returns settlement of the in-flight import, or an already resolved promise; never rejects.
+   */
   settled(): Promise<void> {
     return this.inFlight ?? Promise.resolve()
   }
