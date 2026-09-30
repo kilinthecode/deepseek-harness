@@ -145,7 +145,7 @@ None, as the LLM service adds no content; adapters choose when to add the shared
 
 #### KV Cache effect
 
-Reasoning-effort materialization preserves the assembled request prefix. Image identity and request-preview text are deterministic, while an optional execution-world path is resolved for each request; a changed path or an offload decision can prevent reuse from that image.
+Reasoning-effort materialization preserves the assembled request prefix. Image identity and request-preview text are deterministic, while an optional execution-world path is resolved for each request; a changed path or an offload decision can prevent reuse from that image. `GenerateOptions.cacheKey`, when set, additionally names the provider cache-routing key this request should share; an adapter whose provider supports prompt-prefix cache routing maps it to that provider's own field, so requests carrying the same key can reuse a cached prefix under it regardless of their own `sessionId`. It is transport metadata and never model-visible, so the session log does not record it — the `request/header` event carries only `config`, `adapterDefaults`, and `tools` — and the loop recomputes it for each request from the live session registry.
 
 ## Known Limitations and Deferred Work
 

@@ -647,6 +647,18 @@ interface GenerateOptions {
    */
   sessionId?: Branded<'SessionId'>
   /**
+   * The session id whose provider-side cached prefix this request shares:
+   * the request's own session for a top-level session, or its delegation
+   * tree's root for a delegated child. It is transport metadata and never
+   * model-visible, so the session log does not record it — the
+   * `request/header` event carries only `config`, `adapterDefaults`, and
+   * `tools`. The loop recomputes it for each request from the live session
+   * registry. An adapter whose provider supports prompt-prefix cache routing
+   * may map it to that provider's cache-routing field, and an adapter
+   * without such a mechanism ignores it.
+   */
+  cacheKey?: Branded<'SessionId'>
+  /**
    * Provider-neutral classification for an auxiliary model call. Adapters may
    * map the purpose to model-hidden transport metadata or purpose-specific
    * generation policy. Ordinary conversation requests leave it unset.

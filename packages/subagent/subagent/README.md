@@ -179,6 +179,20 @@ One fixed statement in each child's runtime-context snapshot; none in the parent
 
 Prefix-stable within a child: the statement never changes during the child's lifetime, so it is written once into the first runtime-context snapshot. Parent-side, no direct invalidation; the named tool consumers own any request-prefix changes.
 
+### Provider cache routing
+
+#### What the model sees
+
+Cache routing is transport metadata carried on the request, not prompt content, so it never reaches the model.
+
+#### Token effect
+
+Cache routing changes provider selection of a cached prefix, not request content, so it adds no tokens.
+
+#### KV Cache effect
+
+Every child in one delegation tree — including a continuable fork's descendants — carries `GenerateOptions.cacheKey` set to that tree's root session id (`dsh-agent-loop`'s per-request stamping from the child's own `parentSession` header lineage), so sibling and fork children route to the same provider-side cached prefix on an adapter that honors it, instead of each starting a separate one under its own session id.
+
 ## Known Limitations and Deferred Work
 
 <a id="known-limitations-and-deferred-work"></a>

@@ -1,16 +1,23 @@
 /**
  * The Node-compatibility layer's refusals and its small answering faces.
  *
- * Two contracts live here. Every replaced symbol must be PRESENT — a missing
+ * Three contracts live here. Every replaced symbol must be PRESENT — a missing
  * CommonJS export degrades to `undefined` and fails at call time somewhere
  * unrelated — and every symbol the worker cannot honour must refuse while naming
  * itself, because these errors are routinely swallowed far from their cause and
- * the name is what places them in a worker session's console.
+ * the name is what places them in a worker session's console. For the pi-ai
+ * stub specifically, presence is also checked automatically against
+ * `dsh-llm-pi-ai`'s real source (see "pi-ai stub exhaustiveness" below), so a
+ * new named import from `@earendil-works/pi-ai*` that package adds is caught
+ * here without anyone remembering to update a manual list.
  *
  * The member lists are the tables the modules are checked against: adding a
  * refusing symbol without listing it here leaves it unproven, and listing one
  * that starts answering fails.
  */
+import { readFileSync, readdirSync } from 'node:fs'
+import { join } from 'node:path'
+import { fileURLToPath } from 'node:url'
 import { describe, expect, it, vi } from 'vitest'
 import { notAvailableError, notImplementedFail } from '../../src/node/notImplementedFail.ts'
 import * as childProcess from '../../src/node/builtin_modules/implemented/child_process.ts'
@@ -48,7 +55,7 @@ const CALLED: [string, Record<string, unknown>, readonly string[]][] = [
   ['execa', execa, ['execa']],
   ['@deepseek-ai/pi-ai', piAi, [
     'createProvider', 'createModels', 'openAICompletionsApi', 'openAIResponsesApi', 'anthropicMessagesApi',
-    'isContextOverflow', 'getSupportedThinkingLevels',
+    'isContextOverflow', 'getSupportedThinkingLevels', 'builtinModels', 'clampOpenAIPromptCacheKey',
   ]],
 ]
 
@@ -100,6 +107,77 @@ describe('not-implemented stubs', () => {
       expect(holder.__esModule).toBe(true)
       expect(holder.default).toBeDefined()
     }
+  })
+})
+
+describe('pi-ai stub exhaustiveness', () => {
+  /**
+   * Runtime-imported member names from every `@earendil-works/pi-ai` or
+   * `@earendil-works/pi-ai/<subpath>` specifier in one source file, including
+   * a default-plus-named form (`import x, { a, b } from '...'`, which yields
+   * `['a', 'b']`). Skips a whole `import type { ... }` (no runtime symbol
+   * needed) and a `type X` member inside an otherwise-runtime import;
+   * renamed members (`X as Y`) resolve to the exported name `X`, since that
+   * is what must exist on the stub.
+   * @throws when a matched import is a namespace (`import * as ns`) or a
+   *   bare default (`import x from '...'`, no `{ ... }`) — this regex-based
+   *   scan cannot see which properties either form reads, so it cannot
+   *   silently pass one.
+   */
+  function namedRuntimeImports(source: string, file: string): string[] {
+    const names: string[] = []
+    // Every capture is structurally bounded (a word-character binding, or a
+    // brace-delimited list) rather than "any character up to the target
+    // specifier" — this file's own style omits statement-terminating
+    // semicolons, so an unbounded capture would run past an unrelated
+    // import's own `from '...'` and match it as one clause together with a
+    // later, actually-matching specifier.
+    const importStatement = /import\s+(type\s+)?(?:(\*\s+as\s+\w+|\w+)\s*,?\s*)?(?:\{([^}]*)\})?\s*from\s+['"]([^'"]+)['"]/g
+    for (const match of source.matchAll(importStatement)) {
+      const specifier = match[4]!
+      if (specifier !== '@earendil-works/pi-ai' && !specifier.startsWith('@earendil-works/pi-ai/')) continue
+      if (match[1] !== undefined) continue
+      const binding = match[2]
+      if (binding !== undefined && /^\*\s+as\s+\w+/.test(binding)) {
+        throw new Error(
+          `${file}: a namespace import of ${specifier} ("import ${binding} from ...") cannot be checked against the `
+          + 'stub — this exhaustiveness scan cannot see through it; add its members to the stub and to the CALLED '
+          + 'table by hand instead.',
+        )
+      }
+      if (binding !== undefined && match[3] === undefined) {
+        throw new Error(
+          `${file}: a bare default import of ${specifier} ("import ${binding} from ...") cannot be checked against `
+          + 'the stub — this exhaustiveness scan cannot see through it; add its members to the stub and to the '
+          + 'CALLED table by hand instead.',
+        )
+      }
+      if (match[3] === undefined) continue
+      for (const rawMember of match[3].split(',')) {
+        const member = rawMember.trim()
+        if (member.length === 0 || member.startsWith('type ')) continue
+        names.push(member.split(/\s+as\s+/)[0]!.trim())
+      }
+    }
+    return names
+  }
+
+  it('every symbol dsh-llm-pi-ai imports by name from @earendil-works/pi-ai is present on the stub', () => {
+    // All `@earendil-works/pi-ai/<subpath>` specifiers resolve to this one stub
+    // (REPLACED_PREFIXES / MODULE_PROXY_PREFIXES), so membership on `piAi`
+    // covers every subpath a source file might import from. Recursive so a
+    // future nested directory under dsh-llm-pi-ai's src is not silently skipped.
+    const srcDir = fileURLToPath(new URL('../../../../llm/llm-pi-ai/src', import.meta.url))
+    const files = (readdirSync(srcDir, { recursive: true }) as string[]).filter(name => name.endsWith('.ts'))
+    expect(files.length).toBeGreaterThan(0)
+    const missing: string[] = []
+    for (const file of files) {
+      const source = readFileSync(join(srcDir, file), 'utf8')
+      for (const name of namedRuntimeImports(source, file)) {
+        if (!(name in piAi)) missing.push(`${file}: ${name}`)
+      }
+    }
+    expect(missing).toEqual([])
   })
 })
 
