@@ -19,6 +19,7 @@ function row(overrides: Partial<ProviderRow> = {}): ProviderRow {
     removable: false,
     apiKeyEnv: 'DEEPSEEK_API_KEY',
     credential: missingCredential,
+    flow: undefined,
     ...overrides,
   }
 }
@@ -37,6 +38,7 @@ function otherRow(overrides: Partial<ProviderRow> = {}): ProviderRow {
     removable: true,
     apiKeyEnv: 'HFAI_API_KEY',
     credential: { configured: true, source: 'file', writable: true },
+    flow: undefined,
     ...overrides,
   }
 }
@@ -46,9 +48,11 @@ function state(overrides: Partial<ModelsSettingsState> = {}): ModelsSettingsStat
     status: 'ready',
     error: null,
     credentialError: null,
+    authorizationError: null,
     writable: true,
     rows: [row()],
     namespaces: new Map(),
+    authorization: null,
     ...overrides,
   }
 }

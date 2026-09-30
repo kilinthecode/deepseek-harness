@@ -5,6 +5,7 @@ import z from '@deepseek-ai/schemastery'
 import type { Agent } from '@deepseek-ai/dsh-agent'
 import { TeamTaskId } from '@deepseek-ai/dsh-experimental-agent-team'
 import type { TeamMemberView } from '@deepseek-ai/dsh-experimental-agent-team'
+import { plainForkParentOf } from '@deepseek-ai/dsh-subagent'
 import { defineTool } from '@deepseek-ai/dsh-tools'
 import type { InferValue, ValueSchemaSpec } from '@deepseek-ai/dsh-tools'
 
@@ -398,7 +399,41 @@ To message another teammate, use send_message({ target: "<teammate name>", messa
   }
 }
 
-/** Install Team tools in every live or subsequently published Team member scope. */
+/**
+ * Whether `agent` qualifies for the Team section and tool set: either it
+ * currently has Team membership itself, or walking its plain-fork lineage
+ * ({@link plainForkParentOf}, applied repeatedly) reaches an agent that
+ * currently does. Every agent on that lineage is a plain fork and not itself
+ * a member — `spawn_teammate`/`send_message`/etc. still resolve and
+ * authorize the calling agent through `ctx.agentTeams` at execution time and
+ * reject a non-member with `TEAM_NOT_MEMBER`, so no fork in the lineage can
+ * ever act as its ancestor — but its assembled prompt must match its
+ * immediate parent's declared section and tools, and therefore transitively
+ * the member's, so a provider prompt cache keyed on the exact prefix covers
+ * the inherited history instead of missing on a dropped section.
+ * @param agent - the exact live candidate agent.
+ * @param ctx - the context whose `agentTeams` resolves membership.
+ * @returns whether `agent` qualifies for the Team installation.
+ */
+function qualifiesForTeamInstall(agent: Agent, ctx: Context): boolean {
+  const visited = new Set<Agent>()
+  let candidate: Agent | undefined = agent
+  while (candidate !== undefined) {
+    // Defensive only: plainForkParentOf walks toward an earlier-created
+    // ancestor session, so this lineage cannot cycle in practice.
+    /* v8 ignore next -- guards a defect elsewhere, not a reachable case. */
+    if (visited.has(candidate)) return false
+    if (ctx.agentTeams.tryMembership(candidate) !== undefined) return true
+    visited.add(candidate)
+    candidate = plainForkParentOf(candidate)
+  }
+  return false
+}
+
+/**
+ * Install Team tools in every live or subsequently published Team member scope
+ * and in each plain fork whose fork chain reaches a live member.
+ */
 export function apply(ctx: Context, config: Config = {}): void {
   const resolved: Required<Config> = {
     freshProvider: config.freshProvider ?? 'spawn',
@@ -406,7 +441,7 @@ export function apply(ctx: Context, config: Config = {}): void {
   }
   const installed = new Map<Agent, () => void>()
   const maybeInstall = (agent: Agent): void => {
-    if (installed.has(agent) || ctx.agentTeams.tryMembership(agent) === undefined) return
+    if (installed.has(agent) || !qualifiesForTeamInstall(agent, ctx)) return
     installed.set(agent, install(agent, ctx, resolved))
   }
   for (const agent of ctx.agents.list()) maybeInstall(agent)

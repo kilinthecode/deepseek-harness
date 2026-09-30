@@ -107,10 +107,13 @@ function imageMeta(meta: unknown): ImageMeta | null {
  * The attachment id is checked for existence only — it is opaque and
  * provider-owned, so pattern-matching the local content-address form would reject
  * a legitimate id minted by an alternative store.
+ *
+ * Exported for `models/tool-call-model.ts`'s generic-row gallery claim, same
+ * package only: it stays out of this package's public `/client` exports.
  * @param content - the settled result's content blocks.
  * @returns the narrowed references, or null when no valid image block is present.
  */
-function imageReferences(content: readonly unknown[]): ImageAttachmentRef[] | null {
+export function imageReferences(content: readonly unknown[]): ImageAttachmentRef[] | null {
   const refs: ImageAttachmentRef[] = []
   for (const part of content) {
     if (typeof part !== 'object' || part === null) continue

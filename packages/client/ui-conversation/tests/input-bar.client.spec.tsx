@@ -81,6 +81,8 @@ interface BenchOptions {
   blocked?: { readonly reason: string }
   workspacePickerOpen?: boolean
   onRequestWorkspace?: () => void
+  /** The route-image advisory `ui-model-selection` publishes; omitted matches an old-client-shaped caller. */
+  acceptsImages?: boolean | null
   promptError?: SessionSnapshot['promptError']
   /** Authoritative queue rows served to the machine overlay (empty = none). */
   queue?: InboxState['next-turn']
@@ -133,7 +135,7 @@ function bench(over?: BenchOptions) {
   const shell = new SessionInputShell({
     actx: SCTX,
     defaultSink: sink,
-    commandAttachments: { serialize: () => Promise.resolve([]), release: () => {}, unsupportedNotice: (token: string) => `${token.trim()} attachments-unsupported` },
+    commandAttachments: { serialize: () => Promise.resolve([]), release: () => {}, unsupportedNotice: (token: string) => `${token.trim()} attachments-unsupported`, imageRefusal: () => undefined },
     inbox: createSnapshotStore<InboxState>({
       'next-turn': over?.queue ?? [],
       'next-step': over?.nextStep ?? [],
@@ -218,6 +220,7 @@ function bench(over?: BenchOptions) {
     ...(over?.blocked !== undefined ? { blocked: over.blocked } : {}),
     ...(over?.workspacePickerOpen !== undefined ? { workspacePickerOpen: over.workspacePickerOpen } : {}),
     ...(over?.onRequestWorkspace !== undefined ? { onRequestWorkspace: over.onRequestWorkspace } : {}),
+    ...(over?.acceptsImages !== undefined ? { acceptsImages: over.acceptsImages } : {}),
     ...(over?.placeholder !== undefined ? { placeholder: over.placeholder } : {}),
     ...(over?.accessory !== undefined ? { accessory: over.accessory } : {}),
   }
@@ -578,6 +581,223 @@ describe('image draft rail', () => {
       ])
     })
     expect(result.view.getByRole('alert').textContent).toContain('图片读取服务不可用')
+  })
+})
+
+describe('route image capability', () => {
+  it.each([zh, en])('refuses an image batch when the route does not accept images, without calling addFiles', (dictionary) => {
+    const addFiles = vi.fn(() => null)
+    const result = bench({ addFiles, acceptsImages: false, t: makeTranslate(dictionary, commonZh) })
+    act(() => {
+      attachmentOwner(result.slotCalls).onAddFiles([
+        new File([Uint8Array.of(1)], 'x.png', { type: 'image/png' }),
+      ])
+    })
+    expect(addFiles).not.toHaveBeenCalled()
+    expect(result.view.getByRole('alert').textContent).toBe(dictionary['image.modelUnsupported'])
+  })
+
+  it('still admits a generic file batch when the route does not accept images', () => {
+    const addFiles = vi.fn(() => null)
+    const result = bench({ addFiles, acceptsImages: false })
+    const note = new File([Uint8Array.of(1)], 'notes.md', { type: 'text/markdown' })
+    act(() => { attachmentOwner(result.slotCalls).onAddFiles([note]) })
+    expect(addFiles).toHaveBeenCalledWith([note], undefined)
+    expect(result.view.queryByRole('alert')).toBeNull()
+  })
+
+  it.each([zh, en])('classifies images by declared MIME type when no image-limit projection has loaded', (dictionary) => {
+    const addFiles = vi.fn(() => null)
+    const result = bench({ addFiles, acceptsImages: false, t: makeTranslate(dictionary, commonZh) })
+    act(() => {
+      attachmentOwner(result.slotCalls).onAddFiles([
+        new File([Uint8Array.of(1)], 'x.jpeg', { type: 'image/jpeg' }),
+      ])
+    })
+    expect(addFiles).not.toHaveBeenCalled()
+    expect(result.view.getByRole('alert').textContent).toBe(dictionary['image.modelUnsupported'])
+  })
+
+  it('still admits an image batch when the route accepts images or capability is unknown', () => {
+    const addFilesTrue = vi.fn(() => null)
+    const trueResult = bench({ addFiles: addFilesTrue, acceptsImages: true })
+    act(() => {
+      attachmentOwner(trueResult.slotCalls).onAddFiles([
+        new File([Uint8Array.of(1)], 'x.png', { type: 'image/png' }),
+      ])
+    })
+    expect(addFilesTrue).toHaveBeenCalled()
+    cleanup()
+
+    const addFilesNull = vi.fn(() => null)
+    const nullResult = bench({ addFiles: addFilesNull, acceptsImages: null })
+    act(() => {
+      attachmentOwner(nullResult.slotCalls).onAddFiles([
+        new File([Uint8Array.of(1)], 'x.png', { type: 'image/png' }),
+      ])
+    })
+    expect(addFilesNull).toHaveBeenCalled()
+    cleanup()
+
+    // Omitted (old-client-shaped) owner props behave exactly like `true`/`null`.
+    const addFilesOmitted = vi.fn(() => null)
+    const omittedResult = bench({ addFiles: addFilesOmitted })
+    act(() => {
+      attachmentOwner(omittedResult.slotCalls).onAddFiles([
+        new File([Uint8Array.of(1)], 'x.png', { type: 'image/png' }),
+      ])
+    })
+    expect(addFilesOmitted).toHaveBeenCalled()
+  })
+
+  it.each([zh, en])('toasts once and keeps the thumbnails when a route switch leaves images in the rail unsupported', (dictionary) => {
+    const file = new File([Uint8Array.of(1)], 'pixel.png', { type: 'image/png' })
+    const attachments = [
+      { kind: 'image' as const, id: 'draft-1' as DraftAttachmentId, file, previewUrl: 'blob:draft-1' },
+    ]
+    const result = bench({ attachments, acceptsImages: true, t: makeTranslate(dictionary, commonZh) })
+    expect(result.view.queryByRole('alert')).toBeNull()
+    result.view.rerender(<InputBar {...result.props} acceptsImages={false} />)
+    expect(result.view.getByRole('alert').textContent).toBe(dictionary['image.modelUnsupported'])
+    expect(attachmentOwner(result.slotCalls).attachments).toEqual(attachments)
+  })
+
+  it('does not toast a route switch while the rail holds no images', () => {
+    const result = bench({ acceptsImages: true })
+    result.view.rerender(<InputBar {...result.props} acceptsImages={false} />)
+    expect(result.view.queryByRole('alert')).toBeNull()
+  })
+
+  it.each([zh, en])('disables Send while the rail holds an image the current route refuses', (dictionary) => {
+    const file = new File([Uint8Array.of(1)], 'pixel.png', { type: 'image/png' })
+    const attachments = [
+      { kind: 'image' as const, id: 'draft-1' as DraftAttachmentId, file, previewUrl: 'blob:draft-1' },
+    ]
+    const result = bench({ attachments, acceptsImages: false, t: makeTranslate(dictionary, commonZh) })
+    expect((result.view.getByRole('button', { name: dictionary['input.send'] }) as HTMLButtonElement).disabled).toBe(true)
+  })
+
+  it.each([zh, en])('announces the refusal when images already sit in the rail of a route that refuses them', (dictionary) => {
+    const file = new File([Uint8Array.of(1)], 'pixel.png', { type: 'image/png' })
+    const attachments = [
+      { kind: 'image' as const, id: 'draft-1' as DraftAttachmentId, file, previewUrl: 'blob:draft-1' },
+    ]
+    const result = bench({ attachments, acceptsImages: false, t: makeTranslate(dictionary, commonZh) })
+    expect(result.view.getByRole('alert').textContent).toBe(dictionary['image.modelUnsupported'])
+  })
+
+  it('does not repeat the refusal when the composer re-renders with a new translator in the same episode', () => {
+    vi.useFakeTimers()
+    try {
+      const file = new File([Uint8Array.of(1)], 'pixel.png', { type: 'image/png' })
+      const attachments = [
+        { kind: 'image' as const, id: 'draft-1' as DraftAttachmentId, file, previewUrl: 'blob:draft-1' },
+      ]
+      const result = bench({ attachments, acceptsImages: false, t: makeTranslate(zh, commonZh) })
+      expect(result.view.getByRole('alert').textContent).toBe(zh['image.modelUnsupported'])
+      act(() => { vi.advanceTimersByTime(4000) })
+      expect(result.view.queryByRole('alert')).toBeNull()
+      result.view.rerender(<InputBar {...result.props} t={makeTranslate(en, commonZh)} />)
+      expect(result.view.queryByRole('alert')).toBeNull()
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it.each([zh, en])('refuses the Enter submit gesture while the rail holds an image the current route refuses', async (dictionary) => {
+    vi.useFakeTimers()
+    try {
+      const file = new File([Uint8Array.of(1)], 'pixel.png', { type: 'image/png' })
+      const attachments = [
+        { kind: 'image' as const, id: 'draft-1' as DraftAttachmentId, file, previewUrl: 'blob:draft-1' },
+      ]
+      const result = bench({ attachments, acceptsImages: false, draft: 'describe this', t: makeTranslate(dictionary, commonZh) })
+      // Let the arrival announcement fade so the alert below is the Enter refusal's own.
+      act(() => { vi.advanceTimersByTime(4000) })
+      expect(result.view.queryByRole('alert')).toBeNull()
+      fireEvent.keyDown(result.textarea, { key: 'Enter' })
+      await act(async () => {})
+      expect(result.sink).not.toHaveBeenCalled()
+      expect(attachmentOwner(result.slotCalls).attachments).toEqual(attachments)
+      expect(result.view.getByRole('alert').textContent).toBe(dictionary['image.modelUnsupported'])
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('keeps an unclaimed slash line submittable while the rail holds refused images', () => {
+    const file = new File([Uint8Array.of(1)], 'pixel.png', { type: 'image/png' })
+    const attachments = [
+      { kind: 'image' as const, id: 'draft-1' as DraftAttachmentId, file, previewUrl: 'blob:draft-1' },
+    ]
+    const result = bench({ attachments, acceptsImages: false, draft: '/model' })
+    expect(result.button.disabled).toBe(false)
+  })
+
+  it('keeps a claim that carries no attachments submittable while the rail holds refused images', () => {
+    const file = new File([Uint8Array.of(1)], 'pixel.png', { type: 'image/png' })
+    const attachments = [
+      { kind: 'image' as const, id: 'draft-1' as DraftAttachmentId, file, previewUrl: 'blob:draft-1' },
+    ]
+    const result = bench({ attachments, acceptsImages: false })
+    act(() => {
+      result.shell.beginCommand(
+        { name: 'compact', token: '/compact ', submit: () => Promise.resolve({ kind: 'success' }) },
+        { start: 0, end: 0, draftRev: result.shell.snapshot.draftRev },
+      )
+    })
+    expect(result.shell.snapshot.phase).toBe('claimed')
+    expect((result.view.getByRole('button', { name: '发送消息' }) as HTMLButtonElement).disabled).toBe(false)
+  })
+
+  it('refuses a claim that carries attachments like a message draft: Send disabled, Enter submits nothing', async () => {
+    const file = new File([Uint8Array.of(1)], 'pixel.png', { type: 'image/png' })
+    const attachments = [
+      { kind: 'image' as const, id: 'draft-1' as DraftAttachmentId, file, previewUrl: 'blob:draft-1' },
+    ]
+    const submit = vi.fn(() => Promise.resolve<SubmitOutcome>({ kind: 'success' }))
+    const result = bench({ attachments, acceptsImages: false })
+    act(() => {
+      result.shell.beginCommand(
+        { name: 'goal', token: '/goal ', attachments: true, submit },
+        { start: 0, end: 0, draftRev: result.shell.snapshot.draftRev },
+      )
+    })
+    writeDraft(result.shell, '/goal 描述这张图')
+    expect(result.shell.snapshot.phase).toBe('claimed')
+    expect((result.view.getByRole('button', { name: '发送消息' }) as HTMLButtonElement).disabled).toBe(true)
+    fireEvent.keyDown(result.textarea, { key: 'Enter' })
+    await act(async () => {})
+    expect(submit).not.toHaveBeenCalled()
+    expect(result.sink).not.toHaveBeenCalled()
+    expect(result.shell.snapshot.phase).toBe('claimed')
+    expect(result.shell.snapshot.draft).toBe('/goal 描述这张图')
+    expect(attachmentOwner(result.slotCalls).attachments).toEqual(attachments)
+  })
+
+  it('leaves Send enabled for the same rail when the route accepts images', () => {
+    const file = new File([Uint8Array.of(1)], 'pixel.png', { type: 'image/png' })
+    const attachments = [
+      { kind: 'image' as const, id: 'draft-1' as DraftAttachmentId, file, previewUrl: 'blob:draft-1' },
+    ]
+    const result = bench({ attachments, acceptsImages: true })
+    expect((result.view.getByRole('button', { name: '发送消息' }) as HTMLButtonElement).disabled).toBe(false)
+  })
+
+  it('a subagent session still blocks every attachment before the route-image check', () => {
+    const addFiles = vi.fn(() => null)
+    const result = bench({
+      addFiles,
+      acceptsImages: false,
+      subagent: { address: { mode: 'one-shot', parentSessionId: SID, childSessionId: SID }, parentAvailable: true },
+    })
+    act(() => {
+      attachmentOwner(result.slotCalls).onAddFiles([
+        new File([Uint8Array.of(1)], 'x.png', { type: 'image/png' }),
+      ])
+    })
+    expect(addFiles).not.toHaveBeenCalled()
+    expect(result.view.queryByRole('alert')).toBeNull()
   })
 })
 

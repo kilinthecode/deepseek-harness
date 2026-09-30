@@ -498,6 +498,14 @@ interface LlmConfigurableProvider {
    * from outside.
    */
   declared?: boolean
+  /**
+   * The sign-in this route's adapter offers: the credential record a registered
+   * authorization flow writes, and whether that stored sign-in is the only way
+   * the route can authenticate when it names no credential reference — a
+   * provider serving no api-key auth has nothing else to fall back on. Absent
+   * when the adapter registers no flow for the route.
+   */
+  readonly authorization?: { readonly key: CredentialKey; readonly required: boolean }
   /** Configuration diagnostic for repair; unaffected models may remain serviceable. */
   error?: string
 }
