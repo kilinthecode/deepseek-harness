@@ -228,6 +228,14 @@ export interface SubprocessTerminalSpawnSpec {
   shellActivity?: boolean | undefined
   /** TERM-to-KILL cleanup grace for the complete terminal session. */
   graceMs: number
+  /**
+   * Minimum interval between the descendant-adoption process-table scans a
+   * provider performs inside `inspectForeground`; omitted scans on every
+   * inspection. A caller that ends its observation window passes the
+   * forced-scan argument instead of waiting for the interval, and teardown
+   * inspections always take a fresh snapshot.
+   */
+  descendantScanIntervalMs?: number | undefined
   /** Cancellation of terminal allocation; a published handle owns its later lifetime. */
   signal?: AbortSignal | undefined
 }
@@ -274,9 +282,10 @@ export interface SubprocessTerminalHandle {
   resize(cols: number, rows: number): Promise<void>
   /**
    * Inspect the current foreground process group.
+   * @param forceAdoption - providers that throttle descendant adoption scan now instead of waiting for their interval.
    * @returns its id and input-wait fact, or undefined when no foreground group can be resolved.
    */
-  inspectForeground(): Promise<SubprocessTerminalForeground | undefined>
+  inspectForeground(forceAdoption?: boolean): Promise<SubprocessTerminalForeground | undefined>
   /**
    * Observe command activity without interpreting output or treating silence as completion.
    * @returns a fresh observation; unsupported shells and incomplete observations report unknown.

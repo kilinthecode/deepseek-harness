@@ -45,6 +45,7 @@ function fixture(overrides: Partial<ResolvedConfig> = {}) {
     scrollbackLines: 10_000, scrollbackMaxBytes: 4 * 1024 * 1024, maxReadBytes: 256 * 1024,
     pollIntervalMs: 60_000, exactProbeAfterMs: 60_000, idleSilenceMs: 60_000,
     handoffGraceMs: 60_000, promptTailGraceMs: 0, timeoutMs: 60_000, disposeGraceMs: 60_000,
+    descendantScanIntervalMs: 250,
     ...overrides,
   }
   const producer = new OutputProducer()

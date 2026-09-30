@@ -69,6 +69,8 @@ export class LocalTerminalHandle implements SubprocessTerminalHandle {
   private exited = false
   private outputPaused = false
   private trackedDescendants: ProcessIdentity[] = []
+  /** Time of the last descendant-adoption scan when the provider throttles them. */
+  private lastDescendantScanAt: number | undefined
   private activityRevision = 0
   private activityKey = ''
   private quiescent = false
@@ -81,6 +83,8 @@ export class LocalTerminalHandle implements SubprocessTerminalHandle {
    * @param inspector - platform process/session operations.
    * @param graceMs - TERM-to-KILL and exit-wait grace.
    * @param platform - host platform; defaults to the running platform, injectable for deterministic tests.
+   * @param descendantScanIntervalMs - minimum interval between descendant-adoption scans inside
+   *   `inspectForeground`; omitted scans on every inspection.
    */
   constructor(
     private readonly terminal: IPty,
@@ -92,6 +96,7 @@ export class LocalTerminalHandle implements SubprocessTerminalHandle {
     private readonly shellActivity?: Pick<ShellActivity, 'inspect' | 'invalidate' | 'dispose'>,
     private readonly onQuiescence?: () => void,
     private readonly observeShellExit = false,
+    private readonly descendantScanIntervalMs?: number,
   ) {
     this.pid = terminal.pid
     try { this.rootIdentity = inspector.snapshot().tree(this.pid).find(member => member.pid === this.pid) }
@@ -152,14 +157,40 @@ export class LocalTerminalHandle implements SubprocessTerminalHandle {
 
   // Local inspection is synchronous; the seam returns a promise for remote transports.
   // oxlint-disable-next-line typescript/require-await -- Preserve promise rejection semantics at the async provider contract.
-  async inspectForeground(): Promise<SubprocessTerminalForeground | undefined> {
-    this.descendants(this.inspector.snapshot())
+  async inspectForeground(forceAdoption = false): Promise<SubprocessTerminalForeground | undefined> {
+    this.adoptDescendants(forceAdoption)
     const processGroupId = this.inspector.foregroundPgid(this.pid)
     if (processGroupId === undefined) return undefined
     return {
       processGroupId,
       inputWaiting: this.inspector.isStdinWaiting(processGroupId, this.pid),
     }
+  }
+
+  /**
+   * Adopt newly observed session members so terminate() can still signal them.
+   *
+   * A complete synchronous process-table scan per readiness poll is the cost
+   * being bounded here: adoption repeats at most every
+   * `descendantScanIntervalMs`, while a caller about to leave its observation
+   * window (`forceAdoption`) scans immediately, because the shell's start
+   * identity only proves the tree belongs to this session while it is still
+   * observable. Termination and host-exit paths take their own fresh snapshots.
+   * @param force - scan now, ignoring the interval.
+   */
+  private adoptDescendants(force: boolean): void {
+    const interval = this.descendantScanIntervalMs
+    if (interval === undefined) {
+      this.descendants(this.inspector.snapshot())
+      return
+    }
+    const now = Date.now()
+    const last = this.lastDescendantScanAt
+    // A clock that moved backwards must not suspend adoption for the session's life.
+    if (!force && last !== undefined && now >= last && now - last < interval) return
+    this.descendants(this.inspector.snapshot())
+    // Only a completed scan starts the interval, so a failed table read is retried by the next poll.
+    this.lastDescendantScanAt = now
   }
 
   // oxlint-disable-next-line typescript/require-await -- Local inspection is synchronous; SSH shares this promise interface.

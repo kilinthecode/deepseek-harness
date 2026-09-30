@@ -551,6 +551,10 @@ export class LocalPtySession implements TerminalBackendSession {
     this.polling = true
     try {
       if (this.statusValue.kind === 'exited') {
+        // A shell that exited before this poll cannot be identity-scanned anymore;
+        // the scan is still attempted so the exit path never depends on the
+        // readiness cadence.
+        await this.forceDescendantAdoption()
         this.settleActive('session_exit')
         return
       }
@@ -568,6 +572,8 @@ export class LocalPtySession implements TerminalBackendSession {
       }
       if (this.promptSeen && this.promptTextSeen && idleFor >= this.config.pollIntervalMs
         && foreground?.processGroupId === this.shellPgid) {
+        await this.forceDescendantAdoption()
+        if (this.superseded(operation)) return
         this.settleActive('stdin_read')
         return
       }
@@ -576,6 +582,8 @@ export class LocalPtySession implements TerminalBackendSession {
       const acceptsStdinWait = startupHasOutput && foreground !== undefined
         && operation.acceptsStdinWait(foreground.processGroupId, foreground.inputWaiting)
       if (elapsed >= this.config.exactProbeAfterMs && acceptsStdinWait) {
+        await this.forceDescendantAdoption()
+        if (this.superseded(operation)) return
         this.settleActive('stdin_read')
         return
       }
@@ -593,6 +601,8 @@ export class LocalPtySession implements TerminalBackendSession {
       const tailPending = this.promptSeen && !this.promptTextSeen && CONTROLLED_PROMPT.startsWith(this.promptTail)
       const tailGrace = tailPending ? this.config.promptTailGraceMs : 0
       if (startupHasOutput && idleFor >= this.config.idleSilenceMs + handoffGrace + tailGrace) {
+        await this.forceDescendantAdoption()
+        if (this.superseded(operation)) return
         this.settleActive('inferred_idle')
       }
     } catch (error: unknown) {
@@ -629,6 +639,34 @@ export class LocalPtySession implements TerminalBackendSession {
       if (!this.protocolStateChanged(emulatorWrites, responseWrites)) return foreground
     }
   }
+
+  /**
+   * Force one provider descendant-adoption scan before a readiness poll
+   * concludes its send. Polling itself runs at the provider's throttled scan
+   * cadence, so this is what keeps a child forked during the command inside the
+   * provider's termination set while the shell's start identity still proves
+   * the tree belongs to this session. A failed scan is swallowed: adoption is
+   * termination hygiene and must not decide the readiness outcome.
+   */
+  private async forceDescendantAdoption(): Promise<void> {
+    try {
+      await this.terminal.inspectForeground(true)
+    } catch (_adoptionScanUnavailable) {
+      // terminate() takes its own fresh snapshot and reports a surviving tree.
+    }
+  }
+
+  /**
+   * Whether a newer send, a close, or an interrupt replaced this readiness
+   * operation while it awaited. A method keeps TypeScript from narrowing these
+   * fields across the await that precedes each call.
+   * @param operation - the send whose poll just resumed.
+   * @returns whether the poll must stop without settling.
+   */
+  private superseded(operation: LocalSendOperation): boolean {
+    return this.active !== operation || this.closing || this.interrupting === operation
+  }
+
 
   private protocolStateChanged(emulatorWrites: Promise<void>, responseWrites: Promise<void>): boolean {
     return emulatorWrites !== this.emulatorWrites || responseWrites !== this.responseWrites

@@ -142,7 +142,7 @@ function config(overrides: Partial<ResolvedConfig> = {}): ResolvedConfig {
     backendType: 'shell', shellDialect: 'bash', shellPath: '/bin/bash', shellArgs: [], rows: 24, cols: 80,
     scrollbackLines: 10, scrollbackMaxBytes: 128, maxReadBytes: 64,
     pollIntervalMs: 10, exactProbeAfterMs: 20, idleSilenceMs: 50, handoffGraceMs: 10, promptTailGraceMs: 0, timeoutMs: 100,
-    disposeGraceMs: 20,
+    disposeGraceMs: 20, descendantScanIntervalMs: 250,
     ...overrides,
   }
 }
@@ -505,6 +505,34 @@ describe('LocalPtySession readiness and output', () => {
     terminal.emitData('\x1b]133;D;0\x07dsh> ')
     await vi.advanceTimersByTimeAsync(10)
     expect((await operation.done).waitReason).toBe('stdin_read')
+  })
+
+  it('forces one descendant-adoption scan when a readiness poll concludes its send', async () => {
+    vi.useFakeTimers()
+    const terminal = new FakeTerminal()
+    const inspector = new FakeInspector()
+    const session = makeSession(terminal, inspector, config({ descendantScanIntervalMs: 60_000 }))
+    await initialize(session, terminal)
+
+    const forces: Array<boolean | undefined> = []
+    const inspect = terminal.inspectForeground.bind(terminal)
+    terminal.inspectForeground = async (forceAdoption?: boolean) => {
+      forces.push(forceAdoption)
+      return await inspect()
+    }
+    const operation = session.startSend({ text: 'true', submit: true })
+    await Promise.resolve()
+    await Promise.resolve()
+    await vi.advanceTimersByTimeAsync(0)
+    expect(forces).toEqual([undefined])
+
+    terminal.emitData('\x1b]133;D;0\x07dsh> ')
+    await vi.advanceTimersByTimeAsync(10)
+    expect((await operation.done).waitReason).toBe('stdin_read')
+    // The throttled poll still reads foreground state, and the poll that
+    // concluded the send asked the provider for one fresh adoption scan.
+    expect(forces).toEqual([undefined, undefined, true])
+    await session.close('adoption scan cleanup')
   })
 
   it('discards prompt readiness observed during asynchronous pre-write inspection', async () => {

@@ -2656,7 +2656,7 @@ export interface Config {
 
 - `inject`: `sessions`
 - `refs`: [`SessionQueryConfig`](../packages/session-query/session-query/src/index.ts)
-- `source`: [`packages/session-query/session-query-sqlite/src/index.ts:92`](../packages/session-query/session-query-sqlite/src/index.ts)
+- `source`: [`packages/session-query/session-query-sqlite/src/index.ts:93`](../packages/session-query/session-query-sqlite/src/index.ts)
 
 ```ts config-catalog
 /** Combined session-query configuration backed by SQLite full-text search. */
@@ -3378,6 +3378,12 @@ export interface Config {
   maxReadBytes?: number
   /** Readiness polling interval. */
   pollIntervalMs?: number
+  /**
+   * Minimum interval between descendant-adoption process-table scans inside readiness polling.
+   * Every poll still reads foreground state; the poll that concludes a send, teardown, and host
+   * exit always scan, so this only bounds how often a waiting send repeats the full scan.
+   */
+  descendantScanIntervalMs?: number
   /** Delay before Linux exact syscall probes. */
   exactProbeAfterMs?: number
   /** Silence duration that yields `inferred_idle`. */
