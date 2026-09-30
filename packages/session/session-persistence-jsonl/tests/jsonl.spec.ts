@@ -54,6 +54,12 @@ const openTally = vi.hoisted(() => ({
   enabled: false,
 }))
 
+const statTally = vi.hoisted(() => ({
+  /** Physical stat() calls per path; one observation of an artifact costs exactly one. */
+  byPath: new Map<string, number>(),
+  enabled: false,
+}))
+
 const readFailure = vi.hoisted(() => ({
   path: undefined as string | undefined,
   error: undefined as Error | undefined,
@@ -74,6 +80,10 @@ vi.mock('node:fs/promises', async (importOriginal) => {
   return {
     ...actual,
     stat: (async (...args: Parameters<typeof actual.stat>) => {
+      if (statTally.enabled) {
+        const path = String(args[0])
+        statTally.byPath.set(path, (statTally.byPath.get(path) ?? 0) + 1)
+      }
       if (String(args[0]) === statFailure.path && statFailure.error !== undefined) throw statFailure.error
       const identity = await actual.stat(...args)
       if (String(args[0]) === birthShift.path && 'birthtimeNs' in identity) {
@@ -307,6 +317,8 @@ afterEach(async () => {
   readTally.enabled = false
   openTally.byPath.clear()
   openTally.enabled = false
+  statTally.byPath.clear()
+  statTally.enabled = false
   birthShift.path = undefined
   const pausedReadDone = pausedRead.active ? pausedRead.done : undefined
   readFailure.path = undefined
@@ -1908,8 +1920,8 @@ describe('JsonlSessionPersistence: durability and crash semantics', () => {
   it('stat reports absence for an artifact vanishing before its identity stat and surfaces other faults', async () => {
     const m = meta('stat-fault', '/work')
     await writeLog(ctx.sessionPersistence, m, oneTurnLog())
-    // The header read succeeds; the identity stat then loses the file (a
-    // concurrent removal) or hits a storage fault.
+    // The header guard stat loses the file (a concurrent removal) or hits a
+    // storage fault; both must surface instead of a stale snapshot.
     statFailure.path = rawLogPath(root, '/work', m.id)
     statFailure.error = Object.assign(new Error('ENOENT: vanished'), { code: 'ENOENT' })
     expect(await ctx.sessionPersistence.stat(m.id)).toBeUndefined()
@@ -1994,13 +2006,22 @@ describe('JsonlSessionPersistence: durability and crash semantics', () => {
     const m = meta('vanishing-snapshot')
     await writeLog(ctx.sessionPersistence, m, oneTurnLog())
     const persistence = ctx.sessionPersistence as unknown as {
-      listArtifacts(): Promise<Array<{ header: SessionHeader; path: string }>>
+      listArtifacts(): Promise<{
+        artifacts: Array<{ header: SessionHeader; path: string; sourceVersion: number }>
+        generations: readonly unknown[]
+      }>
     }
     const listArtifacts = persistence.listArtifacts.bind(persistence)
     const discovery = vi.spyOn(persistence, 'listArtifacts').mockImplementation(async () => {
-      const artifacts = await listArtifacts()
-      await rm(artifacts[0]!.path)
-      return artifacts
+      const listed = (await listArtifacts()).artifacts[0]
+      if (listed === undefined) throw new Error('expected one discovered artifact')
+      await rm(listed.path)
+      // The entry keeps no listing-taken identity, so the snapshot stats the
+      // path itself and observes the removal.
+      return {
+        generations: [],
+        artifacts: [{ header: listed.header, path: listed.path, sourceVersion: listed.sourceVersion }],
+      }
     })
 
     await expect(ctx.sessionPersistence.list()).resolves.toEqual([])
@@ -2009,12 +2030,18 @@ describe('JsonlSessionPersistence: durability and crash semantics', () => {
 
   it('surfaces non-ENOENT stat failures during listing', async () => {
     const persistence = ctx.sessionPersistence as unknown as {
-      listArtifacts(): Promise<Array<{ header: SessionHeader; path: string }>>
+      listArtifacts(): Promise<{
+        artifacts: Array<{ header: SessionHeader; path: string }>
+        generations: readonly unknown[]
+      }>
     }
-    const discovery = vi.spyOn(persistence, 'listArtifacts').mockResolvedValue([{
-      header: meta('snapshot-stat-failure'),
-      path: `${root}\0snapshot-stat-failure`,
-    }])
+    const discovery = vi.spyOn(persistence, 'listArtifacts').mockResolvedValue({
+      generations: [],
+      artifacts: [{
+        header: meta('snapshot-stat-failure'),
+        path: `${root}\0snapshot-stat-failure`,
+      }],
+    })
 
     await expect(ctx.sessionPersistence.list()).rejects.toThrow(/null bytes/)
     discovery.mockRestore()
@@ -2022,7 +2049,10 @@ describe('JsonlSessionPersistence: durability and crash semantics', () => {
 
   it('forwards list cancellation and awaits in-flight discovery cleanup', async () => {
     const persistence = ctx.sessionPersistence as unknown as {
-      listArtifacts(signal?: AbortSignal): Promise<Array<{ header: SessionHeader; path: string }>>
+      listArtifacts(signal?: AbortSignal): Promise<{
+        artifacts: Array<{ header: SessionHeader; path: string }>
+        generations: readonly unknown[]
+      }>
     }
     const started = Promise.withResolvers<AbortSignal>()
     const cleanup = Promise.withResolvers<undefined>()
@@ -2030,7 +2060,7 @@ describe('JsonlSessionPersistence: durability and crash semantics', () => {
       if (signal === undefined) throw new Error('expected list signal')
       started.resolve(signal)
       await cleanup.promise
-      return []
+      return { generations: [], artifacts: [] }
     })
     const reason = new Error('JSONL list discovery cancelled')
     const controller = new AbortController()
@@ -2054,12 +2084,18 @@ describe('JsonlSessionPersistence: durability and crash semantics', () => {
     const m = meta('snapshot-stat-cancellation')
     await writeLog(ctx.sessionPersistence, m, oneTurnLog())
     const persistence = ctx.sessionPersistence as unknown as {
-      listArtifacts(signal?: AbortSignal): Promise<Array<{ header: SessionHeader; path: string }>>
+      listArtifacts(signal?: AbortSignal): Promise<{
+        artifacts: Array<{ header: SessionHeader; path: string }>
+        generations: readonly unknown[]
+      }>
     }
-    const discovery = vi.spyOn(persistence, 'listArtifacts').mockResolvedValue([{
-      header: m,
-      path: rawLogPath(root, m.cwd, m.id),
-    }])
+    const discovery = vi.spyOn(persistence, 'listArtifacts').mockResolvedValue({
+      generations: [],
+      artifacts: [{
+        header: m,
+        path: rawLogPath(root, m.cwd, m.id),
+      }],
+    })
     const reason = new Error('JSONL list stat cancelled')
     const controller = new AbortController()
     const pending = ctx.sessionPersistence.list({ signal: controller.signal })
@@ -2143,6 +2179,53 @@ describe('JsonlSessionPersistence: stored-header memo', () => {
 
     await rm(rawLogPath(root, '/work', m.id))
     expect(await ctx.sessionPersistence.list()).toEqual([])
+  })
+
+  it('stats each stored artifact once per stat and per listing', async () => {
+    const m = meta('memo-single-stat', '/work')
+    await writeLog(ctx.sessionPersistence, m, oneTurnLog())
+    const path = rawLogPath(root, '/work', m.id)
+
+    statTally.enabled = true
+    expect((await ctx.sessionPersistence.stat(m.id))?.sizeBytes).toBeGreaterThan(0)
+    expect(statTally.byPath.get(path)).toBe(1)
+
+    statTally.byPath.clear()
+    expect((await ctx.sessionPersistence.list()).map(snapshot => snapshot.header.id)).toEqual([m.id])
+    // The header decode's memo-guard stat IS the snapshot's identity; a second
+    // stat for the revision and size would double the listing's filesystem work.
+    expect(statTally.byPath.get(path)).toBe(1)
+    statTally.enabled = false
+  })
+
+  it('fingerprints a historical corpus from the listing walk and its guard stats', async () => {
+    const current = meta('memo-corpus-current', '/work')
+    const historical = meta('memo-corpus-historical', '/work')
+    await writeLog(ctx.sessionPersistence, current, oneTurnLog())
+    const sourcePath = historicalLogPath(root, historical.cwd, historical.id)
+    await mkdir(dirname(sourcePath), { recursive: true })
+    await writeFile(sourcePath, `${JSON.stringify(releasedV0Header(historical))}\n`)
+    const stored = (await ctx.sessionPersistence.stat(historical.id))!.revision
+    expect(stored).toMatch(/^\d+:\d+:\d+:\d+:\d+:[0-9a-f]{64}$/)
+
+    const persistence = ctx.sessionPersistence as unknown as {
+      listGenerations(signal?: AbortSignal): Promise<readonly unknown[]>
+    }
+    const walks = vi.spyOn(persistence, 'listGenerations')
+    statTally.enabled = true
+    const listed = await ctx.sessionPersistence.list()
+
+    expect(listed.map(snapshot => snapshot.header.id).sort()).toEqual([current.id, historical.id].sort())
+    // The historical token keeps both its file revision and its corpus
+    // fingerprint value...
+    expect(listed.find(snapshot => snapshot.header.id === historical.id)?.revision).toBe(stored)
+    // ...from one stat per artifact, with the fingerprint reusing the walk the
+    // listing already made instead of walking the root a second time.
+    expect(statTally.byPath.get(sourcePath)).toBe(1)
+    expect(statTally.byPath.get(rawLogPath(root, '/work', current.id))).toBe(1)
+    expect(walks).toHaveBeenCalledTimes(1)
+    statTally.enabled = false
+    walks.mockRestore()
   })
 })
 
