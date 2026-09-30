@@ -59,9 +59,9 @@ it('reports a failed event SDK load, retries it on the next report, and still sh
     scope: { name: 'lazy-sdk-failure' }, exporter: { url: 'http://collector.test/v1/logs' },
     resourceAttributes: { 'service.name': 'lazy-sdk-failure' }, processor: {}, onFailure,
   })
-  sender.emit({ eventName: 'first' })
+  sender.emit({ eventName: 'first', body: 'first', timestamp: 1_800_000_000_000 })
   await vi.waitFor(() => { expect(onFailure).toHaveBeenCalledTimes(1) })
-  sender.emit({ eventName: 'second' })
+  sender.emit({ eventName: 'second', body: 'second', timestamp: 1_800_000_000_000 })
   await vi.waitFor(() => { expect(onFailure).toHaveBeenCalledTimes(2) })
   expect(onFailure).toHaveBeenNthCalledWith(2, 'Product telemetry SDK failed to load', expect.any(Error))
   await expect(sender.shutdown()).resolves.toBeUndefined()
