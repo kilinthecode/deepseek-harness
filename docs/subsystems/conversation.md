@@ -269,6 +269,8 @@ With `D` registered Definitions, one incoming scalar event or packed run perform
 
 `publication` controls when changed State is materialized. Use `immediate` for structural or terminal changes, `animation-frame` for high-frequency visible deltas, and `none` when the State change feeds only a later publication. The engine applies every scalar update in log order and every packed run in one batch update; cadence only coalesces view publication.
 
+`foldReadsLocation: false` declares that `start` and `update` never read a Match Location, directly or through `context.matches`. When a live Turn/Step boundary only re-resolves Match Locations, the engine keeps such a Context's State and re-materializes its Location data and view Node from the refreshed `context.start.location` instead of replaying every Match. A step Location survives a live boundary that only appends Steps to its Turn, so its `turn.steps` may lag; replacement and prepend re-resolve Locations strictly.
+
 ## Verification obligations
 
 Add focused tests that establish these outcomes:

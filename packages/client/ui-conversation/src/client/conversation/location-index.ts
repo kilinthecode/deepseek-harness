@@ -158,20 +158,42 @@ function sameStep(left: StepLocation | undefined, right: StepLocation): boolean 
     && left.data === right.data
 }
 
-function sameTurn(left: TurnLocation | undefined, right: TurnLocation): boolean {
-  return left !== undefined
-    && left.start === right.start && left.end === right.end && left.status === right.status
-    && left.data === right.data && sameReferences(left.steps, right.steps)
+/** Turn facts a Definition can read through a Turn or Step Location. */
+function sameTurnFacts(left: TurnLocation, right: TurnLocation): boolean {
+  return left.start === right.start && left.end === right.end && left.status === right.status
+    && left.data === right.data
 }
 
-function sameLocation(left: ConversationLocation | undefined, right: ConversationLocation | undefined): boolean {
+function sameTurn(left: TurnLocation | undefined, right: TurnLocation): boolean {
+  return left !== undefined && sameTurnFacts(left, right) && sameReferences(left.steps, right.steps)
+}
+
+/**
+ * Compare one Match's previously resolved Location with its current Location.
+ * Turn-kind Locations stay reference-strict, so every changed Turn fact and
+ * every Step-membership change reaches a Definition that reads `turn.steps`.
+ * A step-kind Location is also interchangeable while its StepLocation is the
+ * retained one and its TurnLocation differs in Step membership alone
+ * (`tailGrowth`), which no reader observes through that Match. Replacement and
+ * prepend stay strict.
+ * @param left - previously resolved Location.
+ * @param right - currently resolved Location.
+ * @param tailGrowth - whether a live boundary may only have appended Steps to the owning Turn.
+ * @returns whether both Locations are interchangeable for Match identity.
+ */
+function sameLocation(
+  left: ConversationLocation | undefined,
+  right: ConversationLocation | undefined,
+  tailGrowth = false,
+): boolean {
   if (left === undefined || right === undefined || left.kind !== right.kind) return left === right
   if (left.kind === 'session' || left.kind === 'unresolved') return true
   if (right.kind === 'session' || right.kind === 'unresolved') return false
   if (left.kind === 'turn' || right.kind === 'turn') {
     return left.kind === 'turn' && right.kind === 'turn' && left.turn === right.turn
   }
-  return left.turn === right.turn && left.step === right.step
+  return left.step === right.step
+    && (left.turn === right.turn || (tailGrowth && sameTurnFacts(left.turn, right.turn)))
 }
 
 /** Session-owned Turn/Step timeline and event-to-Location index. */
@@ -496,12 +518,15 @@ export class ConversationLocationIndex {
     this.timeline = { turnOrder, turns }
     if (turn !== previousTurn) this.changedTurns.add(turnNumber)
 
+    const stepsByNumber = new Map<number, StepLocation>()
+    for (const step of turn.steps) stepsByNumber.set(step.step, step)
     const changed = new Set<number>()
     for (const seq of this.seqsByTurn.get(turnNumber) ?? []) {
       const previous = this.locations.get(seq)
-      const next = this.resolve(seq)
+      const next = this.resolve(seq, stepsByNumber)
+      if (sameLocation(previous, next, true)) continue
       this.locations.set(seq, next)
-      if (!sameLocation(previous, next)) changed.add(seq)
+      changed.add(seq)
     }
 
     if (event.type === 'step/end' && this.currentTurn === event.data.turn && this.currentStep === event.data.step) {
@@ -611,13 +636,21 @@ export class ConversationLocationIndex {
       : this.mutableStepData(stepDataKey(data.turn, requireStep(data)))
   }
 
-  private resolve(seq: number): ConversationLocation {
+  /**
+   * Resolve the current Location of one indexed event.
+   * @param seq - indexed event sequence.
+   * @param steps - Step Locations of the sequence's own Turn, indexed once by a caller that resolves a whole Turn.
+   * @returns current Location, falling back to session when it has no Turn/Step affinity.
+   */
+  private resolve(seq: number, steps?: ReadonlyMap<number, StepLocation>): ConversationLocation {
     const coordinates = this.coordinates.get(seq)
     if (coordinates?.turn === undefined) return SESSION_LOCATION
     const turn = this.timeline.turns.get(coordinates.turn)
     if (turn === undefined) return UNRESOLVED_LOCATION
     if (coordinates.step === undefined) return { kind: 'turn', turn }
-    const step = turn.steps.find(candidate => candidate.step === coordinates.step)
+    const step = steps === undefined
+      ? turn.steps.find(candidate => candidate.step === coordinates.step)
+      : steps.get(coordinates.step)
     return step === undefined ? { kind: 'turn', turn } : { kind: 'step', turn, step }
   }
 }
