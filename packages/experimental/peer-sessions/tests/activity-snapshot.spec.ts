@@ -6,12 +6,13 @@
  * production writer; see `activity-fixture.ts`.
  */
 
-import { mkdir, writeFile } from 'node:fs/promises'
+import { mkdir, rm, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { SessionId } from '@deepseek-ai/dsh-session'
 import { realpathNormalize } from '@deepseek-ai/dsh-workspace'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import type { PeerActivitySnapshot } from '../src/index.ts'
+import { activityDirectory } from '../src/paths.ts'
 import { mountPeerHarness, type PeerHarness } from './harness.ts'
 import {
   overlapSections,
@@ -126,6 +127,30 @@ describe('peer activity filters', () => {
     expect(peerNames(await rendered(fixture))).toEqual(['peer-b'])
     harness.ctx.emit('agent/disposed', { agent: fixture.caller })
     expect(await fixture.snapshot(1)).toBeUndefined()
+  })
+})
+
+describe('peer activity storage', () => {
+  it('shows nothing while the activity directory does not exist, and lists peers once it does', async () => {
+    const harness = await mountPeerHarness({ peer: { pollMs: 60_000 } })
+    harnesses.push(harness)
+    const fixture = await snapshotFixture(harness, 'peer-a')
+    // A cleaned home leaves no directory, which reads as no peers rather than a failure.
+    await rm(activityDirectory(harness.home), { recursive: true })
+    expect(await fixture.snapshot(1)).toBeUndefined()
+
+    await fixture.write({ id: 'peer-b', status: 'running' })
+    expect(peerNames(await rendered(fixture))).toEqual(['peer-b'])
+  })
+
+  it('fails instead of showing nothing when the activity directory cannot be read', async () => {
+    const harness = await mountPeerHarness({ peer: { pollMs: 60_000 } })
+    harnesses.push(harness)
+    const fixture = await snapshotFixture(harness, 'peer-a')
+    // Only a missing directory means no peers; a file in its place is a fault to report.
+    await rm(activityDirectory(harness.home), { recursive: true })
+    await writeFile(activityDirectory(harness.home), 'not a directory')
+    await expect(fixture.snapshot(1)).rejects.toThrow()
   })
 })
 
@@ -471,6 +496,38 @@ describe('peer activity bounds', () => {
     const truncated = await rendered(narrow)
     expect(truncated.text).toBe(expected)
     // The dropped peer is not a listed peer, so a later step never mistakes it for a new one.
+    expect(truncated.peerIds).toEqual(['peer-newest'])
+  })
+
+  it('drops peers from the end until the remaining ones fit', async () => {
+    const wide = await wideProcess()
+    const longWork = 'a line of work long enough to pay for dropping this peer entirely'
+    await wide.fixture.write({ id: 'peer-newest', status: 'running', files: ['rel:src/kept.ts'] })
+    await wide.fixture.write({
+      id: 'peer-middle',
+      status: 'running',
+      doing: longWork,
+      files: ['rel:src/middle.ts'],
+      updatedAgoMs: 5000,
+    })
+    await wide.fixture.write({
+      id: 'peer-oldest',
+      status: 'running',
+      doing: longWork,
+      files: ['rel:src/oldest.ts'],
+      updatedAgoMs: 10_000,
+    })
+    // The cap fits the first peer alone: without the last peer two are still too many.
+    const expected = [
+      HEADER,
+      '<peer-activity-json>',
+      '{"peers":[{"name":"peer-newest","status":"running","checkout":"shared","files":["src/kept.ts"]}],"truncated":true}',
+      '</peer-activity-json>',
+    ].join('\n')
+
+    const narrow = await peerProcess(wide, 'peer-narrow', Buffer.byteLength(expected, 'utf8'))
+    const truncated = await rendered(narrow)
+    expect(truncated.text).toBe(expected)
     expect(truncated.peerIds).toEqual(['peer-newest'])
   })
 

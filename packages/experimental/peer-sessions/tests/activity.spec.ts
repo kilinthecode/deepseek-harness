@@ -1,5 +1,5 @@
 import { spawnSync } from 'node:child_process'
-import { mkdir, readFile, stat, writeFile } from 'node:fs/promises'
+import { mkdir, readFile, rm, stat, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { Context } from '@deepseek-ai/cordis'
 import type { Agent } from '@deepseek-ai/dsh-agent'
@@ -9,8 +9,9 @@ import type { Session } from '@deepseek-ai/dsh-session'
 import { realpathNormalize } from '@deepseek-ai/dsh-workspace'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { activityFileKey, listActivity, readActivity } from '../src/activity.ts'
-import { activityDirectory, activityPath } from '../src/paths.ts'
+import { activityDirectory, activityPath, peersDirectory } from '../src/paths.ts'
 import PeerService, { type Config } from '../src/index.ts'
+import { readPresence } from '../src/presence.ts'
 import { mountPeerHarness, type PeerHarness } from './harness.ts'
 
 const harnesses: PeerHarness[] = []
@@ -67,6 +68,31 @@ function todoTurn(agent: Agent, todos: readonly { readonly content: string; read
 /** The recorded path keys of one session's row, newest first. */
 async function recordedPaths(harness: PeerHarness, id: string): Promise<readonly string[]> {
   return (await readActivity(harness.home, id))?.files.map(file => file.p) ?? []
+}
+
+/**
+ * Create one subagent whose header names `parent`.
+ * @param harness - the mounted fixture.
+ * @param id - session id of the subagent.
+ * @param parent - session id the header names as its parent.
+ * @param delegationDepth - the depth the header records; the header records none when omitted.
+ * @returns the live subagent.
+ */
+async function delegate(harness: PeerHarness, id: string, parent: string, delegationDepth?: number): Promise<Agent> {
+  return await harness.create(id, {
+    meta: {
+      origin: 'subagent',
+      parentSession: SessionId(parent),
+      ...delegationDepth === undefined ? {} : { delegationDepth },
+    },
+  })
+}
+
+/** The pid of a process that has already exited, so a row naming it is stale. */
+function exitedPid(): number {
+  const pid = spawnSync(process.execPath, ['-e', '']).pid
+  if (pid === undefined) throw new Error('spawn produced no pid')
+  return pid
 }
 
 /** One activity row body as a reader validates it, for rows this process did not write. */
@@ -215,6 +241,100 @@ describe('peer activity rows', () => {
     expect(await recordedPaths(harness, 'peer-a')).toEqual(['rel:src/a.ts'])
   })
 
+  it('records a grandchild\'s writes on the root through a child that owns no row', async () => {
+    const harness = await mountPeerHarness({ peer: { pollMs: 60_000 } })
+    harnesses.push(harness)
+    await harness.create('peer-a')
+    await delegate(harness, 'peer-child', 'peer-a', 1)
+    const grandchild = await delegate(harness, 'peer-grand', 'peer-child', 2)
+    toolTurn(grandchild, 'write', { file_path: 'src/grand.ts', content: 'x' })
+    await vi.waitFor(async () => { expect(await recordedPaths(harness, 'peer-a')).toEqual(['rel:src/grand.ts']) })
+    expect((await listActivity(harness.home)).map(row => row.sessionId)).toEqual(['peer-a'])
+  })
+
+  it('walks up at most the delegation depth a session records', async () => {
+    const harness = await mountPeerHarness({ peer: { pollMs: 60_000 } })
+    harnesses.push(harness)
+    await harness.create('peer-a')
+    const child = await delegate(harness, 'peer-child', 'peer-a', 1)
+    // The root is two parents up, but the header records one hop.
+    const shallow = await delegate(harness, 'peer-shallow', 'peer-child', 1)
+    // The header names a live root as its parent and records no depth at all.
+    const unstated = await delegate(harness, 'peer-unstated', 'peer-a')
+    toolTurn(shallow, 'write', { file_path: 'src/shallow.ts', content: 'x' })
+    toolTurn(unstated, 'write', { file_path: 'src/unstated.ts', content: 'x' })
+    // The child's own write follows, so the row it publishes shows everything recorded before it.
+    toolTurn(child, 'write', { file_path: 'src/child.ts', content: 'x' })
+    await vi.waitFor(async () => { expect(await recordedPaths(harness, 'peer-a')).toEqual(['rel:src/child.ts']) })
+  })
+
+  it('reports to no row when the parent is not tracked by this process', async () => {
+    const harness = await mountPeerHarness({ peer: { pollMs: 60_000 } })
+    harnesses.push(harness)
+    const warn = vi.spyOn(harness.ctx.logger, 'warn')
+    await harness.create('peer-a')
+    const child = await delegate(harness, 'peer-child', 'peer-a', 1)
+    // Its parent lives in another process, so the walk ends there although the header records a second hop.
+    const orphan = await delegate(harness, 'peer-orphan', 'peer-elsewhere', 2)
+    toolTurn(orphan, 'write', { file_path: 'src/orphan.ts', content: 'x' })
+    toolTurn(child, 'write', { file_path: 'src/child.ts', content: 'x' })
+    await vi.waitFor(async () => { expect(await recordedPaths(harness, 'peer-a')).toEqual(['rel:src/child.ts']) })
+    expect(warn).not.toHaveBeenCalled()
+  })
+
+  it('records nothing for a session with no working directory to resolve its paths against', async () => {
+    const harness = await mountPeerHarness({ peer: { pollMs: 60_000 } })
+    harnesses.push(harness)
+    const warn = vi.spyOn(harness.ctx.logger, 'warn')
+    await harness.create('peer-a')
+    const bare = await harness.create('peer-bare', { cwd: null })
+    // Naming a live root as its parent does not help a subagent that has no directory of its own.
+    const directoryless = await harness.create('peer-directoryless', {
+      cwd: null,
+      meta: { origin: 'subagent', parentSession: SessionId('peer-a'), delegationDepth: 1 },
+    })
+    const sibling = await delegate(harness, 'peer-sibling', 'peer-a', 1)
+    toolTurn(bare, 'write', { file_path: 'src/bare.ts', content: 'x' })
+    toolTurn(directoryless, 'write', { file_path: 'src/directoryless.ts', content: 'x' })
+    toolTurn(sibling, 'write', { file_path: 'src/sibling.ts', content: 'x' })
+    await vi.waitFor(async () => { expect(await recordedPaths(harness, 'peer-a')).toEqual(['rel:src/sibling.ts']) })
+    expect((await listActivity(harness.home)).map(row => row.sessionId)).toEqual(['peer-a'])
+    expect(warn).not.toHaveBeenCalled()
+  })
+
+  it('ignores a tool call whose arguments are not JSON', async () => {
+    const harness = await mountPeerHarness({ peer: { pollMs: 60_000 } })
+    harnesses.push(harness)
+    const warn = vi.spyOn(harness.ctx.logger, 'warn')
+    const peer = await harness.create('peer-a')
+    // The arguments end mid-string. The tool reports that to the model; the half-read
+    // path is not a write, even when the result says it was done.
+    toolTurn(peer, 'write', '{"file_path":"src/cut.ts","content":"x')
+    toolTurn(peer, 'write', { file_path: 'src/whole.ts', content: 'x' })
+    await vi.waitFor(async () => { expect(await recordedPaths(harness, 'peer-a')).toEqual(['rel:src/whole.ts']) })
+    expect(warn).not.toHaveBeenCalled()
+  })
+
+  it('warns and keeps the row queue moving when a row cannot be written', async () => {
+    const harness = await mountPeerHarness({ peer: { pollMs: 60_000 } })
+    harnesses.push(harness)
+    const warn = vi.spyOn(harness.ctx.logger, 'warn')
+    // A file where the activity directory belongs makes every row write fail.
+    await mkdir(peersDirectory(harness.home), { recursive: true, mode: 0o700 })
+    await writeFile(activityDirectory(harness.home), 'not a directory')
+    const peer = await harness.create('peer-a')
+    await vi.waitFor(() => {
+      expect(warn).toHaveBeenCalledWith(expect.stringContaining('peer-sessions: publishing activity for "peer-a" failed: '))
+    })
+    // The failure stays inside the activity queue: the presence row still landed.
+    expect(await readPresence(harness.home, SessionId('peer-a'))).toBeDefined()
+
+    // With the path repaired, the next write lands: the failed one did not wedge the queue.
+    await rm(activityDirectory(harness.home))
+    toolTurn(peer, 'write', { file_path: 'src/a.ts', content: 'x' })
+    await vi.waitFor(async () => { expect(await recordedPaths(harness, 'peer-a')).toEqual(['rel:src/a.ts']) })
+  })
+
   it('takes `doing` from the todo list the root itself wrote', async () => {
     const harness = await mountPeerHarness({ peer: { pollMs: 60_000 } })
     harnesses.push(harness)
@@ -251,17 +371,35 @@ describe('peer activity rows', () => {
   it.skipIf(process.platform === 'win32')('unlinks a row whose process exited', async () => {
     const harness = await mountPeerHarness({ peer: { pollMs: 60_000 } })
     harnesses.push(harness)
-    const exited = spawnSync(process.execPath, ['-e', ''])
-    const pid = exited.pid
-    if (pid === undefined) throw new Error('spawn produced no pid')
     await mkdir(activityDirectory(harness.home), { recursive: true })
     await writeFile(activityPath(harness.home, 'peer-dead'), rowBody({
       sessionId: 'peer-dead',
-      pid,
+      pid: exitedPid(),
       root: harness.workdir,
     }))
     expect(await listActivity(harness.home)).toEqual([])
     await expect(stat(activityPath(harness.home, 'peer-dead'))).rejects.toThrow()
+  })
+
+  it.skipIf(process.platform === 'win32')('unlinks a row whose process exited when that one row is read', async () => {
+    const harness = await mountPeerHarness({ peer: { pollMs: 60_000 } })
+    harnesses.push(harness)
+    await mkdir(activityDirectory(harness.home), { recursive: true })
+    await writeFile(activityPath(harness.home, 'peer-dead'), rowBody({
+      sessionId: 'peer-dead',
+      pid: exitedPid(),
+      root: harness.workdir,
+    }))
+    await writeFile(activityPath(harness.home, 'peer-live'), rowBody({
+      sessionId: 'peer-live',
+      pid: process.pid,
+      root: harness.workdir,
+    }))
+    expect(await readActivity(harness.home, 'peer-dead')).toBeUndefined()
+    await expect(stat(activityPath(harness.home, 'peer-dead'))).rejects.toThrow()
+    // The pid probe decides: a row of a running process is returned and stays.
+    expect(await readActivity(harness.home, 'peer-live')).toMatchObject({ sessionId: 'peer-live', pid: process.pid })
+    await expect(stat(activityPath(harness.home, 'peer-live'))).resolves.toBeDefined()
   })
 
   it('skips a row of another version without deleting it', async () => {

@@ -896,11 +896,6 @@ export default class PeerService extends Service {
     // announces the disposal — so the checkout recorded at creation is what
     // proves this session ever owned a row.
     if (state.checkout !== undefined) await this.removeActivityRow(agent.id)
-    for (const other of this.states.values()) {
-      for (const [callId, call] of other.pendingCalls) {
-        if (call.owner === state) other.pendingCalls.delete(callId)
-      }
-    }
     if (state.location === undefined) return
     await this.deleteWatchesOf(agent.id)
   }
@@ -985,6 +980,10 @@ export default class PeerService extends Service {
 
   /**
    * Record a successful tool call's file on the row that owns it.
+   *
+   * An owner disposed since the call started publishes nothing: `ownedRow`
+   * refuses a session that is no longer a live root, so a late result never
+   * brings a retired row back.
    * @param state - the session whose result arrived.
    * @param callId - tool call id this result answers.
    * @param failed - whether the tool reported an error.
@@ -1016,6 +1015,10 @@ export default class PeerService extends Service {
   /**
    * Resolve the row one session's tool call reports to: the session itself when
    * it owns a row, else the nearest ancestor that does.
+   *
+   * The walk follows `parentSession` for at most the delegation depth the
+   * session's header records, so a header that records none reports to no
+   * ancestor, and it stops at a parent this process does not track.
    * @param session - the session whose log carries the call.
    * @param state - that session's peer state.
    * @returns the owning state, or `undefined` when no ancestor in this process owns a row.
@@ -1024,14 +1027,12 @@ export default class PeerService extends Service {
     if (this.ownedRow(state) !== undefined) return state
     let parent = session.header.parentSession
     for (let hops = session.header.delegationDepth ?? 0; parent !== undefined && hops > 0; hops -= 1) {
-      const ancestor = this.ctx.agents.get(parent)
-      // A parent this process does not hold owns no row here, and its own
+      // A parent this process does not track owns no row here, and its own
       // parent is not reachable either.
-      if (ancestor === undefined) return undefined
-      const ancestorState = this.states.get(ancestor.id)
+      const ancestorState = this.states.get(parent)
       if (ancestorState === undefined) return undefined
       if (this.ownedRow(ancestorState) !== undefined) return ancestorState
-      parent = ancestor.session.header.parentSession
+      parent = ancestorState.agent.session.header.parentSession
     }
     return undefined
   }
