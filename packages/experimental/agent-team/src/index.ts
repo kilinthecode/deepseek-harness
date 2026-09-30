@@ -621,6 +621,9 @@ export class TeamService extends TypertRemoteService {
         failures.push(error)
       }
     }
+    // Stopping a teammate can commit its last assistant message, which starts a
+    // transcript append, so the appends are collected after the stops.
+    await this.lifecycle.settle(this.room.pendingTranscripts(), failures)
     if (failures.length > 0) throw new AggregateError(failures, 'Agent Teams runtime disposal failed')
   }
 }

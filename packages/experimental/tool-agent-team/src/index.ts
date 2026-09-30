@@ -9,7 +9,7 @@ import type { TeamMemberView } from '@deepseek-ai/dsh-experimental-agent-team'
 import { ReasoningEffortId, resolveDelegationImages } from '@deepseek-ai/dsh-llm'
 import type { ImageInputSupport } from '@deepseek-ai/dsh-llm'
 import { plainForkParentOf } from '@deepseek-ai/dsh-subagent'
-import { callingAgent, defineTool, jsonOutput, type InferValue } from '@deepseek-ai/dsh-tools'
+import { applyAgentScopedTools, callingAgent, defineTool, jsonOutput, type InferValue } from '@deepseek-ai/dsh-tools'
 
 /** Cordis plugin name. */
 export const name = 'tool-agent-team'
@@ -474,19 +474,10 @@ export function apply(ctx: Context, config: Config = {}): void {
     freshProvider: config.freshProvider ?? 'spawn',
     forkProvider: config.forkProvider ?? 'fork',
   }
-  const installed = new Map<Agent, () => void>()
-  const maybeInstall = (agent: Agent): void => {
-    if (installed.has(agent) || !qualifiesForTeamInstall(agent, ctx)) return
-    installed.set(agent, install(agent, ctx, resolved))
-  }
-  for (const agent of ctx.agents.list()) maybeInstall(agent)
-  ctx.on('agent/created', ({ agent }) => { maybeInstall(agent) })
-  ctx.on('agent/disposed', ({ agent }) => {
-    installed.get(agent)?.()
-    installed.delete(agent)
-  })
-  ctx.effect(() => () => {
-    for (const dispose of installed.values()) dispose()
-    installed.clear()
-  }, 'tool-team.scopedTools()')
+  applyAgentScopedTools(
+    ctx,
+    agent => qualifiesForTeamInstall(agent, ctx),
+    agent => install(agent, ctx, resolved),
+    'tool-team.scopedTools()',
+  )
 }
