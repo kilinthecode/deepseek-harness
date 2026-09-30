@@ -1,0 +1,11 @@
+# Live patch for the peer-message composition: the peer service, its tools, and
+# this scenario's seed plugin, which makes both envelopes durable at
+# `agent/created` and before the service's own listener drains the session.
+
+- insert:
+    - id: peers
+      name: '@deepseek-ai/dsh-experimental-peer-sessions'
+    - id: tool-peer-sessions
+      name: '@deepseek-ai/dsh-experimental-tool-peer-sessions'
+    - id: peer-seed-mail
+      name: ./seed-peer-mail.mjs

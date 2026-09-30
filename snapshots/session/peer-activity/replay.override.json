@@ -1,0 +1,22 @@
+[
+  {
+    "kind": "chunks",
+    "chunks": [
+      { "type": "block-start", "index": 0, "blockType": "tool-call" },
+      { "type": "tool-call-delta", "index": 0, "id": "call_write_token_ttl", "name": "write", "argumentsDelta": "{\"file_path\":\"src/a.ts\",\"content\":\"export const TOKEN_TTL_SECONDS = 3600\\n\"}" },
+      { "type": "block-end", "index": 0, "block": { "type": "tool-call", "id": "call_write_token_ttl", "name": "write", "arguments": "{\"file_path\":\"src/a.ts\",\"content\":\"export const TOKEN_TTL_SECONDS = 3600\\n\"}" } },
+      { "type": "usage", "usage": { "inputTokens": 10, "outputTokens": 5 } },
+      { "type": "finish", "reason": { "kind": "tool-calls" } }
+    ]
+  },
+  {
+    "kind": "chunks",
+    "chunks": [
+      { "type": "block-start", "index": 0, "blockType": "text" },
+      { "type": "text-delta", "index": 0, "text": "DONE" },
+      { "type": "block-end", "index": 0, "block": { "type": "text", "text": "DONE" } },
+      { "type": "usage", "usage": { "inputTokens": 10, "outputTokens": 2 } },
+      { "type": "finish", "reason": { "kind": "stop" } }
+    ]
+  }
+]

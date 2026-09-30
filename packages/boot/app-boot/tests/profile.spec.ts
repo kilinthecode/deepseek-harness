@@ -19,6 +19,7 @@ import {
   initProfile,
   loadProfile,
   loadProfileDirectory,
+  OPTIONAL_BUNDLES,
   PROFILE_COMPATIBILITY_FILENAME,
   PROFILE_PATCH_FILENAME,
   PROFILE_TEMPLATES,
@@ -205,6 +206,14 @@ it('composes current files from profile data and retains launch overlay and tele
   expect(composeEntries([readProfilePatches('test', { ...enabled, overlays: [] })])[0]?.disabled).toBe(true)
   writeFileSync(patchPath, '- id: session-telemetry-otel\n  disabled: false\n')
   expect(composeEntries([readProfilePatches('test', { ...enabled, overlays: [] })])[0]?.disabled).toBe(false)
+})
+
+describe('optional bundles', () => {
+  it('names the peer session profile bundle the plugin manager offers switched off', () => {
+    // `dsh plugin` offers exactly the entries of this list as shipped-but-off
+    // bundles; peer sessions ship through it rather than a default template.
+    expect(OPTIONAL_BUNDLES).toContain('@deepseek-ai/dsh-experimental-peer-sessions-profile')
+  })
 })
 
 describe('initProfile', () => {

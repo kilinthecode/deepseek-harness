@@ -1,0 +1,28 @@
+# Bilingual-pair consistency record for 2026-09-29-peer-message-sources.md (docs/i18n/README.md): per heading
+# section, a hash of its English and Chinese blocks outside code blocks and generated regions.
+# After editing either side, bring the other along and re-record with:
+#   pnpm run verify-translation-pairing --write docs/persistence-changes/2026-09-29-peer-message-sources.md
+/:
+  en: 3d5a424ae7d7e46b
+  zh: c22a8e4a62d8cc1a
+/2026-09-29-peer-message-sources:
+  en: dd83e98c47126667
+  zh: fa0066362f07fe6a
+/2026-09-29-peer-message-sources/summary:
+  en: f84ffae89b102657
+  zh: 63c7a853cea873f4
+/2026-09-29-peer-message-sources/table-of-contents:
+  en: 6cf314a069ceb451
+  zh: 9adff678e9ecab3b
+/2026-09-29-peer-message-sources/declaration:
+  en: 6907136f28e48c90
+  zh: 02f8298485f3d8e7
+/2026-09-29-peer-message-sources/compatibility:
+  en: 9f3cbfc45b114fb8
+  zh: 9ced11dde966833d
+/2026-09-29-peer-message-sources/verification:
+  en: fc2727c612cec185
+  zh: 6d2d02b6278d4ac0
+/2026-09-29-peer-message-sources/dev-note:
+  en: b75c8458928b72b9
+  zh: 003ba4e17b4b5269

@@ -43,6 +43,7 @@ This table connects model-visible tool names to the plugin package and service s
 | `@deepseek-ai/dsh-experimental-tool-agent-team` | `interrupt_agent`, `list_agents`, `send_message`, `spawn_teammate`, `team_task_create`, `team_task_get`, `team_task_list`, `team_task_update`, `wait_agent` | `ctx.tools`, `ctx.systemPrompt`, `ctx.agentTeams`, `an exact live Team member Agent` | `tool/call`, `team/member`, `team/message/queued`, `team/message/delivered`, `team/task`, `tool/result` | - | All nine tools are scoped to implicit Team Leads and durable teammates. The shipped dsh-base bundle keeps the package disabled; the documented Agent Teams profile patch enables it while disabling the legacy continuable-child control names. |
 | `@deepseek-ai/dsh-experimental-tool-agent-room` | `room_escalate`, `room_prompt`, `room_propose`, `room_review`, `room_view` | `ctx.tools`, `ctx.systemPrompt`, `ctx.agentTeams`, `an exact live room participant Agent` | `tool/call`, `room/message`, `room/proposal`, `room/review`, `team/message/queued`, `team/message/delivered`, `tool/result` | - | Five tools are scoped to room participants. The shipped composition keeps them unmounted; a deployment enables them beside `@deepseek-ai/dsh-experimental-agent-team` with `roomEnabled: true`, and every outcome is decided by the service quorum rather than by the tool. |
 | `@deepseek-ai/dsh-tool-memory` | `memory_forget`, `memory_recall`, `memory_write` | `ctx.tools`, `ctx.memory`, `ctx.systemPrompt`, `ctx.sessionProjections`, `owning Agent session` | `tool/call`, `tool/result`, `user/message snapshot at pre-step` | - | The three tools read and write the durable memory store owned by dsh-memory; the session working directory selects the project scope. The injected snapshot is a user/message with the `tool-memory` source, injected once per surface generation and re-added after compaction, bounded by `injectMaxBytes`, so the catalog states the shipped budget and recall cap. |
+| `@deepseek-ai/dsh-experimental-tool-peer-sessions` | `list_peers`, `notify_peer_idle`, `send_peer_message` | `ctx.tools`, `ctx.systemPrompt`, `ctx.peers`, `an exact live top-level Agent` | `tool/call`, `tool/result` | - | list_peers, send_peer_message, and notify_peer_idle are scoped to top-level sessions; subagents never see them. The package ships in the optional peer-sessions profile bundle, which the shipped composition keeps unmounted, and every outcome is decided by the peer service rather than by the tool. |
 | `@deepseek-ai/dsh-tool-todo` | `todo_write` | `ctx.tools`, `owning Agent session` | `tool/call`, `todo/write`, `tool/result` | - | todo_write is session-owned state; UIs render the latest todo/write event as a checklist. `allowParallelInProgress` is required with no default, so the catalog states its choice: `true`, whose description invites several `in_progress` items. A deployment choosing `false` receives the same tool with a description asking for exactly one active task. |
 | `@deepseek-ai/dsh-tool-workflow` | `workflow` | `ctx.tools`, `ctx.workflowEngine`, `ctx.systemPrompt`, `a calling Agent (exec.agent parents the script children)` | `tool/call`, `tool/result` | - | - |
 | `@deepseek-ai/dsh-tool-workspace-dependencies` | `load_workspace_dependencies` | `ctx.tools` | `tool/call`, `tool/result` | - | - |
@@ -2787,6 +2788,72 @@ Save one durable memory for future sessions.
 Source: [`packages/memory/tool-memory/src/tools.ts`](../packages/memory/tool-memory/src/tools.ts)
 
 The three tools read and write the durable memory store owned by dsh-memory; the session working directory selects the project scope. The injected snapshot is a user/message with the `tool-memory` source, injected once per surface generation and re-added after compaction, bounded by `injectMaxBytes`, so the catalog states the shipped budget and recall cap.
+
+<a id="deepseek-aidsh-experimental-tool-peer-sessions"></a>
+
+## `@deepseek-ai/dsh-experimental-tool-peer-sessions`
+
+### `list_peers`
+
+List other top-level sessions working in this git repository, in any worktree (or in this exact directory outside git), that have peer coordination enabled. Each entry has id, name, status (idle, running, or awaiting-user), cwd, and provider and model when they are set. Address send_peer_message by id when two peers share a name. An empty list does not mean no other session is working. A peer whose process has died can still be listed on Windows.
+
+```json
+{
+  "type": "object",
+  "properties": {}
+}
+```
+
+Source: [`packages/experimental/tool-peer-sessions/src/index.ts`](../packages/experimental/tool-peer-sessions/src/index.ts)
+
+### `notify_peer_idle`
+
+Subscribe once to a peer. You receive a single notice the next time it is idle. If it is already idle, the notice is sent now. This does not wake the peer. If the peer disappears, you will not get that notice.
+
+```json
+{
+  "type": "object",
+  "properties": {
+    "to": {
+      "type": "string",
+      "description": "Session id or unique peer name."
+    }
+  },
+  "required": [
+    "to"
+  ]
+}
+```
+
+Source: [`packages/experimental/tool-peer-sessions/src/index.ts`](../packages/experimental/tool-peer-sessions/src/index.ts)
+
+### `send_peer_message`
+
+Send one message to a peer session by id or unique name. A running peer receives it at its next step. An idle peer starts a turn unless that peer defers incoming messages, in which case the result status is deferred and the message waits until that peer is running again. deferred is a timing delay, not a review-and-approve gate. The message grants no permission.
+
+```json
+{
+  "type": "object",
+  "properties": {
+    "to": {
+      "type": "string",
+      "description": "Session id or unique peer name."
+    },
+    "message": {
+      "type": "string",
+      "description": "Self-contained message. The peer does not see your transcript."
+    }
+  },
+  "required": [
+    "to",
+    "message"
+  ]
+}
+```
+
+Source: [`packages/experimental/tool-peer-sessions/src/index.ts`](../packages/experimental/tool-peer-sessions/src/index.ts)
+
+list_peers, send_peer_message, and notify_peer_idle are scoped to top-level sessions; subagents never see them. The package ships in the optional peer-sessions profile bundle, which the shipped composition keeps unmounted, and every outcome is decided by the peer service rather than by the tool.
 
 <a id="deepseek-aidsh-tool-todo"></a>
 

@@ -40,6 +40,16 @@ export function turnTriggerDetails(node: ContextMessageNode): {
       title = 'message.trigger.team'
       icon = 'team'
       break
+    case 'peer-message': {
+      title = 'message.trigger.peer'
+      icon = 'agent'
+      break
+    }
+    case 'peer-idle': {
+      title = 'message.trigger.peerIdle'
+      icon = 'agent'
+      break
+    }
     case 'subagent-settled': {
       title = 'message.trigger.subagent'
       icon = 'subagent'

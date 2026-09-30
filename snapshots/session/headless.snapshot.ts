@@ -415,10 +415,23 @@ function stderrFromSession(log: string): string {
         break
     }
   }
+  // The CLI streams only turns that run after its own task is queued; a turn
+  // that an earlier producer (for example a peer delivery) opened is not printed.
+  const queuesTask = (record: JsonObject): boolean => {
+    const inserted = (record.data as JsonObject | undefined)?.inserted
+    return record.type === 'agent/inbox/spliced' && Array.isArray(inserted)
+      && inserted.some(message => ((message as JsonObject | null)?.source as JsonObject | undefined)?.kind === 'user')
+  }
+  // A log without a queued task splice keeps projecting from its first turn.
+  let taskQueued = !records(log).some(queuesTask)
   for (const record of records(log)) {
+    if (!taskQueued && queuesTask(record)) {
+      taskQueued = true
+      continue
+    }
     if (record.type === 'turn/start') {
       close()
-      started = true
+      started = taskQueued
       continue
     }
     if (!started) continue

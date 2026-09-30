@@ -45,6 +45,18 @@ describe('Turn trigger notices', () => {
     expect(view.container.querySelector('time')?.dateTime).toBe('2023-11-14T22:13:20.000Z')
   })
 
+  it.each([
+    [{ kind: 'peer-message', senderName: 'Reviewer' }, 'message.trigger.peer', 'Message from another agent'],
+    [{ kind: 'peer-idle', senderName: 'Reviewer' }, 'message.trigger.peerIdle', 'Peer is idle'],
+  ] as const)('presents the recorded %j peer source as an agent trigger', (source, title, copy) => {
+    const node = trigger(source)
+    // Neither peer kind falls through to the unnamed `request` trigger.
+    expect(turnTriggerDetails(node.data)).toEqual({ title, icon: 'agent' })
+    const t = makeTranslate(en)
+    const view = render(<TurnTriggerNodeView node={node} t={t} />)
+    expect(view.getByRole('button').textContent).toContain(copy)
+  })
+
   it('opens the recorded notice body and closes it independently of the Turn', () => {
     const view = render(<TurnTriggerNodeView node={trigger({ kind: 'schedule' })} t={makeTranslate(en)} />)
     const button = view.getByRole('button')

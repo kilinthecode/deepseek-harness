@@ -1710,6 +1710,46 @@ export const SERVICE_API: readonly ServiceApiEntry[] = [
     ],
   },
   {
+    key: 'peers',
+    summary: '`ctx.peers`: peer discovery, messaging, and idle watches for the top-level sessions one Host process holds.',
+    description: '`ctx.peers`: peer discovery, messaging, and idle watches for the top-level sessions one Host process holds.\n\nOne instance owns the file provider for every live agent in that process; peers in other processes coordinate only through the mailbox files under the Harness home. Methods take the calling agent explicitly, so authorization follows the caller rather than ambient context.',
+    methods: [
+      {
+        signature: 'async list(agent: Agent): Promise<readonly PeerEntry[]>',
+        description: 'List the caller\'s peers: other top-level sessions in its repository with peer coordination enabled, ordered by name and then session id.',
+        parameters: [{ name: 'agent', description: 'calling agent, whose cached repository key selects the listed peers.' }],
+        returns: 'one entry per listed peer, excluding the caller.',
+        throws: ['{PeerError} `PEER_NOT_TOP_LEVEL` for a caller that is not a peer, `PEER_NO_CWD` for a caller with no usable directory.'],
+      },
+      {
+        signature: 'async send(agent: Agent, request: SendPeerMessageRequest): Promise<SendPeerMessageResult>',
+        description: 'Send one message to a peer, queueing it durably when no process holds a live target.',
+        parameters: [{ name: 'agent', description: 'calling agent; the message is attributed to its session.' }, { name: 'request', description: 'target and complete message text.' }],
+        returns: 'the envelope identity and how far delivery got.',
+        throws: ['{PeerError} for an unresolved, ambiguous, unauthorized, oversized, or relay-limited send.'],
+      },
+      {
+        signature: 'async notifyIdle(agent: Agent, request: NotifyPeerIdleRequest): Promise<NotifyPeerIdleResult>',
+        description: 'Subscribe once to a peer\'s next idle transition.',
+        parameters: [{ name: 'agent', description: 'calling agent, which receives the notice in its own mailbox.' }, { name: 'request', description: 'target to watch.' }],
+        returns: 'whether this call added a subscription, or a notice was already due.',
+        throws: ['{PeerError} for an unresolved, unauthorized, full, or idle-turn-limited watch.'],
+      },
+      {
+        signature: 'async activitySnapshot(agent: Agent, step: number): Promise<PeerActivitySnapshot | undefined>',
+        description: 'Render what the caller\'s peers published, when this step has something new to show.\n\nThe block is data about other agents: it is not a user request and grants no authority, which is what the header says in as many words. A session that owns no activity row — a subagent, or one without a working directory — publishes no row, has no dedupe state of its own, and so is shown nothing.',
+        parameters: [{ name: 'agent', description: 'calling agent, whose repository and checkout scope the listed peers.' }, { name: 'step', description: 'step number inside the open turn. Step 1 shows a block whose text changed since the last one this session logged; a later step shows a block only to warn about an overlap it has not warned about yet, or to list a peer the last logged block did not list.' }],
+        returns: 'the rendered block, its sections, and the ids of the peers it lists, or `undefined` when no peer qualifies, when nothing fits the byte cap, or when this step already saw what it would say.',
+      },
+      {
+        signature: 'async whenSettled(): Promise<void>',
+        description: 'Resolve once every listener-owned operation this service started before the call has settled: coalesced presence writes, drain passes, and status reactions.\n\nTest seam, not part of the peer-sessions contract. A test that removes or rewrites a presence row awaits this so its own write is the final writer instead of racing the coalesced publication queued behind it, and one that waits for a reaction the listeners own gets the completion signal the disposer itself awaits. Production callers never need it: publications coalesce, and any later state change heals the row again.',
+        parameters: [],
+        returns: 'fulfillment after the tracked work settles.',
+      },
+    ],
+  },
+  {
     key: 'permissionPresets',
     summary: 'Owns the deployment\'s configured permission presets, the fixed Auto integration hook, and their write path.',
     description: 'Owns the deployment\'s configured permission presets, the fixed Auto integration hook, and their write path. Requires a confining `ctx.shell` executor and `ctx.approval`; unmatched knob values are reported as CUSTOM_PRESET, not an error.',
@@ -4993,6 +5033,10 @@ export const TYPE_API: readonly TypeApiEntry[] = [
     declaration: 'export type ContentBlockType = keyof ContentBlockMap;',
   },
   {
+    name: 'ContextSnapshotSection',
+    declaration: 'export interface ContextSnapshotSection {\n    readonly name: string;\n    readonly text: string;\n}',
+  },
+  {
     name: 'ContinuableCreateRequest',
     declaration: 'export interface ContinuableCreateRequest {\n    readonly sessionId: SessionId;\n    readonly parent: Agent;\n    readonly signal: AbortSignal;\n}',
   },
@@ -6009,6 +6053,14 @@ export const TYPE_API: readonly TypeApiEntry[] = [
     declaration: 'export interface NotFutureError {\n    readonly code: \'not_future\';\n    readonly message: string;\n}',
   },
   {
+    name: 'NotifyPeerIdleRequest',
+    declaration: 'export interface NotifyPeerIdleRequest {\n    readonly to: string;\n}',
+  },
+  {
+    name: 'NotifyPeerIdleResult',
+    declaration: 'export interface NotifyPeerIdleResult {\n    readonly status: \'watching\' | \'delivered\' | \'queued\';\n}',
+  },
+  {
     name: 'ObjectJsonSchema',
     declaration: 'export type ObjectJsonSchema = JsonSchemaNode & {\n    type: \'object\';\n};',
   },
@@ -6069,16 +6121,32 @@ export const TYPE_API: readonly TypeApiEntry[] = [
     declaration: 'export interface PanelRoomPromptRequest {\n    readonly target: string;\n    readonly instruction: string;\n}',
   },
   {
+    name: 'PeerActivitySnapshot',
+    declaration: 'export interface PeerActivitySnapshot {\n    readonly text: string;\n    readonly sections: readonly ContextSnapshotSection[];\n    readonly peerIds: readonly SessionId[];\n}',
+  },
+  {
     name: 'PeerAdmission',
     declaration: 'export type PeerAdmission = {\n    readonly peer: PeerScope;\n} | {\n    readonly rejection: 401 | 403;\n};',
+  },
+  {
+    name: 'PeerEntry',
+    declaration: 'export interface PeerEntry {\n    readonly kind: \'session\';\n    readonly id: SessionId;\n    readonly name: string;\n    readonly status: PeerStatus;\n    readonly cwd: string;\n    readonly provider?: string;\n    readonly model?: string;\n}',
   },
   {
     name: 'PeerId',
     declaration: 'export type PeerId = Branded<\'PeerId\'>;',
   },
   {
+    name: 'PeerMessageId',
+    declaration: 'export type PeerMessageId = Branded<\'PeerMessageId\'>;',
+  },
+  {
     name: 'PeerScope',
     declaration: 'export interface PeerScope {\n    readonly id: PeerId;\n    readonly ctx: Context;\n    dispose(): Promise<void>;\n}',
+  },
+  {
+    name: 'PeerStatus',
+    declaration: 'export type PeerStatus = \'idle\' | \'running\' | \'awaiting-user\';',
   },
   {
     name: 'PermissionCatalog',
@@ -6643,6 +6711,14 @@ export const TYPE_API: readonly TypeApiEntry[] = [
   {
     name: 'SearchResultView',
     declaration: 'export type SearchResultView = SearchMatchesResultView | SearchPathsResultView;',
+  },
+  {
+    name: 'SendPeerMessageRequest',
+    declaration: 'export interface SendPeerMessageRequest {\n    readonly to: string;\n    readonly message: string;\n}',
+  },
+  {
+    name: 'SendPeerMessageResult',
+    declaration: 'export interface SendPeerMessageResult {\n    readonly messageId: PeerMessageId;\n    readonly status: \'delivered\' | \'queued\' | \'deferred\';\n}',
   },
   {
     name: 'SendTeamMessageRequest',
