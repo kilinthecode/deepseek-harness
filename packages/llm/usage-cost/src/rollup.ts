@@ -87,19 +87,29 @@ const addBuckets = (sum: UsageCostBuckets, next: UsageCostBuckets): UsageCostBuc
   cacheWriteTokens: sum.cacheWriteTokens + next.cacheWriteTokens,
 })
 
+/** Whether these buckets carry anything a provider can bill. */
+const hasBillableTokens = (buckets: UsageCostBuckets): boolean =>
+  buckets.uncachedInputTokens > 0
+  || buckets.outputTokens > 0
+  || buckets.cacheReadTokens > 0
+  || buckets.cacheWriteTokens > 0
+
 /**
  * Roll one window of durable session-index records into priced usage.
  *
  * Whole-session totals come from `tokenUsage`, so every covered record
  * contributes tokens even when the per-route unit has not folded it; per-route
  * cost comes from `usageByRoute`, and {@link UsageCostRollup.pricedSessions}
- * reports how many covered records that unit reached.
+ * reports how many covered records that unit reached. A route whose window
+ * buckets are all zero — a same-step resample leaves its former route at zero —
+ * needs no price and takes no rollup line, so a price table has to cover only
+ * the routes the window actually billed.
  *
  * @param records - session-index records to cover.
  * @param window - half-open window over `identity.createdAt`.
  * @param rates - per-route price table.
  * @returns the priced rollup for the window.
- * @throws Error naming a route the rate table does not price.
+ * @throws Error naming a route that billed usage the rate table does not price.
  */
 export function rollupUsageCost(
   records: Iterable<UsageIndexRecord>,
@@ -130,9 +140,10 @@ export function rollupUsageCost(
   const rollupRoutes: UsageCostRouteRollup[] = []
   let costMicros = 0
   for (const route of [...routeTokens.keys()].sort()) {
-    const routeRates = rates[route]
     // oxlint-disable-next-line typescript/no-non-null-assertion -- route came from this map's keys, so its value exists.
     const routeBuckets = routeTokens.get(route)!
+    if (!hasBillableTokens(routeBuckets)) continue
+    const routeRates = rates[route]
     if (routeRates === undefined) {
       throw new Error(`usage-cost: no prices for route "${route}"; add it to the usage-cost rate table`)
     }

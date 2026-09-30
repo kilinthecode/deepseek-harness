@@ -15,7 +15,9 @@ export type UsageCostBuckets = UsageByRouteState['routes'][string]
 /**
  * One durable session-index record: the identity and projection rows the
  * projection cache stored for a session. Both rows are optional because a
- * record may predate the unit that owns them.
+ * record may predate the unit that owns them. Rows report the usage the session
+ * itself produced, so a forked session's inherited prefix is not counted here
+ * as well as in its parent's record.
  */
 export interface UsageIndexRecord {
   /** Session identity the projection cache stamped on the record. */
@@ -25,15 +27,17 @@ export interface UsageIndexRecord {
   }
   /** Projection rows by unit key. */
   rows: {
-    /** Whole-session usage totals. */
+    /** Whole-session usage totals of the events this session owns. */
     tokenUsage?: {
       val: {
         totals: UsageCostBuckets
       }
     }
-    /** Per-route usage, once the unit has folded this session. */
+    /** Per-route usage, once the unit has folded this session: the rows the rollup prices. */
     usageByRoute?: {
-      val: UsageByRouteState
+      val: {
+        routes: Record<string, UsageCostBuckets>
+      }
     }
   }
 }

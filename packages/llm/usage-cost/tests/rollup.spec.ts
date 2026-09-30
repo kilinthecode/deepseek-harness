@@ -1,5 +1,9 @@
 import { describe, expect, it } from 'vitest'
-import { UNATTRIBUTED_ROUTE } from '@deepseek-ai/dsh-token-meter'
+import { Context } from '@deepseek-ai/cordis'
+import SessionStore from '@deepseek-ai/dsh-session'
+import type { Session } from '@deepseek-ai/dsh-session'
+import SessionProjectionRegistry from '@deepseek-ai/dsh-session-projection'
+import TokenMeter, { UNATTRIBUTED_ROUTE } from '@deepseek-ai/dsh-token-meter'
 import { parseUsageCostRates, priceUsage, rollupUsageCost } from '../src/rollup.ts'
 import type { UsageCostBuckets, UsageIndexRecord } from '../src/types.ts'
 
@@ -29,8 +33,49 @@ const usageRow = (totals: UsageCostBuckets): UsageIndexRecord['rows'] => ({
 })
 
 const routeRow = (routes: Record<string, UsageCostBuckets>): UsageIndexRecord['rows'] => ({
-  usageByRoute: { val: { route: null, routes, last: null } },
+  usageByRoute: { val: { routes } },
 })
+
+/** The durable index record a cost report loads for one session. */
+function indexRecord(ctx: Context, session: Session): UsageIndexRecord {
+  const values = ctx.sessionProjections.snapshot(session).values
+  const totals = values.tokenUsage
+  const routes = values.usageByRoute
+  if (totals === undefined || routes === undefined) {
+    throw new Error('the token-meter usage units must be registered')
+  }
+  return {
+    identity: { createdAt: session.header.createdAt },
+    rows: { tokenUsage: { val: { totals } }, usageByRoute: { val: { routes } } },
+  }
+}
+
+/**
+ * One parent that made a single request worth 1,000,000 input tokens and the
+ * fork that inherited it without making a call of its own.
+ */
+async function forkFixture(): Promise<{ ctx: Context; parent: Session; child: Session }> {
+  const ctx = new Context()
+  await ctx.plugin(SessionStore)
+  await ctx.plugin(SessionProjectionRegistry)
+  await ctx.plugin(TokenMeter)
+  const parent = ctx.sessions.create()
+  parent.append('request/header', {
+    header: { config: { provider: 'deepseek-official', model: 'deepseek-flash' } },
+    reason: 'initial',
+  })
+  parent.append('step/start', { turn: 1, step: 1 })
+  parent.append('assistant/attempt', {
+    turn: 1,
+    step: 1,
+    stream: [{
+      type: 'chunk',
+      time: 0,
+      chunk: { type: 'usage', usage: { inputTokens: 1_000_000, outputTokens: 0 } },
+    }],
+  })
+  return { ctx, parent, child: ctx.sessions.fork(parent) }
+}
 
 describe('parsing the rate table', () => {
   it('accepts provider/model and unattributed keys with integer micro prices', () => {
@@ -186,6 +231,68 @@ describe('rolling up one window', () => {
 
     expect(() => rollupUsageCost(records, { from: 0, to: 1_000 }, RATES))
       .toThrow(/no prices for route "other\/provider-model"/)
+  })
+
+  it('needs no price for a route the window left without billable usage', () => {
+    // A same-step resample keeps its former route at zero, so a price table
+    // covering only the routes that billed must still price the window.
+    const records = [
+      record(100, routeRow({
+        'deepseek-official/deepseek-flash': buckets(1_000_000, 0),
+        'deepseek-official/retired-model': buckets(0, 0),
+      })),
+      record(150, routeRow({ 'deepseek-official/retired-model': buckets(0, 0) })),
+    ]
+
+    const rollup = rollupUsageCost(records, { from: 0, to: 1_000 }, RATES)
+
+    expect(rollup.routes.map(route => route.route)).toEqual(['deepseek-official/deepseek-flash'])
+    expect(rollup.costMicros).toBe(300)
+  })
+
+  it('bills a forked session’s inherited request once', async () => {
+    const { ctx, parent, child } = await forkFixture()
+
+    const rollup = rollupUsageCost(
+      [indexRecord(ctx, parent), indexRecord(ctx, child)],
+      { from: 0, to: Number.MAX_SAFE_INTEGER },
+      RATES,
+    )
+
+    expect(rollup.sessions).toBe(2)
+    expect(rollup.tokens).toEqual(buckets(1_000_000, 0))
+    expect(rollup.routes).toEqual([{
+      route: 'deepseek-official/deepseek-flash',
+      tokens: buckets(1_000_000, 0),
+      costMicros: 300,
+    }])
+  })
+
+  it('counts what a forked session spends on its own calls', async () => {
+    const { ctx, parent, child } = await forkFixture()
+    child.append('request/header', {
+      header: { config: { provider: 'deepseek-official', model: 'deepseek-flash' } },
+      reason: 'change',
+    })
+    child.append('step/start', { turn: 2, step: 1 })
+    child.append('assistant/attempt', {
+      turn: 2,
+      step: 1,
+      stream: [{
+        type: 'chunk',
+        time: 0,
+        chunk: { type: 'usage', usage: { inputTokens: 500_000, outputTokens: 0 } },
+      }],
+    })
+
+    const rollup = rollupUsageCost(
+      [indexRecord(ctx, parent), indexRecord(ctx, child)],
+      { from: 0, to: Number.MAX_SAFE_INTEGER },
+      RATES,
+    )
+
+    expect(rollup.tokens).toEqual(buckets(1_500_000, 0))
+    expect(rollup.costMicros).toBe(450)
   })
 
   it('counts a record with no rows without pricing it', () => {

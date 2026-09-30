@@ -10,6 +10,12 @@
   "references": [
     {
       "path": "../token-meter"
+    },
+    {
+      "path": "../../core/session"
+    },
+    {
+      "path": "../../session/session-projection"
     }
   ]
 }
