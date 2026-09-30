@@ -1,3 +1,4 @@
+import { readFileSync } from 'node:fs'
 import { describe, expect, it } from 'vitest'
 import { resolveDesktopClientBuildProfile, resolveDesktopEdition } from '../scripts/desktop-release-environment.mjs'
 
@@ -36,6 +37,18 @@ describe('Desktop client build profile', () => {
   it('pairs each edition with the profile that renders its own brand', () => {
     expect(resolveDesktopClientBuildProfile({})).toBe('portal')
     expect(resolveDesktopClientBuildProfile({ DSH_DESKTOP_EDITION: 'portal-dev' })).toBe('portal-dev')
+  })
+
+  it('builds each selected profile through a repository script that names it', () => {
+    // Packaging runs `build:<profile>`; a missing or differently named script
+    // would only surface as a failed release stage.
+    const manifest = JSON.parse(readFileSync(new URL('../../../package.json', import.meta.url), 'utf8')) as {
+      scripts: Record<string, string>
+    }
+    for (const edition of ['portal', 'portal-dev'] as const) {
+      const profile = resolveDesktopClientBuildProfile({ DSH_DESKTOP_EDITION: edition })
+      expect(manifest.scripts[`build:${profile}`]).toBe(`tsx scripts/build.ts --profile ${profile}`)
+    }
   })
 
   it('accepts the edition’s own profile as an explicit selection', () => {
