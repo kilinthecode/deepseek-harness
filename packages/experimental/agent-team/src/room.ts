@@ -113,6 +113,8 @@ export class TeamRoom {
    * Lead and decision: every Team numbers its decisions from `proposal-1`.
    */
   private readonly reviewTimers = new Map<string, () => void>()
+  /** Transcript appends this process has started and not yet settled. */
+  private readonly appends = new Set<Promise<unknown>>()
 
   /**
    * @param ctx - Team service context with Agent, Session, and subagent services.
@@ -159,7 +161,7 @@ export class TeamRoom {
       content,
     }
     const { root } = membership
-    void this.journal.transact(root.id, async () => {
+    const append = this.journal.transact(root.id, async () => {
       const state = this.journal.state(root)
       /* v8 ignore next -- the identity is derived from the committed event, so a reload cannot duplicate it. */
       if (state.roomMessages.some(candidate => candidate.id === message.id)) return
@@ -177,6 +179,10 @@ export class TeamRoom {
       if (this.ctx.get('agents')?.get(root.id) === undefined) return
       this.ctx.logger.warn(`room transcript append failed: ${errorMessage(error)}`)
     })
+    // Runtime disposal settles the append instead of returning while the Lead's
+    // log still has a room write in flight.
+    this.appends.add(append)
+    void append.finally(() => { this.appends.delete(append) })
   }
 
   /**
@@ -216,6 +222,7 @@ export class TeamRoom {
 
   /**
    * Open or supersede one collective decision and ask every eligible reviewer to settle it.
+   * Only the participant that proposed a decision supersedes it.
    * @param caller - exact live Team member proposing the decision.
    * @param request - statement, optional superseded proposal, and cancellation.
    * @returns the new revision with its quorum arithmetic.
@@ -223,6 +230,9 @@ export class TeamRoom {
   async propose(caller: Agent, request: ProposeRoomDecisionRequest): Promise<RoomProposalView> {
     const membership = this.membership(caller)
     const statement = requiredText(request.statement, 'statement', 4_000)
+    // Resolve the deadline owner first: a composition that cannot serve one must
+    // refuse before the room commits a decision nothing could ever settle.
+    this.requireTimer()
     const proposal = await this.journal.transact(membership.root.id, async () => {
       request.signal.throwIfAborted()
       const state = this.journal.state(membership.root)
@@ -233,6 +243,12 @@ export class TeamRoom {
         )
       }
       const prior = request.supersedes === undefined ? undefined : this.revisableProposal(state, request.supersedes)
+      if (prior !== undefined && prior.proposerId !== caller.id) {
+        throw new TeamError(
+          `room decision "${prior.id}" is revised only by the participant that proposed it`,
+          'TEAM_ROOM_NOT_PROPOSER',
+        )
+      }
       const revision = prior === undefined ? 1 : prior.revision + 1
       if (revision > this.config.maxProposalRevisions) {
         throw new TeamError(
@@ -255,9 +271,6 @@ export class TeamRoom {
       return next
     })
     this.published(membership.root.id)
-    // Resolve the timer before asking anyone, so a composition that cannot serve
-    // a deadline fails before the room delivers its requests.
-    this.requireTimer()
     try {
       await this.requestReviews(caller, proposal)
     } finally {
@@ -451,6 +464,14 @@ export class TeamRoom {
     this.reviewTimers.clear()
   }
 
+  /**
+   * Transcript appends still in flight.
+   * @returns the append operations runtime disposal must settle.
+   */
+  pendingTranscripts(): readonly Promise<unknown>[] {
+    return [...this.appends]
+  }
+
   /** Arm one revision's stall check at its earliest deadline, replacing any armed check. */
   private armReview(root: Agent, proposal: RoomProposalSnapshot): void {
     this.disarmReview(root.id, proposal.id)
@@ -497,8 +518,10 @@ export class TeamRoom {
     // room hands the decision to the human.
     if (stalled.length > 0 && reminders < this.config.reviewReminders) {
       await this.recordTimeout(root, proposal, 'reminder', stalled)
-      await this.promptStalled(root, proposal, stalled)
+      // Re-arm before the reminder reaches anyone: a reminder the mailbox cannot
+      // deliver must leave the decision with a deadline rather than without one.
       this.armReview(root, proposal)
+      await this.promptStalled(root, proposal, stalled)
       return
     }
     // A reviewer still inside its grace window keeps the decision open, so an
@@ -547,7 +570,7 @@ export class TeamRoom {
     this.published(root.id)
   }
 
-  /** Re-prompt stalled reviewers and re-arm the check. */
+  /** Re-prompt stalled reviewers. */
   private async promptStalled(
     root: Agent,
     proposal: RoomProposalSnapshot,
@@ -583,8 +606,10 @@ export class TeamRoom {
   ): Promise<void> {
     await this.journal.transact(root.id, async () => {
       const current = this.journal.state(root).roomProposals.find(candidate => candidate.id === proposal.id)
-      /* v8 ignore next -- only a concurrent settle can close the decision this sweep just read. */
-      if (current === undefined || current.phase !== 'open') return
+      // The escalation belongs to the revision whose windows expired. A settle
+      // closes the decision, and a supersede reopens it at the next revision
+      // with windows of its own, which this record must not cut short.
+      if (current === undefined || current.phase !== 'open' || current.revision !== proposal.revision) return
       await this.journal.appendAndFlush(root, 'room/proposal', {
         version: 1,
         teamId: TeamId(root.id),

@@ -166,13 +166,13 @@ Mailbox 投影与 checkpoint 准入保留本地声明的校验器之外获准内
 
 参与者就是尚未失败的 roster 成员，包括仍处于 provisioning 的成员；这与 roster 解析在线成员 Team 身份所用的规则一致。`roomPrompt` 通过发送目标自己上次发言之后记录的 transcript 条目把发言权交给某个参与者，条目数量受 `roomTranscriptWindow` 限制。参与者不会因他人的发言而被唤醒，因此 room 只会在有人交出发言权时推进。
 
-接受与否只由 `room-quorum.ts` 根据记录在案的 review 计算。每个有资格的 reviewer 都是 proposer 之外的参与者；只有当全部 reviewer 都已投票、其中至少 `roomApprovalRatio` 比例批准，且没有任何反对成立时，决策才会被接受。反对一旦达到 quorum，决策立即结清。proposer 不能 review 自己的决策，已结清的决策是最终的，被拒绝的决策只能通过携带修订后 statement 的新 revision 解决，其上限为 `roomMaxProposalRevisions`。没有任何操作可以强行给出结论；`roomEscalate` 会把未决决策交给人类。每条已记录的立场都带有理由，而每个参与者都能读到整块决策板，因此 proposer 能回应反对意见，而不是只知道有人反对。room 决策需要挂载 `timer` 插件以执行评审期限；未挂载时，`roomPropose` 会在记录开放决策前以 `TEAM_TIMER_REQUIRED` 失败。
+接受与否只由 `room-quorum.ts` 根据记录在案的 review 计算。每个有资格的 reviewer 都是 proposer 之外的参与者；只有当全部 reviewer 都已投票、其中至少 `roomApprovalRatio` 比例批准，且没有任何反对成立时，决策才会被接受。反对一旦达到 quorum，决策立即结清。proposer 不能 review 自己的决策，已结清的决策是最终的，被拒绝的决策只能由其 proposer 提出携带修订后 statement 的新 revision 来解决，其上限为 `roomMaxProposalRevisions`；其他参与者提出的 revision 会以 `TEAM_ROOM_NOT_PROPOSER` 失败。没有任何操作可以强行给出结论；`roomEscalate` 会把未决决策交给人类。每条已记录的立场都带有理由，而每个参与者都能读到整块决策板，因此 proposer 能回应反对意见，而不是只知道有人反对。room 决策需要挂载 `timer` 插件以执行评审期限；未挂载时，`roomPropose` 会在记录开放决策前以 `TEAM_TIMER_REQUIRED` 失败。
 
 每个 participant view 都会报告该在线参与者在 `roomReviewGraceMs` 内是否没有产生任何被观察到的工作，用的正是停滞巡检所读的同一个窗口，因此决策板点名的正是 room 正在等待的那个参与者。读取方通过 `roomStream` 这个 Remote stream 跟随一个 room：先收到完整的 room，随后每当发言记录、成员名单或决策板发生持久化更新时，读取方都会收到新的 view；参与者输出的每个 text chunk 也会带来一帧，因此 panel 无需轮询即可展示正在进行的审议。判定 reviewer 沉默的依据是该参与者自身被观察到的工作 —— 它自己 turn 的持久 Session event 与实时 `agent/assistant-stream` 帧 —— 而绝不是 room 自身的记录：Lead Session 保存着每个角色的记录。请求一次 standing 会启动该 reviewer 的 `roomReviewGraceMs` 窗口，至多 `roomReviewReminders` 次提醒各自会重启被提醒者的窗口；只有当所有仍欠 standing 的 reviewer 都用尽窗口后，决策才会升级，因此慢模型不会被误判为卡住。升级后的决策会把沉默的 reviewer 记入 `room/review-timeout`，绝不代替它们编造 standing。
 
 ### Dispose
 
-dispose 会关闭准入、中止并等待已获准的创建与 mailbox dispatch 事务，再让 continuation owner 释放 roster 中确切的 live direct child 及其后代；Lead 的非 Team continuable child 不受影响。cleanup 失败会让 dispose 明确失败，并以 `disposalTimeoutMs` 为上限。
+dispose 会关闭准入、中止并等待已获准的创建与 mailbox dispatch 事务，等待仍在进行的 room transcript 追加，再让 continuation owner 释放 roster 中确切的 live direct child 及其后代；Lead 的非 Team continuable child 不受影响。cleanup 失败会让 dispose 明确失败，并以 `disposalTimeoutMs` 为上限。
 
 </details>
 
