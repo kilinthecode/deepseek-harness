@@ -68,7 +68,7 @@ The service also keeps, in this process only, the paths that its session's file 
 
 ### Activity snapshot
 
-`activitySnapshot(agent, step)` renders what the caller's peers published. It lists each other peer of the caller's repository that is `running` or `awaiting-user`, or that has a fresh file; an idle peer without a fresh file is left out. Peers sort `running`, `awaiting-user`, then `idle`, newest publish first within a status, and the first `maxActivityPeers` are listed. A peer's `checkout` is `shared` when its checkout root equals the caller's, and the last path segment of its root otherwise.
+`activitySnapshot(agent, step)` renders what the caller's peers published. It lists each other peer of the caller's repository that is `running` or `awaiting-user`, or that has a fresh file; an idle peer without a fresh file is left out. Peers sort `running`, `awaiting-user`, then `idle`, newest publish first within a status, and the first `maxActivityPeers` are listed. A peer's name is cut to 120 characters, so one long title cannot push every peer out of the byte cap. A peer's `checkout` is `shared` when its checkout root equals the caller's, and the last path segment of its root otherwise.
 
 With `overlap` set to `warn`, the snapshot adds one warning for each listed peer that wrote a path the caller also wrote or tried to write within `activityTtlMs`. The caller's paths come from lists that this process updates as its own tool calls and results arrive, never from the caller's own row, which can lag one queued write. `overlap: off` keeps the block and omits the warnings.
 

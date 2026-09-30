@@ -68,7 +68,7 @@ subagent 的写入记在其顶层祖先名下。服务通过本进程持有的�
 
 ### 活动快照
 
-`activitySnapshot(agent, step)` 渲染调用方的对等会话发布的内容。它列出调用方所在仓库中的每个其他对等会话，只要其状态为 `running` 或 `awaiting-user`，或至少有一个新鲜文件；没有新鲜文件的空闲对等会话不会被列出。对等会话按 `running`、`awaiting-user`、`idle` 排序，同一状态内最近发布的在前，并列出前 `maxActivityPeers` 个。对等会话的检出根目录与调用方相同时，其 `checkout` 为 `shared`，否则为其根目录的最后一段路径。
+`activitySnapshot(agent, step)` 渲染调用方的对等会话发布的内容。它列出调用方所在仓库中的每个其他对等会话，只要其状态为 `running` 或 `awaiting-user`，或至少有一个新鲜文件；没有新鲜文件的空闲对等会话不会被列出。对等会话按 `running`、`awaiting-user`、`idle` 排序，同一状态内最近发布的在前，并列出前 `maxActivityPeers` 个。对等会话的名称截断为 120 个字符，因此一个很长的标题不会把所有对等会话都挤出字节上限。对等会话的检出根目录与调用方相同时，其 `checkout` 为 `shared`，否则为其根目录的最后一段路径。
 
 当 `overlap` 为 `warn` 时，每个被列出的对等会话，只要写过调用方在 `activityTtlMs` 之内也写过或尝试写过的路径，快照就为它添加一条警告。调用方的路径来自本进程随自身工具调用与结果到达而更新的列表，绝不来自调用方自己的记录，因为后者可能滞后一次排队写入。`overlap: off` 保留区块并省略警告。
 

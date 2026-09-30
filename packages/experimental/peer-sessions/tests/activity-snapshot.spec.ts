@@ -8,6 +8,7 @@
 
 import { mkdir, rm, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
+import { boundContextSummary } from '@deepseek-ai/dsh-llm'
 import { SessionId } from '@deepseek-ai/dsh-session'
 import { realpathNormalize } from '@deepseek-ai/dsh-workspace'
 import { afterEach, describe, expect, it, vi } from 'vitest'
@@ -263,6 +264,18 @@ describe('peer activity overlap', () => {
     const snapshot = await rendered(fixture)
     expect(overlapSections(snapshot)).toEqual([overlapWarning('peer-b', ['src/a.ts'])])
     expect(peerBlock(snapshot).peers[0]?.files).toEqual(['src/a.ts'])
+  })
+
+  it('bounds a peer name so one long title cannot suppress the snapshot', async () => {
+    const harness = await mountPeerHarness({ peer: { pollMs: 60_000 } })
+    harnesses.push(harness)
+    const fixture = await snapshotFixture(harness, 'peer-a')
+    const title = 'x'.repeat(5_000)
+    await fixture.write({ id: 'peer-b', name: title, status: 'running' })
+
+    const [peer] = peerBlock(await rendered(fixture)).peers
+    expect(peer?.name).toBe(boundContextSummary(title))
+    expect(peer?.name.length).toBeLessThan(title.length)
   })
 
   it('stays silent about a peer that has only a status', async () => {

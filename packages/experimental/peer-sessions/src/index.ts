@@ -650,7 +650,9 @@ export default class PeerService extends Service {
       if (files.length === 0 && candidate.status === 'idle') continue
       peers.push({
         id: candidate.sessionId,
-        name: candidate.name,
+        // A title is unbounded; bounding it keeps one long title from pushing
+        // every peer out of the byte cap.
+        name: boundContextSummary(candidate.name),
         status: candidate.status,
         doing: candidate.doing,
         checkout: candidate.root === row.checkout.root ? 'shared' : basename(candidate.root),
