@@ -36,6 +36,9 @@
       "path": "../../llm/llm"
     },
     {
+      "path": "../../compaction/compaction"
+    },
+    {
       "path": "../../session/session-projection"
     },
     {
