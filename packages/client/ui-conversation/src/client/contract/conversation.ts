@@ -207,7 +207,7 @@ export interface ConversationNodeDefinition<State = unknown> {
   /**
    * Declare that `start` and `update` never read a Match Location. A Turn/Step
    * boundary that only re-resolved Match Locations then reuses the folded State
-   * and re-materializes Location data and the view Node from the refreshed
+   * and re-materializes Location data and the view Node from the current
    * `context.start.location`. Set exactly `false` to opt in; omit it for every
    * fold that reads a Location, including a Location reached through
    * `context.matches`.

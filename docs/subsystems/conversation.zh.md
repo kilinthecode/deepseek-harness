@@ -269,7 +269,7 @@ Assembler 会记录这项依赖。如果后续 older prepend 带来了更近的�
 
 `publication` 控制发生 State 变更后何时物化。结构或 terminal 变化使用 `immediate`，高频可见 delta 使用 `animation-frame`，只为后续发布积累 State 时使用 `none`。引擎按日志顺序应用每条 scalar update，并用一次 batch update 应用一个 packed run；该选项只合并视图发布频率。
 
-`foldReadsLocation: false` 声明 `start` 与 `update` 从不读取 Match 的 Location，包括经由 `context.matches` 间接读取。实时 Turn/Step 边界只重新解析 Match Location 时，引擎保留此类 Context 的 State，并依据刷新后的 `context.start.location` 重新生成其 Location 数据与视图 Node，而不重放全部 Match。只向所属 Turn 追加 Step 的实时边界会保留原有 step Location，因此其 `turn.steps` 可能滞后；替换与 prepend 仍严格重新解析 Location。
+`foldReadsLocation: false` 声明 `start` 与 `update` 从不读取 Match 的 Location，包括经由 `context.matches` 间接读取。实时 Turn/Step 边界只重新解析 Match Location 时，引擎保留此类 Context 的 State，并依据当前的 `context.start.location` 重新生成其 Location 数据与视图 Node，而不重放全部 Match。只向所属 Turn 追加 Step 的实时边界会保留原有 step Location，因此其 `turn.steps` 可能滞后；替换与 prepend 仍严格重新解析 Location。
 
 ## 验证要求
 
