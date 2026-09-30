@@ -11,6 +11,7 @@
     { "path": "../../../vendor/cordis" },
     { "path": "../../../vendor/timer" },
     { "path": "../../util/brand" },
+    { "path": "../../util/deque" },
     { "path": "../../llm/llm" },
     { "path": "../../core/session" },
     { "path": "../../core/agent" },

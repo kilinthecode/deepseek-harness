@@ -1,3 +1,5 @@
+import type { DesktopEditionName } from './desktop-release-environment.mjs'
+
 /** Environment variable that selects the Desktop update deployment. */
 export const DESKTOP_AUTO_UPDATE_ENV: 'DSH_DESKTOP_AUTO_UPDATE_ENV'
 
@@ -52,14 +54,16 @@ export function resolveDesktopAutoUpdateTarget(
 export function desktopBuildRecordFilename(target: DesktopAutoUpdateTarget): string
 
 /**
- * Return the electron-builder channel metadata filename for an application version.
+ * Return the electron-builder channel metadata filename for one edition and target.
  * @param version - Desktop semantic version.
  * @param platform - Target platform.
+ * @param edition - Validated Desktop edition.
  * @returns Channel metadata filename emitted for the target.
  */
 export function desktopUpdateMetadataFilename(
   version: string,
   platform: NodeJS.Platform,
+  edition: DesktopEditionName,
 ): string
 
 /**

@@ -10,7 +10,7 @@ import {
 } from '../scripts/macos-app-update-config.mjs'
 
 const roots: string[] = []
-const update = { publicUrl: 'https://desktop-updates.example.com/dsh-desk/feeds/mac-arm64/' }
+const update = { publicUrl: 'https://desktop-updates.example.com/dsh-desk/feeds/mac-arm64/', channel: 'nightly' as const }
 
 async function fixture(): Promise<{ appPath: string; resourcesDir: string }> {
   const root = await mkdtemp(join(tmpdir(), 'desktop-macos-update-config-'))
@@ -45,6 +45,15 @@ describe('macOS packaged updater configuration', () => {
     })
     await writeMacOSAppUpdateConfig(paths.resourcesDir, update, 'deepseek-harness-updater')
     await expect(verifyMacOSAppUpdateConfig(paths.appPath, update, 'deepseek-harness-updater')).resolves.toBeUndefined()
+  })
+
+  it('writes and verifies the Portal Dev feed channel', async () => {
+    const paths = await fixture()
+    const devUpdate = { ...update, channel: 'dev' as const }
+    expect(resolveMacOSAppUpdateFeed([{ provider: 'generic', url: devUpdate.publicUrl, channel: 'dev' }]))
+      .toEqual(devUpdate)
+    await writeMacOSAppUpdateConfig(paths.resourcesDir, devUpdate, 'portal-dev-updater')
+    await expect(verifyMacOSAppUpdateConfig(paths.appPath, devUpdate, 'portal-dev-updater')).resolves.toBeUndefined()
   })
 
   it.each([

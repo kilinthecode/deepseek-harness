@@ -1,6 +1,7 @@
 /** Resolve the Desktop auto-update channel and its Tencent COS destination. */
 
 import { valid } from 'semver'
+import { DESKTOP_EDITION_ENV, resolveDesktopEdition } from './desktop-release-environment.mjs'
 
 /** Environment variable that selects the Desktop update deployment. */
 export const DESKTOP_AUTO_UPDATE_ENV = 'DSH_DESKTOP_AUTO_UPDATE_ENV'
@@ -65,19 +66,21 @@ export function desktopBuildRecordFilename(target) {
 }
 
 /**
- * Return the electron-builder channel metadata filename for an application version.
+ * Return the electron-builder channel metadata filename for one edition and target.
  * @param {string} version - Desktop semantic version.
  * @param {NodeJS.Platform} platform - Target platform.
+ * @param {'portal' | 'portal-dev'} edition - Validated Desktop edition.
  * @returns {string} Channel metadata filename emitted for the target.
  */
-export function desktopUpdateMetadataFilename(version, platform) {
+export function desktopUpdateMetadataFilename(version, platform, edition) {
   if (valid(version) === null) {
     throw new Error(`desktop auto-update: invalid Desktop version ${JSON.stringify(version)}`)
   }
   if (platform !== 'darwin' && platform !== 'win32') {
     throw new Error(`desktop auto-update: unsupported metadata platform ${platform}`)
   }
-  return `nightly${platform === 'darwin' ? '-mac' : ''}.yml`
+  const { updateChannel } = resolveDesktopEdition({ [DESKTOP_EDITION_ENV]: edition })
+  return `${updateChannel}${platform === 'darwin' ? '-mac' : ''}.yml`
 }
 
 /**

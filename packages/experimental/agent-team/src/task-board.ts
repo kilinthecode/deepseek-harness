@@ -138,6 +138,12 @@ export class TeamTaskBoard {
           break
         case 'release':
           authorizeOwner()
+          if (this.awaitingVerification(current)) {
+            throw new TeamError(
+              `team task "${current.id}" is awaiting verification; wait for its verdict`,
+              'TEAM_TASK_INVALID_TRANSITION',
+            )
+          }
           if (current.status !== 'in_progress') throw new TeamError('only an in-progress task can be released', 'TEAM_TASK_INVALID_TRANSITION')
           this.refuseWhileAwaitingVerdict(current)
           next = this.withoutVerification(this.withoutOwner({ ...current, status: 'pending' }))
@@ -165,6 +171,12 @@ export class TeamTaskBoard {
           break
         case 'submit':
           authorizeOwner()
+          if (this.awaitingVerification(current)) {
+            throw new TeamError(
+              `team task "${current.id}" is awaiting verification; wait for its verdict`,
+              'TEAM_TASK_INVALID_TRANSITION',
+            )
+          }
           if (current.status !== 'in_progress') {
             throw new TeamError('only an in-progress task can be submitted for verification', 'TEAM_TASK_INVALID_TRANSITION')
           }
@@ -211,6 +223,12 @@ export class TeamTaskBoard {
           break
         case 'reassign': {
           if (!lead) throw new TeamError('only the Team Lead can reassign tasks', 'TEAM_LEAD_REQUIRED')
+          if (this.awaitingVerification(current)) {
+            throw new TeamError(
+              `team task "${current.id}" is awaiting verification; wait for its verdict`,
+              'TEAM_TASK_INVALID_TRANSITION',
+            )
+          }
           if (current.status !== 'pending' && current.status !== 'in_progress') {
             throw new TeamError(
               'only a pending or in-progress task can be reassigned',
@@ -235,7 +253,9 @@ export class TeamTaskBoard {
           if (dependent !== undefined) {
             throw new TeamError(`team task "${current.id}" still blocks "${dependent.id}"`, 'TEAM_TASK_HAS_DEPENDENTS')
           }
-          next = { ...current, status: 'deleted' }
+          next = this.awaitingVerification(current)
+            ? this.withoutVerification({ ...current, status: 'deleted' })
+            : { ...current, status: 'deleted' }
           break
         }
         /* v8 ignore next 2 -- TeamTaskAction is closed and every member is handled above. */

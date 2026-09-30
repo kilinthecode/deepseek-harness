@@ -137,6 +137,33 @@ describe('bootstrap failure rendering', () => {
   })
 })
 
+describe('pre-boot gate', () => {
+  it('holds the boot page back while a pre-boot stage owns the screen, then renders a rejected handshake', async () => {
+    const error = vi.spyOn(console, 'error').mockImplementation(() => {})
+    const container = document.createElement('div')
+    document.body.append(container)
+    const gate = Promise.withResolvers<undefined>()
+    const bootGlobal = globalThis as { __DSH_BOOT_READY__?: PromiseWithResolvers<undefined>; __DSH_PREBOOT_OWNED__?: boolean }
+    bootGlobal.__DSH_BOOT_READY__ = gate
+    bootGlobal.__DSH_PREBOOT_OWNED__ = true
+    try {
+      const entry = new AppWebEntry(container)
+      const running = entry.run()
+      // The pre-boot stage owns the page while the gate is pending.
+      expect(container.querySelector('[data-dsh-boot]')).toBeNull()
+      gate.reject(new Error('worker handshake failed'))
+      await running
+      expect(container.querySelector('[data-dsh-boot]')).not.toBeNull()
+      expect(container.textContent).toContain('worker handshake failed')
+      expect(error).toHaveBeenCalledOnce()
+      await entry.dispose()
+    } finally {
+      delete bootGlobal.__DSH_BOOT_READY__
+      delete bootGlobal.__DSH_PREBOOT_OWNED__
+    }
+  })
+})
+
 describe('plugin activation', () => {
   it('prefetches a parser-loaded immediate row through the injected bundle transport', async () => {
     const container = document.createElement('div')

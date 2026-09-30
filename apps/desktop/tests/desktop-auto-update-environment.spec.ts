@@ -111,11 +111,15 @@ describe('desktop auto-update environment', () => {
     expect(() => desktopBuildRecordFilename('linux-x64' as 'mac-arm64')).toThrow(/unsupported target/u)
   })
 
-  it('uses Nightly metadata for stable and prerelease Desktop versions', () => {
-    expect(desktopUpdateMetadataFilename('1.2.3', 'darwin')).toBe('nightly-mac.yml')
-    expect(desktopUpdateMetadataFilename('1.2.3-alpha.4', 'darwin')).toBe('nightly-mac.yml')
-    expect(desktopUpdateMetadataFilename('1.2.3-beta.2', 'win32')).toBe('nightly.yml')
-    expect(() => desktopUpdateMetadataFilename('not-semver', 'darwin')).toThrow(/invalid Desktop version/u)
-    expect(() => desktopUpdateMetadataFilename('1.2.3', 'linux')).toThrow(/unsupported metadata platform/u)
+  it('uses edition-specific metadata filenames for stable and prerelease Desktop versions', () => {
+    expect(desktopUpdateMetadataFilename('1.2.3', 'darwin', 'portal')).toBe('nightly-mac.yml')
+    expect(desktopUpdateMetadataFilename('1.2.3-alpha.4', 'darwin', 'portal')).toBe('nightly-mac.yml')
+    expect(desktopUpdateMetadataFilename('1.2.3-beta.2', 'win32', 'portal')).toBe('nightly.yml')
+    expect(desktopUpdateMetadataFilename('1.2.3', 'darwin', 'portal-dev')).toBe('dev-mac.yml')
+    expect(desktopUpdateMetadataFilename('1.2.3-beta.2', 'win32', 'portal-dev')).toBe('dev.yml')
+    expect(() => desktopUpdateMetadataFilename('not-semver', 'darwin', 'portal')).toThrow(/invalid Desktop version/u)
+    expect(() => desktopUpdateMetadataFilename('1.2.3', 'linux', 'portal')).toThrow(/unsupported metadata platform/u)
+    expect(() => desktopUpdateMetadataFilename('1.2.3', 'darwin', 'unknown' as 'portal'))
+      .toThrow(/DSH_DESKTOP_EDITION/u)
   })
 })

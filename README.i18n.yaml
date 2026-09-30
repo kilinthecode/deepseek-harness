@@ -2,33 +2,33 @@
 # section, a hash of its English and Chinese blocks outside code blocks and generated regions.
 # After editing either side, bring the other along and re-record with:
 #   pnpm run verify-translation-pairing --write README.md
-/deepseek-harness:
-  en: f68c4f080ce55ff2
-  zh: 88a76d7f7f0b260e
-/deepseek-harness/developer-preview:
-  en: 4ef4d8a71ac143f0
-  zh: 1bfc3149ba8e5543
-/deepseek-harness/run:
+/portal-harness:
+  en: 2e793a3166e2c6e3
+  zh: cba6e3b8453ad47b
+/portal-harness/developer-preview:
+  en: df95cad7656a93df
+  zh: 5eb5cd318b7e3622
+/portal-harness/run:
   en: 4e0248e4c6474fc6
   zh: eb2fb8d78c7d6bc0
-/deepseek-harness/run/run-from-npm:
+/portal-harness/run/run-from-npm:
   en: e22005cd42e6cbad
   zh: 0f536f4208df1d60
-/deepseek-harness/run/run-from-source:
+/portal-harness/run/run-from-source:
   en: 819e3f7c144d0d64
   zh: de815f040975dba7
-/deepseek-harness/community-and-support:
-  en: 42848f543aff6e02
-  zh: d46a07bdc6f36629
-/deepseek-harness/contributing:
+/portal-harness/community-and-support:
+  en: 15940edebea63847
+  zh: 21ad57e9324307c6
+/portal-harness/contributing:
   en: cabc2d3e9f8898bd
   zh: 83b6d238bae29ce3
-/deepseek-harness/development:
+/portal-harness/development:
   en: 803ca2b11b497bed
   zh: 8b4071eb0e7783ef
-/deepseek-harness/citation:
+/portal-harness/citation:
   en: 6704e9e5a8d49a91
   zh: 85c9cdd8d56f8e9d
-/deepseek-harness/license:
+/portal-harness/license:
   en: 926995344fc1c72b
   zh: c92fab5abf85932f

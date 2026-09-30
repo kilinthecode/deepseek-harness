@@ -5,8 +5,8 @@ import z from '@deepseek-ai/schemastery'
 import type { Agent } from '@deepseek-ai/dsh-agent'
 import { RoomProposalId } from '@deepseek-ai/dsh-experimental-agent-team'
 import type { RoomProposalView, RoomView } from '@deepseek-ai/dsh-experimental-agent-team'
-import { defineTool } from '@deepseek-ai/dsh-tools'
-import type { InferValue, ValueSchemaSpec } from '@deepseek-ai/dsh-tools'
+import { applyAgentScopedTools, callingAgent, defineTool, jsonOutput } from '@deepseek-ai/dsh-tools'
+import type { InferValue } from '@deepseek-ai/dsh-tools'
 
 /** Cordis plugin name. */
 export const name = 'tool-agent-room'
@@ -99,30 +99,6 @@ const PROMPT_VALUE_SCHEMA = {
   },
 } as const
 
-/**
- * Declare one canonical output schema with compact model-facing JSON. Every
- * room result is a fixed record, so the declared schema is what makes the
- * compiler check `execute` against the value the model is promised.
- * @param schema - canonical value schema for one tool.
- * @returns the `output` declaration accepted by {@link defineTool}.
- */
-function jsonOutput<const S extends ValueSchemaSpec>(schema: S): {
-  schema: S
-  render: (args: unknown, value: InferValue<S>) => [{ type: 'text'; text: string }]
-} {
-  return {
-    schema,
-    render: (_args: unknown, value: InferValue<S>) => [{ type: 'text', text: JSON.stringify(value) }],
-  }
-}
-
-/** Recover the exact caller guaranteed by Agent-scoped tool discovery. */
-function callingAgent(agent: Agent | undefined, toolName: string): Agent {
-  /* v8 ignore next 2 -- room tools are registered only in an exact Agent scope, so discovery supplies this carrier. */
-  if (agent === undefined) throw new Error(`${toolName} requires a calling Agent`)
-  return agent
-}
-
 /** Render one decision as the compact record the model is promised. */
 function decisionValue(view: RoomProposalView): InferValue<typeof DECISION_VIEW_SCHEMA> {
   return {
@@ -154,16 +130,15 @@ function transcriptText(content: RoomView['messages'][number]['content']): strin
 /** Register the complete room tool set in one exact Agent scope. */
 function install(agent: Agent, ctx: Context, config: Required<Config>): () => void {
   const scoped = agent.ctx
-  const disposers: Array<() => unknown> = []
-  const register = (disposer: () => unknown): void => { disposers.push(disposer) }
-  try {
-    register(scoped.systemPrompt.section({
+  // oxlint-disable-next-line typescript/no-misused-promises -- Cordis effect generators collect yielded disposers synchronously.
+  return scoped.effect(function* () {
+    yield scoped.systemPrompt.section({
       name: 'room:policy',
       order: scoped.systemPrompt.getSectionOrder('TEAM_POLICY'),
       text: POLICY,
-    }))
+    })
 
-    register(scoped.tools.register(defineTool({
+    yield scoped.tools.register(defineTool({
       name: 'room_view',
       description: 'Read the room roster, the recent shared transcript, and every decision with its current votes. Re-read after you are woken instead of relying on memory.',
       parameters: {
@@ -192,9 +167,9 @@ function install(agent: Agent, ctx: Context, config: Required<Config>): () => vo
           decisions: view.proposals.map(decisionValue),
         })
       },
-    })))
+    }))
 
-    register(scoped.tools.register(defineTool({
+    yield scoped.tools.register(defineTool({
       name: 'room_prompt',
       description: 'Give one participant the floor when the next step needs its judgement rather than yours. The target receives the transcript it has not yet seen.',
       parameters: {
@@ -209,9 +184,9 @@ function install(agent: Agent, ctx: Context, config: Required<Config>): () => vo
           signal: exec.signal,
         })
       },
-    })))
+    }))
 
-    register(scoped.tools.register(defineTool({
+    yield scoped.tools.register(defineTool({
       name: 'room_propose',
       description: 'Put one statement to the room as a decision for review.',
       parameters: {
@@ -230,9 +205,9 @@ function install(agent: Agent, ctx: Context, config: Required<Config>): () => vo
         })
         return decisionValue(view)
       },
-    })))
+    }))
 
-    register(scoped.tools.register(defineTool({
+    yield scoped.tools.register(defineTool({
       name: 'room_review',
       description: 'Record your standing on one decision revision.',
       parameters: {
@@ -252,9 +227,9 @@ function install(agent: Agent, ctx: Context, config: Required<Config>): () => vo
         })
         return decisionValue(view)
       },
-    })))
+    }))
 
-    register(scoped.tools.register(defineTool({
+    yield scoped.tools.register(defineTool({
       name: 'room_escalate',
       description: 'Hand one unresolved decision to the human. Use it when reviewers cannot converge, the revision limit is reached, or the choice is not the room\'s to make.',
       parameters: {
@@ -270,14 +245,8 @@ function install(agent: Agent, ctx: Context, config: Required<Config>): () => vo
         })
         return decisionValue(view)
       },
-    })))
-  } catch (error: unknown) {
-    for (const dispose of disposers.reverse()) void dispose()
-    throw error
-  }
-  return () => {
-    for (const dispose of disposers.reverse()) void dispose()
-  }
+    }))
+  }, 'tool-room.agentScope()')
 }
 
 /** Install room tools in every live or subsequently published room participant scope. */
@@ -285,19 +254,10 @@ export function apply(ctx: Context, config: Config = {}): void {
   const resolved: Required<Config> = {
     maxTranscriptEntries: config.maxTranscriptEntries ?? 20,
   }
-  const installed = new Map<Agent, () => void>()
-  const maybeInstall = (agent: Agent): void => {
-    if (installed.has(agent) || ctx.agentTeams.tryMembership(agent) === undefined) return
-    installed.set(agent, install(agent, ctx, resolved))
-  }
-  for (const agent of ctx.agents.list()) maybeInstall(agent)
-  ctx.on('agent/created', ({ agent }) => { maybeInstall(agent) })
-  ctx.on('agent/disposed', ({ agent }) => {
-    installed.get(agent)?.()
-    installed.delete(agent)
-  })
-  ctx.effect(() => () => {
-    for (const dispose of installed.values()) dispose()
-    installed.clear()
-  }, 'tool-room.scopedTools()')
+  applyAgentScopedTools(
+    ctx,
+    agent => ctx.agentTeams.tryMembership(agent) !== undefined,
+    agent => install(agent, ctx, resolved),
+    'tool-room.scopedTools()',
+  )
 }

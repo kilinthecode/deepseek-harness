@@ -316,15 +316,19 @@ export function clientSourceRoot(file: string): string | undefined {
   return index < 0 ? undefined : normalized.slice(0, index + marker.length - 1)
 }
 
-function sourceFiles(): string[] {
+/**
+ * Collect every Client source file the copy check admits, including plain `.ts`
+ * modules under a `packages/client` package `src` root.
+ * @returns Repository-relative paths in sorted order.
+ */
+export function sourceFiles(): string[] {
   const clientComponentRoots = new Set(
     globSync('packages/*/*/src/client/**/*.tsx', { cwd: root })
       .map(clientSourceRoot)
       .filter((clientRoot): clientRoot is string => clientRoot !== undefined),
   )
   return [...new Set([
-    ...globSync('packages/client/*/src/**/*.tsx', { cwd: root }),
-    ...globSync('packages/client/ui-*/src/**/*.{ts,tsx}', { cwd: root }),
+    ...globSync('packages/client/*/src/**/*.{ts,tsx}', { cwd: root }),
     ...[...clientComponentRoots].flatMap(clientRoot =>
       globSync(`${clientRoot}/**/*.{ts,tsx}`, { cwd: root })),
     ...globSync('apps/web/src/**/*.{ts,tsx}', { cwd: root }),

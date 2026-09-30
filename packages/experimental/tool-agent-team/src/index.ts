@@ -6,8 +6,7 @@ import type { Agent, AgentOptions } from '@deepseek-ai/dsh-agent'
 import { ReasoningEffortId } from '@deepseek-ai/dsh-llm'
 import { TeamTaskId } from '@deepseek-ai/dsh-experimental-agent-team'
 import type { TeamMemberView } from '@deepseek-ai/dsh-experimental-agent-team'
-import { defineTool } from '@deepseek-ai/dsh-tools'
-import type { InferValue, ValueSchemaSpec } from '@deepseek-ai/dsh-tools'
+import { applyAgentScopedTools, callingAgent, defineTool, jsonOutput } from '@deepseek-ai/dsh-tools'
 
 /** Cordis plugin name. */
 export const name = 'tool-agent-team'
@@ -147,43 +146,18 @@ const TASK_LIST_VALUE_SCHEMA = {
   },
 } as const
 
-/**
- * Declare one canonical output schema with compact model-facing JSON. Every
- * Team result is a fixed record, so the declared schema is what makes the
- * compiler check `execute` against the value the model is promised.
- * @param schema - canonical value schema for one tool.
- * @returns the `output` declaration accepted by {@link defineTool}.
- */
-function jsonOutput<const S extends ValueSchemaSpec>(schema: S): {
-  schema: S
-  render: (args: unknown, value: InferValue<S>) => [{ type: 'text'; text: string }]
-} {
-  return {
-    schema,
-    render: (_args: unknown, value: InferValue<S>) => [{ type: 'text', text: JSON.stringify(value) }],
-  }
-}
-
-/** Recover the exact caller guaranteed by Agent-scoped tool discovery. */
-function callingAgent(agent: Agent | undefined, toolName: string): Agent {
-  /* v8 ignore next 2 -- Team tools are registered only in an exact Agent scope, so discovery supplies this carrier. */
-  if (agent === undefined) throw new Error(`${toolName} requires a calling Agent`)
-  return agent
-}
-
 /** Register the complete Team tool set in one exact Agent scope. */
 function install(agent: Agent, ctx: Context, config: Required<Config>): () => void {
   const scoped = agent.ctx
-  const disposers: Array<() => unknown> = []
-  const register = (disposer: () => unknown): void => { disposers.push(disposer) }
-  try {
-    register(scoped.systemPrompt.section({
+  // oxlint-disable-next-line typescript/no-misused-promises -- Cordis effect generators collect yielded disposers synchronously.
+  return scoped.effect(function* () {
+    yield scoped.systemPrompt.section({
       name: 'team:policy',
       order: scoped.systemPrompt.getSectionOrder('TEAM_POLICY'),
       text: POLICY,
-    }))
+    })
 
-    register(scoped.tools.register(defineTool({
+    yield scoped.tools.register(defineTool({
       name: 'spawn_teammate',
       description: 'Create one named, durable teammate. Only the Team Lead may call this tool.',
       parameters: {
@@ -239,9 +213,9 @@ To message another teammate, use send_message({ target: "<teammate name>", messa
         })
         return { member: modelMember(result.member) }
       },
-    })))
+    }))
 
-    register(scoped.tools.register(defineTool({
+    yield scoped.tools.register(defineTool({
       name: 'send_message',
       description: 'Send one durable message to another Team member. A running target receives it at the nearest step boundary; an inactive target starts or resumes a turn.',
       parameters: {
@@ -256,9 +230,9 @@ To message another teammate, use send_message({ target: "<teammate name>", messa
           signal: exec.signal,
         })
       },
-    })))
+    }))
 
-    register(scoped.tools.register(defineTool({
+    yield scoped.tools.register(defineTool({
       name: 'list_agents',
       description: 'List the Lead and every durable teammate with an addressable target and current availability. inactive means no turn is executing, not a task result. provisioning and failed describe member creation.',
       parameters: {},
@@ -266,9 +240,9 @@ To message another teammate, use send_message({ target: "<teammate name>", messa
       execute(_args, exec) {
         return Promise.resolve(ctx.agentTeams.listMembers(callingAgent(exec.agent, 'list_agents')).map(modelMember))
       },
-    })))
+    }))
 
-    register(scoped.tools.register(defineTool({
+    yield scoped.tools.register(defineTool({
       name: 'wait_agent',
       description: 'Wait for the next teammate status, mailbox, or shared-task change after this call starts. This never wakes inactive members and returns noProgress immediately when no other member is running or provisioning. Re-list after wakeup or timeout instead of polling.',
       parameters: {
@@ -301,9 +275,9 @@ To message another teammate, use send_message({ target: "<teammate name>", messa
         }
         return await ctx.agentTeams.waitForChange(caller, timeoutMs, exec.signal)
       },
-    })))
+    }))
 
-    register(scoped.tools.register(defineTool({
+    yield scoped.tools.register(defineTool({
       name: 'interrupt_agent',
       description: 'Interrupt one teammate\'s current turn while preserving its pending inbox. Team Lead only.',
       parameters: {
@@ -313,9 +287,9 @@ To message another teammate, use send_message({ target: "<teammate name>", messa
       execute(args, exec) {
         return Promise.resolve(ctx.agentTeams.interrupt(callingAgent(exec.agent, 'interrupt_agent'), args.target))
       },
-    })))
+    }))
 
-    register(scoped.tools.register(defineTool({
+    yield scoped.tools.register(defineTool({
       name: 'team_task_create',
       description: 'Create one unowned pending task on the shared Team task board.',
       parameters: {
@@ -337,9 +311,9 @@ To message another teammate, use send_message({ target: "<teammate name>", messa
           ...args.write_scopes === undefined ? {} : { writeScopes: args.write_scopes },
         })
       },
-    })))
+    }))
 
-    register(scoped.tools.register(defineTool({
+    yield scoped.tools.register(defineTool({
       name: 'team_task_list',
       description: 'List shared tasks, including readiness, owner, revision, blockers, and write-scope warnings.',
       parameters: {
@@ -369,9 +343,9 @@ To message another teammate, use send_message({ target: "<teammate name>", messa
           ...(cursor + limit < filtered.length ? { nextCursor: cursor + limit } : {}),
         })
       },
-    })))
+    }))
 
-    register(scoped.tools.register(defineTool({
+    yield scoped.tools.register(defineTool({
       name: 'team_task_get',
       description: 'Read the complete latest value of one shared task before changing or executing it.',
       parameters: {
@@ -384,9 +358,9 @@ To message another teammate, use send_message({ target: "<teammate name>", messa
           TeamTaskId(args.task_id),
         ))
       },
-    })))
+    }))
 
-    register(scoped.tools.register(defineTool({
+    yield scoped.tools.register(defineTool({
       name: 'team_task_update',
       description: 'Compare-and-set a shared task action using the latest revision from team_task_get or team_task_list.',
       parameters: {
@@ -421,14 +395,8 @@ To message another teammate, use send_message({ target: "<teammate name>", messa
           ...args.reason === undefined ? {} : { reason: args.reason },
         })
       },
-    })))
-  } catch (error: unknown) {
-    for (const dispose of disposers.reverse()) void dispose()
-    throw error
-  }
-  return () => {
-    for (const dispose of disposers.reverse()) void dispose()
-  }
+    }))
+  }, 'tool-team.agentScope()')
 }
 
 /** Install Team tools in every live or subsequently published Team member scope. */
@@ -437,19 +405,10 @@ export function apply(ctx: Context, config: Config = {}): void {
     freshProvider: config.freshProvider ?? 'spawn',
     forkProvider: config.forkProvider ?? 'fork',
   }
-  const installed = new Map<Agent, () => void>()
-  const maybeInstall = (agent: Agent): void => {
-    if (installed.has(agent) || ctx.agentTeams.tryMembership(agent) === undefined) return
-    installed.set(agent, install(agent, ctx, resolved))
-  }
-  for (const agent of ctx.agents.list()) maybeInstall(agent)
-  ctx.on('agent/created', ({ agent }) => { maybeInstall(agent) })
-  ctx.on('agent/disposed', ({ agent }) => {
-    installed.get(agent)?.()
-    installed.delete(agent)
-  })
-  ctx.effect(() => () => {
-    for (const dispose of installed.values()) dispose()
-    installed.clear()
-  }, 'tool-team.scopedTools()')
+  applyAgentScopedTools(
+    ctx,
+    agent => ctx.agentTeams.tryMembership(agent) !== undefined,
+    agent => install(agent, ctx, resolved),
+    'tool-team.scopedTools()',
+  )
 }

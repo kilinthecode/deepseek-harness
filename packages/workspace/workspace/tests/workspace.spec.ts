@@ -384,11 +384,12 @@ describe('WorkspaceRegistry create and lookup', () => {
     const alias = join(base, 'first-link')
     await symlink(firstDir, alias)
     const { registry, pool } = await harness()
-    const first = await registry.create(firstDir, 'Original')
+    const first = await registry.create(firstDir)
     const second = await registry.create(secondDir)
-    const reused = await registry.create(alias, 'Ignored')
+    const reused = await registry.create(alias)
     expect(reused).toBe(first)
-    expect(first.title).toBe('Original')
+    expect(first.title).toBe(defaultWorkspaceTitle(firstDir))
+    expect(reused.title).toBe(first.title)
     expect(registry.list()).toEqual([second, first])
     expect(storedState(pool).workspaceIds).toEqual([second.id, first.id])
     expect(await registry.resolveByPath(alias)).toBe(first)
@@ -399,8 +400,8 @@ describe('WorkspaceRegistry create and lookup', () => {
     const dir = await makeDir('concurrent')
     const { registry, pool } = await harness()
     const [left, right] = await Promise.all([
-      registry.create(dir, 'Winner'),
-      registry.create(dir, 'Loser'),
+      registry.create(dir),
+      registry.create(dir),
     ])
     expect(left).toBe(right)
     expect(registry.list()).toEqual([left])
@@ -408,13 +409,13 @@ describe('WorkspaceRegistry create and lookup', () => {
   })
 
   it('allows a duplicate display name on a different canonical path', async () => {
-    const firstDir = await makeDir('named-first')
-    const secondDir = await makeDir('named-second')
+    const firstDir = await makeDir('named-left/same')
+    const secondDir = await makeDir('named-right/same')
     const { registry } = await harness()
-    const first = await registry.create(firstDir, 'Shared')
-    const second = await registry.create(secondDir, 'Shared')
-    expect(first.title).toBe('Shared')
-    expect(second.title).toBe('Shared')
+    const first = await registry.create(firstDir)
+    const second = await registry.create(secondDir)
+    expect(first.title).toBe('same')
+    expect(second.title).toBe('same')
     expect(registry.list()).toEqual([second, first])
   })
 
