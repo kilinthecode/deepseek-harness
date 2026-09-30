@@ -1,4 +1,4 @@
-import { mkdir, readdir, stat, symlink, writeFile } from 'node:fs/promises'
+import { mkdir, readdir, rename, stat, symlink, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { withFileLock } from '@deepseek-ai/dsh-atomic-write'
@@ -436,26 +436,82 @@ describe('peer mailbox', () => {
       if (payload.agent.id === 'peer-b') await held
       return await next()
     })
-    target.followup(createUserMessage({ content: [{ type: 'text', text: 'work' }], source: { kind: 'user' } }))
-    await vi.waitFor(() => { expect(target.status).toBe('running') })
-    let failFlush = true
-    harness.ctx.on('session/flush', (session: Session) => {
-      if (session.id === 'peer-b' && failFlush) throw new Error('flush failed')
+    try {
+      target.followup(createUserMessage({ content: [{ type: 'text', text: 'work' }], source: { kind: 'user' } }))
+      await vi.waitFor(() => { expect(target.status).toBe('running') })
+      let failFlush = true
+      harness.ctx.on('session/flush', (session: Session) => {
+        if (session.id === 'peer-b' && failFlush) throw new Error('flush failed')
+      })
+      const warn = vi.spyOn(harness.ctx.logger, 'warn')
+      const result = await harness.ctx.peers.send(sender, { to: 'peer-b', message: 'durable?' })
+      // A steer whose checkpoint failed did not deliver: the caller is told the
+      // envelope is still queued, and the next pass may steer it again.
+      expect(result.status).toBe('queued')
+      expect(warn.mock.calls.some(call => String(call[0]).includes('failed'))).toBe(true)
+      // A checkpoint failure must not delete a body the log never accepted.
+      expect(await harness.mailFiles('peer-b')).toHaveLength(1)
+      expect(harness.userMessages(target).some(message => message.source.kind === 'peer-message')).toBe(false)
+      failFlush = false
+    } finally {
+      // The gate holds an agent, so every failure path releases it before
+      // teardown instead of leaving the disposer waiting out the hook budget.
+      release()
+    }
+    // The step the release frees claims the pending splice; that owned turn is
+    // what delivers the message, so there is no interval to race.
+    await target.whenIdle()
+    expect(harness.userMessages(target).some(message => message.source.kind === 'peer-message')).toBe(true)
+  })
+
+  it('reports a delivered steer whose pass lost its own record of the steer', async () => {
+    const harness = await mountPeerHarness({ peer: { pollMs: 60_000 } })
+    harnesses.push(harness)
+    const sender = await harness.create('peer-a')
+    const target = await harness.create('peer-t')
+    // Hold the running step so the steered splice stays pending while the pass
+    // this send awaits finishes its own bookkeeping.
+    let release = (): void => {}
+    const held = new Promise<void>((resolve) => { release = resolve })
+    harness.ctx.on('agent/pre-step', async (payload, next) => {
+      if (payload.agent.id === 'peer-t') await held
+      return await next()
     })
+    const shard = mailShardDirectory(harness.home, 'peer-t')
     const warn = vi.spyOn(harness.ctx.logger, 'warn')
-    const result = await harness.ctx.peers.send(sender, { to: 'peer-b', message: 'durable?' })
-    // A steer whose checkpoint failed did not deliver: the caller is told the
-    // envelope is still queued, and the next pass may steer it again.
-    expect(result.status).toBe('queued')
-    expect(warn.mock.calls.some(call => String(call[0]).includes('failed'))).toBe(true)
-    // A checkpoint failure must not delete a body the log never accepted.
-    expect(await harness.mailFiles('peer-b')).toHaveLength(1)
-    expect(harness.userMessages(target).some(message => message.source.kind === 'peer-message')).toBe(false)
-    failFlush = false
-    release()
-    await vi.waitFor(() => {
-      expect(harness.userMessages(target).some(message => message.source.kind === 'peer-message')).toBe(true)
+    let sabotaged = false
+    harness.ctx.on('session/flush', async (session: Session) => {
+      if (sabotaged || session.id !== 'peer-t') return
+      sabotaged = true
+      // The steer's checkpoint is the last hook before the pass's own shard
+      // bookkeeping. Moving the shard aside and leaving a file at its path makes
+      // that bookkeeping fail after the steer, so the pass returns without its
+      // record of it — exactly the loss the in-flight mark survives.
+      await rename(shard, join(harness.home, 'held-mail'))
+      await writeFile(shard, 'not a directory')
     })
+    let messageId: PeerMessageId | undefined
+    try {
+      target.followup(createUserMessage({ content: [{ type: 'text', text: 'work' }], source: { kind: 'user' } }))
+      await vi.waitFor(() => { expect(target.status).toBe('running') })
+      const result = await harness.ctx.peers.send(sender, { to: 'peer-t', message: 'record me' })
+      messageId = result.messageId
+      expect(sabotaged).toBe(true)
+      // The pass lost its record of the steer, so only the in-flight mark is
+      // left to answer for it: the steer is committed, and `send` reports it.
+      expect(result.status).toBe('delivered')
+      expect(warn.mock.calls.map(call => String(call[0]))
+        .some(line => line.includes('draining peer "peer-t" failed'))).toBe(true)
+      // The failed bookkeeping deleted nothing: the body the moved shard still
+      // holds is the only copy until the pending splice lands.
+      expect(await readdir(join(harness.home, 'held-mail'))).toEqual([expect.stringContaining(`${result.messageId}.json`)])
+    } finally {
+      release()
+    }
+    await target.whenIdle()
+    const peerMessages = harness.userMessages(target).filter(message => message.source.kind === 'peer-message')
+    expect(peerMessages).toHaveLength(1)
+    expect(peerMessages[0]?.source.kind === 'peer-message' && peerMessages[0].source.messageId).toBe(messageId)
   })
 
   it('counts a file that is not an envelope toward the target cap', async () => {

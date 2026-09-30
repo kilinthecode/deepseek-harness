@@ -1633,6 +1633,12 @@ export const SERVICE_API: readonly ServiceApiEntry[] = [
         parameters: [{ name: 'agent', description: 'calling agent, whose repository and checkout scope the listed peers.' }, { name: 'step', description: 'step number inside the open turn. Step 1 shows a block whose text changed since the last one this session logged; a later step shows a block only to warn about an overlap it has not warned about yet, or to list a peer the last logged block did not list.' }],
         returns: 'the rendered block, its sections, and the ids of the peers it lists, or `undefined` when no peer qualifies, when nothing fits the byte cap, or when this step already saw what it would say.',
       },
+      {
+        signature: 'async whenSettled(): Promise<void>',
+        description: 'Resolve once every listener-owned operation this service started before the call has settled: coalesced presence writes, drain passes, and status reactions.\n\nTest seam, not part of the peer-sessions contract. A test that removes or rewrites a presence row awaits this so its own write is the final writer instead of racing the coalesced publication queued behind it, and one that waits for a reaction the listeners own gets the completion signal the disposer itself awaits. Production callers never need it: publications coalesce, and any later state change heals the row again.',
+        parameters: [],
+        returns: 'fulfillment after the tracked work settles.',
+      },
     ],
   },
   {
