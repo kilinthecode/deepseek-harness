@@ -16,6 +16,7 @@
     { "path": "../../core/tools" },
     { "path": "../../llm/llm" },
     { "path": "../../attachment/attachment" },
+    { "path": "../../subagent/subagent" },
     { "path": "../agent-team" }
   ]
 }

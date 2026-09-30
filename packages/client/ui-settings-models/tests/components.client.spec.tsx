@@ -8,6 +8,8 @@ import { bindSnapshotSelector, RemoteError } from '@deepseek-ai/dsh-client-test-
 import type {
   CredentialInfo, RemoteResult, SettingsNamespaceView,
 } from '@deepseek-ai/dsh-api-remotes/client'
+import type { AuthorizationFlowView, AuthorizationPromptId, AuthorizationView } from '@deepseek-ai/dsh-api-authorization-controller/types'
+import type { CredentialKey } from '@deepseek-ai/dsh-credentials/types'
 import type { JsonValue } from '@deepseek-ai/dsh-util-values'
 import {
   ModelsSection, needsSetup, providerCopy, providerTargetLabel, removeProviderProfile,
@@ -21,7 +23,7 @@ import { apiKeyFailure } from '../src/client/apiKey.ts'
 import { SettingsDescribeMirror } from '@deepseek-ai/dsh-client-ui-settings/src/client/settings-mirror.ts'
 import { deriveKeyRef, ModelsSettingsStore } from '../src/client/store.ts'
 import { createModelsOperations } from '../src/client/operations.ts'
-import type { ModelsOperations } from '../src/client/operations.ts'
+import type { ModelsOperations, AuthorizationOutcome } from '../src/client/operations.ts'
 import type { ProviderRow } from '../src/client/store.ts'
 import { en, zh } from '../src/client/locales.ts'
 import { settingsSchema } from './settings-schema.client.ts'
@@ -184,6 +186,8 @@ function scriptedFace(overrides: {
   mutate?: ReturnType<typeof vi.fn>
   set?: ReturnType<typeof vi.fn>
   unset?: ReturnType<typeof vi.fn>
+  /** The `remote.authorization` namespace; the page treats an absent one as a degraded sign-in read. */
+  authorization?: Record<string, unknown>
 } = {}) {
   const providerNamespace = wireNamespaces().find(view => view.ns === 'llm-pi-ai')!
   const update = overrides.update ?? vi.fn(() => Promise.resolve(remoteOk(providerNamespace)))
@@ -225,6 +229,7 @@ function scriptedFace(overrides: {
       set,
       unset,
     },
+    ...overrides.authorization === undefined ? {} : { authorization: overrides.authorization },
   }
   return { face, update, mutate, set, unset }
 }
@@ -527,6 +532,7 @@ describe('ModelsSection', () => {
       removable: false,
       apiKeyEnv: 'X',
       credential,
+      flow: undefined,
     })
     expect(needsSetup(row(undefined), false)).toBe(true)
     expect(needsSetup(row({ configured: true, writable: true }), false)).toBe(false)
@@ -2017,4 +2023,403 @@ it('renders the localized account row and supports catalogs without capacity def
     namespace={{ ...namespace, value: { models: [] }, base: { models: [] } }} settingsPath={[]} schema={settingsSchema}
     operations={operationsWith(scripted.face)} t={t} readOnly={false} onClose={() => {}} />)
   expect(screen.queryByLabelText(en.keyInput)).toBeNull()
+})
+
+describe('authorization operations', () => {
+  /** The record the ChatGPT subscription's flow writes: pi-ai scopes it by provider id. */
+  const CODEX_KEY = 'llm-pi-ai/openai-codex' as CredentialKey
+  /** The identity the prompt of the running attempt is addressed by. */
+  const PROMPT_ID = 'prompt-1' as AuthorizationPromptId
+  /** What every command answers with here: the subscription's flow, no attempt running. */
+  const VIEW: AuthorizationView = {
+    flows: [{
+      key: CODEX_KEY,
+      label: 'ChatGPT',
+      methods: [{ id: 'oauth', label: 'ChatGPT' }],
+      inFlight: false,
+      configured: false,
+      writable: true,
+    }],
+    attempt: null,
+  }
+
+  /** Every refusal code the authorization Remote declares, with the details its own code carries. */
+  type FailureCode =
+    | 'authorization/already-in-flight'
+    | 'authorization/no-flow'
+    | 'authorization/not-committed'
+    | 'authorization/read-only'
+    | 'authorization/stale-prompt'
+    | 'authorization/unknown-method'
+  /** One command's answer over the Remote carrier, which has no envelope. */
+  type AuthorizationAnswer =
+    | { readonly ok: true; readonly value: AuthorizationView }
+    | { readonly ok: false; readonly error: RemoteError }
+  const REFUSALS: { [Code in FailureCode]: (message: string) => RemoteError<Code> } = {
+    'authorization/already-in-flight': message =>
+      new RemoteError('authorization/already-in-flight', message, { key: CODEX_KEY }),
+    'authorization/no-flow': message => new RemoteError('authorization/no-flow', message, { key: CODEX_KEY }),
+    'authorization/not-committed': message => new RemoteError('authorization/not-committed', message, { key: CODEX_KEY }),
+    'authorization/read-only': message => new RemoteError('authorization/read-only', message, { key: CODEX_KEY }),
+    'authorization/stale-prompt': message => new RemoteError('authorization/stale-prompt', message, { promptId: PROMPT_ID }),
+    'authorization/unknown-method': message =>
+      new RemoteError('authorization/unknown-method', message, { key: CODEX_KEY, method: 'nope' }),
+  }
+
+  /**
+   * The page's bound operations over one scripted `remote.authorization`.
+   * @param answer - what every command answers with.
+   * @returns the operations and the recorded namespace.
+   */
+  function authorizationWith(answer: AuthorizationAnswer = remoteOk(VIEW)) {
+    const authorization = {
+      start: vi.fn((_key: CredentialKey, _method?: string) => Promise.resolve(answer)),
+      answer: vi.fn((_promptId: AuthorizationPromptId, _value: string) => Promise.resolve(answer)),
+      decline: vi.fn((_promptId: AuthorizationPromptId) => Promise.resolve(answer)),
+      cancel: vi.fn(() => Promise.resolve(answer)),
+      signOut: vi.fn((_key: CredentialKey) => Promise.resolve(answer)),
+    }
+    // The page plugin's context, scripted down to the namespace these wrappers reach.
+    return { operations: createModelsOperations({ remote: { authorization } } as never), authorization }
+  }
+
+  it('starts a sign-in on the flow default and answers with the whole view', async () => {
+    const { operations, authorization } = authorizationWith()
+    await expect(operations.startAuthorization(CODEX_KEY)).resolves.toEqual({ kind: 'answered', view: VIEW })
+    expect(authorization.start).toHaveBeenCalledExactlyOnceWith(CODEX_KEY, undefined)
+  })
+
+  it('starts a sign-in on the chosen method', async () => {
+    const { operations, authorization } = authorizationWith()
+    await expect(operations.startAuthorization(CODEX_KEY, 'oauth')).resolves.toEqual({ kind: 'answered', view: VIEW })
+    expect(authorization.start).toHaveBeenCalledExactlyOnceWith(CODEX_KEY, 'oauth')
+  })
+
+  it('answers the pending prompt with the submitted value', async () => {
+    const { operations, authorization } = authorizationWith()
+    await expect(operations.answerAuthorization(PROMPT_ID, '421-337')).resolves.toEqual({ kind: 'answered', view: VIEW })
+    expect(authorization.answer).toHaveBeenCalledExactlyOnceWith(PROMPT_ID, '421-337')
+  })
+
+  it('declines the pending prompt', async () => {
+    const { operations, authorization } = authorizationWith()
+    await expect(operations.declineAuthorization(PROMPT_ID)).resolves.toEqual({ kind: 'answered', view: VIEW })
+    expect(authorization.decline).toHaveBeenCalledExactlyOnceWith(PROMPT_ID)
+  })
+
+  it('cancels the attempt the controller owns', async () => {
+    const { operations, authorization } = authorizationWith()
+    await expect(operations.cancelAuthorization()).resolves.toEqual({ kind: 'answered', view: VIEW })
+    expect(authorization.cancel).toHaveBeenCalledOnce()
+  })
+
+  it('signs out of the record one flow stored', async () => {
+    const { operations, authorization } = authorizationWith()
+    await expect(operations.signOutAuthorization(CODEX_KEY)).resolves.toEqual({ kind: 'answered', view: VIEW })
+    expect(authorization.signOut).toHaveBeenCalledExactlyOnceWith(CODEX_KEY)
+  })
+
+  /**
+   * Every command with one refusal it hands back untouched: the dialog picks its
+   * one special line — the sign-in that is already running — out of the code
+   * rather than out of the message.
+   */
+  const REFUSED: readonly [
+    name: string,
+    invoke: (operations: ModelsOperations) => Promise<AuthorizationOutcome>,
+    code: FailureCode,
+  ][] = [
+    ['start', operations => operations.startAuthorization(CODEX_KEY), 'authorization/no-flow'],
+    ['start on an unknown method', operations => operations.startAuthorization(CODEX_KEY, 'nope'), 'authorization/unknown-method'],
+    ['start while another attempt runs', operations => operations.startAuthorization(CODEX_KEY), 'authorization/already-in-flight'],
+    ['answer', operations => operations.answerAuthorization(PROMPT_ID, '421-337'), 'authorization/stale-prompt'],
+    ['decline', operations => operations.declineAuthorization(PROMPT_ID), 'authorization/stale-prompt'],
+    ['cancel', operations => operations.cancelAuthorization(), 'authorization/read-only'],
+    ['sign out', operations => operations.signOutAuthorization(CODEX_KEY), 'authorization/read-only'],
+    ['start that resolved no record', operations => operations.startAuthorization(CODEX_KEY), 'authorization/not-committed'],
+  ]
+
+  it.each(REFUSED)('hands back the code and the Host diagnostic of a refused %s', async (_name, invoke, code) => {
+    const { operations } = authorizationWith({ ok: false, error: REFUSALS[code]('the Host refused the command') })
+    await expect(invoke(operations)).resolves.toEqual({
+      kind: 'refused', code, message: 'the Host refused the command',
+    })
+  })
+})
+
+describe('authorization rows', () => {
+  /** The record the ChatGPT subscription's flow writes: pi-ai scopes it by provider id. */
+  const CODEX_KEY = 'llm-pi-ai/openai-codex' as CredentialKey
+  /** The flow the page's view lists for that record, unsigned and writable. */
+  const FLOW: AuthorizationFlowView = {
+    key: CODEX_KEY,
+    label: 'ChatGPT',
+    methods: [{ id: 'oauth', label: 'ChatGPT' }],
+    inFlight: false,
+    configured: false,
+    writable: true,
+  }
+  /** What a command answers with before the sign-in is stored. */
+  const UNSIGNED: AuthorizationView = { flows: [FLOW], attempt: null }
+  /** …and what the last command of a sign-in answers with: the record committed. */
+  const AUTHORIZED: AuthorizationView = {
+    flows: [{ ...FLOW, configured: true }],
+    attempt: { key: CODEX_KEY, method: 'oauth', phase: 'authorized' },
+  }
+  /** One command's answer over the Remote carrier, which has no envelope. */
+  type Answer =
+    | { readonly ok: true; readonly value: AuthorizationView }
+    | { readonly ok: false; readonly error: RemoteError }
+
+  /**
+   * Mount the page holding one subscription route: the ChatGPT catalog route
+   * whose pi-ai profile names no API key reference, so a stored sign-in is the
+   * only credential it can authenticate with, plus the sign-in Remote its row
+   * action drives.
+   * @param options - the flow overrides the Remote reports (`null` for a view
+   * that lists no flow for the record), whether the route's declaration makes
+   * the sign-in required, the API key reference its profile names, and what
+   * every command answers with.
+   * @returns the mounted page and the recorded authorization namespace.
+   */
+  async function mountAuthorizationRow(options: {
+    flow?: Partial<AuthorizationFlowView> | null
+    required?: boolean
+    apiKeyEnv?: string
+    answer?: Answer
+    /** The attempt the initial read reports, e.g. a previous sign-in's stale terminal outcome. */
+    attempt?: AuthorizationView['attempt']
+  } = {}) {
+    const flow = options.flow === null ? undefined : { ...FLOW, ...options.flow }
+    const remoteView: AuthorizationView = { flows: flow === undefined ? [] : [flow], attempt: options.attempt ?? null }
+    const answer = options.answer ?? remoteOk(remoteView)
+    const authorization = {
+      getState: vi.fn(() => Promise.resolve(remoteOk(remoteView))),
+      start: vi.fn((_key: CredentialKey, _method?: string) => Promise.resolve(answer)),
+      answer: vi.fn((_promptId: AuthorizationPromptId, _value: string) => Promise.resolve(answer)),
+      decline: vi.fn((_promptId: AuthorizationPromptId) => Promise.resolve(answer)),
+      cancel: vi.fn(() => Promise.resolve(answer)),
+      signOut: vi.fn((_key: CredentialKey) => Promise.resolve(answer)),
+    }
+    const scripted = scriptedFace({ authorization })
+    // The route's profile is what makes its row keyless: `apiKeyEnv` is the
+    // only field through which a route names a credential reference.
+    const profile = {
+      api: 'openai-responses',
+      ...options.apiKeyEnv === undefined ? {} : { apiKeyEnv: options.apiKeyEnv },
+    }
+    scripted.face.settings.describe.mockResolvedValue(remoteOk({
+      writable: true,
+      hasDocument: false,
+      namespaces: wireNamespaces().map(entry => entry.ns === 'llm-pi-ai'
+        ? { ...entry, value: { providers: { 'openai-codex': profile } }, user: { providers: { 'openai-codex': profile } } }
+        : entry),
+    }))
+    scripted.face.llm.listProviders.mockResolvedValue(remoteOk([{ id: 'openai-codex', name: 'ChatGPT' }]))
+    scripted.face.llm.listConfigurableProviders.mockResolvedValue(remoteOk([{
+      provider: 'openai-codex',
+      displayName: 'ChatGPT',
+      settingsNs: 'llm-pi-ai',
+      settingsPath: ['providers', 'openai-codex'],
+      authorization: { key: CODEX_KEY, required: options.required ?? true },
+    }]))
+    return { ...await mountFace(scripted), authorization }
+  }
+
+  it('offers the sign-in action and says a required sign-in is not stored', async () => {
+    await mountAuthorizationRow()
+
+    expect(screen.getByText(en.notSignedIn)).toBeTruthy()
+    expect(screen.getByRole('button', { name: en.signIn })).toBeTruthy()
+    expect(screen.queryByRole('button', { name: en.signOut })).toBeNull()
+  })
+
+  it('reports a stored sign-in and offers sign out while the flow can write it', async () => {
+    await mountAuthorizationRow({ flow: { configured: true, writable: true } })
+
+    expect(screen.getByText(en.signedIn)).toBeTruthy()
+    expect(screen.getByRole('button', { name: en.signOut })).toBeTruthy()
+    expect(screen.queryByRole('button', { name: en.signIn })).toBeNull()
+  })
+
+  it('hides sign out while the credential provider cannot write the record', async () => {
+    await mountAuthorizationRow({ flow: { configured: true, writable: false } })
+
+    expect(screen.getByText(en.signedIn)).toBeTruthy()
+    expect(screen.queryByRole('button', { name: en.signOut })).toBeNull()
+    expect(screen.queryByRole('button', { name: en.signIn })).toBeNull()
+  })
+
+  it('leaves the status label off a sign-in the route does not require', async () => {
+    await mountAuthorizationRow({ required: false, flow: { configured: true } })
+
+    expect(screen.getByRole('button', { name: en.signOut })).toBeTruthy()
+    expect(screen.queryByText(en.signedIn)).toBeNull()
+    expect(screen.queryByText(en.notSignedIn)).toBeNull()
+  })
+
+  it('keeps every sign-in control off a row that names an API key reference', async () => {
+    await mountAuthorizationRow({ apiKeyEnv: 'OPENAI_CODEX_TOKEN', flow: { configured: true } })
+
+    expect(screen.queryByRole('button', { name: en.signIn })).toBeNull()
+    expect(screen.queryByRole('button', { name: en.signOut })).toBeNull()
+    expect(screen.queryByText(en.signedIn)).toBeNull()
+  })
+
+  it('opens the dialog on the row flow and starts its single method', async () => {
+    const { authorization } = await mountAuthorizationRow()
+
+    await act(async () => { fireEvent.click(screen.getByRole('button', { name: en.signIn })) })
+
+    expect(screen.getByRole('dialog', { name: en.signInTitle.replace('{provider}', 'ChatGPT') })).toBeTruthy()
+    await waitFor(() => { expect(authorization.start).toHaveBeenCalledExactlyOnceWith(CODEX_KEY, undefined) })
+  })
+
+  it('keeps a newer live frame over a start answer that resolves after it', async () => {
+    const { authorization, controller } = await mountAuthorizationRow()
+    const pending = Promise.withResolvers<Answer>()
+    authorization.start.mockImplementation(() => pending.promise)
+
+    await act(async () => { fireEvent.click(screen.getByRole('button', { name: en.signIn })) })
+    expect(authorization.start).toHaveBeenCalledExactlyOnceWith(CODEX_KEY, undefined)
+
+    // pi-ai raises a `select` prompt right after `start`; the stream frame can
+    // reach the page before start's own HTTP answer, whose view was captured
+    // earlier at the `starting` phase.
+    const promptingView: AuthorizationView = {
+      flows: [FLOW],
+      attempt: {
+        key: CODEX_KEY,
+        method: 'oauth',
+        phase: 'prompting',
+        prompt: {
+          id: 'p1' as AuthorizationPromptId,
+          kind: 'select',
+          message: 'Browser login or device code?',
+          options: [{ id: 'browser', label: 'Browser login' }, { id: 'device', label: 'Device code login' }],
+        },
+      },
+    }
+    await act(async () => { controller.mergeAuthorization(promptingView) })
+    expect(screen.getByText('Browser login or device code?')).toBeTruthy()
+
+    // The late `starting` answer must not overwrite the newer prompting state.
+    const startingView: AuthorizationView = { flows: [FLOW], attempt: { key: CODEX_KEY, method: 'oauth', phase: 'starting' } }
+    await act(async () => { pending.resolve(remoteOk(startingView)); await pending.promise })
+
+    expect(screen.getByText('Browser login or device code?')).toBeTruthy()
+    expect(screen.queryByText(en.signInWaiting)).toBeNull()
+  })
+
+  it('retries when a fresh dialog opens onto a previously cancelled attempt', async () => {
+    // The stored view still names the prior sign-in's cancelled outcome — the
+    // Host keeps it until a new start — so opening the row's dialog again
+    // must restart rather than getting stuck showing that stale line.
+    const { authorization, controller } = await mountAuthorizationRow({
+      attempt: { key: CODEX_KEY, method: 'oauth', phase: 'cancelled' },
+    })
+    const pending = Promise.withResolvers<Answer>()
+    authorization.start.mockImplementation(() => pending.promise)
+
+    await act(async () => { fireEvent.click(screen.getByRole('button', { name: en.signIn })) })
+
+    expect(authorization.start).toHaveBeenCalledExactlyOnceWith(CODEX_KEY, undefined)
+    expect(screen.queryByText(en.signInCancelled)).toBeNull()
+
+    const promptingView: AuthorizationView = {
+      flows: [FLOW],
+      attempt: {
+        key: CODEX_KEY,
+        method: 'oauth',
+        phase: 'prompting',
+        prompt: { id: 'p1' as AuthorizationPromptId, kind: 'select', message: 'Which login?', options: [{ id: 'browser', label: 'Browser login' }] },
+      },
+    }
+    await act(async () => { controller.mergeAuthorization(promptingView) })
+
+    expect(screen.getByText('Which login?')).toBeTruthy()
+  })
+
+  it('waits for the flow instead of starting a key the view lists none for', async () => {
+    const { authorization } = await mountAuthorizationRow({ flow: null })
+
+    await act(async () => { fireEvent.click(screen.getByRole('button', { name: en.signIn })) })
+
+    expect(screen.getByText(en.signInWaiting)).toBeTruthy()
+    expect(authorization.start).not.toHaveBeenCalled()
+  })
+
+  it('signs out from the row action and follows the answered view', async () => {
+    const { authorization } = await mountAuthorizationRow({ flow: { configured: true } })
+    const pending = Promise.withResolvers<Answer>()
+    authorization.signOut.mockImplementation(() => pending.promise)
+
+    fireEvent.click(screen.getByRole('button', { name: en.signOut }))
+
+    expect(authorization.signOut).toHaveBeenCalledExactlyOnceWith(CODEX_KEY)
+    // One sign-out at a time: the action holds still until the answer lands.
+    expect(screen.getByRole('button', { name: en.signOut }).hasAttribute('disabled')).toBe(true)
+    await act(async () => {
+      pending.resolve(remoteOk(UNSIGNED))
+      await pending.promise
+    })
+    expect(screen.getByRole('button', { name: en.signIn })).toBeTruthy()
+    expect(screen.getByText(en.notSignedIn)).toBeTruthy()
+  })
+
+  it('reports a refused sign out in place, keeping the stored sign-in', async () => {
+    const { authorization } = await mountAuthorizationRow({
+      flow: { configured: true },
+      answer: { ok: false, error: new RemoteError('authorization/read-only', 'the credential provider is read-only', { key: CODEX_KEY }) },
+    })
+
+    expect(screen.queryByText(en.signOutFailed)).toBeNull()
+    await act(async () => { fireEvent.click(screen.getByRole('button', { name: en.signOut })) })
+
+    expect(screen.getByText(en.signOutFailed)).toBeTruthy()
+    expect(screen.getByRole('button', { name: en.signOut })).toBeTruthy()
+    expect(authorization.signOut).toHaveBeenCalledExactlyOnceWith(CODEX_KEY)
+  })
+
+  it('reports a dropped sign-out call the same way', async () => {
+    const { authorization } = await mountAuthorizationRow({ flow: { configured: true } })
+    authorization.signOut.mockImplementation(() => Promise.reject(new Error('the bridge dropped the call')))
+
+    await act(async () => { fireEvent.click(screen.getByRole('button', { name: en.signOut })) })
+
+    expect(screen.getByText(en.signOutFailed)).toBeTruthy()
+    expect(screen.getByRole('button', { name: en.signOut }).hasAttribute('disabled')).toBe(false)
+  })
+
+  it('drops a stale sign-out answer after a newer live frame arrived', async () => {
+    const { authorization, controller } = await mountAuthorizationRow({ flow: { configured: true } })
+    const pending = Promise.withResolvers<Answer>()
+    authorization.signOut.mockImplementation(() => pending.promise)
+
+    fireEvent.click(screen.getByRole('button', { name: en.signOut }))
+    expect(authorization.signOut).toHaveBeenCalledExactlyOnceWith(CODEX_KEY)
+
+    // A live frame — another surface re-confirming the sign-in — supersedes
+    // the outstanding sign-out before its own answer resolves.
+    const reSignedIn: AuthorizationView = { flows: [{ ...FLOW, configured: true }], attempt: null }
+    await act(async () => { controller.mergeAuthorization(reSignedIn) })
+
+    // The late sign-out answer (still reporting unsigned) must not overwrite it.
+    await act(async () => { pending.resolve(remoteOk(UNSIGNED)); await pending.promise })
+
+    expect(screen.getByText(en.signedIn)).toBeTruthy()
+    expect(screen.getByRole('button', { name: en.signOut })).toBeTruthy()
+  })
+
+  it('signs in through the dialog and follows the answered view', async () => {
+    const { authorization } = await mountAuthorizationRow({ answer: remoteOk(AUTHORIZED) })
+
+    await act(async () => { fireEvent.click(screen.getByRole('button', { name: en.signIn })) })
+
+    expect(authorization.start).toHaveBeenCalledExactlyOnceWith(CODEX_KEY, undefined)
+    // The committed attempt is the dialog's own exit, and the row now says so.
+    expect(screen.queryByRole('dialog')).toBeNull()
+    expect(screen.getByText(en.signedIn)).toBeTruthy()
+    expect(screen.getByRole('button', { name: en.signOut })).toBeTruthy()
+  })
 })

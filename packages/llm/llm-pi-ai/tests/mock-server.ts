@@ -1,5 +1,6 @@
 import { createServer } from 'node:http'
 import type { IncomingMessage, Server, ServerResponse } from 'node:http'
+import { zstdDecompressSync } from 'node:zlib'
 
 export interface MockServer {
   url: string
@@ -43,11 +44,16 @@ export async function mockServer(script: {
       closedResponses += 1
       responseClosed.resolve(undefined)
     })
-    let body = ''
-    request.on('data', (chunk: Buffer) => { body += chunk.toString('utf8') })
+    const chunks: Buffer[] = []
+    request.on('data', (chunk: Buffer) => { chunks.push(chunk) })
     request.on('end', () => {
       paths.push(request.url ?? '')
-      requests.push(body.length === 0 ? undefined : JSON.parse(body))
+      const raw = Buffer.concat(chunks)
+      // The Codex SSE request body is zstd-compressed when Node exposes
+      // zlib's zstd codec (pi-ai/api/openai-codex-responses.js); every other
+      // caller sends plain JSON and this header is absent.
+      const decoded = request.headers['content-encoding'] === 'zstd' ? zstdDecompressSync(raw) : raw
+      requests.push(decoded.length === 0 ? undefined : JSON.parse(decoded.toString('utf8')))
       headers.push(request.headers)
       const behavior = script.shift() ?? { status: 500, body: 'script exhausted' }
       if (behavior.status !== undefined && behavior.status !== 200) {

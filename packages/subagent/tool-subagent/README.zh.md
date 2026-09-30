@@ -64,9 +64,9 @@ kind: "package-reference"
 
 ### 选择子级 LLM
 
-设置 `modelSelectionSettings: true`，即可在组合每个全新顶层 Session 时读取宿主的 `subagent-model-selection` 偏好。没有已记录策略的恢复 Session 会保持禁用，包括显式为空的恢复。启用后，非空的精确 provider/model 路由列表会记录进 Session、由子 Session 继承，后续设置编辑不会改变它。工具随后公开可选的 `provider`、`model` 与 `reasoning_effort` 字段，并注册共享的 `list_subagent_models` 工具。此模式要求后端声明 `agentOptions`；两个进程内后端和 DSH SDK 支持该能力，而 ACP、Codex 与 Claude Code 会拒绝它，而不是忽略它。
+设置 `modelSelectionSettings: true`，即可在组合每个全新顶层 Session 时读取宿主的 `subagent-model-selection` 偏好。没有已记录策略的恢复 Session 会保持禁用，包括显式为空的恢复。启用后，非空的精确 provider/model 路由列表——以及可选的默认子级路由和它自己的推理等级——会记录进 Session、由子 Session 继承，后续设置编辑不会改变它。工具随后公开可选的 `provider`、`model` 与 `reasoning_effort` 字段，并注册共享的 `list_subagent_models` 工具。此模式要求后端声明 `agentOptions`；两个进程内后端和 DSH SDK 支持该能力，而 ACP、Codex 与 Claude Code 会拒绝它，而不是忽略它。
 
-一次调用需同时提供 `provider` 与 `model`；当配置值、父 agent 值或提供方持有的默认值能提供路由时，也可只提供推理等级。静态的 `provider.agentRouteDefaults` 在存在时构成提供方／模型基线；工具配置与模型字段会在路由相关强度合并和确切路由预检前覆盖它。没有这些默认值的提供方会使用父 agent 最新已记录请求中的兼容值，再使用父级首次请求前的创建选项，并保留配置的 `maxTokens`。更改路由但未显式提供推理等级时，会清除继承的路由自有等级，使所选模型解析自己的默认值。实时 LLM 适配器在创建子 agent 前校验有效路由。目录成员资格只提供建议，因此适配器接受时，模型可以使用未列出的 id。
+一次调用需同时提供 `provider` 与 `model`；当配置值、Session 默认值、提供方持有的默认值或父 agent 值能提供路由时，也可只提供推理等级。工具配置只要指定了路由，就会直接压过其他所有来源。如果没有配置路由，Session 中记录的默认值会提供子级的 provider、model 及其自身的推理等级，其优先级高于静态的 `provider.agentRouteDefaults`；当默认值更改了相对于父级的路由时，与路由无关的已配置等级会被清除——这与显式更改路由但未指定等级时的清除规则相同。如果既没有配置路由，也没有 Session 默认值，`provider.agentRouteDefaults`(如果存在)才会构成提供方／模型基线，工具配置与模型字段会在路由相关强度合并前覆盖它。没有配置路由、Session 默认值或路由默认值的提供方会使用父 agent 最新已记录请求中的兼容值，再使用父级首次请求前的创建选项，并保留配置的 `maxTokens`。更改有效路由但未显式提供推理等级时，会清除继承的路由自有等级，使所选模型解析自己的默认值。实时 LLM 适配器在创建子 agent 前校验有效路由，包括调用从未显式指定过的仅默认值路由。目录成员资格只提供建议，因此适配器接受时，模型可以使用未列出的 id。
 
 -----
 
@@ -129,7 +129,7 @@ kind: "package-reference"
 
 #### 模型看到什么
 
-委派工具的描述使用 `running` 与 `inactive` 表达后续投递的可用状态；`inactive` 不表示任务结果。当提供方存在时，以当前实例配置的名称公开已生成的默认 [`subagent` schema](../../../docs/tool-catalog.zh.md#deepseek-aidsh-tool-subagent)。启用的 Session 策略会添加 `provider`、`model` 与 `reasoning_effort`，以及继承和选择指引；提供方必须支持 `agentOptions`。提供方是否继承上下文会改变工具描述和提示词描述。启用后台模式会添加 `run_in_background`：可继续模式会记录其默认值为 `true`、运行时结算通知与显式前台覆盖；一次性模式会记录其默认值为 `false`，以及用 `job_output` 收集或用 `job_kill` 停止的 job id。可选的 `images` 参数——「Attachment ids of images already shown in this conversation, appended to the prompt.」——会在任何子级工作之前对照调用方的历史解析：图片块在子级首条消息中位于提示词文本之后，未知 id 会使调用失败。当工具在本次组装的作用域中可见时，一个 `tool:<toolName>` 系统提示词 section 会指示模型同时启动相互独立的委派，并在它们运行时继续工作；工具限制会同时移除其 schema 和这段指引。
+委派工具的描述使用 `running` 与 `inactive` 表达后续投递的可用状态；`inactive` 不表示任务结果。当提供方存在时，以当前实例配置的名称公开已生成的默认 [`subagent` schema](../../../docs/tool-catalog.zh.md#deepseek-aidsh-tool-subagent)。启用的 Session 策略会添加 `provider`、`model` 与 `reasoning_effort`，以及继承和选择指引；提供方必须支持 `agentOptions`。当策略携带已记录的默认子级路由、且本实例自身的 `agentOptions` 没有指定路由时，选择语句以及三个路由字段的描述会将默认值表述为具体效果，而非泛泛的“使用已配置的子级默认值”措辞——例如，当默认值为 `deepseek-official/deepseek-flash`、强度为 `max` 时，该语句读作 "Omit `provider` and `model` to run the child on `deepseek-official/deepseek-flash` at reasoning effort `max`."（默认值未指定强度时会省略强度分句）。没有有效默认值时——无论是没有记录默认值，还是本实例自身已配置的路由已经指定了路由——这段文本都与没有记录默认值的策略保持字节级一致。提供方是否继承上下文会改变工具描述和提示词描述。可选的 `images` 参数——「Attachment ids of images already shown in this conversation, appended to the prompt.」——会在任何子级工作之前对照调用方的历史解析：图片块在子级首条消息中位于提示词文本之后，未知 id 会使调用失败。启用后台模式会添加 `run_in_background`：可继续模式会记录其默认值为 `true`、运行时结算通知与显式前台覆盖；一次性模式会记录其默认值为 `false`，以及用 `job_output` 收集或用 `job_kill` 停止的 job id。当工具在本次组装的作用域中可见时，一个 `tool:<toolName>` 系统提示词 section 会指示模型同时启动相互独立的可继续委派、在它们运行时继续工作，并且仅当下一步动作依赖结果时选择前台；工具限制会同时移除其 schema 和这段指引。
 
 #### Token 影响
 
@@ -137,13 +137,13 @@ kind: "package-reference"
 
 #### KV Cache 影响
 
-只要提供方实例及其配置不变，前缀就保持稳定。适配器目录变化不会改变定义；子级路由覆盖可能使 fork 子 agent 无法复用继承的父级前缀。
+只要提供方实例及其配置不变，前缀就保持稳定。适配器目录变化不会改变定义；子级路由覆盖可能使 fork 子 agent 无法复用继承的父级前缀。已记录的默认值只在 Session 级别采样一次，并原样被子 Session 继承，因此它是这份定义中的一次性差异，而非逐次调用的差异；默认路由本身只改变子级自身的请求，父级的工具文本仅在记录了默认值时才会改变。
 
 ### 模型选择与发现
 
 #### 模型看到什么
 
-Session 携带策略的 settings 控制实例会公开子级 LLM 选择字段与 `list_subagent_models`。可选 `ctx.llm` 服务不可用时，调用会失败。发现只返回精确路由策略中的已注册提供方与已公布模型；未授权提供方会在调用其适配器目录前被拒绝，精确查询也必须先获准，才会解析模型的推理强度与默认值。执行阶段会独立强制同一策略。
+Session 携带策略的 settings 控制实例会公开子级 LLM 选择字段与 `list_subagent_models`。可选 `ctx.llm` 服务不可用时，调用会失败。发现只返回精确路由策略中的已注册提供方与已公布模型；未授权提供方会在调用其适配器目录前被拒绝，精确查询也必须先获准，才会解析模型的推理强度与默认值。被记录为策略默认值的路由，会在提供方的模型列表和精确模型行中都标记为 `(default)`。执行阶段会独立强制同一策略。
 
 #### Token 影响
 

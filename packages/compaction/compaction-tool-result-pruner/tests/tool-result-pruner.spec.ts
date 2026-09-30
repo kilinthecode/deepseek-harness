@@ -268,6 +268,35 @@ describe('ToolResultPruner session transaction', () => {
     expect(second).toEqual({ pruned: [], charsRemoved: 0 })
   })
 
+  it('projects accurate token savings without mutating the session', () => {
+    const ctx = new Context()
+    new SessionProjectionRegistry(ctx)
+    void new TokenMeter(ctx)
+    const prune = new ToolResultPruner(ctx, SMALL)
+    const session = Session.create(SessionId('preview'))
+    appendToolStep(session, 1, 'big', [{ type: 'text', text: 'A'.repeat(200) }])
+    appendToolStep(session, 2, 'small', [{ type: 'text', text: 'short' }])
+    appendToolStep(session, 3, 'mixed', [
+      { type: 'text', text: 'B'.repeat(200) },
+      { type: 'reasoning', text: 'private' },
+    ])
+    session.append('turn/start', {
+      turn: 4,
+    })
+
+    const seqBeforeProjection = session.seq
+    const before = ctx.tokenMeter.measure(session)
+    const projected = prune.projectTokenSavings(session)
+    expect(session.seq).toBe(seqBeforeProjection)
+
+    // The two oversized results ('big' and 'mixed') are the only prune
+    // candidates; 'short' stays within budget.
+    const { pruned } = prune.pruneSession(session)
+    expect(pruned).toHaveLength(2)
+    const after = ctx.tokenMeter.measure(session)
+    expect(projected).toBe(before.totalTokens - after.totalTokens)
+  })
+
   it('replays to the identical pruned model messages', () => {
     const session = Session.create(SessionId('replay'))
     appendToolStep(session, 1, 'a', [{ type: 'text', text: 'A'.repeat(100) }])

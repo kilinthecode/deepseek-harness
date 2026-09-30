@@ -147,6 +147,16 @@ describe('direct Messages HTTP', () => {
     expect(llm.imageRequestPricing('deepseek-official', MODEL)).toBeDefined()
   })
 
+  it('ignores cacheKey: the request body and headers are unchanged', async () => {
+    const http = await endpoint()
+    const llm = adapter({ baseURL: http.url })
+    await assemble(llm.stream(options({ sessionId: SessionId('cache-key-noop') })))
+    await assemble(llm.stream(options({ sessionId: SessionId('cache-key-noop'), cacheKey: SessionId('delegation-tree-root') })))
+    expect(http.requests).toHaveLength(2)
+    expect(http.requests[1]?.headers).toEqual(http.requests[0]?.headers)
+    expect(http.requests[1]?.body).toEqual(http.requests[0]?.body)
+  })
+
   it.each([
     ['https://provider.example', 'https://provider.example/v1/messages'],
     ['https://provider.example/v1/', 'https://provider.example/v1/messages'],

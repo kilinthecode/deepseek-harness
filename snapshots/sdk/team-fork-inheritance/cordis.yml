@@ -1,0 +1,8 @@
+# Opt-in Agent Teams overlay on top of the default SDK composition, so the
+# Lead's plain `subagent_fork` call (already available in the default
+# composition) also carries the Team section and tools.
+- insert:
+    - id: agent-team
+      name: '@deepseek-ai/dsh-experimental-agent-team'
+    - id: tool-agent-team
+      name: '@deepseek-ai/dsh-experimental-tool-agent-team'

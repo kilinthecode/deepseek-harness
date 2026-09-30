@@ -57,7 +57,7 @@ Character counts are Unicode code points, so slicing never splits an emoji pair,
 
 ### When trimming runs
 
-Trimming only runs when a compaction trigger qualifies: `dsh-compaction-basic` invokes it after pressure or overflow is confirmed, before it selects what to condense. Below pressure nothing is trimmed, and trimming itself makes no model call.
+Trimming only runs once a compaction trigger qualifies; a below-pressure conversation is never touched or previewed, and trimming itself makes no model call. Overflow recovery prunes unconditionally before it selects what to condense, since the retried request itself must fit. Proactive pressure previews the prune first: a preview that would clear the configured headroom below the threshold on its own lands the prune alone, with no condensation, only if that landed trim actually clears the threshold; if it falls short, condensation still follows over the now-trimmed surface. When the preview does not clear that headroom, the oldest balanced span condenses first instead, and trimming runs afterward over what remains after every successful condensation, since that request already pays the cache-invalidation cost trimming would add. Even when no balanced span exists to condense, a mounted pruner still trims before the check declines.
 
 -----
 
@@ -79,13 +79,13 @@ The pruner is built on three commitments:
 
 ### Pruning mechanics
 
-Pruning measures `text` blocks by Unicode code point (non-text blocks cost zero), produces a bounded replacement — or none when content is already within budget — and swaps each over-budget tool result for one newly appended `tool/result` that replaces the original event and cites it through `sourceEventSeqs`, immediately preceded by a `compaction/prune` shadow-price event. A session that rejects a replacement fails the run synchronously; replacements committed earlier in the pass stay durable. Non-text blocks keep their original relative positions, and slicing never splits a UTF-16 surrogate pair. Exact signatures are in [`src/index.ts`](src/index.ts).
+Pruning measures `text` blocks by Unicode code point (non-text blocks cost zero), produces a bounded replacement — or none when content is already within budget — and swaps each over-budget tool result for one newly appended `tool/result` that replaces the original event and cites it through `sourceEventSeqs`, immediately preceded by a `compaction/prune` shadow-price event. A session that rejects a replacement fails the run synchronously; replacements committed earlier in the pass stay durable. Non-text blocks keep their original relative positions, and slicing never splits a UTF-16 surrogate pair. `projectTokenSavings` runs the identical candidate planning read-only, returning the estimated token savings a `pruneSession` call would currently produce, so a caller can price a prune-only reduction before committing to it. Exact signatures are in [`src/index.ts`](src/index.ts).
 
 ### Source map
 
 | File | Role |
 |---|---|
-| [`src/index.ts`](src/index.ts) | Plugin entry: `ToolResultPruner` service, `pruneSession` / `pruneContent` / `measureContent` |
+| [`src/index.ts`](src/index.ts) | Plugin entry: `ToolResultPruner` service, `pruneSession` / `projectTokenSavings` / `pruneContent` / `measureContent` |
 | [`src/config.ts`](src/config.ts) | `PRUNE_MARKER`, defaults, code-point counting, budget validation |
 | [`src/types.ts`](src/types.ts) | `ToolResultPruneConfig`, `ResolvedConfig`, `PrunedEntry`, `PruneResult` |
 | — | No runtime invariant companion is published; Session validates each content-only rewrite and its companion owns cross-event enclosure. |
@@ -99,7 +99,7 @@ Pruning measures `text` blocks by Unicode code point (non-text blocks cost zero)
 
 Read these pages when the package-level contract is not enough; they move from the consuming backend to the shared seam and the pricing service.
 
-- [Compaction basic backend](../compaction-basic/README.md) — the backend that trims oversized tool outputs before condensing.
+- [Compaction basic backend](../compaction-basic/README.md) — the backend whose pressure preview decides whether trimming lands alone or condensation runs first.
 - [Compaction seam](../compaction/README.md) — the condensation contract this package plugs into.
 - [Compaction subsystem reference](../../../docs/subsystems/compaction.md) — the condensation vocabulary, results, and service behavior.
 - [Token meter](../../llm/token-meter/README.md) — the measurement service that decides whether trimming relieved pressure.
@@ -114,11 +114,11 @@ Read these pages when the package-level contract is not enough; they move from t
 
 #### What the model sees
 
-Once a compaction trigger qualifies, future requests see the retained head, `\n\n[... tool result middle pruned ...]\n\n`, and retained tail in place of the removed text. Rich blocks keep their order. The model does not see a second copy of the original.
+Once a compaction trigger qualifies and lands, future requests see the retained head, `\n\n[... tool result middle pruned ...]\n\n`, and retained tail in place of the removed text. Rich blocks keep their order. The model does not see a second copy of the original.
 
 #### Token effect
 
-Each rewritten tool result has at most `thresholdChars` text code points. Pruning itself makes no model call; compaction-basic skips summarization when the remeasured request falls below pressure, otherwise the summarizer reads the pruned surface.
+Each rewritten tool result has at most `thresholdChars` text code points. Pruning itself makes no model call. Under `dsh-compaction-basic`'s proactive pressure trigger, the summarizer reads the original oversized text on the ordinary path, where a non-qualifying preview leaves compaction to run on the unpruned surface; it reads pruned text only in the rare fall-through where a qualifying preview's landed prune still leaves the surface at or above the threshold, so compaction proceeds on the already-pruned surface.
 
 #### KV Cache effect
 

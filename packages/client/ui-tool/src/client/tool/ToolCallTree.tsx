@@ -1,7 +1,9 @@
 /** Root/subcall Tool composition with one keyed atomic dispatch path. */
-import { memo, useMemo, type ReactNode } from 'react'
+import { memo, useCallback, useMemo, type ReactNode } from 'react'
 import type { ToolCallBlock } from '@deepseek-ai/dsh-client-ui-chat/client'
-import type { ToolCallHookContext, ToolCallOwnerProps, ToolCallPhaseProps, ToolTreeProps } from '../contract/slots.ts'
+import type {
+  RenderResultImages, ToolCallHookContext, ToolCallOwnerProps, ToolCallPhaseProps, ToolTreeProps,
+} from '../contract/slots.ts'
 import { toolRowModel } from './models/tool-call-model.ts'
 import { GenericToolCard } from './toolviews/GenericToolCard.tsx'
 import css from './ToolCallTree.module.css'
@@ -18,13 +20,15 @@ function callName(call: ToolCallPhaseProps): string {
 
 /** One atomic call dispatched through the Tool-owned keyed slot. */
 const ToolCall = memo(function ToolCall({
-  renderSlot, callId, toolName, call, assistant, openFile, cwd, home, inspectCall, loadImage, useDisclosure, t, children,
+  renderSlot, callId, toolName, call, assistant, openFile, cwd, home, inspectCall, loadImage, useDisclosure,
+  renderResultImages, t, children,
 }: Pick<ToolTreeProps, 'renderSlot' | 'openFile' | 'cwd' | 'inspectCall' | 'loadImage' | 'useDisclosure' | 't'> & {
   callId: string
   toolName: string
   call: ToolCallPhaseProps
   assistant: ToolCallHookContext['assistant']
   home?: string | undefined
+  renderResultImages: RenderResultImages
   children?: ReactNode
 }) {
   const preparing = call.phase === 'preparing'
@@ -53,11 +57,11 @@ const ToolCall = memo(function ToolCall({
       data-chat-call-id={callId}
     >
       {autoReviewDenied
-        ? <GenericToolCard {...owner} t={t} />
+        ? <GenericToolCard {...owner} t={t} renderResultImages={renderResultImages} />
         : renderSlot('tool.call.toolview', owner, {
           entryKey: toolName,
           hookContext,
-          fallback: <GenericToolCard {...owner} t={t} />,
+          fallback: <GenericToolCard {...owner} t={t} renderResultImages={renderResultImages} />,
         })}
       {children}
     </div>
@@ -65,11 +69,12 @@ const ToolCall = memo(function ToolCall({
 })
 
 const ToolCallBranch = memo(function ToolCallBranch({
-  renderSlot, block, assistant, cwd, home, openFile, inspectCall, loadImage, useDisclosure, t,
+  renderSlot, block, assistant, cwd, home, openFile, inspectCall, loadImage, useDisclosure, renderResultImages, t,
 }: Pick<ToolTreeProps, 'renderSlot' | 'cwd' | 'openFile' | 'inspectCall' | 'loadImage' | 'useDisclosure' | 't'> & {
   block: ToolCallBlock
   assistant: ToolCallHookContext['assistant']
   home?: string | undefined
+  renderResultImages: RenderResultImages
 }) {
   const call = useMemo(() => toolCallPhase(block), [block])
   return (
@@ -85,6 +90,7 @@ const ToolCallBranch = memo(function ToolCallBranch({
       inspectCall={inspectCall}
       useDisclosure={useDisclosure}
       loadImage={loadImage}
+      renderResultImages={renderResultImages}
       t={t}
     >
       {call.phase !== 'preparing' && call.block.subCalls.length > 0 ? (
@@ -101,6 +107,7 @@ const ToolCallBranch = memo(function ToolCallBranch({
               inspectCall={inspectCall}
               useDisclosure={useDisclosure}
               loadImage={loadImage}
+              renderResultImages={renderResultImages}
               t={t}
             />
           ))}
@@ -121,6 +128,13 @@ export function ToolCallTree({
 }: ToolTreeProps) {
   const home = useHostInfo(info => info.home)
   const assistant = node.location.kind === 'step' ? node.location.step.data.source('assistant-step') : undefined
+  // Generic-row gallery dispatch: closes over this tree's loader so the
+  // GenericToolCard fallback (and its recursive sub-calls) supply only the
+  // claimed images, placement, and the text shown for an unfilled slot.
+  const renderResultImages = useCallback<RenderResultImages>(
+    (owner, fallback) => renderSlot('tool.call.resultImages', { ...owner, loadImage }, { fallback }),
+    [loadImage, renderSlot],
+  )
   return (
     <ToolCallBranch
       renderSlot={renderSlot}
@@ -132,6 +146,7 @@ export function ToolCallTree({
       inspectCall={inspectCall}
       useDisclosure={useDisclosure}
       loadImage={loadImage}
+      renderResultImages={renderResultImages}
       t={t}
     />
   )

@@ -106,6 +106,7 @@ export {
   snapshotSubagentDescriptor,
   SUBAGENT_DESCRIPTOR_VERSION,
 } from './descriptor.ts'
+export { plainForkParentOf } from './plain-fork.ts'
 export type {
   ContinuableSubagentDescriptorData,
   ContinuableSubagentDescriptorInput,

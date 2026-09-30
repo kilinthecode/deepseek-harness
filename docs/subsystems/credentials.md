@@ -130,6 +130,86 @@ async begin(request: AuthorizationRequest): Promise<AuthorizationOutcome>
 
 Source: [`packages/credentials/authorization/src/index.ts`](../../packages/credentials/authorization/src/index.ts)
 
+<a id="ctxauthorizationcontroller--authorizationcontroller"></a>
+
+### `ctx.authorizationController` — `AuthorizationController`
+
+Authorization commands and a reconnect-safe state stream. The controller owns exactly one running attempt at a time: `start` claims the slot for a key, `answer` and `decline` resolve the attempt's current prompt, `cancel` withdraws it, and every mutating method returns the complete view as it stands after the command, so a caller never has to separately re-fetch state. `decline` and `cancel` return without waiting for the flow to settle; the terminal phase reaches surfaces through `watch`.
+
+```ts cordis-catalog
+/**
+ * Read the current authorization view.
+ * @returns every registered flow and the controller-owned attempt, if any.
+ */
+@Remote async getState(): Promise<AuthorizationView>
+
+/**
+ * Begin an attempt for one registered flow. Refused while a different key's
+ * attempt is already active; starting the same key's attempt again returns
+ * its current state instead of starting a second one.
+ * @param key - the credential record to authorize; a flow must be registered for it.
+ * @param method - which of the flow's methods to run; defaults to the flow's first.
+ * @returns state after the attempt starts, or its already-active state.
+ * @throws {RemoteError} code `authorization/no-flow` when no flow claims
+ *   `key`, `authorization/unknown-method` when the flow offers no such
+ *   method, or `authorization/already-in-flight` when a different key's
+ *   attempt is active.
+ */
+@Remote start(key: CredentialKey, method?: string): Promise<AuthorizationView>
+
+/**
+ * Answer the active attempt's current prompt.
+ * @param promptId - identity of the prompt this answer addresses.
+ * @param value - typed text, or the chosen option's id for a `select` prompt.
+ * @returns state after the answer is delivered to the running flow.
+ * @throws {RemoteError} code `authorization/stale-prompt` when no attempt is
+ *   waiting on `promptId`, or when a `select` prompt offers no such option,
+ *   because the prompt's own options are the only answers it accepts.
+ */
+@Remote answer(promptId: AuthorizationPromptId, value: string): Promise<AuthorizationView>
+
+/**
+ * Decline the active attempt's current prompt. The attempt settles
+ * `cancelled`, the same outcome as a withdrawn signal, because a human
+ * saying no is a refusal, not a breakage.
+ * @param promptId - identity of the prompt being declined.
+ * @returns the complete view as it stands after the refusal, taken without
+ *   waiting for the flow to unwind; the attempt's terminal phase follows
+ *   through `watch`.
+ * @throws {RemoteError} code `authorization/stale-prompt` when no attempt is
+ *   waiting on `promptId`.
+ */
+@Remote async decline(promptId: AuthorizationPromptId): Promise<AuthorizationView>
+
+/**
+ * Withdraw the controller-owned attempt, if one is running. A no-op when
+ * nothing is active, so a stale Cancel click never fails.
+ * @returns the complete view as it stands after the withdrawal, taken
+ *   without waiting for the flow to unwind; the terminal `cancelled` phase
+ *   follows through `watch`.
+ */
+@Remote async cancel(): Promise<AuthorizationView>
+
+/**
+ * Remove the stored credential record a registered flow claims for `key`.
+ * @param key - the credential record to remove; a flow must be registered for it.
+ * @returns state after the record is removed.
+ * @throws {RemoteError} code `authorization/no-flow` when no flow claims
+ *   `key`, or `authorization/read-only` when the active provider cannot
+ *   write that key's record.
+ */
+@Remote async signOut(key: CredentialKey): Promise<AuthorizationView>
+
+/**
+ * Stream the complete authorization view.
+ * @param signal - stream lifetime.
+ * @returns initial snapshot and subsequent complete views.
+ */
+@Remote({ mode: 'stream' }) async *watch(signal: AbortSignal): AsyncIterable<AuthorizationView>
+```
+
+Source: [`packages/api/authorization-controller/src/index.ts`](../../packages/api/authorization-controller/src/index.ts)
+
 <a id="ctxcredentials--credentialprovider-abstract-seam"></a>
 
 ### `ctx.credentials` — `CredentialProvider` (abstract seam)

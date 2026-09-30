@@ -19,11 +19,31 @@ import type { SessionId } from '@deepseek-ai/dsh-session/types'
 import { WeakMapWithValues } from '@deepseek-ai/dsh-util-values'
 import { ModelCatalogDirectory } from './catalog.ts'
 import { ModelDirectory } from './directory.ts'
+import type { ModelDirectoryState } from './directory.ts'
 
 declare module '@deepseek-ai/cordis' {
   interface Context {
     modelDirectories: ModelDirectoryResolver
   }
+}
+
+/**
+ * Derive the Session's route-image advisory from the shared directory
+ * snapshot. Unknown while the catalog has not resolved a current selection,
+ * or when that selection is not a listed model (advisory-unlisted stays
+ * allow, matching Host prompt admission); a retained snapshot after a
+ * refresh error keeps its prior derived value because `current`/`groups`
+ * themselves are retained.
+ * @param state - the shared directory snapshot.
+ * @returns whether the current route accepts image input, or null when unknown.
+ */
+function routeImageOf(state: ModelDirectoryState): boolean | null {
+  const { current, groups } = state
+  if (current === null) return null
+  const group = groups.find(candidate => candidate.id === current.provider)
+  const model = group?.models.find(candidate => candidate.id === current.model)
+  if (model === undefined) return null
+  return model.inputModalities === undefined || model.inputModalities.includes('image')
 }
 
 /** Live mutable state in one holder (service methods run behind the caller-ctx tracker). */
@@ -79,6 +99,27 @@ export class ModelDirectoryResolver extends Service {
       binding.session.projections.faceOf('modelSelection'),
     )
     live.directories.set(binding, directory)
+    // The composer cannot read this plugin (the dependency runs one way), so
+    // the route-image advisory is pushed from the directory snapshot. Only a
+    // definite `false` refuses image intake; `null` leaves the decision to
+    // Host prompt admission.
+    const conversation = this.ctx.get('conversation')
+    if (conversation !== undefined) {
+      const publish = (): void => {
+        if (sessions.binding(sessionId) !== binding) return
+        conversation.routeImage.set(sessionId, routeImageOf(directory.store.getSnapshot()))
+      }
+      publish()
+      actx.effect(() => {
+        const stop = directory.store.subscribe(publish)
+        return () => {
+          stop()
+          const current = sessions.binding(sessionId)
+          if (current !== undefined && current !== binding && live.directories.get(current) !== undefined) return
+          conversation.routeImage.set(sessionId, null)
+        }
+      }, 'ui-model-selection: route-image publish')
+    }
     actx.effect(() => () => {
       directory.dispose()
       live.directories.delete(binding)
