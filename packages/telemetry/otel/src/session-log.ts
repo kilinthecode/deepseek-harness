@@ -277,21 +277,29 @@ export class SessionLogReporter {
     })
   }
 
-  /** Deliver queued records and then the current one; a stopped channel drops them all. */
+  /** Deliver queued records and then the current one; a stopped channel builds nothing and drops them all. */
   private flush(sdk: SessionLogSdk, record?: SessionLogRecord): void {
+    if (this.stopped) {
+      this.pending.length = 0
+      return
+    }
     const logger = this.open(sdk)
     const queued = this.pending.splice(0)
     if (record !== undefined) queued.push(record)
-    if (this.stopped) return
     for (const item of queued) this.write(logger, sdk, item)
   }
 
-  /** Import the SDK graph at the first report; a failed load is reported, never swallowed. */
+  /**
+   * Import the SDK graph at the first report. A failed load is reported through
+   * `onFailure` and leaves the queued records for the next report's retry.
+   */
   private startLoading(): void {
     if (this.connecting !== undefined || this.logger !== undefined) return
-    const connecting = loadSdk().then((sdk) => { this.flush(sdk) })
-    this.connecting = connecting
-    void connecting.catch((error: unknown) => {
+    this.connecting = loadSdk().then((sdk) => {
+      this.connecting = undefined
+      this.flush(sdk)
+    }, (error: unknown) => {
+      this.connecting = undefined
       this.options.onFailure('Session log SDK failed to load', error instanceof Error ? error : new Error(String(error)))
     })
   }
@@ -305,7 +313,13 @@ export class SessionLogReporter {
   reportSessionLog(record: SessionLogRecord): void {
     if (this.stopped) return
     const sdk = loaded
-    if (sdk === undefined) {
+    // While this channel's load is outstanding, a report joins the queue behind the
+    // earlier ones, even after the shared graph finished loading.
+    if (sdk === undefined || this.connecting !== undefined) {
+      if (this.pending.length >= (this.options.processor?.maxQueueSize ?? 2048)) {
+        this.options.onFailure('Session log queue is full; record rejected')
+        return
+      }
       this.pending.push(record)
       this.startLoading()
       return

@@ -45,6 +45,9 @@ function loadSdk(): Promise<EventLogSdk> {
   return started
 }
 
+/** The SDK batch processor's default queue bound, applied to records reported before the SDK loads. */
+const DEFAULT_MAX_QUEUE_SIZE = 2048
+
 /** One ordinary event with the observation time assigned when it was reported. */
 interface EventLogEntry {
   record: OTelEventRecord
@@ -144,12 +147,17 @@ export class EventLogReporter {
     }
   }
 
-  /** Import the SDK graph at the first report; a failed load is reported, never swallowed. */
+  /**
+   * Import the SDK graph at the first report. A failed load is reported through
+   * `onFailure` and leaves the queued records for the next report's retry.
+   */
   private startLoading(): void {
     if (this.connecting !== undefined || this.logger !== undefined) return
-    const connecting = loadSdk().then((sdk) => { this.flush(sdk) })
-    this.connecting = connecting
-    void connecting.catch((error: unknown) => {
+    this.connecting = loadSdk().then((sdk) => {
+      this.connecting = undefined
+      this.flush(sdk)
+    }, (error: unknown) => {
+      this.connecting = undefined
       this.options.onFailure('Product telemetry SDK failed to load', error instanceof Error ? error : new Error(String(error)))
     })
   }
@@ -163,8 +171,11 @@ export class EventLogReporter {
   emit(record: OTelEventRecord): void {
     const entry: EventLogEntry = { record, observedTimestamp: Date.now() }
     const sdk = loaded
-    if (sdk === undefined) {
-      this.pending.push(entry)
+    // While this channel's load is outstanding, a report joins the queue behind the
+    // earlier ones, even after the shared graph finished loading.
+    if (sdk === undefined || this.connecting !== undefined) {
+      // The batch processor drops records past its queue bound; the pre-load queue does too.
+      if (this.pending.length < (this.options.processor.maxQueueSize ?? DEFAULT_MAX_QUEUE_SIZE)) this.pending.push(entry)
       this.startLoading()
       return
     }
