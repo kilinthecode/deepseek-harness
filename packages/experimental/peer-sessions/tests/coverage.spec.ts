@@ -159,9 +159,12 @@ describe('peer service failure handling and edge paths', () => {
   })
 
   it('retires unreadable watch files on reap, on idle, and on disposal', async () => {
-    const harness = await mountPeerHarness({ peer: { pollMs: 5 } })
+    // A coarse poll keeps timer passes out of the way entirely: each leg below
+    // drives its own retirement and awaits the work that performs it, so a
+    // planted file can never race a reap between its directory and its write.
+    const harness = await mountPeerHarness({ peer: { pollMs: 60_000 } })
     harnesses.push(harness)
-    await harness.create('peer-w')
+    const watcher = await harness.create('peer-w')
     const handle = await harness.createHandle('peer-t')
     const directory = watchShardDirectory(harness.home, 'peer-t')
     const plant = async (): Promise<void> => {
@@ -169,20 +172,22 @@ describe('peer service failure handling and edge paths', () => {
       await writeFile(join(directory, 'garbage.json'), '{not json')
     }
     await plant()
-    await vi.waitFor(async () => {
-      await expect(stat(directory)).rejects.toMatchObject({ code: 'ENOENT' })
-    })
+    // The reap this call awaits retires the unreadable file and then its empty
+    // shard; only the name resolution that follows fails.
+    await expect(harness.ctx.peers.notifyIdle(watcher, { to: 'peer-gone' }))
+      .rejects.toThrow('No peer session named "peer-gone" is live in this repository.')
+    await expect(stat(directory)).rejects.toMatchObject({ code: 'ENOENT' })
     await plant()
     handle.agent.followup(createUserMessage({ content: [{ type: 'text', text: 'work' }], source: { kind: 'user' } }))
     await handle.agent.whenIdle()
-    await vi.waitFor(async () => {
-      await expect(stat(directory)).rejects.toMatchObject({ code: 'ENOENT' })
-    })
+    // The idle reaction the listeners own does the second retirement; the seam
+    // awaits the same tracked work the disposer awaits.
+    await harness.ctx.peers.whenSettled()
+    await expect(stat(directory)).rejects.toMatchObject({ code: 'ENOENT' })
     await plant()
     await handle.dispose()
-    await vi.waitFor(async () => {
-      await expect(stat(directory)).rejects.toMatchObject({ code: 'ENOENT' })
-    })
+    await harness.ctx.peers.whenSettled()
+    await expect(stat(directory)).rejects.toMatchObject({ code: 'ENOENT' })
   })
 
   it('warns when an idle notice cannot fit the watcher mailbox', async () => {

@@ -154,6 +154,22 @@ async send(agent: Agent, request: SendPeerMessageRequest): Promise<SendPeerMessa
  * @throws {PeerError} for an unresolved, unauthorized, full, or idle-turn-limited watch.
  */
 async notifyIdle(agent: Agent, request: NotifyPeerIdleRequest): Promise<NotifyPeerIdleResult>
+
+/**
+ * Resolve once every listener-owned operation this service started before the
+ * call has settled: coalesced presence writes, drain passes, and status
+ * reactions.
+ *
+ * Test seam, not part of the peer-sessions contract. A test that removes or
+ * rewrites a presence row awaits this so its own write is the final writer
+ * instead of racing the coalesced publication queued behind it, and one that
+ * waits for a reaction the listeners own gets the completion signal the
+ * disposer itself awaits. Production callers never need it: publications
+ * coalesce, and any later state change heals the row again.
+ * @internal
+ * @returns fulfillment after the tracked work settles.
+ */
+async whenSettled(): Promise<void>
 ```
 
 Types: [Agent](core.zh.md)

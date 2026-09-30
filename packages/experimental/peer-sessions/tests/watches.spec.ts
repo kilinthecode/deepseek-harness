@@ -149,39 +149,58 @@ describe('peer idle watches', () => {
   })
 
   it('reaps a watch whose target presence row is gone', async () => {
-    const harness = await mountPeerHarness({ peer: { pollMs: 10 } })
+    const harness = await mountPeerHarness({ peer: { pollMs: 60_000 } })
     harnesses.push(harness)
     const watcher = await harness.create('peer-w')
     const target = await harness.create('peer-t')
     const release = gate(harness, 'peer-t')
-    start(target)
-    await vi.waitFor(() => { expect(target.status).toBe('running') })
-    await harness.ctx.peers.notifyIdle(watcher, { to: 'peer-t' })
-    await rm(presencePath(harness.home, 'peer-t'), { force: true })
-    await vi.waitFor(async () => { expect(await harness.watchFiles('peer-t')).toEqual([]) }, { timeout: 2_000 })
-    expect(await harness.mailFiles('peer-w')).toEqual([])
-    release()
+    try {
+      start(target)
+      await vi.waitFor(() => { expect(target.status).toBe('running') })
+      await harness.ctx.peers.notifyIdle(watcher, { to: 'peer-t' })
+      // The running transition's publication is the only writer the service
+      // still has queued; awaiting it makes the removal below the final write
+      // instead of racing the coalesced publish behind it.
+      await harness.ctx.peers.whenSettled()
+      await rm(presencePath(harness.home, 'peer-t'), { force: true })
+      // The reap this call awaits reads the row first, so it retires the watch
+      // without telling anyone; only the name resolution then fails.
+      await expect(harness.ctx.peers.notifyIdle(watcher, { to: 'peer-gone' }))
+        .rejects.toThrow('No peer session named "peer-gone" is live in this repository.')
+      expect(await harness.watchFiles('peer-t')).toEqual([])
+      expect(await harness.mailFiles('peer-w')).toEqual([])
+    } finally {
+      release()
+    }
   })
 
   it('reaps a watch whose target row is held by a process that cannot exist', async () => {
-    const harness = await mountPeerHarness({ peer: { pollMs: 10 } })
+    const harness = await mountPeerHarness({ peer: { pollMs: 60_000 } })
     harnesses.push(harness)
     const watcher = await harness.create('peer-w')
     const target = await harness.create('peer-t')
     const release = gate(harness, 'peer-t')
-    start(target)
-    await vi.waitFor(() => { expect(target.status).toBe('running') })
-    await harness.ctx.peers.notifyIdle(watcher, { to: 'peer-t' })
-    // A pid no process can hold: the same signal probe the atomic-write lock uses.
-    const raw = await readFile(presencePath(harness.home, 'peer-t'), 'utf8')
-    const row = JSON.parse(raw) as Record<string, unknown>
-    await writeFile(presencePath(harness.home, 'peer-t'), `${JSON.stringify({ ...row, pid: 2_147_483_647 })}\n`)
-    await vi.waitFor(async () => {
+    try {
+      start(target)
+      await vi.waitFor(() => { expect(target.status).toBe('running') })
+      await harness.ctx.peers.notifyIdle(watcher, { to: 'peer-t' })
+      // The running transition's publication is the only writer the service
+      // still has queued; awaiting it makes the rewrite below the final write.
+      await harness.ctx.peers.whenSettled()
+      // A pid no process can hold: the same signal probe the atomic-write lock uses.
+      const raw = await readFile(presencePath(harness.home, 'peer-t'), 'utf8')
+      const row = JSON.parse(raw) as Record<string, unknown>
+      await writeFile(presencePath(harness.home, 'peer-t'), `${JSON.stringify({ ...row, pid: 2_147_483_647 })}\n`)
+      // The reap this call awaits probes the pid, retires the row it cannot
+      // find alive, and then reaps the watch the row no longer backs.
+      await expect(harness.ctx.peers.notifyIdle(watcher, { to: 'peer-gone' }))
+        .rejects.toThrow('No peer session named "peer-gone" is live in this repository.')
       await expect(stat(presencePath(harness.home, 'peer-t'))).rejects.toMatchObject({ code: 'ENOENT' })
-    }, { timeout: 2_000 })
-    await vi.waitFor(async () => { expect(await harness.watchFiles('peer-t')).toEqual([]) }, { timeout: 2_000 })
-    expect(await harness.mailFiles('peer-w')).toEqual([])
-    release()
+      expect(await harness.watchFiles('peer-t')).toEqual([])
+      expect(await harness.mailFiles('peer-w')).toEqual([])
+    } finally {
+      release()
+    }
   })
 
   it('does not count a notice still pending in the open turn as a failed attempt', async () => {
