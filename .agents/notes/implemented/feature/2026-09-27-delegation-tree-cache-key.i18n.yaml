@@ -1,0 +1,19 @@
+# Bilingual-pair consistency record for 2026-09-27-delegation-tree-cache-key.md (docs/i18n/README.md): per heading
+# section, a hash of its English and Chinese blocks outside code blocks and generated regions.
+# After editing either side, bring the other along and re-record with:
+#   pnpm run verify-translation-pairing --write .agents/notes/implemented/feature/2026-09-27-delegation-tree-cache-key.md
+/agent-note-a-shared-provider-cache-routing-key-for-one-delegation-tree:
+  en: 6af3bb143fc8bbd7
+  zh: 320e1d5928c2c0f9
+/agent-note-a-shared-provider-cache-routing-key-for-one-delegation-tree/problem:
+  en: d321ceedd01c7874
+  zh: b3e1174da97f604f
+/agent-note-a-shared-provider-cache-routing-key-for-one-delegation-tree/decision:
+  en: 89cac3bf8e052f4a
+  zh: a6c5345d010272fb
+/agent-note-a-shared-provider-cache-routing-key-for-one-delegation-tree/alternatives-considered:
+  en: 321e9ea0a54b727d
+  zh: 4bbd1459a191d5b5
+/agent-note-a-shared-provider-cache-routing-key-for-one-delegation-tree/consequences:
+  en: 9ae4007eb72d2b7d
+  zh: 274f27e5d9b24f4b

@@ -12,7 +12,9 @@ import type {
   BeginSubmissionInput, PendingSubmissionRetirement,
 } from '@deepseek-ai/dsh-api-session-controller/client'
 import type { SessionId } from '@deepseek-ai/dsh-session/types'
+import type { SubmitAttachment, SubmitOutcome } from '../src/client/contract/input.ts'
 import { ComposerBlockRegistry } from '../src/client/input/blocks.ts'
+import { ComposerRouteImageRegistry } from '../src/client/input/route-image.ts'
 import { InputHub } from '../src/client/input/hub.ts'
 import { ConversationController } from '../src/client/service.ts'
 import { zh } from '../src/client/locales.ts'
@@ -44,6 +46,7 @@ async function bench(maxConcurrentFileUploads = 2) {
   const fiber = runtime.ctx.plugin(ConversationController, {
     input: hub,
     blocks: new ComposerBlockRegistry(),
+    routeImage: new ComposerRouteImageRegistry(),
     maxConcurrentFileUploads,
   })
   await fiber.await()
@@ -479,6 +482,7 @@ describe('ConversationController', () => {
     await bare.plugin(ConversationController, {
       input: new InputHub(bare, makeTranslate(zh, {})),
       blocks: new ComposerBlockRegistry(),
+      routeImage: new ComposerRouteImageRegistry(),
       maxConcurrentFileUploads: 2,
     }).await()
     const orphan = bare.get('conversation') as ConversationController
@@ -874,5 +878,83 @@ describe('InputHub queue steering (empty-draft accelerated Enter)', () => {
     b.shell.steerQueue()
     expect(b.updateQueue).not.toHaveBeenCalled()
     await b.runtime.dispose()
+  })
+})
+
+describe('InputHub command image refusal', () => {
+  /** Claim an attachment-accepting command in the resident shell with a submit spy. */
+  function claimAccepting(shell: Awaited<ReturnType<typeof bench>>['shell']) {
+    const submit = vi.fn((_args: string, _actx: Context, _attachments: readonly SubmitAttachment[]) =>
+      Promise.resolve<SubmitOutcome>({ kind: 'success' }))
+    shell.beginCommand(
+      { name: 'goal', token: '/goal ', attachments: true, submit },
+      { start: 0, end: 0, draftRev: shell.snapshot.draftRev },
+    )
+    return submit
+  }
+
+  it('refuses an image a refusing route cannot accept before encoding it, and admits it once capability is unknown', async () => {
+    const b = await bench()
+    const created = vi.spyOn(URL, 'createObjectURL').mockReturnValue('blob:draft-1')
+    const revoked = vi.spyOn(URL, 'revokeObjectURL').mockReturnValue(undefined)
+    try {
+      const session = b.runtime.sessions.binding('s1')!.session
+      const [image] = b.root.createDrafts(session.sessionId, [
+        new File([Uint8Array.of(1)], 'a.png', { type: 'image/png' }),
+      ])
+      if (image === undefined) throw new Error('draft attachment missing')
+      const serialize = vi.spyOn(b.root, 'serializeDraftAttachments')
+      const submit = claimAccepting(b.shell)
+      b.shell.addAttachments([image.id])
+      b.root.routeImage.set(session.sessionId, false)
+      b.shell.submit()
+      await vi.waitFor(() => {
+        expect(b.shell.notices.getSnapshot()).toEqual(
+          expect.objectContaining({ level: 'error', text: zh['image.modelUnsupported'] }),
+        )
+      })
+      expect(serialize).not.toHaveBeenCalled()
+      expect(submit).not.toHaveBeenCalled()
+      expect(b.shell.snapshot.phase).toBe('claimed')
+      expect(b.shell.snapshot.attachmentIds).toEqual([image.id])
+
+      b.root.routeImage.set(session.sessionId, null)
+      b.shell.submit()
+      await vi.waitFor(() => { expect(submit).toHaveBeenCalledOnce() })
+      expect(serialize).toHaveBeenCalledWith([image.id])
+      expect(submit.mock.calls[0]?.[2]).toEqual([expect.objectContaining({ type: 'image', mediaType: 'image/png' })])
+    } finally {
+      created.mockRestore()
+      revoked.mockRestore()
+      await b.runtime.dispose()
+    }
+  })
+
+  it('admits a generic file for an accepting command while the route refuses images', async () => {
+    const b = await bench()
+    try {
+      const session = b.runtime.sessions.binding('s1')!.session
+      ;(session as { uploadFile?: unknown }).uploadFile = vi.fn((_file: Blob | Uint8Array, name?: string) =>
+        Promise.resolve({
+          ok: true as const,
+          value: {
+            receiptId: `receipt-${name}` as never,
+            file: { attachmentId: `file-${name}` as never, name: name ?? 'file', bytes: 1 },
+          },
+        }))
+      const [file] = b.root.createDrafts(session.sessionId, [
+        new File([Uint8Array.of(1)], 'notes.txt', { type: 'text/plain' }),
+      ])
+      if (file === undefined) throw new Error('draft attachment missing')
+      await vi.waitFor(() => { expect(b.root.fileUploads.getSnapshot()[file.id]?.status).toBe('ready') })
+      const submit = claimAccepting(b.shell)
+      b.shell.addAttachments([file.id])
+      b.root.routeImage.set(session.sessionId, false)
+      b.shell.submit()
+      await vi.waitFor(() => { expect(submit).toHaveBeenCalledOnce() })
+      expect(submit.mock.calls[0]?.[2]).toEqual([{ type: 'file', receiptId: 'receipt-notes.txt' }])
+    } finally {
+      await b.runtime.dispose()
+    }
   })
 })

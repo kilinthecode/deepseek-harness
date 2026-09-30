@@ -18,14 +18,14 @@
   en: fb7da851bf6a020e
   zh: b40dc932d6c3101c
 /agent-note-after-call-compaction-pressure-and-context-overflow-recovery/decision/compactionengine-exposes-intent-not-token-accounting:
-  en: be9505b3d73c7f6b
-  zh: ed753f1afec2787a
+  en: ff33dc312fb7f608
+  zh: 592944b6333adda2
 /agent-note-after-call-compaction-pressure-and-context-overflow-recovery/testing:
-  en: b0e1704bd3724301
-  zh: 2279353ff615f183
+  en: 8f68b2526712a351
+  zh: 70860d0115360467
 /agent-note-after-call-compaction-pressure-and-context-overflow-recovery/alternatives-considered:
   en: 3cb5363732ef5758
   zh: 07746411cc80878f
 /agent-note-after-call-compaction-pressure-and-context-overflow-recovery/consequences:
-  en: dfe515fb04127eb5
-  zh: 1924b2e1e9997910
+  en: bdcdae4e0c779526
+  zh: 91a8c341554ba8c8

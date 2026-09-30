@@ -1,0 +1,28 @@
+# Bilingual-pair consistency record for 2026-09-26-generic-authorization-remote.md (docs/i18n/README.md): per heading
+# section, a hash of its English and Chinese blocks outside code blocks and generated regions.
+# After editing either side, bring the other along and re-record with:
+#   pnpm run verify-translation-pairing --write .agents/notes/implemented/architecture/2026-09-26-generic-authorization-remote.md
+/agent-note-generic-authorization-remote:
+  en: 8861d105df267f4b
+  zh: 100b51b8e8314612
+/agent-note-generic-authorization-remote/problem:
+  en: 9bdf28f46421be60
+  zh: e88f5ed0ac3741d3
+/agent-note-generic-authorization-remote/decision:
+  en: 8148af81d25d556e
+  zh: dcc99032bb850bdc
+/agent-note-generic-authorization-remote/one-attempt-with-a-whole-view-stream:
+  en: e95dfd30ac58fdc6
+  zh: 16b56c299141b160
+/agent-note-generic-authorization-remote/the-directory-advertises-the-sign-ins-the-seam-registers:
+  en: 0c83b17624a45850
+  zh: f366f4ce9b2692ec
+/agent-note-generic-authorization-remote/prompts-withdrawal-and-the-end-of-an-attempt:
+  en: 25faf40f6cad5242
+  zh: d501e8ada656e0e9
+/agent-note-generic-authorization-remote/alternatives-considered:
+  en: f0521b11c13fa437
+  zh: a0b790c4a488a108
+/agent-note-generic-authorization-remote/consequences:
+  en: 6e0776419079cd4b
+  zh: fa4e1ee612aef289

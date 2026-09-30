@@ -103,17 +103,18 @@ export class TeamRoster {
             return { root, id: TeamId(root.id), role: 'teammate', name: member.name }
           }
           // A direct child outside the durable roster is not a teammate. Ordinary
-          // host forks are independent roots; subagent descriptors distinguish
-          // provider-owned workers that must not receive a nested Team identity.
-          if (this.subagentDescriptor(agent)) return undefined
+          // host forks are independent roots; the durable header's subagent
+          // origin distinguishes provider-owned workers that must not receive a
+          // nested Team identity.
+          if (this.hasSubagentOrigin(agent)) return undefined
           return { root: agent, id: TeamId(agent.id), role: 'lead', name: 'lead' }
         }
       }
       // A continuation can briefly outlive its parent during child-first teardown.
       // Do not reinterpret that durable child as a new implicit root Team. A host-
-      // resumed ordinary fork has no descriptor in its own suffix and remains a
-      // valid new root whose inherited Team records stay outside its projected Team state.
-      if (this.subagentDescriptor(agent)) return undefined
+      // resumed ordinary fork has no subagent origin in its own header and remains
+      // a valid new root whose inherited Team records stay outside its projected Team state.
+      if (this.hasSubagentOrigin(agent)) return undefined
       return { root: agent, id: TeamId(agent.id), role: 'lead', name: 'lead' }
     } catch {
       // This method is used by lifecycle observers and teardown discovery. A
@@ -514,10 +515,15 @@ export class TeamRoster {
     })
   }
 
-  /** Whether a Session's own suffix identifies a provider-owned subagent child. */
-  private subagentDescriptor(agent: Agent): boolean {
-    // oxlint-disable-next-line typescript/no-deprecated -- Existing Session history read; migration deferred.
-    return foldSubagentDescriptor(agent.session.snapshotEvents(agent.session.inheritedEventCount)) !== undefined
+  /**
+   * Whether a Session identifies a provider-owned subagent child, from the
+   * durable header alone. The header origin is stamped synchronously in
+   * `childSessionMeta()`. The one-shot `subagent/descriptor` event is instead
+   * appended only after `agent/created`, so classification reacting to that
+   * event cannot rely on it.
+   */
+  private hasSubagentOrigin(agent: Agent): boolean {
+    return agent.session.header.origin === 'subagent'
   }
 }
 

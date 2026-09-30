@@ -9,8 +9,8 @@
   en: 6cc2cd9ced70bb09
   zh: 1c0e6cb4ba2ed637
 /tool-schema-catalog/tool-package-map:
-  en: 72e2a375567f5850
-  zh: b51b8ea5b52814fd
+  en: 1984c5f40853948e
+  zh: 00e827ad9c6ca067
 /tool-schema-catalog/deepseek-ai-dsh-plugin-manager:
   en: e0143916bb634762
   zh: e0143916bb634762
@@ -282,8 +282,20 @@
   en: 2eac7360ba68b1bd
   zh: b5d676bf288c245e
 /tool-schema-catalog/deepseek-ai-dsh-experimental-tool-agent-team/wait-agent:
-  en: fbc4d75a9bcf6816
-  zh: 672131ac2705f411
+  en: 50dcffe804868ce3
+  zh: 8c265475a281f2c2
+/tool-schema-catalog/deepseek-ai-dsh-tool-memory:
+  en: b94bf14065439df0
+  zh: b94bf14065439df0
+/tool-schema-catalog/deepseek-ai-dsh-tool-memory/memory-forget:
+  en: ee9550d65b760c49
+  zh: e57f776d0c3d32fe
+/tool-schema-catalog/deepseek-ai-dsh-tool-memory/memory-recall:
+  en: 7972383fe3abeab0
+  zh: 3eb89691df634be7
+/tool-schema-catalog/deepseek-ai-dsh-tool-memory/memory-write:
+  en: d5f92247cdd44de8
+  zh: 88c1c0718d26fc7f
 /tool-schema-catalog/deepseek-ai-dsh-tool-todo:
   en: dea62d26fb18ff68
   zh: dea62d26fb18ff68

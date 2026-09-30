@@ -17,6 +17,7 @@ import SubagentRuntime from '@deepseek-ai/dsh-subagent'
 import SessionProjectionRegistry from '@deepseek-ai/dsh-session-projection'
 import * as tool from '../src/index.ts'
 import { registerListSubagentModels } from '../src/list-models.ts'
+import type { DefaultChildRoute } from '../src/model-selection.ts'
 import { testToolSignal, text } from './harness.ts'
 
 class CatalogAdapter extends LlmAdapter {
@@ -63,12 +64,12 @@ async function setupListTool(routes = [
   { provider: 'alpha', model: 'plain' },
   { provider: 'beta', model: 'fast' },
   { provider: 'beta', model: 'plain' },
-]) {
+], defaultRoute?: DefaultChildRoute) {
   const ctx = new Context()
   await ctx.plugin(LlmRuntime)
   await ctx.plugin(SystemPrompt)
   await ctx.plugin(ToolRuntime)
-  registerListSubagentModels(ctx, { routes })
+  registerListSubagentModels(ctx, { routes, ...defaultRoute === undefined ? {} : { defaultRoute } })
   return ctx
 }
 
@@ -157,6 +158,28 @@ describe('list_subagent_models', () => {
       'alpha/fast — Fast: Focused work.\nImage input: undeclared\n'
       + 'alpha/plain — Plain\nImage input: undeclared',
     )
+  })
+
+  it('marks the recorded default route in a provider\'s model listing and in exact-model inspection', async () => {
+    const ctx = await setupListTool(undefined, { provider: 'alpha', model: 'plain' })
+    ctx.llm.registerAdapter(['alpha'], new CatalogAdapter())
+    const result = await call(ctx, { provider: 'alpha' })
+    expect(result.isError).toBe(false)
+    expect(text(result)).toBe('alpha/fast — Fast: Focused work.\nalpha/plain (default) — Plain')
+
+    const inspected = await call(ctx, { provider: 'alpha', model: 'plain' })
+    expect(text(inspected)).toContain('alpha/plain (default) — Plain')
+    const other = await call(ctx, { provider: 'alpha', model: 'fast' })
+    expect(text(other)).toContain('alpha/fast — Fast')
+    // The model route is unmarked; "high (default)" still names the reasoning effort default.
+    expect(text(other)).not.toContain('alpha/fast (default)')
+  })
+
+  it('does not mark any route without a recorded default', async () => {
+    const ctx = await setupListTool()
+    ctx.llm.registerAdapter(['alpha'], new CatalogAdapter())
+    const result = await call(ctx, { provider: 'alpha' })
+    expect(text(result)).not.toContain('(default)')
   })
 
   it('intersects provider and model discovery with the Session allowlist', async () => {

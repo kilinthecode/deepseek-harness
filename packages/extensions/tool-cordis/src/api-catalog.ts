@@ -551,6 +551,59 @@ export const SERVICE_API: readonly ServiceApiEntry[] = [
     ],
   },
   {
+    key: 'authorizationController',
+    summary: 'Authorization commands and a reconnect-safe state stream.',
+    description: 'Authorization commands and a reconnect-safe state stream. The controller owns exactly one running attempt at a time: `start` claims the slot for a key, `answer` and `decline` resolve the attempt\'s current prompt, `cancel` withdraws it, and every mutating method returns the complete view as it stands after the command, so a caller never has to separately re-fetch state. `decline` and `cancel` return without waiting for the flow to settle; the terminal phase reaches surfaces through `watch`.',
+    methods: [
+      {
+        signature: '@Remote async getState(): Promise<AuthorizationView>',
+        description: 'Read the current authorization view.',
+        parameters: [],
+        returns: 'every registered flow and the controller-owned attempt, if any.',
+      },
+      {
+        signature: '@Remote start(key: CredentialKey, method?: string): Promise<AuthorizationView>',
+        description: 'Begin an attempt for one registered flow. Refused while a different key\'s attempt is already active; starting the same key\'s attempt again returns its current state instead of starting a second one.',
+        parameters: [{ name: 'key', description: 'the credential record to authorize; a flow must be registered for it.' }, { name: 'method', description: 'which of the flow\'s methods to run; defaults to the flow\'s first.' }],
+        returns: 'state after the attempt starts, or its already-active state.',
+        throws: ['{RemoteError} code `authorization/no-flow` when no flow claims `key`, `authorization/unknown-method` when the flow offers no such method, or `authorization/already-in-flight` when a different key\'s attempt is active.'],
+      },
+      {
+        signature: '@Remote answer(promptId: AuthorizationPromptId, value: string): Promise<AuthorizationView>',
+        description: 'Answer the active attempt\'s current prompt.',
+        parameters: [{ name: 'promptId', description: 'identity of the prompt this answer addresses.' }, { name: 'value', description: 'typed text, or the chosen option\'s id for a `select` prompt.' }],
+        returns: 'state after the answer is delivered to the running flow.',
+        throws: ['{RemoteError} code `authorization/stale-prompt` when no attempt is waiting on `promptId`, or when a `select` prompt offers no such option, because the prompt\'s own options are the only answers it accepts.'],
+      },
+      {
+        signature: '@Remote async decline(promptId: AuthorizationPromptId): Promise<AuthorizationView>',
+        description: 'Decline the active attempt\'s current prompt. The attempt settles `cancelled`, the same outcome as a withdrawn signal, because a human saying no is a refusal, not a breakage.',
+        parameters: [{ name: 'promptId', description: 'identity of the prompt being declined.' }],
+        returns: 'the complete view as it stands after the refusal, taken without waiting for the flow to unwind; the attempt\'s terminal phase follows through `watch`.',
+        throws: ['{RemoteError} code `authorization/stale-prompt` when no attempt is waiting on `promptId`.'],
+      },
+      {
+        signature: '@Remote async cancel(): Promise<AuthorizationView>',
+        description: 'Withdraw the controller-owned attempt, if one is running. A no-op when nothing is active, so a stale Cancel click never fails.',
+        parameters: [],
+        returns: 'the complete view as it stands after the withdrawal, taken without waiting for the flow to unwind; the terminal `cancelled` phase follows through `watch`.',
+      },
+      {
+        signature: '@Remote async signOut(key: CredentialKey): Promise<AuthorizationView>',
+        description: 'Remove the stored credential record a registered flow claims for `key`.',
+        parameters: [{ name: 'key', description: 'the credential record to remove; a flow must be registered for it.' }],
+        returns: 'state after the record is removed.',
+        throws: ['{RemoteError} code `authorization/no-flow` when no flow claims `key`, or `authorization/read-only` when the active provider cannot write that key\'s record.'],
+      },
+      {
+        signature: '@Remote({ mode: \'stream\' }) async *watch(signal: AbortSignal): AsyncIterable<AuthorizationView>',
+        description: 'Stream the complete authorization view.',
+        parameters: [{ name: 'signal', description: 'stream lifetime.' }],
+        returns: 'initial snapshot and subsequent complete views.',
+      },
+    ],
+  },
+  {
     key: 'browserUse',
     summary: 'Owns one optional provider registration in the shared browser-use service.',
     description: 'Owns one optional provider registration in the shared browser-use service.',
@@ -1490,6 +1543,50 @@ export const SERVICE_API: readonly ServiceApiEntry[] = [
         description: 'Register one server and expose resource tools while that scope has providers.',
         parameters: [{ name: 'server', description: 'configured server name, unique in this scope.' }, { name: 'provider', description: 'connection-owned resource operations.' }],
         returns: 'the effect disposer for this exact registration.',
+      },
+    ],
+  },
+  {
+    key: 'memory',
+    summary: 'The memory store.',
+    description: 'The memory store. Opening the domain happens during service init, so every consumer that injects `memory` sees an open store; the domain closes with this service\'s fiber.',
+    methods: [
+      {
+        signature: 'async resolveProjectRoot(cwd: string | undefined): Promise<string | undefined>',
+        description: 'Resolve the project root of one working directory.',
+        parameters: [{ name: 'cwd', description: 'session working directory; `undefined` when the session has none.' }],
+        returns: 'the absolute root, or `undefined` when there is no cwd or no marker above it.',
+      },
+      {
+        signature: 'async visible(cwd: string | undefined): Promise<MemoryVisible>',
+        description: 'Every record visible from one working directory: all global records plus the current project\'s records when a root resolves.',
+        parameters: [{ name: 'cwd', description: 'session working directory, when the session has one.' }],
+        returns: 'the visible records in stored order.',
+      },
+      {
+        signature: 'scan(text: string): MemoryScanFinding | undefined',
+        description: 'Scan one memory description or body using the store\'s fixed threat checks.',
+        parameters: [{ name: 'text', description: 'raw description or content.' }],
+        returns: 'the first finding, or `undefined` when the text is allowed.',
+      },
+      {
+        signature: 'async write(request: MemoryWriteRequest): Promise<MemoryWriteResult>',
+        description: 'Insert or replace one record durably. Writes and forgets of one store run one at a time in call order, from the project-root lookup to the durable put, so overlapping calls never exceed the cap and a same-name overlap reports `created` for the earlier call and keeps its `createdAt`. The cap counts the records this process has loaded or written.',
+        parameters: [{ name: 'request', description: 'the memory to store.' }],
+        returns: 'whether the record was created or updated, and the stored record.',
+        throws: ['{@link MemoryError} for an invalid name, description, or content, blocked description or content, a project scope without a project root, a project key occupied by another project\'s record, a cap reached in the target scope, (`request.ifAbsent`) an existing record with that name and scope, or a write begun after the store\'s domain started closing.'],
+      },
+      {
+        signature: 'async recall(request: MemoryRecallRequest): Promise<MemoryRecord[]>',
+        description: 'Find visible records by substring, newest first, then by name, then with `global` before `project`. A request without a resolvable project root searches the global records only.',
+        parameters: [{ name: 'request', description: 'query, result cap, and working directory.' }],
+        returns: 'at most `limit` matching records.',
+      },
+      {
+        signature: 'async forget(request: MemoryForgetRequest): Promise<void>',
+        description: 'Delete one record durably, in the same one-at-a-time call order as writes.',
+        parameters: [{ name: 'request', description: 'name, scope, and working directory.' }],
+        throws: ['{@link MemoryError} when the name is invalid, the project root is unavailable, no such record exists in the scope, a project key is occupied by another project\'s record, or the forget began after the store\'s domain started closing.'],
       },
     ],
   },
@@ -2815,7 +2912,8 @@ export const SERVICE_API: readonly ServiceApiEntry[] = [
         signature: 'current(): SubagentModelSelectionSettings',
         description: 'Read a detached selection preference for the next eligible Session composition.',
         parameters: [],
-        returns: 'the enabled state and exact allowed routes.',
+        returns: 'the enabled state, exact allowed routes, and, while enabled, a default child route when one is set.',
+        throws: ['when the allowed routes are malformed or duplicated, or the default route is malformed; while enabled, also throws when the default\'s provider/model pair is not one of the allowed routes.'],
       },
     ],
   },
@@ -3216,6 +3314,12 @@ export const SERVICE_API: readonly ServiceApiEntry[] = [
         parameters: [{ name: 'session', description: 'session whose current surface is rewritten.' }],
         returns: 'landed replacements and aggregate Unicode-code-point savings.',
         throws: ['when the session rejects a replacement; replacements committed earlier in the pass remain durable.'],
+      },
+      {
+        signature: 'projectTokenSavings(session: Session): number',
+        description: 'Project the token savings `pruneSession` would land for the current surface, without appending anything. A caller compares the projection against a pressure margin to decide whether a prune-only reduction is worth landing on its own, before paying for a second cache break by also summarizing.',
+        parameters: [{ name: 'session', description: 'session whose current surface is inspected.' }],
+        returns: 'aggregate estimated tokens `pruneSession` would currently remove, summed per candidate as `tokenMeter.estimateMessage(original) - tokenMeter.estimateMessage(replacement)`.',
       },
     ],
   },
@@ -4562,12 +4666,24 @@ export const TYPE_API: readonly TypeApiEntry[] = [
     declaration: 'export type AttachmentId = Branded<\'AttachmentId\'>;',
   },
   {
+    name: 'AuthorizationAttemptPhase',
+    declaration: 'export type AuthorizationAttemptPhase = \'starting\' | \'running\' | \'prompting\' | \'authorized\' | \'cancelled\' | \'failed\';',
+  },
+  {
+    name: 'AuthorizationAttemptView',
+    declaration: 'export interface AuthorizationAttemptView {\n    readonly key: CredentialKey;\n    readonly method: string;\n    readonly phase: AuthorizationAttemptPhase;\n    readonly notice?: AuthorizationNotice;\n    readonly prompt?: AuthorizationPromptView;\n    readonly failure?: string;\n}',
+  },
+  {
     name: 'AuthorizationEntry',
     declaration: 'export interface AuthorizationEntry {\n    key: CredentialKey;\n    label: string;\n    methods: readonly AuthorizationMethod[];\n    inFlight: boolean;\n}',
   },
   {
     name: 'AuthorizationFlow',
     declaration: 'export interface AuthorizationFlow {\n    readonly key: CredentialKey;\n    readonly label: string;\n    readonly methods: readonly [\n        AuthorizationMethod,\n        ...AuthorizationMethod[]\n    ];\n    run(session: AuthorizationSession): Promise<void>;\n}',
+  },
+  {
+    name: 'AuthorizationFlowView',
+    declaration: 'export interface AuthorizationFlowView {\n    readonly key: CredentialKey;\n    readonly label: string;\n    readonly methods: readonly AuthorizationMethod[];\n    readonly inFlight: boolean;\n    readonly configured: boolean;\n    readonly writable: boolean;\n}',
   },
   {
     name: 'AuthorizationInteraction',
@@ -4582,16 +4698,16 @@ export const TYPE_API: readonly TypeApiEntry[] = [
     declaration: 'export interface AuthorizationNotice {\n    message: string;\n    url?: string;\n    code?: string;\n}',
   },
   {
-    name: 'AuthorizationOutcome',
-    declaration: 'export interface AuthorizationOutcome {\n    status: AuthorizationStatus;\n}',
-  },
-  {
     name: 'AuthorizationPrompt',
     declaration: 'export type AuthorizationPrompt = {\n    signal?: AbortSignal;\n} & ({\n    kind: \'text\';\n    message: string;\n    placeholder?: string;\n} | {\n    kind: \'secret\';\n    message: string;\n    placeholder?: string;\n} | {\n    kind: \'select\';\n    message: string;\n    options: readonly AuthorizationPromptOption[];\n});',
   },
   {
-    name: 'AuthorizationPromptOption',
-    declaration: 'export interface AuthorizationPromptOption {\n    id: string;\n    label: string;\n    description?: string;\n}',
+    name: 'AuthorizationPromptId',
+    declaration: 'export type AuthorizationPromptId = Branded<\'AuthorizationPromptId\'>;',
+  },
+  {
+    name: 'AuthorizationPromptView',
+    declaration: 'export interface AuthorizationPromptView {\n    readonly id: AuthorizationPromptId;\n    readonly kind: \'text\' | \'secret\' | \'select\';\n    readonly message: string;\n    readonly placeholder?: string;\n    readonly options?: readonly AuthorizationPromptOption[];\n}',
   },
   {
     name: 'AuthorizationRequest',
@@ -4608,6 +4724,10 @@ export const TYPE_API: readonly TypeApiEntry[] = [
   {
     name: 'AuthorizationStatus',
     declaration: 'export type AuthorizationStatus = \'authorized\' | \'cancelled\';',
+  },
+  {
+    name: 'AuthorizationView',
+    declaration: 'export interface AuthorizationView {\n    readonly flows: readonly AuthorizationFlowView[];\n    readonly attempt: AuthorizationAttemptView | null;\n}',
   },
   {
     name: 'BackendRegistry',
@@ -5187,7 +5307,7 @@ export const TYPE_API: readonly TypeApiEntry[] = [
   },
   {
     name: 'GenerateOptions',
-    declaration: 'export interface GenerateOptions {\n    provider: string;\n    model: string;\n    reasoningEffort?: ReasoningEffortId;\n    messages: RequestMessage[];\n    system?: string;\n    tools?: ToolSchema[];\n    toolHistory?: ToolHistory;\n    temperature?: number;\n    maxTokens?: number;\n    stop?: string[];\n    signal?: AbortSignal;\n    sessionId?: Branded<\'SessionId\'>;\n    purpose?: \'compaction\' | \'session-title\';\n}',
+    declaration: 'export interface GenerateOptions {\n    provider: string;\n    model: string;\n    reasoningEffort?: ReasoningEffortId;\n    messages: RequestMessage[];\n    system?: string;\n    tools?: ToolSchema[];\n    toolHistory?: ToolHistory;\n    temperature?: number;\n    maxTokens?: number;\n    stop?: string[];\n    signal?: AbortSignal;\n    sessionId?: Branded<\'SessionId\'>;\n    cacheKey?: Branded<\'SessionId\'>;\n    purpose?: \'compaction\' | \'session-title\';\n}',
   },
   {
     name: 'GenericCallView',
@@ -5519,7 +5639,7 @@ export const TYPE_API: readonly TypeApiEntry[] = [
   },
   {
     name: 'LlmConfigurableProvider',
-    declaration: 'export interface LlmConfigurableProvider {\n    provider: string;\n    displayName: string;\n    settingsNs: string;\n    settingsPath: readonly string[];\n    declared?: boolean;\n    error?: string;\n}',
+    declaration: 'export interface LlmConfigurableProvider {\n    provider: string;\n    displayName: string;\n    settingsNs: string;\n    settingsPath: readonly string[];\n    declared?: boolean;\n    readonly authorization?: {\n        readonly key: CredentialKey;\n        readonly required: boolean;\n    };\n    error?: string;\n}',
   },
   {
     name: 'LlmDiscoveredModel',
@@ -5634,6 +5754,46 @@ export const TYPE_API: readonly TypeApiEntry[] = [
     declaration: 'export type McpResourceRequest = {\n    method: \'resources/list\' | \'resources/templates/list\';\n    cursor?: string;\n} | {\n    method: \'resources/read\';\n    uri: string;\n};',
   },
   {
+    name: 'MemoryForgetRequest',
+    declaration: 'export interface MemoryForgetRequest {\n    readonly name: string;\n    readonly scope: MemoryScope;\n    readonly cwd?: string | undefined;\n}',
+  },
+  {
+    name: 'MemoryName',
+    declaration: 'export type MemoryName = Branded<\'MemoryName\'>;',
+  },
+  {
+    name: 'MemoryRecallRequest',
+    declaration: 'export interface MemoryRecallRequest {\n    readonly query?: string | undefined;\n    readonly limit: number;\n    readonly cwd?: string | undefined;\n}',
+  },
+  {
+    name: 'MemoryRecord',
+    declaration: 'export interface MemoryRecord {\n    readonly name: MemoryName;\n    readonly type: MemoryType;\n    readonly scope: MemoryScope;\n    readonly description: string;\n    readonly content: string;\n    readonly projectRoot?: string | undefined;\n    readonly createdAt: string;\n    readonly updatedAt: string;\n}',
+  },
+  {
+    name: 'MemoryScanFinding',
+    declaration: 'export interface MemoryScanFinding {\n    readonly id: string;\n    readonly message: string;\n}',
+  },
+  {
+    name: 'MemoryScope',
+    declaration: 'export type MemoryScope = (typeof MEMORY_SCOPES)[number];',
+  },
+  {
+    name: 'MemoryType',
+    declaration: 'export type MemoryType = (typeof MEMORY_TYPES)[number];',
+  },
+  {
+    name: 'MemoryVisible',
+    declaration: 'export interface MemoryVisible {\n    readonly global: readonly MemoryRecord[];\n    readonly project?: {\n        readonly root: string;\n        readonly records: readonly MemoryRecord[];\n    };\n}',
+  },
+  {
+    name: 'MemoryWriteRequest',
+    declaration: 'export interface MemoryWriteRequest {\n    readonly name: string;\n    readonly type: MemoryType;\n    readonly scope: MemoryScope;\n    readonly description: string;\n    readonly content: string;\n    readonly cwd?: string | undefined;\n    readonly ifAbsent?: boolean;\n}',
+  },
+  {
+    name: 'MemoryWriteResult',
+    declaration: 'export interface MemoryWriteResult {\n    readonly outcome: \'created\' | \'updated\';\n    readonly record: MemoryRecord;\n}',
+  },
+  {
     name: 'Message',
     declaration: 'export type Message = MessageRoleMap[keyof MessageRoleMap];',
   },
@@ -5735,7 +5895,7 @@ export const TYPE_API: readonly TypeApiEntry[] = [
   },
   {
     name: 'ModelCatalogModel',
-    declaration: 'export interface ModelCatalogModel {\n    readonly id: string;\n    readonly name: string;\n    readonly description?: string;\n    readonly reasoning?: ModelReasoning;\n}',
+    declaration: 'export interface ModelCatalogModel {\n    readonly id: string;\n    readonly name: string;\n    readonly description?: string;\n    readonly reasoning?: ModelReasoning;\n    readonly inputModalities?: readonly ModelModality[];\n}',
   },
   {
     name: 'ModelMessageSource',

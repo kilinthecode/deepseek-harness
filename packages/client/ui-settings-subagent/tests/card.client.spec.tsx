@@ -49,6 +49,8 @@ function renderSubagent(
     catalogStatus: 'idle',
     catalogPartial: false,
     conflicted: false,
+    defaultModel: null,
+    defaultEffort: undefined,
     ...modelState,
   })
   const actions = {
@@ -56,6 +58,8 @@ function renderSubagent(
     resetLimit: vi.fn(),
     toggleEnabled: vi.fn(),
     toggleModel: vi.fn(),
+    setDefaultModel: vi.fn(),
+    setDefaultEffort: vi.fn(),
     retryCatalog: vi.fn(),
     save: vi.fn(),
     discard: vi.fn(),
@@ -152,6 +156,75 @@ describe('Subagent model selection fields', () => {
     cleanup()
     renderSubagentModelSelection({ enabled: true, catalogStatus: 'ready' })
     expect(screen.getByText(en.subagentModelSelectionEmpty)).toBeTruthy()
+  })
+
+  it('offers the calling-agent option plus only checked routes as the default, and stages a choice', () => {
+    const actions = renderSubagentModelSelection({
+      enabled: true,
+      candidates: [
+        {
+          key: 'alpha\0fast', provider: 'alpha', model: 'fast', providerName: 'Alpha API',
+          modelName: 'Fast', available: true, selected: true,
+        },
+        {
+          key: 'alpha\0deep', provider: 'alpha', model: 'deep', providerName: 'Alpha API',
+          modelName: 'Deep', available: true, selected: false,
+        },
+      ],
+      catalogStatus: 'ready',
+      defaultModel: null,
+    })
+
+    const select = screen.getByRole('combobox', { name: en.subagentModelSelectionDefaultLabel })
+    expect(select).toHaveProperty('value', '')
+    const optionLabels = Array.from(select.querySelectorAll('option')).map(option => option.textContent)
+    expect(optionLabels).toEqual([en.subagentModelSelectionDefaultSameAsCaller, 'Fast (Alpha API)'])
+    expect(screen.queryByRole('combobox', { name: en.subagentModelSelectionDefaultEffortLabel })).toBeNull()
+
+    fireEvent.change(select, { target: { value: 'alpha\0fast' } })
+    expect(actions.setDefaultModel).toHaveBeenCalledWith('alpha\0fast')
+  })
+
+  it('shows the effort choice only once a default route is staged, offering its advertised efforts', () => {
+    const actions = renderSubagentModelSelection({
+      enabled: true,
+      candidates: [{
+        key: 'alpha\0fast', provider: 'alpha', model: 'fast', providerName: 'Alpha API',
+        modelName: 'Fast', available: true, selected: true,
+        reasoning: { efforts: [{ id: 'low', name: 'Low' }, { id: 'high', name: 'High' }], defaultEffort: 'high' },
+      }],
+      catalogStatus: 'ready',
+      defaultModel: { provider: 'alpha', model: 'fast' },
+      defaultEffort: 'low',
+    })
+
+    const effort = screen.getByRole('combobox', { name: en.subagentModelSelectionDefaultEffortLabel })
+    expect(effort).toHaveProperty('value', 'low')
+    const optionLabels = Array.from(effort.querySelectorAll('option')).map(option => option.textContent)
+    expect(optionLabels).toEqual([en.subagentModelSelectionDefaultEffortModelDefault, 'Low', 'High'])
+
+    fireEvent.change(effort, { target: { value: 'high' } })
+    expect(actions.setDefaultEffort).toHaveBeenCalledWith('high')
+    fireEvent.change(effort, { target: { value: '' } })
+    expect(actions.setDefaultEffort).toHaveBeenCalledWith(undefined)
+
+    const model = screen.getByRole('combobox', { name: en.subagentModelSelectionDefaultLabel })
+    fireEvent.change(model, { target: { value: '' } })
+    expect(actions.setDefaultModel).toHaveBeenCalledWith(null)
+
+    cleanup()
+    renderSubagentModelSelection({
+      enabled: true,
+      candidates: [{
+        key: 'alpha\0fast', provider: 'alpha', model: 'fast', providerName: 'Alpha API',
+        modelName: 'Fast', available: true, selected: true,
+      }],
+      catalogStatus: 'ready',
+      defaultModel: { provider: 'alpha', model: 'fast' },
+      defaultEffort: undefined,
+    })
+    expect(screen.getByRole('combobox', { name: en.subagentModelSelectionDefaultEffortLabel }))
+      .toHaveProperty('value', '')
   })
 
   it('distinguishes a stale draft from a rejected save', () => {

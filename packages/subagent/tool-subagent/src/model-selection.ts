@@ -19,10 +19,33 @@ export const AllowedModelRouteSchema: z<AllowedModelRoute> = z.object({
   model: z.string().min(1).required(),
 })
 
+/**
+ * Default child route a Session policy supplies when a call omits `provider`
+ * and `model`. Distinct from {@link AllowedModelRoute}: it additionally
+ * carries the reasoning effort applied on that route.
+ */
+export interface DefaultChildRoute {
+  /** Registered LLM provider id. */
+  readonly provider: string
+  /** Provider-owned exact model id. */
+  readonly model: string
+  /** Adapter-owned reasoning effort applied on the default route. */
+  readonly reasoningEffort?: ReasoningEffortId
+}
+
+/** Schema shared by the Host setting and its deployment base. */
+export const DefaultChildRouteSchema: z<DefaultChildRoute> = z.object({
+  provider: z.string().min(1).required(),
+  model: z.string().min(1).required(),
+  reasoningEffort: z.string().min(1) as z<ReasoningEffortId>,
+})
+
 /** Route-selection authority captured by one delegation definition. */
 export interface ModelSelectionPolicy {
   /** Exact provider/model routes authorized for explicit selection. */
   readonly routes: readonly AllowedModelRoute[]
+  /** Default child route applied when a call omits `provider` and `model`. */
+  readonly defaultRoute?: DefaultChildRoute
 }
 
 /**
@@ -61,6 +84,39 @@ export function assertAllowedModelRoutes(routes: unknown): asserts routes is rea
   }
 }
 
+/**
+ * Reject a malformed default child route at a durable or configuration boundary.
+ * @param value - Candidate default route, or null for no default.
+ * @returns an assertion that the candidate is a validated default route or null.
+ */
+export function assertValidDefaultChildRoute(value: unknown): asserts value is DefaultChildRoute | null {
+  if (value === null) return
+  if (typeof value !== 'object' || Array.isArray(value)
+    || !('provider' in value) || typeof value.provider !== 'string'
+    || !('model' in value) || typeof value.model !== 'string'
+    || value.provider.length === 0 || value.model.length === 0) {
+    throw new Error('subagent default child route requires non-empty provider and model ids')
+  }
+  if ('reasoningEffort' in value && value.reasoningEffort !== undefined
+    && (typeof value.reasoningEffort !== 'string' || value.reasoningEffort.length === 0)) {
+    throw new Error('subagent default child route requires a non-empty reasoning effort when set')
+  }
+}
+
+/**
+ * Whether a default child route's provider/model pair is one of the allowed routes.
+ * @param defaultRoute - Candidate default route.
+ * @param allowedModels - Exact routes authorized for explicit selection.
+ * @returns Whether the default route's provider/model pair is in `allowedModels`.
+ */
+export function defaultChildRouteAllowed(
+  defaultRoute: DefaultChildRoute,
+  allowedModels: readonly AllowedModelRoute[],
+): boolean {
+  const key = modelRouteKey(defaultRoute)
+  return allowedModels.some(route => modelRouteKey(route) === key)
+}
+
 /** Model-facing child LLM route fields. */
 export interface DelegationModelRequest {
   readonly provider?: string
@@ -87,13 +143,47 @@ function assertNonEmpty(value: string | undefined, field: keyof DelegationModelR
 }
 
 /**
- * Merge model-supplied selection fields over configured child defaults.
- * Provider and model form one route and must be supplied together. Changing
- * that route without an effort clears the configured route-owned effort.
+ * Overlay a Session policy's default child route below the tool's configured
+ * options and above the parent route. A configured route (`provider` set)
+ * wins outright and the default contributes nothing. Otherwise the default
+ * supplies `provider`/`model` and, unconditionally when set, its own
+ * `reasoningEffort`; when the default has no effort, a configured
+ * route-agnostic effort is dropped exactly when the default changes the
+ * child's route relative to the parent (otherwise it is preserved), mirroring
+ * how an explicit route change without a named effort clears a configured effort.
+ * @param parentOptions - Current parent values that supply the route-changed comparison.
+ * @param configured - Tool-instance child defaults, with any provider-owned route already merged in.
+ * @param defaultRoute - Session-recorded default child route, when one exists.
+ * @returns `configured` unchanged when no default applies, otherwise `configured` overlaid with the default route.
+ */
+function applyDefaultRoute(
+  parentOptions: AgentOptions,
+  configured: AgentOptions | undefined,
+  defaultRoute: DefaultChildRoute | undefined,
+): AgentOptions | undefined {
+  if (defaultRoute === undefined || configured?.provider !== undefined) return configured
+  const changesRoute = defaultRoute.provider !== parentOptions.provider || defaultRoute.model !== parentOptions.model
+  const { reasoningEffort: configuredEffort, ...configuredWithoutReasoning } = configured ?? {}
+  const reasoningEffort = defaultRoute.reasoningEffort ?? (changesRoute ? undefined : configuredEffort)
+  return {
+    ...configuredWithoutReasoning,
+    provider: defaultRoute.provider,
+    model: defaultRoute.model,
+    ...reasoningEffort === undefined ? {} : { reasoningEffort },
+  }
+}
+
+/**
+ * Merge model-supplied selection fields over configured child defaults and a
+ * Session policy's default child route. Provider and model form one route
+ * and must be supplied together. Changing that route without an effort clears
+ * the configured route-owned effort.
  * @param parentOptions - Current parent values that supply missing child values.
  * @param configured - Tool-instance child defaults.
  * @param request - Model-facing route override.
  * @param enabled - Whether this tool instance permits model-facing selection.
+ * @param defaultRoute - Session-recorded default child route applied when
+ *   `configured` names no route; see {@link applyDefaultRoute}.
  * @returns Child Agent options, preserving omission when no layer contributes one.
  */
 export function requestedAgentOptions(
@@ -101,8 +191,10 @@ export function requestedAgentOptions(
   configured: AgentOptions | undefined,
   request: DelegationModelRequest,
   enabled: boolean,
+  defaultRoute?: DefaultChildRoute,
 ): AgentOptions | undefined {
-  if (!hasDelegationModelRequest(request)) return configured
+  const defaulted = applyDefaultRoute(parentOptions, configured, defaultRoute)
+  if (!hasDelegationModelRequest(request)) return defaulted
   if (!enabled) {
     throw new Error('child model selection is disabled for this tool instance')
   }
@@ -113,13 +205,13 @@ export function requestedAgentOptions(
     throw new Error('child LLM `provider` and `model` must be supplied together')
   }
 
-  const baselineProvider = configured?.provider ?? parentOptions.provider
-  const baselineModel = configured?.model ?? parentOptions.model
+  const baselineProvider = defaulted?.provider ?? parentOptions.provider
+  const baselineModel = defaulted?.model ?? parentOptions.model
   const routeChanged = request.provider !== undefined
     && (request.provider !== baselineProvider || request.model !== baselineModel)
-  const { reasoningEffort: _configuredReasoningEffort, ...configuredWithoutReasoning } = configured ?? {}
+  const { reasoningEffort: _defaultedReasoningEffort, ...defaultedWithoutReasoning } = defaulted ?? {}
   return {
-    ...routeChanged && request.reasoning_effort === undefined ? configuredWithoutReasoning : configured,
+    ...routeChanged && request.reasoning_effort === undefined ? defaultedWithoutReasoning : defaulted,
     ...request.provider === undefined ? {} : { provider: request.provider, model: request.model },
     ...request.reasoning_effort === undefined
       ? {}

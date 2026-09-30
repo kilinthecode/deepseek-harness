@@ -28,7 +28,7 @@ Status: implemented
 
 插件通过 `ctx.systemPrompt.variable(name, provider)` 注册 `{{name}}` 值。组装过程将它们解析到 waterfall 可见的变量映射中。渲染阶段拒绝以下情况：引用未知的自有属性、已注册的提供方返回 `undefined`、格式错误的完整引用、以及仍包含闭合 `}}` 的不平衡引用；孤立的未匹配 `{{` 保留为行文，替换后的值不会被重新扫描。注册阶段拒绝无效或重复的变量名，section 名称也必须唯一。段可设置 `interpolate: false` 来原样保留生成的文档；`tools:sdk` 使用此设置，因为工具描述和 schema 可能会介绍自身的 `{{…}}` 语法。
 
-`dsh-agent-loop` 注册两个内置变量，均为上下文 agent 的纯投影：`model`（= `options.model`）和 `cwd`（= `session.header.cwd`）。示例 persona 写 `powered by the {{model}} model`——模型名称只在 `model:` 配置键中声明一次。`{{cwd}}` 仅在 ACP 示例中演示：每个 ACP 会话携带客户端的 cwd，而配置预创建的 stdio agent 没有 cwd（在那里声称 `{{cwd}}` 的 persona 会导致该轮次失败——这是有意为之）。变量留在 loop 插件上（不同于下面的 section）：它们是本循环驱动的 agent 的运行时事实，替换循环自行提供自己的变量。
+`dsh-agent-loop` 注册两个内置变量，均为上下文 agent 的纯投影：`model`（= `options.model`）和 `cwd`（= `session.header.cwd`）。persona 模板可以引用 `{{model}}` 以声明一次模型名称（该名称本身记录在 `model:` 配置键中）；随附的 persona 不指定路由，因此模型切换不会改变渲染后的提示词。`{{cwd}}` 仅在 ACP 示例中演示：每个 ACP 会话携带客户端的 cwd，而配置预创建的 stdio agent 没有 cwd（在那里声称 `{{cwd}}` 的 persona 会导致该轮次失败——这是有意为之）。变量留在 loop 插件上（不同于下面的 section）：它们是本循环驱动的 agent 的运行时事实，替换循环自行提供自己的变量。
 
 ### Persona 作为 order-0 section
 
@@ -58,7 +58,7 @@ Status: implemented
 
 ## 交付的不变式
 
-- tui-agent 的提示词通过一条组装路径依次渲染 identity、带插值模型名的 persona，然后是 fs/shell/web 指导。
+- tui-agent 的提示词通过一条组装路径依次渲染 identity、persona，然后是 fs/shell/web 指导。
 - fork 和 fresh subagent 的描述反映提供方是否继承已完成的对话轮次；工具随提供方生命周期变化而出现、消失和重新措辞。
 - 在启用插值的段中，未知、无值、格式错误或不平衡的变量引用会指明 section 名称并抛出异常；重复的 section、变量和工具注册同样抛出异常。
 - 快照回放与提示词无关：它按轮次和步骤索引已记录的分片流，不比较发出的请求。

@@ -1,0 +1,42 @@
+[
+  {
+    "kind": "chunks",
+    "chunks": [
+      {"type": "block-start", "index": 0, "blockType": "tool-call"},
+      {"type": "tool-call-delta", "index": 0, "id": "call_memory_write", "name": "memory_write", "argumentsDelta": "{\"name\":\"uses-zsh\",\"type\":\"user\",\"scope\":\"global\",\"description\":\"Uses zsh as the login shell\",\"content\":\"The user's login shell is zsh; write shell snippets for zsh.\"}"},
+      {"type": "block-end", "index": 0, "block": {"type": "tool-call", "id": "call_memory_write", "name": "memory_write", "arguments": "{\"name\":\"uses-zsh\",\"type\":\"user\",\"scope\":\"global\",\"description\":\"Uses zsh as the login shell\",\"content\":\"The user's login shell is zsh; write shell snippets for zsh.\"}"}},
+      {"type": "usage", "usage": {"inputTokens": 10, "outputTokens": 5}},
+      {"type": "finish", "reason": {"kind": "tool-calls"}}
+    ]
+  },
+  {
+    "kind": "chunks",
+    "chunks": [
+      {"type": "block-start", "index": 0, "blockType": "text"},
+      {"type": "text-delta", "index": 0, "text": "SAVED"},
+      {"type": "block-end", "index": 0, "block": {"type": "text", "text": "SAVED"}},
+      {"type": "usage", "usage": {"inputTokens": 10, "outputTokens": 2}},
+      {"type": "finish", "reason": {"kind": "stop"}}
+    ]
+  },
+  {
+    "kind": "chunks",
+    "chunks": [
+      {"type": "block-start", "index": 0, "blockType": "tool-call"},
+      {"type": "tool-call-delta", "index": 0, "id": "call_memory_recall", "name": "memory_recall", "argumentsDelta": "{\"query\":\"shell\"}"},
+      {"type": "block-end", "index": 0, "block": {"type": "tool-call", "id": "call_memory_recall", "name": "memory_recall", "arguments": "{\"query\":\"shell\"}"}},
+      {"type": "usage", "usage": {"inputTokens": 10, "outputTokens": 5}},
+      {"type": "finish", "reason": {"kind": "tool-calls"}}
+    ]
+  },
+  {
+    "kind": "chunks",
+    "chunks": [
+      {"type": "block-start", "index": 0, "blockType": "text"},
+      {"type": "text-delta", "index": 0, "text": "You use zsh and pnpm."},
+      {"type": "block-end", "index": 0, "block": {"type": "text", "text": "You use zsh and pnpm."}},
+      {"type": "usage", "usage": {"inputTokens": 10, "outputTokens": 2}},
+      {"type": "finish", "reason": {"kind": "stop"}}
+    ]
+  }
+]

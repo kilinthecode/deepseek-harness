@@ -87,6 +87,7 @@ const summarizationModelSchema = z.string()
 const maxTokensSchema = z.number().step(1).min(1)
 const compactionRetriesSchema = z.number().step(1).min(0)
 const maxOverflowRetriesSchema = z.number().step(1).min(0)
+const pruneHeadroomRatioSchema = z.number()
 
 const modelPolicy: z<ModelCompactPolicyConfig> = z.object({
   provider: z.string().required(),
@@ -100,6 +101,7 @@ const modelPolicy: z<ModelCompactPolicyConfig> = z.object({
   maxTokens: maxTokensSchema,
   compactionRetries: compactionRetriesSchema,
   maxOverflowRetries: maxOverflowRetriesSchema,
+  pruneHeadroomRatio: pruneHeadroomRatioSchema,
 })
 
 /**
@@ -123,6 +125,7 @@ export class BasicCompactionEngine extends CompactionEngine {
     maxTokens: maxTokensSchema,
     compactionRetries: compactionRetriesSchema,
     maxOverflowRetries: maxOverflowRetriesSchema,
+    pruneHeadroomRatio: pruneHeadroomRatioSchema,
     modelPolicies: z.array(modelPolicy),
     auto: z.boolean(),
   })
@@ -318,24 +321,38 @@ export class BasicCompactionEngine extends CompactionEngine {
     )
     if (measurement.totalTokens < spec.thresholdTokens) return null
 
-    // Once pressure qualifies, land the model-free pass before choosing a
-    // summary range, then remeasure through the singleton replay fold.
+    // The projection uses the heuristic estimateMessage while measure() is
+    // route-priced, so a landed prune can still leave the surface at or above
+    // threshold; compaction then proceeds on the pruned surface.
     if (prune !== undefined) {
-      prune.pruneSession(agent.session)
-      measurement = meter.measure(agent.session)
+      const projectedSavings = prune.projectTokenSavings(agent.session)
+      const projected = measurement.totalTokens - projectedSavings
+      if (projected <= spec.thresholdTokens - spec.pruneHeadroomTokens
+        && projected < spec.thresholdTokens) {
+        prune.pruneSession(agent.session)
+        measurement = meter.measure(agent.session)
+        if (measurement.totalTokens < spec.thresholdTokens) return null
+      }
     }
-    if (measurement.totalTokens < spec.thresholdTokens) return null
 
     let result: CompactionResult | null = null
     for (let attempt = 0; attempt <= spec.compactionRetries; attempt += 1) {
       const range = selectCompactableRange(agent.session, measurement, spec.retainTokens)
       if (range === null) {
         /* v8 ignore else -- concrete replacement preserves a compactable checkpoint; subclass hooks cannot mutate it. */
-        if (result === null) return null
+        if (result === null) {
+          // No compactable range and nothing was compacted: a mounted pruner
+          // is the only reduction still available before declining.
+          if (prune !== undefined) prune.pruneSession(agent.session)
+          return null
+        }
         /* v8 ignore next -- paired with the defensive post-success branch above. */
         break
       }
       result = await this.compactRegion(range.start, range.end, agent, signal)
+      // The replacement above already broke the provider cache, so pruning
+      // the remaining surface here costs no additional cache break.
+      if (prune !== undefined) prune.pruneSession(agent.session)
       measurement = meter.measure(agent.session)
       if (measurement.totalTokens < spec.thresholdTokens) return result
     }

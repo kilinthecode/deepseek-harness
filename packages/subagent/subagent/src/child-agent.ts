@@ -162,6 +162,44 @@ export interface ChildComposition {
   readonly persona?: string | undefined
   /** Per-child tool scoping. */
   readonly toolFilter?: ToolRestriction | undefined
+  /**
+   * Whether the caller attaches a structured-output runtime
+   * (`attachStructuredRuntime`) to this child. Set by the caller because the
+   * attachment itself happens outside `applyChildComposition`, on the
+   * caller's own `request.outputSchema`; recorded here so
+   * {@link isChildCompositionScoped} sees it alongside persona and toolFilter.
+   * Only the one-shot driver sets this: a continuable start request cannot
+   * carry an output schema (`ContinuableStartSpec.request` in
+   * `./types.ts` omits `outputSchema` from `SubagentStartRequest`), so a
+   * continuable child's composition never has one to report.
+   */
+  readonly structured?: boolean | undefined
+}
+
+/**
+ * Child contexts whose composition installed a persona, tool filter, or
+ * structured-output runtime. Keyed by the child's own scoped context — the
+ * same object a creation or resume `setup` callback receives as `agentCtx`
+ * and the published Agent exposes as `agent.ctx` — so the record is
+ * reachable at classification time without a session read. Module-private:
+ * only {@link applyChildComposition} writes it and only
+ * {@link isChildCompositionScoped} reads it, so a Context that never composes
+ * a child is simply absent, and the record is garbage-collected with the
+ * Context once nothing else holds it.
+ */
+const scopedChildContexts = new WeakSet<Context>()
+
+/**
+ * Whether `applyChildComposition` installed a persona, tool filter, or
+ * structured-output runtime for the child owning `childCtx`. A scoped
+ * child's prompt or tool registry diverges from a plain fork's, so a caller
+ * that classifies a plain fork from its composition rather than its session
+ * history excludes a scoped child through this check.
+ * @param childCtx - the candidate child's own scoped context.
+ * @returns whether that exact child's composition was scoped.
+ */
+export function isChildCompositionScoped(childCtx: Context): boolean {
+  return scopedChildContexts.has(childCtx)
 }
 
 /**
@@ -193,9 +231,15 @@ export const SUBAGENT_DELEGATION_CONTEXT
  * no preset sees an empty tool registry and none of its parent's prompt
  * sections. Taking the parent as a parameter is what makes that omission
  * unrepresentable at the call sites.
+ *
+ * Also records, for {@link isChildCompositionScoped}, whether this call
+ * installed a persona, tool filter, or structured-output runtime — the one
+ * place both a fresh child and a cold-resumed one report their scoping, so a
+ * caller never re-derives it from session history.
  * @param childCtx - the child agent's scoped creation context.
  * @param parent - the delegating parent whose composition the child joins.
- * @param composition - the per-child persona and tool filter to install.
+ * @param composition - the per-child persona, tool filter, and
+ *   structured-output presence to install and record.
  */
 export function applyChildComposition(
   childCtx: Context,
@@ -216,6 +260,9 @@ export function applyChildComposition(
     })
   }
   if (composition.toolFilter !== undefined) childCtx.tools.restrict(composition.toolFilter)
+  if (composition.persona !== undefined || composition.toolFilter !== undefined || composition.structured === true) {
+    scopedChildContexts.add(childCtx)
+  }
 }
 
 /** Policy seeded onto a child session's log at the delegation boundary. */

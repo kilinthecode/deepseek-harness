@@ -6,7 +6,7 @@ import type {
 } from '@deepseek-ai/dsh-attachment'
 import type { Branded } from '@deepseek-ai/dsh-brand'
 import type { LlmAttemptId, MessageId } from '@deepseek-ai/dsh-llm/brand'
-import type { TextBlock } from '@deepseek-ai/dsh-llm'
+import type { ModelModality, TextBlock } from '@deepseek-ai/dsh-llm'
 import type { SessionId, SessionSeqCursor } from '@deepseek-ai/dsh-session/types'
 import type { SessionProjectionMap } from '@deepseek-ai/dsh-session-projection/types'
 import type { JsonValue } from '@deepseek-ai/dsh-util-values'
@@ -138,6 +138,13 @@ export interface ModelCatalogModel {
   readonly name: string
   readonly description?: string
   readonly reasoning?: ModelReasoning
+  /**
+   * Accepted request modalities, copied from the resolved LLM registry entry.
+   * Absent means unknown capability; a present list that omits `'image'`
+   * marks the route text-only. Catalog membership stays advisory: prompt admission
+   * checks an image prompt against the Session's resolved model; command execution does not.
+   */
+  readonly inputModalities?: readonly ModelModality[]
 }
 
 /** One provider and its successfully loaded model catalog. */
