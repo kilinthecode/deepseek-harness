@@ -17,6 +17,7 @@
       - button "删除 minimax-cn": 删除
     - listitem:
       - text: openai
+      - button "登录"
       - button "编辑 openai": 编辑
       - button "删除 openai": 删除
       - text: openai API 密钥

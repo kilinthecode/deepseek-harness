@@ -300,6 +300,10 @@ describe('dsh-subagent-spawn-in-process', () => {
       toolFilter: true,
       persona: true,
     })
+    // A spawned child starts fresh, but shares the parent process and
+    // attachment store: durable image references stay valid.
+    expect(provider.inheritsParentContext).toBe(false)
+    expect(provider.imageInput).toBe(true)
   })
 
   it('unregisters the provider when its fiber is disposed (HMR safety)', async () => {

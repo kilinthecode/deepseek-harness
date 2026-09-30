@@ -10,7 +10,7 @@
  */
 
 import { offloadedImageText, requestImageHandleText, textOnlyImageText } from '@deepseek-ai/dsh-llm'
-import type { ImageAttachmentAccessResolver, ImageBlock, LlmImageRequestPrice, LlmImageRequestPricing } from '@deepseek-ai/dsh-llm'
+import type { ImageAttachmentAccess, ImageAttachmentAccessResolver, ImageBlock, LlmImageRequestPrice, LlmImageRequestPricing } from '@deepseek-ai/dsh-llm'
 import { longEdgeDimensions, requestImageDimensions } from '@deepseek-ai/dsh-attachment'
 import type { ImageAttachmentRef, ImageRequestTarget } from '@deepseek-ai/dsh-attachment'
 import { deepSeekImageTokens, deepSeekRequestImageDimensions } from './image-tokens.ts'
@@ -69,8 +69,8 @@ export function resolveRequestImageTarget(
  * reproducing the `projectImagesForTextModel` substitution `LlmRuntime`
  * applies before dispatching to a route without the `image` modality.
  */
-function textOnlyPrice(block: ImageBlock): LlmImageRequestPrice {
-  return { visualTokens: 0, text: textOnlyImageText(block.attachment) }
+function textOnlyPrice(block: ImageBlock, access?: ImageAttachmentAccess): LlmImageRequestPrice {
+  return { visualTokens: 0, text: textOnlyImageText(block.attachment, access) }
 }
 
 /**
@@ -94,7 +94,19 @@ export function deepSeekImageRequestPricing(
 ): LlmImageRequestPricing {
   const catalogModel = connection.models.find(entry => entry.id === model)
   if (catalogModel?.inputModalities?.includes('image') !== true) {
-    return { priceImages: images => images.map(textOnlyPrice) }
+    return {
+      priceImages: images => images.map((block) => {
+        let access: ImageAttachmentAccess | undefined
+        try {
+          access = resolveAccess?.(block.attachment)
+        } catch (_error: unknown) {
+          // Thrown access resolution (malformed ref, INVALID_ATTACHMENT_REF)
+          // degrades this occurrence to identity-only text so priced text stays
+          // byte-identical to projectImagesForTextModel.
+        }
+        return textOnlyPrice(block, access)
+      }),
+    }
   }
   return {
     priceImages: images => images.map(({ attachment: ref, offloaded }) => {

@@ -16,7 +16,15 @@ Keys are write-only. The page receives a redacted descriptor after saving, never
 
 Choose **Add model provider**. The card opens on **Third-party model provider**: pick a provider dsh ships with — the list shows provider ids such as `anthropic`, `openai`, `moonshotai` for Kimi, or `zai` for GLM — enter its API key, and save. The installed catalog supplies the endpoint, protocol, and model list.
 
-Providers that sign in with OAuth, such as Codex, are not supported here yet.
+A provider that authenticates with a subscription instead of an API key — `openai-codex`, which serves a ChatGPT Plus or Pro plan — is added the same way: pick it, leave the API key empty, and save.
+
+## Sign in with a subscription
+
+Choose **Sign in** on the provider's row and answer what the dialog asks. For `openai-codex` the choice is browser sign-in or a device code: the browser path finishes by itself when the local callback on port 1455 is reachable, and otherwise asks you to paste the redirect URL or the code the page shows, while the device code is typed into the provider's verification page.
+
+The row then reads **Signed in**, and the provider serves requests; a provider whose sign-in is required, such as `openai-codex`, works only once it is stored, so its row shows **Signed in** or **Not signed in**. **Sign out** removes the stored sign-in from this device.
+
+To use a model the installed catalog has not caught up with, such as `gpt-6-luna`, declare it in the provider's model list in `$DSH_HOME/profiles/<profile>/cordis.patch.yml`; the [`dsh-llm-pi-ai` reference](../../../packages/llm/llm-pi-ai/README.md) shows the entry.
 
 ## Add a custom model API
 
@@ -202,3 +210,4 @@ Every switch, its accepted values, and the protocols that take it are listed und
 - **A compat switch is refused as having no value** — A key written with nothing after the colon. Give it a value, or remove the key to keep the installed catalog's.
 - **An image is refused before sending** — The model declares no image modality. Give a custom provider's model `input: [text, image]`; on DeepSeek's own route, select an image-capable entry from the configured catalog (`deepseek-flash` by default) and confirm that your gateway serves that model with image input.
 - **The provider rejects a request carrying an image** — The model declares images its endpoint does not actually serve. Remove `image` from whichever list granted it — the model's `input`, or the route's `defaultInput` — then start a new session: the attached image stays in the session log, so the same request repeats until the session moves off it.
+- **`dsh --profile headless --image` or an SDK image prompt is refused with "does not support image input"** — The selected route's model declares no image modality; the refusal happens before any file is read or the prompt is admitted. Select an image-capable model, as above.

@@ -15,6 +15,7 @@ Every package below exports a Cordis plugin that a bundle patch can name in a Lo
 | Package | Config | Description |
 |---|---|---|
 | `@deepseek-ai/dsh-api-account-controller` | no | Expose safe account operations over authenticated Remote |
+| `@deepseek-ai/dsh-api-authorization-controller` | no | Expose credential sign-in flows over authenticated Remote |
 | `@deepseek-ai/dsh-api-gateway` | yes | Typert Remote Host dispatcher and Client API endpoint |
 | `@deepseek-ai/dsh-api-job-controller` | yes | Job Remote observation stream and the reference-counted client job-output service |
 | `@deepseek-ai/dsh-api-remotes` | no | Remote BFF assembly for application-selected Host capabilities |
@@ -301,6 +302,14 @@ Every package below exports a Cordis plugin that a bundle patch can name in a Lo
 |---|---|---|
 | `@deepseek-ai/dsh-mcp-client` | yes | MCP client bridge: connects to MCP servers and registers their tools on ctx.tools |
 | `@deepseek-ai/dsh-mcp-resources` | no | Scoped MCP resource discovery and reading through shared model tools |
+
+## memory
+
+| Package | Config | Description |
+|---|---|---|
+| `@deepseek-ai/dsh-memory` | yes | Durable agent memory store (ctx.memory): cross-session user, feedback, project, and reference records over the domain data form for the DeepSeek Harness |
+| `@deepseek-ai/dsh-memory-review` | yes | Cache-parity unattended memory review: a fork child that may only add new memories, started from the parent idle notification in the DeepSeek Harness |
+| `@deepseek-ai/dsh-tool-memory` | yes | Model-facing memory_write, memory_recall, and memory_forget tools, the injected memory snapshot, and the remember-when prompt section over ctx.memory for the DeepSeek Harness |
 
 ## plan
 

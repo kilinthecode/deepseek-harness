@@ -24,8 +24,8 @@
   en: 8e7319bc2887ae5c
   zh: 87d5abdfbe7562df
 /deepseek-ai-dsh-tool-subagent/use-this-package/selecting-a-child-llm:
-  en: 0d37e3b3957515e4
-  zh: ea1a94b2f29e7d9a
+  en: d5dd57cfb2b35952
+  zh: aa7c6c703c186672
 /deepseek-ai-dsh-tool-subagent/understand-the-implementation:
   en: 6ce5f749256a7e6c
   zh: a4f2adb04a70d9cf
@@ -54,20 +54,20 @@
   en: e4c7376d4f29dbd5
   zh: 6b7a9eaf69c9ea53
 /deepseek-ai-dsh-tool-subagent/model-experience/tool-schema/what-the-model-sees:
-  en: 5d88050d9496b928
-  zh: 1278b3b7da4335db
+  en: 33df78bf33bf0a63
+  zh: ac2929e5d4e778b3
 /deepseek-ai-dsh-tool-subagent/model-experience/tool-schema/token-effect:
   en: 1aa53b7a4c24cc25
   zh: bebd5c5ce6443259
 /deepseek-ai-dsh-tool-subagent/model-experience/tool-schema/kv-cache-effect:
-  en: 46f736c6c389052a
-  zh: a7765541030e9104
+  en: 642bd67bffd6e2c5
+  zh: 7e6ddb7b8ef15b65
 /deepseek-ai-dsh-tool-subagent/model-experience/model-selection-and-discovery:
   en: a4ca31b9cbacda6b
   zh: 91ac3e0784a14697
 /deepseek-ai-dsh-tool-subagent/model-experience/model-selection-and-discovery/what-the-model-sees:
-  en: 1c9dd328eaf96683
-  zh: 3be88d3b00f51cfa
+  en: a08a1cf83e501599
+  zh: a330e8b586c1a503
 /deepseek-ai-dsh-tool-subagent/model-experience/model-selection-and-discovery/token-effect:
   en: 8137e72f630f0190
   zh: 73b1d9374b6cbccd

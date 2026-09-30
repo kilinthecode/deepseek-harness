@@ -12,7 +12,7 @@
             name: '@deepseek-ai/dsh-persona'
             config:
               suffix: Your working directory is {{cwd}}.
-              prefix: You are a coding agent powered by the {{model}} model.
+              prefix: You are a coding agent.
           - id: agent-instructions
             name: '@deepseek-ai/dsh-agent-instructions'
             config:
@@ -148,6 +148,16 @@
             name: '@deepseek-ai/dsh-tool-todo'
             config:
               allowParallelInProgress: true
+          - id: tool-memory
+            name: '@deepseek-ai/dsh-tool-memory'
+            config:
+              injectMaxBytes: 8192
+              maxRecallResults: 8
+          - id: memory-review
+            name: '@deepseek-ai/dsh-memory-review'
+            config:
+              reviewEveryUserTurns: 10
+              maxReviewSteps: 8
           - id: tool-web
             name: '@deepseek-ai/dsh-tool-web'
             config:

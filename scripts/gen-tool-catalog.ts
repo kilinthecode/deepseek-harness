@@ -59,6 +59,8 @@ import * as ToolLsp from '@deepseek-ai/dsh-tool-lsp'
 import * as ToolSkill from '@deepseek-ai/dsh-tool-skill'
 import * as ToolSessionQuery from '@deepseek-ai/dsh-tool-session-query'
 import * as ToolJobs from '@deepseek-ai/dsh-tool-jobs'
+import type MemoryStore from '@deepseek-ai/dsh-memory'
+import * as ToolMemory from '@deepseek-ai/dsh-tool-memory'
 import BrowserUseRegistry from '@deepseek-ai/dsh-browser-use'
 import * as StagehandBrowserTools from '@deepseek-ai/dsh-experimental-browser-use-stagehand-native'
 import type TeamService from '@deepseek-ai/dsh-experimental-agent-team'
@@ -124,6 +126,7 @@ function registerCatalogSubagentProvider(ctx: Context, name: string): void {
     name,
     capabilities: { agentOptions: true, outputSchema: true, depthLimit: true, toolFilter: true, persona: true },
     inheritsParentContext: false,
+    imageInput: true,
     start: () => Promise.reject(new Error('tool-catalog provider cannot start a child')),
     // Declared so consumers configured for continuable background mode mount.
     prepareContinuable: () => Promise.reject(new Error('tool-catalog provider cannot prepare a child')),
@@ -642,6 +645,20 @@ const TOOL_PACKAGES: ToolPackage[] = [
     scope: ctx => catalogChildScopes.get(ctx) as Agent,
     note:
       'Five tools are scoped to room participants. The shipped composition keeps them unmounted; a deployment enables them beside `@deepseek-ai/dsh-experimental-agent-team` with `roomEnabled: true`, and every outcome is decided by the service quorum rather than by the tool.',
+  },
+  {
+    pkg: '@deepseek-ai/dsh-tool-memory',
+    dir: 'tool-memory',
+    source: 'packages/memory/tool-memory/src/tools.ts',
+    requires: ['ctx.tools', 'ctx.memory', 'ctx.systemPrompt', 'ctx.sessionProjections', 'owning Agent session'],
+    writes: ['tool/call', 'tool/result', 'user/message snapshot at pre-step'],
+    async mount(ctx) {
+      // Schema harvest never opens the store; the tools only need the service key present.
+      ctx.provide('memory', {} as MemoryStore)
+      await ctx.plugin(ToolMemory, { injectMaxBytes: 4096, maxRecallResults: 8 })
+    },
+    note:
+      'The three tools read and write the durable memory store owned by dsh-memory; the session working directory selects the project scope. The injected snapshot is a user/message with the `tool-memory` source, injected once per surface generation and re-added after compaction, bounded by `injectMaxBytes`, so the catalog states the shipped budget and recall cap.',
   },
   {
     pkg: '@deepseek-ai/dsh-tool-todo',

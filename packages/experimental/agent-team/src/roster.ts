@@ -4,13 +4,15 @@ import { randomUUID } from 'node:crypto'
 import type { Context } from '@deepseek-ai/cordis'
 import { brandString } from '@deepseek-ai/dsh-brand'
 import type { Agent, AgentOptions } from '@deepseek-ai/dsh-agent'
+import { contentHasImage } from '@deepseek-ai/dsh-llm'
 // Type-only: pulls the LLM plugin's Context merge so the injected route lookup typechecks.
 import type { ContentBlock, MessageId } from '@deepseek-ai/dsh-llm'
 import type {} from '@deepseek-ai/dsh-llm'
 import type { SessionId } from '@deepseek-ai/dsh-session'
-import { foldSubagentDescriptor } from '@deepseek-ai/dsh-subagent'
+import { foldSubagentDescriptor, resolveChildAgentOptions, resolveChildDepth } from '@deepseek-ai/dsh-subagent'
 import type { ContinuableStart, ContinuableSubagentDescriptorData } from '@deepseek-ai/dsh-subagent'
 import { errorMessage, TeamError } from './error.ts'
+import { admitTeamContent, assertTeamRouteAcceptsImages } from './image-content.ts'
 import type { TeamJournal } from './journal.ts'
 import type { TeamRuntimeLifecycle } from './lifecycle.ts'
 import { readPersistedSession } from './persisted.ts'
@@ -119,18 +121,19 @@ export class TeamRoster {
           if (member?.phase === 'active' || member?.phase === 'provisioning') {
             return { root, id: TeamId(root.id), role: 'teammate', name: member.name }
           }
-          // A direct child outside the durable roster is not a teammate.
-          // Runtime ownership excludes provider children before they append a
-          // descriptor; ordinary host forks remain independent roots.
-          if (this.ctx.agents.isOwnedBy(agent.id, root) || this.subagentDescriptor(agent)) return undefined
+          // A direct child outside the durable roster is not a teammate. Ordinary
+          // host forks are independent roots; the durable header's subagent
+          // origin distinguishes provider-owned workers that must not receive a
+          // nested Team identity.
+          if (this.hasSubagentOrigin(agent)) return undefined
           return { root: agent, id: TeamId(agent.id), role: 'lead', name: 'lead' }
         }
       }
       // A continuation can briefly outlive its parent during child-first teardown.
       // Do not reinterpret that durable child as a new implicit root Team. A host-
-      // resumed ordinary fork has no descriptor in its own suffix and remains a
-      // valid new root whose inherited Team records stay outside its projected Team state.
-      if (this.subagentDescriptor(agent)) return undefined
+      // resumed ordinary fork has no subagent origin in its own header and remains
+      // a valid new root whose inherited Team records stay outside its projected Team state.
+      if (this.hasSubagentOrigin(agent)) return undefined
       return { root: agent, id: TeamId(agent.id), role: 'lead', name: 'lead' }
     } catch {
       // This method is used by lifecycle observers and teardown discovery. A
@@ -276,24 +279,37 @@ export class TeamRoster {
     const name = this.memberName(request.name)
     const description = requiredText(request.description, 'description', 200)
     await this.assertRouteReasoning(signal, root, request)
+    const provider = requiredText(request.provider, 'provider', 200)
     const childId = brandString<SessionId>(randomUUID())
+    const prompt = admitTeamContent(request.prompt)
+    if (contentHasImage(prompt)) {
+      // The child does not exist yet: check the name and member limit against
+      // a snapshot read, then the route the roster is about to provision it
+      // with, before the durable `team/member` append burns the name and a
+      // member slot on a doomed spawn. Cheap, synchronous conflicts run
+      // before the route check's LLM round trip so a doomed request fails
+      // with its own error instead of an image-route refusal earned first by
+      // draw order; the transaction below repeats the name and limit checks
+      // as a second line of defense against a race with this snapshot read.
+      this.assertNameAndCapacityAvailable(root, name)
+      const childDepth = resolveChildDepth(root, undefined)
+      const agentOptions = resolveChildAgentOptions(root, undefined, childDepth)
+      await assertTeamRouteAcceptsImages(this.ctx, agentOptions.provider, agentOptions.model, signal)
+    }
     const member: TeamMemberSnapshot = {
       id: childId,
       name,
       description,
-      provider: requiredText(request.provider, 'provider', 200),
+      provider,
       context: request.context,
       phase: 'provisioning',
     }
 
     await this.journal.transact(root.id, async () => {
-      const state = this.journal.state(root)
-      if (state.members.some(member => member.name === name)) {
-        throw new TeamError(`teammate name "${name}" was already used in this Team`, 'TEAM_MEMBER_NAME_TAKEN')
-      }
-      if (state.members.length >= this.maxMembers) {
-        throw new TeamError(`Team member limit ${this.maxMembers} reached`, 'TEAM_MEMBER_LIMIT')
-      }
+      // A cancellation during the image-route read or the journal wait must
+      // not provision a member whose start would then fail and burn the name.
+      signal.throwIfAborted()
+      this.assertNameAndCapacityAvailable(root, name)
       await this.journal.appendAndFlush(root, 'team/member', { version: 2, teamId: TeamId(root.id), member })
     })
 
@@ -304,7 +320,7 @@ export class TeamRoster {
         provider: request.provider,
         label: description,
         request: {
-          prompt: request.prompt,
+          prompt,
           parent: root,
           ...request.agentOptions === undefined ? {} : { agentOptions: request.agentOptions },
         },
@@ -390,6 +406,24 @@ export class TeamRoster {
         : `; it declares ${efforts.map(candidate => `"${candidate.id}"`).join(', ')}`),
       'TEAM_UNSUPPORTED_REASONING_EFFORT',
     )
+  }
+
+  /**
+   * Reject an already-used member name or a full roster read from the
+   * current journal state. Called both from a pre-route snapshot read and
+   * from inside the commit transaction, so a race between the two call
+   * sites still lands on the transaction's authoritative re-check.
+   * @param root - exact live Team Lead.
+   * @param name - normalized candidate member name.
+   */
+  private assertNameAndCapacityAvailable(root: Agent, name: string): void {
+    const state = this.journal.state(root)
+    if (state.members.some(member => member.name === name)) {
+      throw new TeamError(`teammate name "${name}" was already used in this Team`, 'TEAM_MEMBER_NAME_TAKEN')
+    }
+    if (state.members.length >= this.maxMembers) {
+      throw new TeamError(`Team member limit ${this.maxMembers} reached`, 'TEAM_MEMBER_LIMIT')
+    }
   }
 
   /** Flush the accepted initial inbox item before the Lead can commit `active`. */
@@ -541,10 +575,15 @@ export class TeamRoster {
     })
   }
 
-  /** Whether a Session's own suffix identifies a provider-owned subagent child. */
-  private subagentDescriptor(agent: Agent): boolean {
-    // oxlint-disable-next-line typescript/no-deprecated -- Existing Session history read; migration deferred.
-    return foldSubagentDescriptor(agent.session.snapshotEvents(agent.session.inheritedEventCount)) !== undefined
+  /**
+   * Whether a Session identifies a provider-owned subagent child, from the
+   * durable header alone. The header origin is stamped synchronously in
+   * `childSessionMeta()`. The one-shot `subagent/descriptor` event is instead
+   * appended only after `agent/created`, so classification reacting to that
+   * event cannot rely on it.
+   */
+  private hasSubagentOrigin(agent: Agent): boolean {
+    return agent.session.header.origin === 'subagent'
   }
 }
 

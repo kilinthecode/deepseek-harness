@@ -26,7 +26,7 @@ The automation-only ACP stdio application as a `dsh` profile bundle over [`dsh-b
 
 The startup provider binds stdin EOF to the launcher's bounded successful shutdown. ACP connection close, SIGINT, and SIGTERM drain the bridge-owned agents and the root profile tree before exit. Stdout is reserved for newline-delimited ACP JSON-RPC frames. The bundle disables model-generated session titles because ACP exposes no title surface; deterministic fallback titles remain durable without an auxiliary model request. The inherited projection cache checkpoints ACP-created sessions for later consumers; its durability barrier flushes each covered log prefix before publishing the cache row and may split otherwise coalesced JSONL runs. A deployment selects a different complete composition through profile bundles and patch files, not another app bin.
 
-The shipped row creates sessions with `deepseek-official` and `deepseek-v4-flash`; a later patch can replace that row's complete config. The base profile owns adapters, tools, persistence, policy, settings, credentials, and the per-session workspace supplied by the ACP client.
+The shipped row creates sessions with `deepseek-official` and `deepseek-flash`, which declares image input, so the bridge advertises image prompts when the base profile's attachment store is mounted; a later patch can replace that row's complete config. The base profile owns adapters, tools, persistence, policy, settings, credentials, and the per-session workspace supplied by the ACP client.
 
 -----
 
@@ -44,7 +44,7 @@ The complete supported method matrix, MCP trust model, update mapping, and stop 
 
 #### What the model sees
 
-The profile supplies `You are a coding agent powered by the {{model}} model.` before first-party guidance and `Your working directory is {{cwd}}.` in a separate persona suffix. The ACP row's route and each `session/new` cwd resolve the placeholders.
+The profile supplies `You are a coding agent.` before first-party guidance and `Your working directory is {{cwd}}.` in a separate persona suffix. The persona names no route, so it renders identically regardless of the ACP row's route; each `session/new` cwd resolves the remaining placeholder.
 
 #### Token effect
 
@@ -52,7 +52,7 @@ One short stable persona plus the data-dependent base prompt sections and select
 
 #### KV Cache effect
 
-Stable for a fixed profile, provider, model, and tool roster. Profile changes take effect on the next process because the shipped ACP profile uses startup-only patches.
+Stable for a fixed profile, provider, model, and tool roster. Profile changes take effect on the next process because the shipped ACP profile uses startup-only patches. A model switch mid-session leaves the persona text unchanged, so it does not by itself force a system-prompt rewrite.
 
 ## Known Limitations and Deferred Work
 

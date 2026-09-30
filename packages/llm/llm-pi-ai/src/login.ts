@@ -11,6 +11,7 @@ import type { AuthEvent, AuthPrompt, AuthType, Provider } from '@earendil-works/
 import type { Context } from '@deepseek-ai/cordis'
 import type { AuthorizationMethod, AuthorizationPrompt, AuthorizationSession } from '@deepseek-ai/dsh-authorization'
 import { isCredentialKeySegment } from '@deepseek-ai/dsh-credentials'
+import type { CredentialKey } from '@deepseek-ai/dsh-credentials'
 import { catalogProvider, catalogProviderIds } from './catalog.ts'
 import { recordKeyFor } from './auth.ts'
 import type { PiAiAuthInjection } from './adapter.ts'
@@ -109,34 +110,68 @@ function restate(prompt: AuthPrompt): AuthorizationPrompt {
 }
 
 /**
+ * The sign-in one catalog provider offers a route, for the directory that
+ * advertises it.
+ *
+ * Flow registration and that directory both answer from this predicate, so a
+ * surface can never offer a sign-in the seam does not run, and a flow can never
+ * exist for a key no entry names.
+ * @param providerId - pi-ai's own provider id, which is also the harness route key.
+ * @returns the credential record a registered flow writes, plus whether that
+ *   stored sign-in is the route's only way to authenticate without a credential
+ *   reference; `undefined` when the installed catalog ships no login under that
+ *   id, or the id cannot address a credential record at all.
+ */
+export function authorizationFor(providerId: string): { key: CredentialKey; required: boolean } | undefined {
+  const provider = catalogProvider(providerId)
+  /* v8 ignore next -- every installed provider ships a login and every installed
+     id is a lowercase hyphenated identifier, so no installed route reaches either
+     refusal; they are what keeps a future upstream provider or id outside either
+     grammar from advertising a sign-in that cannot run. */
+  if (loginMethods(provider).length === 0 || !isCredentialKeySegment(providerId)) return undefined
+  return { key: recordKeyFor(providerId), required: provider?.auth.apiKey === undefined }
+}
+
+/**
  * Register one authorization flow per installed provider that ships a login.
  *
  * Registration is unconditional on configuration: a provider has to be signed
  * into before a route for it is worth adding, so the flow exists from the
- * moment the plugin mounts rather than appearing once a profile does.
+ * moment the plugin mounts rather than appearing once a profile does. A route
+ * the installed catalog ships no runnable login for, and one whose id cannot
+ * address a credential record, are each skipped with a warning naming that
+ * fault: the first needs a login upstream does not ship yet, the second a route
+ * key that authenticates through `apiKeyEnv` instead.
  * @param ctx - the plugin context carrying `ctx.authorization`.
  * @param auth - the injectables every collection here is built with.
  */
 export function registerPiAiFlows(ctx: Context, auth: PiAiAuthInjection): void {
   for (const providerId of catalogProviderIds()) {
     const provider = catalogProvider(providerId)
+    const authorization = authorizationFor(providerId)
     const [first, ...rest] = loginMethods(provider)
-    /* v8 ignore next 3 -- every id here names an installed provider and every
-       installed provider ships a login, so no entry is skipped; the guard
-       is what keeps that from becoming a crash if either stops being true. */
-    if (provider === undefined || first === undefined) continue
-    /* v8 ignore next 7 -- every installed catalog id is a lowercase
-       hyphenated identifier; the guard keeps a future upstream id outside the
-       record grammar (dotted or uppercase, as vendor ids elsewhere already
-       are) from throwing in `recordKeyFor` and failing the whole mount. */
-    if (!isCredentialKeySegment(providerId)) {
+    /* v8 ignore next 6 -- every id here names an installed provider and every
+       installed provider ships a login, so the installed catalog skips no entry;
+       the guard is what keeps that from becoming a crash if either stops being
+       true. */
+    if (provider === undefined || first === undefined) {
+      ctx.logger.warn(
+        'llm-pi-ai: catalog provider "%s" offers no login method this plugin can run; its sign-in is not offered',
+        providerId)
+      continue
+    }
+    /* v8 ignore next 6 -- every installed catalog id is a lowercase hyphenated
+       identifier, so no installed route reaches this; the guard keeps a future
+       upstream id outside the record grammar (dotted or uppercase, as vendor ids
+       elsewhere already are) from addressing a record it can never have. */
+    if (authorization === undefined) {
       ctx.logger.warn(
         'llm-pi-ai: catalog provider "%s" cannot address a credential record; its sign-in is not offered',
         providerId)
       continue
     }
     ctx.authorization.registerFlow({
-      key: recordKeyFor(providerId),
+      key: authorization.key,
       label: provider.name,
       methods: [first, ...rest],
       async run(session) {

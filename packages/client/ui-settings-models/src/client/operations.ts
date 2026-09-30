@@ -1,15 +1,18 @@
 /**
  * The Host reads and writes the Models cards perform, as callbacks built in the
  * plugin body. Cards receive these instead of a context: the outcomes name what
- * a card renders — a stored view, a stale revision, a refusal message — so the
- * failure codes and Remote namespaces stay in the apply world.
+ * a card renders — a stored view, a stale revision, a refusal message, the
+ * already-running sign-in — so the failure codes and Remote namespaces stay in
+ * the apply world.
  */
 
 import type { Context as ClientContext } from '@deepseek-ai/cordis'
+import type { AuthorizationPromptId, AuthorizationView } from '@deepseek-ai/dsh-api-authorization-controller/types'
 import type {
-  CredentialInfo, LlmDiscoveredModel, LlmModelDiscoveryRequest,
+  CredentialInfo, LlmDiscoveredModel, LlmModelDiscoveryRequest, RemoteErrorCode, RemoteResult,
   SettingsNamespaceView, SettingsPathOpView,
 } from '@deepseek-ai/dsh-api-remotes/client'
+import type { ProviderAuthorization } from './store.ts'
 
 /** What one namespace write answered. */
 export type SettingsWriteOutcome =
@@ -29,6 +32,17 @@ export type ModelDiscoveryOutcome =
   | { readonly kind: 'found'; readonly models: readonly LlmDiscoveredModel[] }
   /** The interrogation was refused, with the Host's own diagnostic. */
   | { readonly kind: 'refused'; readonly message: string }
+
+/** What one authorization command answered. */
+export type AuthorizationOutcome =
+  /** The Host answered with the whole view, attempt included. */
+  | { readonly kind: 'answered'; readonly view: AuthorizationView }
+  /**
+   * The command was refused. The code stays because one dialog line depends on
+   * which refusal it was — a start that lost the controller's single slot to an
+   * attempt already running says so instead of reporting a failure.
+   */
+  | { readonly kind: 'refused'; readonly code: RemoteErrorCode; readonly message: string }
 
 /** The Host operations the Models page and its cards invoke. */
 export interface ModelsOperations {
@@ -71,6 +85,37 @@ export interface ModelsOperations {
    * @returns the candidates, or the refusal.
    */
   discoverModels(settingsNs: string, request: LlmModelDiscoveryRequest): Promise<ModelDiscoveryOutcome>
+  /**
+   * Begin one route's sign-in flow.
+   * @param key - the credential record the route's flow writes.
+   * @param method - the chosen method id, or undefined for the flow's own default.
+   * @returns the resulting view, or the refusal.
+   */
+  startAuthorization(key: ProviderAuthorization['key'], method?: string): Promise<AuthorizationOutcome>
+  /**
+   * Answer the in-flight attempt's current prompt.
+   * @param promptId - identity of the prompt this answer addresses.
+   * @param value - typed text, or the chosen option id for a `select` prompt.
+   * @returns the resulting view, or the refusal.
+   */
+  answerAuthorization(promptId: AuthorizationPromptId, value: string): Promise<AuthorizationOutcome>
+  /**
+   * Decline the in-flight attempt's current prompt, settling the attempt cancelled.
+   * @param promptId - identity of the prompt being declined.
+   * @returns the resulting view, or the refusal.
+   */
+  declineAuthorization(promptId: AuthorizationPromptId): Promise<AuthorizationOutcome>
+  /**
+   * Withdraw the in-flight attempt (a no-op on the Host when none is running).
+   * @returns the resulting view, or the refusal.
+   */
+  cancelAuthorization(): Promise<AuthorizationOutcome>
+  /**
+   * Remove the credential record one route's sign-in stored.
+   * @param key - the credential record the route's flow writes.
+   * @returns the resulting view, or the refusal.
+   */
+  signOutAuthorization(key: ProviderAuthorization['key']): Promise<AuthorizationOutcome>
 }
 
 /**
@@ -105,5 +150,21 @@ export function createModelsOperations(ctx: ClientContext): ModelsOperations {
         ? { kind: 'found', models: response.value }
         : { kind: 'refused', message: response.error.message }
     },
+    startAuthorization: async (key, method) => authorizationOutcome(await ctx.remote.authorization.start(key, method)),
+    answerAuthorization: async (promptId, value) => authorizationOutcome(await ctx.remote.authorization.answer(promptId, value)),
+    declineAuthorization: async promptId => authorizationOutcome(await ctx.remote.authorization.decline(promptId)),
+    cancelAuthorization: async () => authorizationOutcome(await ctx.remote.authorization.cancel()),
+    signOutAuthorization: async key => authorizationOutcome(await ctx.remote.authorization.signOut(key)),
   }
+}
+
+/**
+ * Fold one authorization command's answer into the outcome its surface renders.
+ * @param response - the Remote call's answer.
+ * @returns the whole view, or the refusal code and the Host's own diagnostic.
+ */
+function authorizationOutcome(response: RemoteResult<AuthorizationView>): AuthorizationOutcome {
+  return response.ok
+    ? { kind: 'answered', view: response.value }
+    : { kind: 'refused', code: response.error.code, message: response.error.message }
 }

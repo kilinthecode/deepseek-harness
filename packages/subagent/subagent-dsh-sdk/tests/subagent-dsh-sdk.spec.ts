@@ -824,6 +824,9 @@ describe('dsh-subagent-dsh-sdk provider', () => {
     })
     expect(ctx.subagents.getProvider('sdk-hmr')?.name).toBe('sdk-hmr')
     expect(ctx.subagents.getProvider('sdk-hmr')?.inheritsParentContext).toBe(false)
+    // The child process has its own attachment store; byte encoding across
+    // that boundary is deferred, so this provider refuses image prompts.
+    expect(ctx.subagents.getProvider('sdk-hmr')?.imageInput).toBe(false)
     expect(ctx.subagents.getProvider('sdk-hmr')?.capabilities).toEqual({
       agentOptions: true,
       outputSchema: false,

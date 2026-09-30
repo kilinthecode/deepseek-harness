@@ -101,6 +101,7 @@ kind: "package-reference"
 | [`src/control.ts`](src/control.ts) | 浏览器控制请求校验与稳定失败分码 |
 | [`src/control-types.ts`](src/control-types.ts) | client-safe 的目录行、控制面请求、回执与失败 |
 | [`src/archive-admission.ts`](src/archive-admission.ts) | Workspace 注册表归档准入中的 `subagent` 族：运行中的子孙及其父级取消 |
+| [`src/plain-fork.ts`](src/plain-fork.ts) | 把一个确切在线 Agent 分类为符合条件 parent 的纯 fork，供运行时状态门控的提示词或工具安装器使用 |
 
 ### 一次性流程
 
@@ -119,6 +120,7 @@ kind: "package-reference"
 - **Agent 消息权限基于确切相邻关系**——`sendMessage()` 要求确切在线 sender；每个 sender 都可以指定直接可继续 child，只有具备驻留可继续 Activation 的 sender 可以指定自己的直接 parent。
 - **描述符仅进日志**——它是会话事件，不进入模型历史，并跨压缩（compaction）保留；可继续描述符会显式记录解析后的子级提供方、模型与推理强度，用于冷恢复。
 - **本 runtime 为子代理回答归档准入**（[接缝](../../workspace/workspace/README.zh.md)）——`workspace/session-activity` 把回合中的在线子代理子孙作为 `subagent` 族报告：按本包记录的持久化血缘查找（带 subagent 来源的 `parentSession`，任意深度，从不包括 fork），组合了 Session query 服务时经一次活会话 observation 从各 child 的描述符取名称，否则只报 id；`workspace/session-stop` 以父级原因逐个取消它们，一个拒绝取消的 child 只记日志，其兄弟仍会停止。父级自身的回合、它的任务以及已归档血缘的步骤门禁归 API Session Controller。
+- **纯 fork 依据自身组合而非持久化历史分类**——`plainForkParentOf()` 解析出通过 `subagent_fork` 以父级历史为种子、且组合未安装 persona、工具过滤或结构化输出 runtime 的子级的确切在线委派 parent；该判断读取 `applyChildComposition` 在子级创建窗口中设置的进程内记录，一次性与可继续模式（含冷恢复）下一致；在 `agent.ctx` 上按运行时状态添加提示词小节或工具的安装逻辑，也必须为符合条件的 parent 的纯 fork 安装同样的内容，使 fork 声明的提示词与 parent 一致，让基于确切前缀匹配的提供方提示词缓存覆盖继承的历史。
 
 </details>
 
@@ -177,6 +179,20 @@ You are a delegated subagent: your permission scope was fixed when you were star
 
 子级内部前缀稳定：该声明在子 agent 生命周期内绝不变化，因此只写入第一份运行时上下文快照一次。父级侧不会直接使缓存失效；具名工具消费方共同负责请求前缀的任何变化。
 
+### 提供方缓存路由
+
+#### 模型看到什么
+
+缓存路由是请求上携带的传输层元数据，不是提示词内容，因此永不到达模型。
+
+#### Token 影响
+
+缓存路由只改变对已缓存前缀的提供方选择，不改变请求内容，因此不增加任何 token。
+
+#### KV Cache 影响
+
+同一委派树中的每个子级——包括可续写 fork 的后代——都携带设为该树根会话 id 的 `GenerateOptions.cacheKey`（由 `dsh-agent-loop` 依据子级自身 `parentSession` 表头谱系逐请求标注），使兄弟与 fork 子级在支持该字段的适配器上路由到同一个提供方侧已缓存前缀，而非各自使用自己的会话 id 各起一份。
+
 ## 已知限制与延期工作
 
 <a id="known-limitations-and-deferred-work"></a>
@@ -186,6 +202,7 @@ You are a delegated subagent: your permission scope was fixed when you were star
 
 - **后代读取串行执行**——每个可达目录（包括一次性子级）都需要一次观察。冷 Session 缺少有效的 prepared 观察时需要读取完整日志；大型冷会话树可能累积存储延迟。
 - **ACP 子级仍为一次性，且无法通过追踪枚举**——ACP 运行在父级会话语料中没有本地子会话，远程提供方需要 Activation 所有权约定才能支持可继续子级。
+- **只有同进程 child 接受图片提示词**——`spawn` 与 `fork` 共享 parent 的附件存储，声明 `imageInput: true`；ACP、Claude Code、Codex 与 DSH SDK 提供方声明 `imageInput: false`，在 `start()` 阶段、任何子进程或 Agent 出现之前拒绝图片提示词。具备该能力的提供方，其解析出的 child 路由会在可继续创建、一次性 `start()` 与每次后续投递时以同一方式检查；声明的输入模态省略 `image` 的路由会以 `MODEL_DOES_NOT_SUPPORT_IMAGES` 拒绝。仍有两处边界保持纯文本：workflow 的 `agent(prompt)` 组合的是纯文本子级提示词，子级自身的结果内容也以文本形式返回给父级。
 - **仅允许相邻模型消息**——`sendMessage()` 要求确切在线 sender；每个 sender 都可以指定直接可继续 child，只有具备驻留可继续 Activation 的 sender 可以指定自己的直接 parent。浏览器提示使用独立的人类 Queue 或 Steer 控制路径。
 - **child 到 parent 的投递要求直接 parent 保持在线**——服务没有持久 parent mailbox；parent 缺失时会拒绝消息，而非接受无法唤醒的工作。
 - **取消收敛期间存在唤醒缺口**——中断信号发出后、driver 进入 idle 前被接受的后续消息会保持排队，直到另一条唤醒发送到达。

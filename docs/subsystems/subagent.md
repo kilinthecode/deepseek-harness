@@ -37,7 +37,7 @@ interface SubagentCapabilities {
 
 ## The one-shot start request
 
-The tool layer builds this request from the model input and its own config; the service validates it against the named provider before `start`. Required `parent` supplies the session cwd, lineage, and delegation depth. Optional Agent provider, model, reasoning-effort, and token overrides, output schema, depth, tool filter, and persona require matching capability flags. In-process backends merge `agentOptions` over the parent Agent's options, scope filters and personas to child creation, and implement the supported object-rooted schema with a forced capture tool. The DSH SDK backend merges the four Agent route fields over its instance defaults and validates them in the child runtime's initialization; ACP, Codex, and Claude Code reject `agentOptions` before starting their transports.
+The tool layer builds this request from the model input and its own config; the service validates it against the named provider before `start`. Required `parent` supplies the session cwd, lineage, and delegation depth. Optional Agent provider, model, reasoning-effort, and token overrides, output schema, depth, tool filter, and persona require matching capability flags. In-process backends merge `agentOptions` over the parent Agent's options, scope filters and personas to child creation, and implement the supported object-rooted schema with a forced capture tool. The DSH SDK backend merges the four Agent route fields over its instance defaults and validates them in the child runtime's initialization; ACP, Codex, and Claude Code reject `agentOptions` before starting their transports. The subagent tool appends the resolved image blocks to the start request's `prompt` after the text: its optional `images` parameter names attachment ids already shown in the calling conversation, resolved against the caller's derived history; an unknown id fails the call with a model-correctable error.
 
 ```ts type-equiv
 /**
@@ -135,7 +135,7 @@ persisted Session
 
 `SubagentRuntime.startContinuable()` reserves the stable child id, snapshots the versioned `subagent/descriptor` payload, asks the named provider for its detached `ContinuableCreateSpec`, creates the child Agent through a private activation-owner scope, establishes any continuable-parent ownership, and submits the initial prompt. It resolves with `{ childId, messageId }` when inbox acceptance yields the message id — without waiting for the turn to start or for the message to enter the Session log. Every failure before that acceptance rejects with neither id, disposing any created handle and rolling back the Activation and parent ownership.
 
-`SubagentRuntime.sendMessage()` is the sole model-authored message operation. It accepts the exact live sender plus a target id, permits only a direct parent or direct continuable child, derives sender attribution itself, and routes a direct-child target by Activation residency:
+`SubagentRuntime.sendMessage()` is the sole model-authored message operation. The control `send_message` tool appends the resolved image blocks to the delivered message content after the text: its optional `images` parameter names attachment ids already shown in the calling conversation, resolved against the caller's derived history; an unknown id fails the call with a model-correctable error. `sendMessage()` accepts the exact live sender plus a target id, permits only a direct parent or direct continuable child, derives sender attribution itself, and routes a direct-child target by Activation residency:
 
 | Target Activation state | `sendMessage` |
 |---|---|
@@ -390,7 +390,7 @@ A local one-shot run MUST publish an ordinary child agent/session before `start(
 
 ## The provider contract: `SubagentProvider`
 
-Each provider is a named child-agent transport, and multiple providers may coexist. The service validates requested start-time capabilities before `start()`, and rejects a continuable start on a provider without `prepareContinuable`. `inheritsParentContext` describes only conversation seeding (`fork`: true; `spawn` and `acp`: false), allowing consumers to generate accurate model-facing wording without implying inherited tools, services, or authority. A provider whose one-shot route has static provider-owned defaults publishes optional immutable `agentRouteDefaults`, allowing a Consumer to merge model/tool overrides against the correct baseline before preflight.
+Each provider is a named child-agent transport, and multiple providers may coexist. The service validates requested start-time capabilities before `start()`, and rejects a continuable start on a provider without `prepareContinuable`. `inheritsParentContext` describes only conversation seeding (`fork`: true; `spawn` and `acp`: false), allowing consumers to generate accurate model-facing wording without implying inherited tools, services, or authority. `imageInput` names the child's request-content ceiling rather than a `SubagentStartRequest` option the caller opts into (`spawn` and `fork`: true, same process and attachment store; `acp`, `claude-code`, `codex`, and the DSH SDK provider: false); the service checks it before `start()` for a one-shot image prompt. A provider whose one-shot route has static provider-owned defaults publishes optional immutable `agentRouteDefaults`, allowing a Consumer to merge model/tool overrides against the correct baseline before preflight.
 
 ```ts type-equiv
 /**
@@ -412,6 +412,15 @@ interface SubagentProvider {
    * It says nothing about tool registration, injected services, or authority inheritance.
    */
   readonly inheritsParentContext: boolean
+  /**
+   * Whether a published child of this provider can receive image content in
+   * its prompt. Checked by the service before `start` for a one-shot child
+   * whose prompt has an image, so an incapable transport refuses before any
+   * process or Agent it cannot serve. Distinct from {@link SubagentCapabilities}:
+   * it names the child's request-content ceiling rather than a
+   * {@link SubagentStartRequest} option the caller opts into.
+   */
+  readonly imageInput: boolean
   /**
    * Optional static provider-owned provider/model route for one-shot Agent
    * options. Consumers merge tool/model overrides over these values before
@@ -480,7 +489,11 @@ Singleton settings owner read when delegation tools are composed for a Session.
 ```ts cordis-catalog
 /**
  * Read a detached selection preference for the next eligible Session composition.
- * @returns the enabled state and exact allowed routes.
+ * @returns the enabled state, exact allowed routes, and, while enabled, a
+ *   default child route when one is set.
+ * @throws when the allowed routes are malformed or duplicated, or the
+ *   default route is malformed; while enabled, also throws when the
+ *   default's provider/model pair is not one of the allowed routes.
  */
 current(): SubagentModelSelectionSettings
 ```

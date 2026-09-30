@@ -1,0 +1,28 @@
+# Cache-sharing memory review: re-enable @deepseek-ai/dsh-memory-review over
+# the shipped headless profile, which disables it, and add the test-only
+# bridge that holds this one-shot process open until the plugin-started (not
+# tool-started) review child reaches its own turn end. Memory, tool-memory,
+# and the fork provider are already mounted by the shipped profile; this
+# patch changes only what differs.
+- id: agent-default-model
+  name: '@deepseek-ai/dsh-agent-default-model'
+  config:
+    provider: deepseek-official
+    model: deepseek-v4-pro
+
+- id: session-persistence-jsonl
+  name: '@deepseek-ai/dsh-session-persistence-jsonl'
+  config:
+    root: !!js dshHomePath('sessions')
+    compression: !!js 'process.env.DSH_SNAPSHOT === undefined ? ''zstd'' : ''none'''
+
+- id: memory-review
+  name: '@deepseek-ai/dsh-memory-review'
+  disabled: false
+  config:
+    reviewEveryUserTurns: 1
+    maxReviewSteps: 8
+
+- insert:
+    - id: quiesce-plugin-started-child
+      name: '../../../packages/test-support/session-snapshot/tests/fixtures/quiesce-plugin-started-child.ts'

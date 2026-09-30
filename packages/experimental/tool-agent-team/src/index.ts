@@ -3,10 +3,13 @@
 import type { Context } from '@deepseek-ai/cordis'
 import z from '@deepseek-ai/schemastery'
 import type { Agent, AgentOptions } from '@deepseek-ai/dsh-agent'
-import { ReasoningEffortId } from '@deepseek-ai/dsh-llm'
+import type {} from '@deepseek-ai/dsh-attachment'
 import { TeamTaskId } from '@deepseek-ai/dsh-experimental-agent-team'
 import type { TeamMemberView } from '@deepseek-ai/dsh-experimental-agent-team'
-import { applyAgentScopedTools, callingAgent, defineTool, jsonOutput, type InferValue } from '@deepseek-ai/dsh-tools'
+import { ReasoningEffortId, resolveDelegationImages } from '@deepseek-ai/dsh-llm'
+import type { ImageInputSupport } from '@deepseek-ai/dsh-llm'
+import { plainForkParentOf } from '@deepseek-ai/dsh-subagent'
+import { callingAgent, defineTool, jsonOutput, type InferValue } from '@deepseek-ai/dsh-tools'
 
 /** Cordis plugin name. */
 export const name = 'tool-agent-team'
@@ -55,9 +58,13 @@ const MEMBER_VIEW_SCHEMA = {
     provider: { type: 'string' },
     context: { type: 'string', enum: ['fresh', 'fork'] },
     model: { type: 'string' },
+    acceptsImages: { type: 'string', enum: ['supported', 'unsupported', 'undeclared'] },
     diagnostics: { type: 'array', required: true, items: { type: 'string' } },
   },
 } as const
+
+/** One `list_agents` result row: the roster view plus listing-time image-input support. */
+type ListedMember = TeamMemberView & { acceptsImages?: ImageInputSupport }
 
 /** Expose the member name as its model-facing target. */
 function modelMember(member: TeamMemberView): InferValue<typeof MEMBER_VIEW_SCHEMA> {
@@ -164,6 +171,11 @@ function install(agent: Agent, ctx: Context, config: Required<Config>): () => vo
         name: { type: 'string', required: true, description: 'Unique lower-kebab-case teammate name.' },
         description: { type: 'string', required: true, description: 'Short description of the delegated responsibility.' },
         prompt: { type: 'string', required: true, description: 'Complete initial task for the teammate.' },
+        images: {
+          type: 'array',
+          items: { type: 'string' },
+          description: 'Attachment ids of images already shown in this conversation, appended to the prompt.',
+        },
         context: {
           type: 'string',
           enum: ['fresh', 'fork'],
@@ -185,6 +197,11 @@ function install(agent: Agent, ctx: Context, config: Required<Config>): () => vo
       output: jsonOutput(SPAWN_VALUE_SCHEMA),
       async execute(args, exec) {
         const agent = callingAgent(exec.agent, 'spawn_teammate')
+        const imageBlocks = resolveDelegationImages(
+          agent.session.deriveMessages(),
+          args.images,
+          ctx.get('attachments')?.imageLimits.maxImagesPerMessage,
+        )
         const context = args.context ?? 'fresh'
         const agentOptions: AgentOptions = {
           ...args.provider === undefined ? {} : { provider: args.provider },
@@ -205,6 +222,7 @@ To message another teammate, use send_message({ target: "<teammate name>", messa
 
 ` },
             { type: 'text', text: args.prompt },
+            ...imageBlocks,
           ],
           context,
           provider: context === 'fork' ? config.forkProvider : config.freshProvider,
@@ -221,12 +239,22 @@ To message another teammate, use send_message({ target: "<teammate name>", messa
       parameters: {
         target: { type: 'string', required: true, description: 'Member target returned by spawn_teammate or list_agents, including lead.' },
         message: { type: 'string', required: true, description: 'Self-contained message for the target.' },
+        images: {
+          type: 'array',
+          items: { type: 'string' },
+          description: 'Attachment ids of images already shown in this conversation, appended to the message.',
+        },
       },
       output: jsonOutput(SEND_VALUE_SCHEMA),
       execute(args, exec) {
-        return ctx.agentTeams.sendMessage(callingAgent(exec.agent, 'send_message'), {
+        const agent = callingAgent(exec.agent, 'send_message')
+        return ctx.agentTeams.sendMessage(agent, {
           target: args.target,
-          content: [{ type: 'text', text: args.message }],
+          content: [{ type: 'text', text: args.message }, ...resolveDelegationImages(
+            agent.session.deriveMessages(),
+            args.images,
+            ctx.get('attachments')?.imageLimits.maxImagesPerMessage,
+          )],
           signal: exec.signal,
         })
       },
@@ -234,11 +262,18 @@ To message another teammate, use send_message({ target: "<teammate name>", messa
 
     yield scoped.tools.register(defineTool({
       name: 'list_agents',
-      description: 'List the Lead and every durable teammate with an addressable target and current availability. inactive means no turn is executing, not a task result. provisioning and failed describe member creation.',
+      description: 'List the Lead and every durable teammate with an addressable target, current availability, and image-input support. inactive means no turn is executing, not a task result. provisioning and failed describe member creation.',
       parameters: {},
       output: jsonOutput(MEMBER_LIST_VALUE_SCHEMA),
-      execute(_args, exec) {
-        return Promise.resolve(ctx.agentTeams.listMembers(callingAgent(exec.agent, 'list_agents')).map(modelMember))
+      async execute(_args, exec) {
+        const caller = callingAgent(exec.agent, 'list_agents')
+        const members = ctx.agentTeams.listMembers(caller)
+        const imageSupport = await ctx.agentTeams.resolveMemberImageSupport(caller, exec.signal)
+        return members.map((member) => {
+          const view = modelMember(member)
+          const acceptsImages: ListedMember['acceptsImages'] = imageSupport.get(member.id)
+          return acceptsImages === undefined ? view : { ...view, acceptsImages }
+        })
       },
     }))
 
@@ -399,16 +434,59 @@ To message another teammate, use send_message({ target: "<teammate name>", messa
   }, 'tool-team.agentScope()')
 }
 
-/** Install Team tools in every live or subsequently published Team member scope. */
+/**
+ * Whether `agent` qualifies for the Team section and tool set: either it
+ * currently has Team membership itself, or walking its plain-fork lineage
+ * ({@link plainForkParentOf}, applied repeatedly) reaches an agent that
+ * currently does. Every agent on that lineage is a plain fork and not itself
+ * a member — `spawn_teammate`/`send_message`/etc. still resolve and
+ * authorize the calling agent through `ctx.agentTeams` at execution time and
+ * reject a non-member with `TEAM_NOT_MEMBER`, so no fork in the lineage can
+ * ever act as its ancestor — but its assembled prompt must match its
+ * immediate parent's declared section and tools, and therefore transitively
+ * the member's, so a provider prompt cache keyed on the exact prefix covers
+ * the inherited history instead of missing on a dropped section.
+ * @param agent - the exact live candidate agent.
+ * @param ctx - the context whose `agentTeams` resolves membership.
+ * @returns whether `agent` qualifies for the Team installation.
+ */
+function qualifiesForTeamInstall(agent: Agent, ctx: Context): boolean {
+  const visited = new Set<Agent>()
+  let candidate: Agent | undefined = agent
+  while (candidate !== undefined) {
+    // Defensive only: plainForkParentOf walks toward an earlier-created
+    // ancestor session, so this lineage cannot cycle in practice.
+    /* v8 ignore next -- guards a defect elsewhere, not a reachable case. */
+    if (visited.has(candidate)) return false
+    if (ctx.agentTeams.tryMembership(candidate) !== undefined) return true
+    visited.add(candidate)
+    candidate = plainForkParentOf(candidate)
+  }
+  return false
+}
+
+/**
+ * Install Team tools in every live or subsequently published Team member scope
+ * and in each plain fork whose fork chain reaches a live member.
+ */
 export function apply(ctx: Context, config: Config = {}): void {
   const resolved: Required<Config> = {
     freshProvider: config.freshProvider ?? 'spawn',
     forkProvider: config.forkProvider ?? 'fork',
   }
-  applyAgentScopedTools(
-    ctx,
-    agent => ctx.agentTeams.tryMembership(agent) !== undefined,
-    agent => install(agent, ctx, resolved),
-    'tool-team.scopedTools()',
-  )
+  const installed = new Map<Agent, () => void>()
+  const maybeInstall = (agent: Agent): void => {
+    if (installed.has(agent) || !qualifiesForTeamInstall(agent, ctx)) return
+    installed.set(agent, install(agent, ctx, resolved))
+  }
+  for (const agent of ctx.agents.list()) maybeInstall(agent)
+  ctx.on('agent/created', ({ agent }) => { maybeInstall(agent) })
+  ctx.on('agent/disposed', ({ agent }) => {
+    installed.get(agent)?.()
+    installed.delete(agent)
+  })
+  ctx.effect(() => () => {
+    for (const dispose of installed.values()) dispose()
+    installed.clear()
+  }, 'tool-team.scopedTools()')
 }

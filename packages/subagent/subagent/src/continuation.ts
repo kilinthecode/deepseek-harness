@@ -26,6 +26,7 @@ import type { SessionObservation, SessionQueryEngine } from '@deepseek-ai/dsh-se
 import {
   childSessionMeta,
   captureDelegatedPolicyOverrides,
+  parentAgentOptionsForDelegation,
   resolveChildAgentOptions,
   resolveChildDepth,
 } from './child-agent.ts'
@@ -41,6 +42,7 @@ import { assertSubagentMaxDepth } from './depth.ts'
 import { foldSubagentDescriptor, snapshotSubagentDescriptor } from './descriptor.ts'
 import { establishCatalogChild } from './catalog.ts'
 import { SubagentError } from './error.ts'
+import { assertImageCapableRoute } from './image-capability.ts'
 import { isAdjacentAgentSendMessageTool } from './internal.ts'
 import type { ActivationObserver } from './lifecycle.ts'
 import type {
@@ -71,6 +73,26 @@ interface ContinuationHost {
   prepareContinuable(name: string, request: ContinuableCreateRequest): Promise<ContinuableCreateSpec>
   /** Build the lifecycle observer for one Activation residency epoch. */
   observeActivation(provider: string, childId: SessionId, parent: Agent): ActivationObserver
+}
+
+/**
+ * Take one child route source whole: the child's own route when it names
+ * either field, else the parent's current delegation route. Never mixes a
+ * child's provider with the parent's model, which is a route neither source
+ * names.
+ */
+function childRouteOrParent(
+  provider: string | undefined,
+  model: string | undefined,
+  parent: Agent,
+): { provider?: string; model?: string } {
+  const route = provider === undefined && model === undefined
+    ? parentAgentOptionsForDelegation(parent)
+    : { provider, model }
+  return {
+    ...route.provider !== undefined ? { provider: route.provider } : {},
+    ...route.model !== undefined ? { model: route.model } : {},
+  }
 }
 
 /**
@@ -135,11 +157,16 @@ export class SubagentContinuationManager {
     // but the service is also callable outside a turn.
     const releaseHold = this.activations.holdOwnership(parent, childId)
     try {
+      // A provider's synchronous contribution (the fork seed) is captured
+      // here, before the first await, alongside the delegated policies above.
       const prepared = await this.host.prepareContinuable(spec.provider, {
         sessionId: childId,
         parent,
         signal: spec.signal,
       })
+      if (contentHasImage(request.prompt)) {
+        await assertImageCapableRoute(this.ctx, agentProvider, agentModel, spec.signal)
+      }
       spec.signal.throwIfAborted()
       this.activations.assertAdmitting(parent)
 
@@ -219,7 +246,7 @@ export class SubagentContinuationManager {
       && senderActivation.handle.agent === sender
       && senderActivation.parentSession === targetId) {
       options.signal.throwIfAborted()
-      return this.sendToParent(senderActivation, sender, content)
+      return this.sendToParent(senderActivation, sender, content, options.signal)
     }
     if (sender.session.header.parentSession === targetId) {
       throw new SubagentError(
@@ -335,14 +362,68 @@ export class SubagentContinuationManager {
     this.activations.interrupt(targetSessionId, authority)
   }
 
+  /**
+   * Resolve one continuable child's current LLM route from the same sources
+   * cold resume reads: a live Activation's Agent options, or else the
+   * persisted descriptor's `agentProvider`/`agentModel`. The fallback is per
+   * source, never per field: a child source that names either field is the
+   * route as a whole (a missing field stays missing), and only a source that
+   * names neither falls back to the parent's current delegation route as a
+   * whole, so a Team teammate without a recorded route inherits the Lead's.
+   * @param parent - the delegating parent whose route is the fallback.
+   * @param childId - durable direct-child session id.
+   * @param signal - caller cancellation for the persisted descriptor read.
+   * @returns the resolved provider and model, when known.
+   */
+  async resolveChildRoute(
+    parent: Agent,
+    childId: SessionId,
+    signal: AbortSignal,
+  ): Promise<{ provider?: string; model?: string }> {
+    const live = this.activations.get(childId)
+    if (live !== undefined) {
+      return childRouteOrParent(live.handle.agent.options.provider, live.handle.agent.options.model, parent)
+    }
+    const query = this.requireSessionQuery()
+    let observation: SessionObservation
+    try {
+      observation = await query.observeSession(childId, { signal })
+    } catch (error: unknown) {
+      signal.throwIfAborted()
+      throw new SubagentError(`subagent "${childId}" is unavailable`, 'NOT_RESUMABLE', { cause: error })
+    }
+    using source = observation
+    const descriptor = foldSubagentDescriptor(source.events.slice(source.inheritedEventCount))
+    const persisted = descriptor?.mode === 'continuable' ? descriptor : undefined
+    return childRouteOrParent(persisted?.agentProvider, persisted?.agentModel, parent)
+  }
+
+  /**
+   * Refuse image content for one continuable child whose resolved route
+   * cannot accept it. Applies {@link assertImageCapableRoute} to
+   * {@link resolveChildRoute}'s result.
+   * @param parent - the delegating parent whose route the fallback reads.
+   * @param childId - durable direct-child session id.
+   * @param signal - caller cancellation for the route resolution.
+   */
+  async assertChildAcceptsImages(
+    parent: Agent,
+    childId: SessionId,
+    signal: AbortSignal,
+  ): Promise<void> {
+    const { provider, model } = await this.resolveChildRoute(parent, childId, signal)
+    await assertImageCapableRoute(this.ctx, provider, model, signal)
+  }
+
   /** Deliver one resident continuable child's message to its live direct parent. */
-  private sendToParent(
+  private async sendToParent(
     activation: Activation,
     sender: Agent,
     content: ContentBlock[],
-  ): MessageId {
+    signal: AbortSignal,
+  ): Promise<MessageId> {
     /* v8 ignore next 6 -- only synchronous re-entrant teardown can open this
-     * transaction between exact-agent authorization and this no-await span. */
+     * transaction between exact-agent authorization and the first await. */
     if (activation.inbox.closing !== undefined) {
       throw new SubagentError(
         `subagent "${sender.id}" activation is being disposed; the message was not delivered`,
@@ -355,6 +436,25 @@ export class SubagentContinuationManager {
         'direct parent is not live; the message was not delivered',
         'PARENT_UNAVAILABLE',
       )
+    }
+    if (contentHasImage(content)) {
+      const route = parentAgentOptionsForDelegation(parent)
+      await assertImageCapableRoute(this.ctx, route.provider, route.model, signal)
+      signal.throwIfAborted()
+      // oxlint-disable-next-line typescript/no-unnecessary-condition -- the awaited read above can flip this mutable getter.
+      if (activation.inbox.closing !== undefined) {
+        throw new SubagentError(
+          `subagent "${sender.id}" activation is being disposed; the message was not delivered`,
+          'ACTIVATION_CLOSING',
+        )
+      }
+      // The awaited read can also outlive the parent's registration.
+      if (this.ctx.agents.get(activation.parentSession) !== parent) {
+        throw new SubagentError(
+          'direct parent is not live; the message was not delivered',
+          'PARENT_UNAVAILABLE',
+        )
+      }
     }
     const message = createAgentMessage(sender, content)
     this.sendAgentMessage(parent, message)
@@ -510,18 +610,7 @@ export class SubagentContinuationManager {
     agent: Agent,
     signal: AbortSignal,
   ): Promise<void> {
-    const { provider, model } = agent.options
-    if (provider === undefined || model === undefined) return
-    const llm = this.ctx.get('llm')
-    /* v8 ignore next -- without an LLM registry, delivery defers to projection. */
-    if (llm === undefined) return
-    const info = await llm.resolveModelInfo(provider, model, signal)
-    if (info.inputModalities !== undefined && !info.inputModalities.includes('image')) {
-      throw new SubagentError(
-        `Model "${model}" does not support image input.`,
-        'MODEL_DOES_NOT_SUPPORT_IMAGES',
-      )
-    }
+    await assertImageCapableRoute(this.ctx, agent.options.provider, agent.options.model, signal)
   }
 
   /** Resolve the persistence service continuable children require, or fail loud. */

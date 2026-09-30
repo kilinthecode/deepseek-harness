@@ -24,6 +24,9 @@
       "path": "../../core/agent-default-model"
     },
     {
+      "path": "../../attachment/attachment"
+    },
+    {
       "path": "../../llm/llm"
     },
     {

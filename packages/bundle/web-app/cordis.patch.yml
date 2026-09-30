@@ -16,8 +16,7 @@
 - id: system-prompt
   config:
     personaSuffix: Your working directory is {{cwd}}.
-    personaPrefix: >-
-      You are a coding agent powered by the {{model}} model.
+    personaPrefix: You are a coding agent.
 
 # Full-text session search is opt-in (the base row's `openAt: never`). This
 # restatement keeps the Web values on one ephemeral in-memory index; a
@@ -133,6 +132,9 @@
 
     - id: account-controller
       name: '@deepseek-ai/dsh-api-account-controller'
+
+    - id: authorization-controller
+      name: '@deepseek-ai/dsh-api-authorization-controller'
 
     - id: settings-controller
       name: '@deepseek-ai/dsh-api-settings-controller'
@@ -552,6 +554,12 @@
   disabled: true
 
 - id: tool-todo
+  disabled: true
+
+- id: tool-memory
+  disabled: true
+
+- id: memory-review
   disabled: true
 
 - id: tool-web

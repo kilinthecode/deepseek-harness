@@ -101,6 +101,7 @@ This section explains how the service is built and where the observable behavior
 | [`src/control.ts`](src/control.ts) | Browser control request validation and stable failure codes |
 | [`src/control-types.ts`](src/control-types.ts) | Client-safe catalog row, control requests, receipts, and failures |
 | [`src/archive-admission.ts`](src/archive-admission.ts) | The `subagent` family of the Workspace registry's archive admission: running descendants and their parent-cause cancel |
+| [`src/plain-fork.ts`](src/plain-fork.ts) | Classifies an exact live Agent as a plain fork of a qualifying parent, for runtime-gated prompt or tool installers |
 
 ### One-shot flow
 
@@ -119,6 +120,7 @@ Successful local child creation appends a `subagent/catalog` fact to the parent 
 - **Agent-message authority is exact adjacency** — `sendMessage()` requires the exact live sender; every sender may target a direct continuable child, while only a sender with a resident continuable Activation may target its direct parent.
 - **The descriptor is log-only** — a session event absent from model history and retained across compaction; a continuable descriptor records the resolved child provider, model, and reasoning effort explicitly for cold resume.
 - **This runtime answers archive admission for children** ([seam](../../workspace/workspace/README.md)) — `workspace/session-activity` reports the live subagent descendants inside a turn as the `subagent` family, found by the durable lineage this package records (`parentSession` with the subagent origin, any depth, never a fork) and labelled from each child's descriptor through a live Session observation when the Session query service is composed, otherwise by id; `workspace/session-stop` cancels each of them with the parent cause, one at a time, so one child refusing its cancel is logged while its siblings still stop. The parent's own turn, its jobs, and the archived-lineage step gate belong to the API Session Controller.
+- **A plain fork classifies from its composition, not durable history** — `plainForkParentOf()` resolves the exact live delegating parent of a child seeded through `subagent_fork` whose composition installed no persona, tool filter, or structured-output runtime, checked from the in-process record `applyChildComposition` sets during the child's creation window in one-shot and continuable modes alike, including cold resume; a runtime-gated installer that adds prompt sections or tools on `agent.ctx` must also install them on a plain fork of a qualifying agent, so the fork's declared prompt matches the parent's and a provider prompt cache covers the inherited history.
 
 </details>
 
@@ -177,6 +179,20 @@ One fixed statement in each child's runtime-context snapshot; none in the parent
 
 Prefix-stable within a child: the statement never changes during the child's lifetime, so it is written once into the first runtime-context snapshot. Parent-side, no direct invalidation; the named tool consumers own any request-prefix changes.
 
+### Provider cache routing
+
+#### What the model sees
+
+Cache routing is transport metadata carried on the request, not prompt content, so it never reaches the model.
+
+#### Token effect
+
+Cache routing changes provider selection of a cached prefix, not request content, so it adds no tokens.
+
+#### KV Cache effect
+
+Every child in one delegation tree — including a continuable fork's descendants — carries `GenerateOptions.cacheKey` set to that tree's root session id (`dsh-agent-loop`'s per-request stamping from the child's own `parentSession` header lineage), so sibling and fork children route to the same provider-side cached prefix on an adapter that honors it, instead of each starting a separate one under its own session id.
+
 ## Known Limitations and Deferred Work
 
 <a id="known-limitations-and-deferred-work"></a>
@@ -186,6 +202,7 @@ These limits define when the seam is a poor fit or needs special operational car
 
 - **Descendant reads are sequential** — each reachable catalog, including one-shot children, takes one observation. A cold Session without a valid prepared observation requires a full-log read; large cold trees can accumulate storage latency.
 - **ACP children remain one-shot and are not trace-enumerable** — an ACP run has no local child session in the parent's session corpus, and remote providers need an Activation ownership contract before they can support continuable children.
+- **Only same-process children accept image prompts** — `spawn` and `fork` share the parent's attachment store and declare `imageInput: true`; ACP, Claude Code, Codex, and the DSH SDK provider declare `imageInput: false` and refuse an image prompt at `start()`, before any child process or Agent. A capable provider's resolved child route is checked the same way at continuable creation, one-shot `start()`, and every follow-up delivery; a route whose declared modalities omit `image` refuses with `MODEL_DOES_NOT_SUPPORT_IMAGES`. Two edges stay text-only: workflow `agent(prompt)` composes a text-only child prompt, and a child's own result content returns to the parent as text.
 - **Adjacent model messaging only** — `sendMessage()` requires an exact live sender; every sender may target a direct continuable child, while only a sender with a resident continuable Activation may target its direct parent. Browser prompts use a separate human Queue-or-Steer control path.
 - **A direct parent must remain live for child-to-parent delivery** — the service has no durable parent mailbox; a missing parent rejects the message instead of accepting work it cannot wake.
 - **Wake gap during cancellation convergence** — a follow-up accepted after an interrupt signal but before the driver becomes idle stays queued until another waking send.

@@ -4,17 +4,22 @@ import type { AttachmentStore, ImageMediaType } from '@deepseek-ai/dsh-attachmen
 import {
   ToolCallId,
   contentHasFile,
+  createAssistantMessage,
   createDeveloperMessage,
   createToolResultMessage,
   createUserMessage,
   fileHandleText,
+  imageInputSupport,
   projectFilesToText,
   offloadedImageText,
+  textOnlyImageText,
   projectImagesForTextModel,
   projectOffloadedImages,
   projectToolUpdates,
   requiredImageOffload,
+  resolveDelegationImages,
   resolveImageAttachmentAccess,
+  resolveImageAttachmentRefs,
   requestImageHandleText,
 } from '../src/index.ts'
 import type { ContentBlock, RequestMessage, RequestUserInput, ToolHistory, ToolSchema } from '../src/index.ts'
@@ -69,7 +74,7 @@ describe('projectOffloadedImages', () => {
       { role: 'user', content: [{ type: 'text', text: OMITTED }] },
     ])
     expect(projectImagesForTextModel([input])).toEqual([
-      { role: 'user', content: [{ type: 'text', text: '[image omitted because this model accepts text only; attachment sha256:aaaaaaaa]' }] },
+      { role: 'user', content: [{ type: 'text', text: '[image omitted because this model accepts text only; sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.]' }] },
     ])
     expect(input.content).toEqual([image(3, true)])
   })
@@ -266,6 +271,35 @@ describe('model-facing image access', () => {
   })
 })
 
+describe('textOnlyImageText', () => {
+  const ref = {
+    attachmentId: AttachmentId(`sha256:${'a'.repeat(64)}`),
+    mediaType: 'image/png' as const,
+    bytes: 3,
+    width: 1,
+    height: 1,
+  }
+
+  it('names the full attachment identity without a local path', () => {
+    expect(textOnlyImageText(ref)).toBe(
+      `[image omitted because this model accepts text only; ${ref.attachmentId}.]`,
+    )
+    expect(textOnlyImageText({ ...ref, name: 'photo.png' })).toBe(
+      `[image omitted because this model accepts text only; "photo.png" (${ref.attachmentId}).]`,
+    )
+  })
+
+  it('appends the same normalized access text the offload placeholder uses', () => {
+    const access = { readonlyPath: '/path/to.png' }
+    expect(textOnlyImageText(ref, access)).toBe(
+      `[image omitted because this model accepts text only; ${ref.attachmentId}.`
+      + ' Normalized copy (read-only; may be resized or re-encoded): "/path/to.png" (1x1px, image/png).'
+      + ' Source dimensions, format, and byte size may differ.'
+      + ' Copy to a writable path ending in .png before editing.]',
+    )
+  })
+})
+
 describe('projectImagesForTextModel', () => {
   it('returns image-free history unchanged', () => {
     const messages = [createUserMessage({ content: [{ type: 'text', text: 'plain' }], source })]
@@ -276,6 +310,13 @@ describe('projectImagesForTextModel', () => {
       isError: false,
     })]
     expect(projectImagesForTextModel(results)).toBe(results)
+    expect(projectImagesForTextModel(
+      [createUserMessage({ content: [image(3)], source })],
+      () => undefined,
+    )[0]?.content).toEqual([{
+      type: 'text',
+      text: `[image omitted because this model accepts text only; sha256:${'a'.repeat(64)}.]`,
+    }])
   })
 
   it('replaces direct images while retaining unaffected messages', () => {
@@ -299,18 +340,106 @@ describe('projectImagesForTextModel', () => {
       isError: false,
     })
 
-    const projected = projectImagesForTextModel([plain, visual, unchangedTool, visualTool])
+    const projected = projectImagesForTextModel([plain, visual, unchangedTool, visualTool], () => ({ readonlyPath: '/path/to.png' }))
     expect(projected[0]).toBe(plain)
     expect(projected[1]?.content).toEqual([
       { type: 'text', text: 'lead' },
-      { type: 'text', text: '[image omitted because this model accepts text only; attachment sha256:aaaaaaaa]' },
+      { type: 'text', text: '[image omitted because this model accepts text only; sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa. Normalized copy (read-only; may be resized or re-encoded): "/path/to.png" (1x1px, image/png). Source dimensions, format, and byte size may differ. Copy to a writable path ending in .png before editing.]' },
     ])
     expect(projected[2]).toBe(unchangedTool)
     expect(projected[3]?.content).toEqual([
       { type: 'text', text: 'before' },
-      { type: 'text', text: '[image omitted because this model accepts text only; attachment sha256:aaaaaaaa]' },
+      { type: 'text', text: '[image omitted because this model accepts text only; sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa. Normalized copy (read-only; may be resized or re-encoded): "/path/to.png" (1x1px, image/png). Source dimensions, format, and byte size may differ. Copy to a writable path ending in .png before editing.]' },
       { type: 'text', text: 'after' },
     ])
+  })
+})
+
+describe('imageInputSupport', () => {
+  it('reports supported when the declared modalities include image', () => {
+    expect(imageInputSupport({ inputModalities: ['text', 'image'] })).toBe('supported')
+  })
+
+  it('reports unsupported when a declared list omits image', () => {
+    expect(imageInputSupport({ inputModalities: ['text'] })).toBe('unsupported')
+  })
+
+  it('reports undeclared when no modality list was disclosed', () => {
+    expect(imageInputSupport({})).toBe('undeclared')
+  })
+})
+
+describe('delegation image resolution', () => {
+  const idA = `sha256:${'f'.repeat(64)}`
+  const idB = `sha256:${'0'.repeat(64)}`
+  const unknownA = `sha256:${'1'.repeat(64)}`
+  const unknownB = `sha256:${'2'.repeat(64)}`
+  const ref = (id: string, bytes: number) => ({
+    attachmentId: AttachmentId(id), mediaType: 'image/png' as const, bytes, width: 1, height: 1,
+  })
+  const imageBlock = (id: string, bytes: number): Extract<ContentBlock, { type: 'image' }> => ({
+    type: 'image', attachment: ref(id, bytes),
+  })
+
+  it('resolves user and tool-result occurrences in request order, first occurrence winning', () => {
+    const messages = [
+      createUserMessage({ content: [imageBlock(idA, 1)], source }),
+      createToolResultMessage({
+        callId: ToolCallId('shot'),
+        content: [imageBlock(idA, 2), imageBlock(idB, 3)],
+        isError: false,
+      }),
+      createUserMessage({ content: [imageBlock(idB, 4)], source }),
+    ]
+    expect(resolveImageAttachmentRefs(messages, [idB, idA])).toEqual({
+      refs: [ref(idB, 3), ref(idA, 1)],
+      missing: [],
+    })
+  })
+
+  it('never resolves an id only an assistant message carries', () => {
+    const messages = [
+      createAssistantMessage({ content: [imageBlock(idA, 1)], source: { provider: 'p', model: 'm' } }),
+    ]
+    expect(resolveImageAttachmentRefs(messages, [idA])).toEqual({ refs: [], missing: [idA] })
+  })
+
+  it('repeats a duplicated request id and reports every unknown id in request order', () => {
+    const messages = [createUserMessage({ content: [imageBlock(idA, 1)], source })]
+    expect(resolveImageAttachmentRefs(messages, [unknownA, idA, unknownB, idA])).toEqual({
+      refs: [ref(idA, 1), ref(idA, 1)],
+      missing: [unknownA, unknownB],
+    })
+  })
+
+  it('returns no blocks for an omitted or empty images argument', () => {
+    expect(resolveDelegationImages([], undefined)).toEqual([])
+    expect(resolveDelegationImages([], [])).toEqual([])
+  })
+
+  it('rejects empty entries, duplicates, and over-limit lists before resolution', () => {
+    const messages = [createUserMessage({ content: [imageBlock(idA, 1), imageBlock(idB, 2)], source })]
+    expect(() => resolveDelegationImages(messages, ['']))
+      .toThrow('images entries must be non-empty attachment id strings')
+    expect(() => resolveDelegationImages(messages, [idA, idA]))
+      .toThrow(`images lists attachment id ${JSON.stringify(idA)} more than once`)
+    expect(() => resolveDelegationImages(messages, [idA, idB], 1))
+      .toThrow('images lists 2 attachments, over the per-message image limit of 1')
+    expect(resolveDelegationImages(messages, [idA, idB], 2)).toHaveLength(2)
+  })
+
+  it('fails model-correctably on the first unknown id', () => {
+    const messages = [createUserMessage({ content: [imageBlock(idA, 1)], source })]
+    expect(() => resolveDelegationImages(messages, [idA, unknownA, unknownB]))
+      .toThrow(`${JSON.stringify(unknownA)} is not an image shown in this conversation`)
+  })
+
+  it('returns fresh blocks in cited order that never carry the history offload mark', () => {
+    const messages = [createUserMessage({
+      content: [{ type: 'text', text: 'see' }, { ...imageBlock(idA, 1), offloaded: true as const }],
+      source,
+    })]
+    expect(resolveDelegationImages(messages, [idA])).toEqual([{ type: 'image', attachment: ref(idA, 1) }])
   })
 })
 

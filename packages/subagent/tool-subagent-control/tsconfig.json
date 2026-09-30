@@ -18,6 +18,9 @@
       "path": "../../llm/llm"
     },
     {
+      "path": "../../attachment/attachment"
+    },
+    {
       "path": "../../core/session"
     },
     {

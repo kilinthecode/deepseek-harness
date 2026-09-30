@@ -17,6 +17,7 @@ import SubagentRuntime from '@deepseek-ai/dsh-subagent'
 import SessionProjectionRegistry from '@deepseek-ai/dsh-session-projection'
 import * as tool from '../src/index.ts'
 import { registerListSubagentModels } from '../src/list-models.ts'
+import type { DefaultChildRoute } from '../src/model-selection.ts'
 import { testToolSignal, text } from './harness.ts'
 
 class CatalogAdapter extends LlmAdapter {
@@ -63,12 +64,12 @@ async function setupListTool(routes = [
   { provider: 'alpha', model: 'plain' },
   { provider: 'beta', model: 'fast' },
   { provider: 'beta', model: 'plain' },
-]) {
+], defaultRoute?: DefaultChildRoute) {
   const ctx = new Context()
   await ctx.plugin(LlmRuntime)
   await ctx.plugin(SystemPrompt)
   await ctx.plugin(ToolRuntime)
-  registerListSubagentModels(ctx, { routes })
+  registerListSubagentModels(ctx, { routes, ...defaultRoute === undefined ? {} : { defaultRoute } })
   return ctx
 }
 
@@ -153,7 +154,32 @@ describe('list_subagent_models', () => {
     ctx.llm.registerAdapter(['alpha'], new CatalogAdapter())
     const result = await call(ctx, { provider: 'alpha' })
     expect(result.isError).toBe(false)
-    expect(text(result)).toBe('alpha/fast — Fast: Focused work.\nalpha/plain — Plain')
+    expect(text(result)).toBe(
+      'alpha/fast — Fast: Focused work.\nImage input: undeclared\n'
+      + 'alpha/plain — Plain\nImage input: undeclared',
+    )
+  })
+
+  it('marks the recorded default route in a provider\'s model listing and in exact-model inspection', async () => {
+    const ctx = await setupListTool(undefined, { provider: 'alpha', model: 'plain' })
+    ctx.llm.registerAdapter(['alpha'], new CatalogAdapter())
+    const result = await call(ctx, { provider: 'alpha' })
+    expect(result.isError).toBe(false)
+    expect(text(result)).toBe('alpha/fast — Fast: Focused work.\nalpha/plain (default) — Plain')
+
+    const inspected = await call(ctx, { provider: 'alpha', model: 'plain' })
+    expect(text(inspected)).toContain('alpha/plain (default) — Plain')
+    const other = await call(ctx, { provider: 'alpha', model: 'fast' })
+    expect(text(other)).toContain('alpha/fast — Fast')
+    // The model route is unmarked; "high (default)" still names the reasoning effort default.
+    expect(text(other)).not.toContain('alpha/fast (default)')
+  })
+
+  it('does not mark any route without a recorded default', async () => {
+    const ctx = await setupListTool()
+    ctx.llm.registerAdapter(['alpha'], new CatalogAdapter())
+    const result = await call(ctx, { provider: 'alpha' })
+    expect(text(result)).not.toContain('(default)')
   })
 
   it('intersects provider and model discovery with the Session allowlist', async () => {
@@ -161,7 +187,9 @@ describe('list_subagent_models', () => {
     ctx.llm.registerAdapter(['alpha', 'beta'], new CatalogAdapter())
 
     expect(text(await call(ctx, {}))).toBe('alpha — ALPHA API')
-    expect(text(await call(ctx, { provider: 'alpha' }))).toBe('alpha/fast — Fast: Focused work.')
+    expect(text(await call(ctx, { provider: 'alpha' }))).toBe(
+      'alpha/fast — Fast: Focused work.\nImage input: undeclared',
+    )
     expect(text(await call(ctx, { provider: 'alpha', model: 'unlisted' })))
       .toContain('alpha/unlisted — Fast')
 
@@ -197,8 +225,40 @@ describe('list_subagent_models', () => {
     const result = await call(ctx, { provider: 'alpha', model: 'fast' })
     expect(result.isError).toBe(false)
     expect(text(result)).toBe(
-      'alpha/fast — Fast: Focused work.\nReasoning efforts:\n'
+      'alpha/fast — Fast: Focused work.\nImage input: undeclared\nReasoning efforts:\n'
       + 'low — Low\nhigh (default) — High: Quality first.',
+    )
+  })
+
+  it('annotates advertised and exact models with declared image-input support', async () => {
+    class VisionCatalog extends CatalogAdapter {
+      override listModels(provider: string): Promise<readonly LlmModelInfo[]> {
+        return Promise.resolve([
+          { provider, id: 'fast', name: 'Fast', inputModalities: ['text', 'image'] },
+          { provider, id: 'plain', name: 'Plain', inputModalities: ['text'] },
+        ])
+      }
+
+      override resolveModel(provider: string, model: string): Promise<LlmResolvedModelInfo> {
+        return Promise.resolve({
+          provider,
+          id: model,
+          name: model === 'plain' ? 'Plain' : 'Fast',
+          inputModalities: ['text', 'image'],
+        })
+      }
+    }
+    const ctx = await setupListTool()
+    ctx.llm.registerAdapter(['alpha'], new VisionCatalog())
+    expect(text(await call(ctx, { provider: 'alpha' }))).toBe(
+      'alpha/fast — Fast\nImage input: supported\n'
+      + 'alpha/plain — Plain\nImage input: unsupported',
+    )
+    expect(text(await call(ctx, { provider: 'alpha', model: 'fast' }))).toBe(
+      'alpha/fast — Fast\nImage input: supported\nReasoning efforts:\n(no advertised reasoning efforts)',
+    )
+    expect(text(await call(ctx, { provider: 'alpha', model: 'plain' }))).toBe(
+      'alpha/plain — Plain\nImage input: supported\nReasoning efforts:\n(no advertised reasoning efforts)',
     )
   })
 
@@ -207,7 +267,9 @@ describe('list_subagent_models', () => {
     ctx.llm.registerAdapter(['alpha'], new CatalogAdapter())
     const result = await call(ctx, { provider: 'alpha', model: 'plain' })
     expect(result.isError).toBe(false)
-    expect(text(result)).toBe('alpha/plain — Plain\nReasoning efforts:\n(no advertised reasoning efforts)')
+    expect(text(result)).toBe(
+      'alpha/plain — Plain\nImage input: undeclared\nReasoning efforts:\n(no advertised reasoning efforts)',
+    )
   })
 
   it.each([

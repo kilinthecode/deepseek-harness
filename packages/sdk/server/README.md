@@ -105,7 +105,7 @@ Read these pages when the plugin contract is not enough. They move from the wire
 
 #### What the model sees
 
-For each accepted `session/prompt`, text and durable content references enter one user message verbatim. Inline `SdkEncodedImageBlock` values are validated and committed through the composition's attachment store first, so the session log retains content-addressed image references rather than base64 bytes. This package adds no system-prompt prose or tool schema; those come from the other plugins in the composition.
+For each accepted `session/prompt`, text and durable content references enter one user message verbatim. Inline `SdkEncodedImageBlock` values are validated and committed through the composition's attachment store first, so the session log retains content-addressed image references rather than base64 bytes. A prompt carrying any image block, encoded or already durable, is refused before any session or attachment side effect when the initialized route's resolved model declares input modalities that omit `image`. A route that discloses no modalities is admitted and its images reach the adapter unchanged; an adapter that cannot send them fails the turn with `UNSUPPORTED_CONTENT` after the Session and attachments exist. This package adds no system-prompt prose or tool schema; those come from the other plugins in the composition.
 
 #### Token effect
 

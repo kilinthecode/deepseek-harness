@@ -2,7 +2,8 @@
 
 import type { Context } from '@deepseek-ai/cordis'
 import type LlmRuntime from '@deepseek-ai/dsh-llm'
-import type { LlmProviderInfo } from '@deepseek-ai/dsh-llm'
+import { imageInputSupport } from '@deepseek-ai/dsh-llm'
+import type { LlmModelInfo, LlmProviderInfo } from '@deepseek-ai/dsh-llm'
 import { defineTool } from '@deepseek-ai/dsh-tools'
 import type { ModelSelectionPolicy } from './model-selection.ts'
 
@@ -27,9 +28,24 @@ function registeredProvider(
   throw new Error(`LLM provider "${providerId}" is not registered; available providers: ${available}`)
 }
 
-/** Render one advertised or resolved model. */
-function modelLine(provider: string, model: { id: string; name: string; description?: string }): string {
-  return `${provider}/${model.id} — ${model.name}${model.description === undefined ? '' : `: ${model.description}`}`
+/** Render one advertised or resolved model, marking the Session policy's default route. */
+function modelLine(
+  provider: string,
+  model: { id: string; name: string; description?: string },
+  isDefault: boolean,
+): string {
+  return `${provider}/${model.id}${isDefault ? ' (default)' : ''} — ${model.name}`
+    + (model.description === undefined ? '' : `: ${model.description}`)
+}
+
+/** Whether a route is the Session policy's recorded default child route. */
+function isDefaultRoute(policy: ModelSelectionPolicy, provider: string, model: string): boolean {
+  return policy.defaultRoute?.provider === provider && policy.defaultRoute.model === model
+}
+
+/** Render one model's declared image-input support. */
+function imageInputLine(info: Pick<LlmModelInfo, 'inputModalities'>): string {
+  return `Image input: ${imageInputSupport(info)}`
 }
 
 /** Read the requested provider, advertised models, or exact-model efforts. */
@@ -64,7 +80,7 @@ async function listSubagentModels(
       .filter(model => allowedRoutes.some(route => route.model === model.id))
     return models.length === 0
       ? `(no advertised models for ${provider.id})`
-      : models.map(model => modelLine(provider.id, model)).join('\n')
+      : models.map(model => `${modelLine(provider.id, model, isDefaultRoute(policy, provider.id, model.id))}\n${imageInputLine(model)}`).join('\n')
   }
   if (request.model.length === 0) throw new Error('`model` must be non-empty')
   if (!allowedRoutes.some(route => route.model === request.model)) {
@@ -75,7 +91,7 @@ async function listSubagentModels(
     `${effort.id}${model.reasoning?.defaultEffort === effort.id ? ' (default)' : ''} — ${effort.name}`
     + (effort.description === undefined ? '' : `: ${effort.description}`)
   )).join('\n') || '(no advertised reasoning efforts)'
-  return `${modelLine(provider.id, model)}\nReasoning efforts:\n${efforts}`
+  return `${modelLine(provider.id, model, isDefaultRoute(policy, provider.id, model.id))}\n${imageInputLine(model)}\nReasoning efforts:\n${efforts}`
 }
 
 /**
@@ -89,9 +105,9 @@ export function registerListSubagentModels(ctx: Context, policy: ModelSelectionP
     description:
       'Discover LLM routes for subagents without changing the current Agent. Call with no arguments to list '
       + 'registered providers, with `provider` to list its advertised models, or with `provider` and `model` '
-      + 'to inspect that exact model and its reasoning efforts. Catalog membership is advisory: an adapter may '
-      + 'accept an unlisted model id. Use the returned ids with a delegation tool\'s `provider`, `model`, and '
-      + '`reasoning_effort` fields.',
+      + 'to inspect that exact model and its reasoning efforts. Model entries include image-input support. '
+      + 'Catalog membership is advisory: an adapter may accept an unlisted model id. Use the returned ids with '
+      + 'a delegation tool\'s `provider`, `model`, and `reasoning_effort` fields.',
     parameters: {
       provider: {
         type: 'string',

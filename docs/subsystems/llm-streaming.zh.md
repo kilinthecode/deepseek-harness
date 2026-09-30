@@ -33,7 +33,7 @@ interface ContentBlockMap {
 
 各块接口（完整字段见源码）：`TextBlock`（`text`）、`ReasoningBlock`（thinking，区别于可见文本）、`ImageBlock`（一个持久的[图片附件](attachment.zh.md)）、`FileBlock`（一个持久的原样[文件附件](attachment.zh.md)，请求组装对每条路由都把它投影为 handle 文本）和 `ToolCallBlock`（`id: ToolCallId`、`name`、原始 JSON `arguments`）。工具结果是一等 `ToolResultMessage`，含有 `toolCallId`、结果 `content` 与可选的 `isError`；它不是内容块。`ContentBlock = ContentBlockMap[ContentBlockType]`。仅当适配器、UI、压缩（compaction）和持久回放路径均支持某种新模态时，才将其纳入可合并扩展的 map。 Developer 工具变更块按已解析路由的能力投影。
 
-图片访问方式属于请求序列化，不属于持久附件或确定性请求图片版本。`resolveImageAttachmentAccess()` 把附件提供方可选的宿主对象路径，与消费方为当前工具执行文件系统提供的映射组合起来。结果只适用于本次请求，不参与 `variantId`。
+图片访问方式属于请求序列化，不属于持久附件或确定性请求图片版本。`resolveImageAttachmentAccess()` 把附件提供方可选的宿主对象路径，与消费方为当前工具执行文件系统提供的映射组合起来。结果只适用于本次请求，不参与 `variantId`。纯文本路由会收到确定性的逐图片占位符，包含完整图片身份以及（在可解析时）其只读执行世界路径；它与基于限额的卸载占位文本共享这些内容，但原因子句不同，且没有重新附加的句子，因此模型仍可用文件工具读取这些字节或把它们委派出去。
 
 源码：[`packages/llm/llm/src/content.ts`](../../packages/llm/llm/src/content.ts)
 
@@ -504,6 +504,14 @@ interface LlmConfigurableProvider {
    * from outside.
    */
   declared?: boolean
+  /**
+   * The sign-in this route's adapter offers: the credential record a registered
+   * authorization flow writes, and whether that stored sign-in is the only way
+   * the route can authenticate when it names no credential reference — a
+   * provider serving no api-key auth has nothing else to fall back on. Absent
+   * when the adapter registers no flow for the route.
+   */
+  readonly authorization?: { readonly key: CredentialKey; readonly required: boolean }
   /** Configuration diagnostic for repair; unaffected models may remain serviceable. */
   error?: string
 }
@@ -638,6 +646,18 @@ interface GenerateOptions {
    * to separate cursors; adapters may map it to model-hidden transport metadata.
    */
   sessionId?: Branded<'SessionId'>
+  /**
+   * The session id whose provider-side cached prefix this request shares:
+   * the request's own session for a top-level session, or its delegation
+   * tree's root for a delegated child. It is transport metadata and never
+   * model-visible, so the session log does not record it — the
+   * `request/header` event carries only `config`, `adapterDefaults`, and
+   * `tools`. The loop recomputes it for each request from the live session
+   * registry. An adapter whose provider supports prompt-prefix cache routing
+   * may map it to that provider's cache-routing field, and an adapter
+   * without such a mechanism ignores it.
+   */
+  cacheKey?: Branded<'SessionId'>
   /**
    * Provider-neutral classification for an auxiliary model call. Adapters may
    * map the purpose to model-hidden transport metadata or purpose-specific

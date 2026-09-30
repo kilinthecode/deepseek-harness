@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { offloadedImageText, requestImageHandleText, textOnlyImageText } from '@deepseek-ai/dsh-llm'
+import { offloadedImageText, projectImagesForTextModel, requestImageHandleText, textOnlyImageText } from '@deepseek-ai/dsh-llm'
 import type { ImageBlock } from '@deepseek-ai/dsh-llm'
 import { AttachmentId } from '@deepseek-ai/dsh-attachment'
 import type { ImageAttachmentRef } from '@deepseek-ai/dsh-attachment'
@@ -43,6 +43,34 @@ describe('DeepSeek request-image pricing', () => {
     const options = resolveAdapterOptions({ models: [{ id: 'text-only' }] })
     const prices = deepSeekImageRequestPricing(options, 'text-only').priceImages([block(image)])
     expect(prices).toEqual([{ visualTokens: 0, text: textOnlyImageText(image) }])
+  })
+
+  it('prices a text-only model with identical substitution text when access resolves', () => {
+    const access = { readonlyPath: '/world/attachments/photo.png' }
+    const image = ref('photo', 1920, 1080)
+    const options = resolveAdapterOptions({ models: [{ id: 'text-only' }] })
+    const prices = deepSeekImageRequestPricing(options, 'text-only', () => access).priceImages([block(image)])
+    expect(prices).toEqual([{ visualTokens: 0, text: textOnlyImageText(image, access) }])
+    expect(prices[0]?.text).toContain('/world/attachments/photo.png')
+    const projected = projectImagesForTextModel(
+      [{ role: 'user', content: [block(image)] }],
+      () => access,
+    )
+    expect(prices[0]?.text).toBe(projected[0]?.content[0]?.type === 'text' ? projected[0].content[0].text : undefined)
+  })
+
+  it('prices a text-only model as identity-only text when access resolution throws', () => {
+    const image = ref('photo', 1920, 1080)
+    const options = resolveAdapterOptions({ models: [{ id: 'text-only' }] })
+    const prices = deepSeekImageRequestPricing(options, 'text-only', () => {
+      throw new Error('INVALID_ATTACHMENT_REF')
+    }).priceImages([block(image)])
+    const projected = projectImagesForTextModel(
+      [{ role: 'user', content: [block(image)] }],
+      () => undefined,
+    )
+    expect(prices).toEqual([{ visualTokens: 0, text: textOnlyImageText(image) }])
+    expect(prices[0]?.text).toBe(projected[0]?.content[0]?.type === 'text' ? projected[0].content[0].text : undefined)
   })
 
   it('prices a retained image by its projected request dimensions plus its handle text', () => {

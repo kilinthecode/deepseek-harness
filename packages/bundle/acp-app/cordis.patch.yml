@@ -3,8 +3,7 @@
 - id: system-prompt
   config:
     personaSuffix: Your working directory is {{cwd}}.
-    personaPrefix: >-
-      You are a coding agent powered by the {{model}} model.
+    personaPrefix: You are a coding agent.
 
 - id: session-title-llm
   disabled: true
@@ -18,7 +17,10 @@
       inject: [acpAppStartup]
       config:
         provider: deepseek-official
-        model: deepseek-v4-flash
+        model: deepseek-flash
 
 - id: hmr
+  disabled: true
+
+- id: memory-review
   disabled: true
