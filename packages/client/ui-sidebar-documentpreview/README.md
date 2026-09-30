@@ -141,7 +141,7 @@ No direct effect; what the user reads here never enters a model request.
 - **PDF raster allocation is bounded.** Each page bitmap is capped at 16,777,216 pixels; very large pages or high zoom on high-density displays can still render below device resolution.
 - **Byte-view scroll state is not restored.** PDF, HTML, and images can return to the top when their renderer remounts or reloads; fixed PDF and image zoom can overflow horizontally, and HTML iframe scrolling belongs to its opaque browsing context.
 - **Finite local HTML dependencies.** Only direct classic `.js` and stylesheet `.css` references are packed. Browser-resolved resources retain browser origin and network restrictions; no runtime file-read bridge is exposed to the iframe.
-- **Scroll writes are unthrottled.** Every scroll event records its offset in the store; the line blocks are memoized so the resulting re-render hands React the same elements back.
+- **Scroll offsets commit on unmount.** A scroll event keeps its offset in the body's own ref, so it neither writes the store nor re-renders the loaded lines; the offset reaches the store when the body unmounts, and a navigation landing is recorded where it happens.
 - **A failed PDF chunk load requires a page reload.** React caches a rejected lazy import for the page lifetime; ordinary PDF open or render failures remain retryable inside the loaded body.
 
 <a id="dev-note"></a>

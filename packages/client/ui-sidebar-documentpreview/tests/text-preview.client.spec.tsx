@@ -22,6 +22,11 @@ import { TextBody } from '../src/client/text/TextBody.tsx'
 import { PLAIN_BODY_ID } from '../src/client/text/index.ts'
 import { documentSlots, ABSOLUTE_PATH, ADDRESS, PATH, SESSION, TAB_ID, failure, harness, page, settle } from './fixtures.client.ts'
 
+/** The document Slot owner a test renderer receives, typed as the Slot declares it. */
+function documentOwner(owner: unknown): OwnerOf<'sidebar.right.tab.document'> {
+  return owner as OwnerOf<'sidebar.right.tab.document'>
+}
+
 const LINE_HEIGHT = 20
 
 const originals = {
@@ -88,7 +93,7 @@ function codeProps(h: ReturnType<typeof harness>, navigation: { params?: unknown
   return {
     ...props,
     useDocumentPreviews: selector => selector([definition]),
-    renderSlot: documentSlots((_key, owner) => <CodeBody {...props} {...owner as unknown as OwnerOf<'sidebar.right.tab.document'>} t={key => key} />),
+    renderSlot: documentSlots((_key, owner) => <CodeBody {...props} {...documentOwner(owner)} t={key => key} />),
   }
 }
 
@@ -457,19 +462,48 @@ describe('TextPreview — navigation and view', () => {
     await settle()
     const outer = body(view.container)
     fireEvent.scroll(outer, { target: { scrollTop: 120 } })
-    expect(h.instance.getSnapshot().byTab[TAB_ID]?.scrollTop).toBe(120)
+    // The offset is the body's own until it unmounts: the store hears it once, then.
+    expect(h.instance.getSnapshot().byTab[TAB_ID]?.scrollTop).toBe(0)
 
     view.rerender(<TextPreview {...code} />)
     const inner = scrollport(view.container)
     expect(inner).not.toBe(outer)
     expect(inner.scrollTop).toBe(120)
     fireEvent.scroll(inner, { target: { scrollTop: 240 } })
-    expect(h.instance.getSnapshot().byTab[TAB_ID]?.scrollTop).toBe(240)
 
     view.rerender(<TextPreview {...fallback} />)
     expect(outer.scrollTop).toBe(240)
     fireEvent.scroll(outer, { target: { scrollTop: 360 } })
+    view.unmount()
     expect(h.instance.getSnapshot().byTab[TAB_ID]?.scrollTop).toBe(360)
+  })
+
+  it('keeps every scroll event out of the store, so the document body is not rendered again', async () => {
+    const h = harness({ 1: page(1, ['a', 'b', 'c'], true) })
+    const props = h.props()
+    let renders = 0
+    const counted: TextPreviewProps = {
+      ...props,
+      renderSlot: documentSlots((_key, owner) => {
+        renders += 1
+        return <TextBody {...props} {...documentOwner(owner)} />
+      }),
+    }
+    const view = render(<TextPreview {...counted} />)
+    await settle()
+    const drawn = renders
+    expect(drawn).toBeGreaterThan(0)
+
+    for (let offset = 1; offset <= 20; offset += 1) {
+      fireEvent.scroll(body(view.container), { target: { scrollTop: offset } })
+    }
+    // Nothing the document body draws depends on the offset, so twenty scroll
+    // events hand the slot the same props and re-split no page.
+    expect(renders).toBe(drawn)
+    expect(h.instance.getSnapshot().byTab[TAB_ID]?.scrollTop).toBe(0)
+
+    view.unmount()
+    expect(h.instance.getSnapshot().byTab[TAB_ID]?.scrollTop).toBe(20)
   })
 
   it.each([
@@ -489,9 +523,9 @@ describe('TextPreview — navigation and view', () => {
       ...base,
       useDocumentPreviews: selector => selector(definitions),
       renderSlot: documentSlots((_key, owner, opts) => {
-        const documentOwner = owner as unknown as OwnerOf<'sidebar.right.tab.document'>
-        if (opts.entryKey === 'code') return <CodeBody {...base} {...documentOwner} t={key => key} />
-        if (opts.entryKey === PLAIN_BODY_ID) return <TextBody {...base} {...documentOwner} />
+        const slotOwner = documentOwner(owner)
+        if (opts.entryKey === 'code') return <CodeBody {...base} {...slotOwner} t={key => key} />
+        if (opts.entryKey === PLAIN_BODY_ID) return <TextBody {...base} {...slotOwner} />
         return <div data-test-no-lines />
       }),
     }
@@ -519,7 +553,9 @@ describe('TextPreview — navigation and view', () => {
     fireEvent.scroll(body(view.container), { target: { scrollTop: 300 } })
     expect(h.instance.getSnapshot().byTab[TAB_ID]?.scrollTop).toBe(LINE_HEIGHT)
     fireEvent.scroll(codeScrollport, { target: { scrollTop: 300 } })
-    expect(h.instance.getSnapshot().byTab[TAB_ID]?.scrollTop).toBe(300)
+    // The scrollport keeps its own offset; only the landing reached the store.
+    expect(codeScrollport.scrollTop).toBe(300)
+    expect(h.instance.getSnapshot().byTab[TAB_ID]?.scrollTop).toBe(LINE_HEIGHT)
 
     const block = view.container.querySelector('[data-code-preview] .md-code-block')!
     act(() => { PendingIntersectionObserver.instances[0]!.intersect(block) })

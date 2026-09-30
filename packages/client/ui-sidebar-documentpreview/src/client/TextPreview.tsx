@@ -88,7 +88,10 @@ export function TextPreview({
   }, [set, selected?.id])
   const bodyRef = useRef<HTMLDivElement | null>(null)
   const scrollportRef = useRef<HTMLElement | null>(null)
-  const storedScrollTopRef = useRef(0)
+  // The body's offset lives here while the body does: seeded once from the
+  // store, written back on unmount. Only a navigation landing reaches the store
+  // from this component, so scrolling costs no store write and no re-render.
+  const storedScrollTopRef = useRef(state?.scrollTop ?? 0)
   const [menuOpen, setMenuOpen] = useState(false)
   const absolutePath = meta.value?.absolutePath ?? current?.complete?.absolutePath
   const displayPath = absolutePath ?? file.path
@@ -101,7 +104,7 @@ export function TextPreview({
   const loaded = useMemo(() => loadedPages(pages ?? {}), [pages])
   const loadedThrough = lastLineLoaded(loaded)
   const hasContent = mode === 'renderer' ? current?.version !== undefined : loaded.length > 0 || current?.complete !== undefined
-  storedScrollTopRef.current = state?.scrollTop ?? 0
+  const seeded = state !== undefined
   const bindBody = useCallback((body: HTMLDivElement | null): void => {
     const previous = bodyRef.current
     bodyRef.current = body
@@ -128,8 +131,15 @@ export function TextPreview({
   // Scroll writes preserve both identities, so they never re-land.
   useEffect(() => {
     const body = scrollportRef.current
-    if (hasContent && body !== null && state !== undefined) body.scrollTop = state.scrollTop
+    if (hasContent && body !== null && seeded) body.scrollTop = storedScrollTopRef.current
   }, [hasContent, selected?.id])
+
+  // Scrolling only moves the ref; the store hears about it once, on unmount, so
+  // a scroll neither re-renders the loaded lines nor writes after the owner's
+  // abort has forgotten the bucket.
+  useEffect(() => () => {
+    if (seeded && !signal.aborted) actions.scrolled(tab.id, storedScrollTopRef.current)
+  }, [seeded, signal, tab.id, actions])
 
   // Answer a navigation once: a line the pages do not reach yet loads the next
   // page (again, until the pages cover it or the file ends); a line they hold
@@ -151,8 +161,10 @@ export function TextPreview({
     const landed = scrollToLine(body, line)
     if (!landed && line <= loadedThrough) return
     actions.navigated(tab.id, navigation.revision)
-    // Recorded here as well as by the scroll event, so the store holds the
-    // landing before any later navigation reads it.
+    // A landing is kept in the ref as well as written, so the store holds it
+    // before any later navigation reads it, and a later unmount cannot
+    // overwrite it with the offset the reader had before the jump.
+    storedScrollTopRef.current = body.scrollTop
     actions.scrolled(tab.id, body.scrollTop)
   }, [
     navigation.revision, line, loadedThrough, current?.eof, current?.loading, current?.failure, started,
@@ -335,7 +347,9 @@ export function TextPreview({
           /* v8 ignore next -- callback refs bind the scrollport during commit, before user input. */
           if (body === null) return
           if (event.target !== body) return
-          actions.scrolled(tab.id, body.scrollTop)
+          // The offset stays in the ref: writing it per event would rebuild this
+          // tab's bucket and re-render every loaded line.
+          storedScrollTopRef.current = body.scrollTop
           if (mode === 'text-pages' && current?.failure === undefined && body.clientHeight > 0
             && body.scrollTop + body.clientHeight >= body.scrollHeight - 1) loadNext()
         }}
