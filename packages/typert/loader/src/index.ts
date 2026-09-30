@@ -383,6 +383,19 @@ export async function apply(ctx: Context, config: Config): Promise<void> {
     return loading
   }
 
+  /** Names with at least one running, enabled Loader entry, from one walk of the live tree. */
+  const activeNames = (): Set<string> => {
+    const names = new Set<string>()
+    for (const entry of ctx.loader.entries()) {
+      if (entry.fiber !== undefined && !entry.disabled) names.add(entry.options.name)
+    }
+    return names
+  }
+
+  /**
+   * Live check for one entry name. The post-import recheck below uses it because
+   * the entry may unmount while its manifest is importing.
+   */
   const qualifies = (entryName: string): boolean => {
     if (configured.has(entryName)) return true
     for (const entry of ctx.loader.entries()) {
@@ -391,9 +404,12 @@ export async function apply(ctx: Context, config: Config): Promise<void> {
     return false
   }
 
-  /** Reconcile one entry name against the live loader entries; a mount returns its async task. */
-  const processOne = (entryName: string): Promise<void> | undefined => {
-    if (!qualifies(entryName)) {
+  /**
+   * Reconcile one entry name against the active names collected for this flush;
+   * a mount returns its async task.
+   */
+  const processOne = (entryName: string, running: ReadonlySet<string>): Promise<void> | undefined => {
+    if (!configured.has(entryName) && !running.has(entryName)) {
       const dispose = registered.get(entryName)
       if (dispose !== undefined) {
         registered.delete(entryName)
@@ -418,10 +434,11 @@ export async function apply(ctx: Context, config: Config): Promise<void> {
 
   const flush = (onError: (error: Error) => void): Promise<void>[] => {
     const tasks: Promise<void>[] = []
+    const running = activeNames()
     for (const entryName of [...dirty]) {
       dirty.delete(entryName)
       try {
-        const task = processOne(entryName)
+        const task = processOne(entryName, running)
         if (task !== undefined) tasks.push(task.catch((error: unknown) => { onError(toError(error)) }))
       } catch (error) {
         // Steady state: one broken package must not poison the others; the

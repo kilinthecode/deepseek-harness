@@ -102,6 +102,18 @@ function appendSummaryMeter(ctx: Context, session: Session, start: SessionSeqTyp
   })
 }
 
+/**
+ * The registered context-breakdown state of one Session.
+ * @param ctx - the harness context.
+ * @param session - the observed Session.
+ * @returns the current projection state.
+ */
+function breakdownState(ctx: Context, session: Session) {
+  const current = ctx.sessionProjections.stateOf(session, 'contextBreakdown')
+  if (current === undefined) throw new Error('registered context breakdown has no state')
+  return current
+}
+
 describe('contextBreakdown session projection', () => {
   it('serves zeros for an empty log', async () => {
     const { ctx, session } = await harness()
@@ -370,11 +382,7 @@ describe('contextBreakdown session projection', () => {
     const first = appendUser(session, 'the first of many messages')
     for (let index = 0; index < 24; index += 1) appendUser(session, `message number ${index} with some text`)
     const last = appendUser(session, 'the last message before compaction')
-    const state = () => {
-      const current = ctx.sessionProjections.stateOf(session, 'contextBreakdown')
-      if (current === undefined) throw new Error('registered context breakdown has no state')
-      return current
-    }
+    const state = () => breakdownState(ctx, session)
     expect(state().nodes).toHaveLength(26)
     expect(Object.keys(state().nodes[0]!).sort()).toEqual(['heuristicTokens', 'seq', 'system'])
     const shadowed = [...session.surface.nodes]
@@ -383,6 +391,74 @@ describe('contextBreakdown session projection', () => {
     }), { surfaceOp: { op: 'replace', startSeq: first, endSeq: last }, sourceEventSeqs: shadowed })
     expect(state().nodes).toHaveLength(1)
     expect(projected(ctx, session).messageTokens).toBe(10)
+  })
+
+  it('keeps the system figure equal to a full rescan across appends and replaces', async () => {
+    const { ctx, session } = await harness()
+    const state = () => breakdownState(ctx, session)
+    const agree = (): void => {
+      expect(projected(ctx, session).systemTokens)
+        .toBe(state().nodes.findLast(node => node.system && node.heuristicTokens > 0)?.heuristicTokens ?? 0)
+    }
+    const head = appendSystem(session, 'head prompt')
+    agree()
+    const first = appendUser(session, 'first question')
+    agree()
+    const second = appendUser(session, 'second question')
+    agree()
+    const middle = appendSystem(session, 'middle prompt')
+    agree()
+    const rewrittenHead = replaceSystem(session, head, 'head rewritten')
+    agree()
+    // A replace that shadows the surviving system node must rescan, never carry.
+    replaceSystem(session, middle, '')
+    agree()
+    appendSummaryMeter(ctx, session, first, second)
+    session.append('user/message', createUserMessage({
+      content: [{ type: 'text', text: 'summary' }], source: { kind: 'test' },
+    }), {
+      surfaceOp: { op: 'replace', startSeq: first, endSeq: second },
+      sourceEventSeqs: [first, second],
+    })
+    agree()
+    replaceSystem(session, rewrittenHead, '')
+    agree()
+    expect(projected(ctx, session).systemTokens).toBe(0)
+  })
+
+  it('carries the system figure across a non-system append without rescanning retained nodes', async () => {
+    const { session } = await harness()
+    const definition = contextBreakdownProjectionDefinition
+    const user = (text: string) => session.append('user/message', createUserMessage({
+      content: [{ type: 'text', text }],
+      source: { kind: 'user' },
+    }), { surfaceOp: 'append' })
+    const committed = [
+      session.append('system/message', {
+        turn: 1, step: 1, message: createSystemMessage('head prompt'),
+      }, { surfaceOp: 'append' }),
+      user('one'),
+      user('two'),
+      user('three'),
+    ]
+    const state = committed.reduce(definition.apply, definition.init())
+    let systemReads = 0
+    const counted = {
+      ...state,
+      nodes: state.nodes.map(node => ({
+        seq: node.seq,
+        heuristicTokens: node.heuristicTokens,
+        get system() {
+          systemReads += 1
+          return node.system
+        },
+      })),
+    }
+
+    const next = definition.apply(counted, user('four'))
+
+    expect(systemReads).toBe(0)
+    expect(next.breakdown.systemTokens).toBe(state.breakdown.systemTokens)
   })
 
   it('retains wire identity when a same-price rewrite changes only checkpoint positions', async () => {

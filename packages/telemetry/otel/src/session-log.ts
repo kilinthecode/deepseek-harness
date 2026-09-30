@@ -1,13 +1,54 @@
 /** Session-log records in an independent byte-bounded OTLP queue. */
 import type { SessionEvent, SessionId } from '@deepseek-ai/dsh-session'
 import type { Attributes } from '@opentelemetry/api'
-import { SeverityNumber } from '@opentelemetry/api-logs'
-import { ExportResultCode } from '@opentelemetry/core'
+import type { Logger, SeverityNumber } from '@opentelemetry/api-logs'
 import type { OTLPExporterNodeConfigBase } from '@opentelemetry/otlp-exporter-base'
-import { JsonLogsSerializer } from '@opentelemetry/otlp-transformer'
-import { resourceFromAttributes } from '@opentelemetry/resources'
-import { LoggerProvider, type BatchLogRecordProcessorOptions, type LogRecordExporter, type ReadableLogRecord, type LogRecordProcessor } from '@opentelemetry/sdk-logs'
-import { createLogExporter } from './transport.ts'
+import type {
+  BatchLogRecordProcessorOptions, LogRecordExporter, LoggerProvider, LogRecordProcessor, ReadableLogRecord,
+} from '@opentelemetry/sdk-logs'
+import { SdkLoad } from './sdk-load.ts'
+
+/**
+ * SDK entry points the Session pipeline needs. Whole module namespaces are kept
+ * so every value is read at call time and a test can replace one export.
+ */
+interface SessionLogSdk {
+  apiLogs: typeof import('@opentelemetry/api-logs')
+  core: typeof import('@opentelemetry/core')
+  transformer: typeof import('@opentelemetry/otlp-transformer')
+  resources: typeof import('@opentelemetry/resources')
+  sdkLogs: typeof import('@opentelemetry/sdk-logs')
+  transport: typeof import('./transport.ts')
+}
+
+let loading: Promise<SessionLogSdk> | undefined
+let loaded: SessionLogSdk | undefined
+
+/**
+ * Import the OTLP SDK graph once, at the first report instead of at mount.
+ * Mounting validates options and creates no SDK object; a failed load is not memoized.
+ * @returns the shared SDK entry points.
+ */
+function loadSdk(): Promise<SessionLogSdk> {
+  if (loaded !== undefined) return Promise.resolve(loaded)
+  const pending = loading
+  if (pending !== undefined) return pending
+  const started = Promise.all([
+    import('@opentelemetry/api-logs'),
+    import('@opentelemetry/core'),
+    import('@opentelemetry/otlp-transformer'),
+    import('@opentelemetry/resources'),
+    import('@opentelemetry/sdk-logs'),
+    import('./transport.ts'),
+  ]).then(([apiLogs, core, transformer, resources, sdkLogs, transport]) => {
+    const sdk: SessionLogSdk = { apiLogs, core, transformer, resources, sdkLogs, transport }
+    loaded = sdk
+    return sdk
+  })
+  loading = started
+  void started.catch(() => { loading = undefined })
+  return started
+}
 
 /** Collector request ceiling in uncompressed UTF-8 bytes, including the OTLP envelope. */
 export const SESSION_LOG_MAX_REQUEST_BYTES = 4_000_000
@@ -75,6 +116,7 @@ class SessionLogProcessor implements LogRecordProcessor {
 
   constructor(
     private readonly exporter: LogRecordExporter,
+    private readonly sdk: Pick<SessionLogSdk, 'core' | 'transformer'>,
     private readonly limit: number,
     private readonly config: Required<Pick<BatchLogRecordProcessorOptions, 'maxQueueSize' | 'maxExportBatchSize' | 'scheduledDelayMillis' | 'exportTimeoutMillis'>>,
     private readonly warn: SessionLogOptions['onFailure'],
@@ -88,7 +130,7 @@ class SessionLogProcessor implements LogRecordProcessor {
     }
     let bytes: number
     try {
-      const serialized = JsonLogsSerializer.serializeRequest([record])
+      const serialized = this.sdk.transformer.JsonLogsSerializer.serializeRequest([record])
       if (serialized === undefined) throw new Error('Session log serialization produced no request')
       bytes = serialized.byteLength
     } catch (error) {
@@ -153,7 +195,7 @@ class SessionLogProcessor implements LogRecordProcessor {
       }
       try {
         this.exporter.export(records, (result) => {
-          finish(result.code === ExportResultCode.SUCCESS
+          finish(result.code === this.sdk.core.ExportResultCode.SUCCESS
             ? undefined : result.error ?? new Error('Session log HTTP export failed'))
         })
       } catch (error) {
@@ -176,49 +218,125 @@ class SessionLogProcessor implements LogRecordProcessor {
   }
 }
 
-/** Owns feedback-authorized Session logs; no product-event provider or queue is mounted. */
+/**
+ * Owns feedback-authorized Session logs; no product-event provider or queue is mounted.
+ * The constructor validates limits and creates no SDK state: the OTLP pipeline is
+ * imported and built on the first report, or by a shutdown that follows one.
+ */
 export class SessionLogReporter {
-  private readonly provider: LoggerProvider
-  private readonly processor: SessionLogProcessor
-  private readonly logger: ReturnType<LoggerProvider['getLogger']>
+  private readonly limit: number
+  private provider: LoggerProvider | undefined
+  private processor: SessionLogProcessor | undefined
+  private logger: Logger | undefined
+  /** This reporter's SDK import, started by the first report and awaited by shutdown. */
+  private readonly sdkLoad: SdkLoad<SessionLogSdk>
+  /** Records reported before the pipeline existed; delivered in report order. */
+  private readonly pending: SessionLogRecord[] = []
+  private stopped = false
+  private readonly options: SessionLogOptions
 
   /** @param options - explicit transport, resource identity, queue limits, and diagnostics. */
   constructor(options: SessionLogOptions) {
-    const limit = resolveSessionLogLimits(options)
-    this.processor = new SessionLogProcessor(createLogExporter(options.exporter), limit, {
-      maxQueueSize: options.processor?.maxQueueSize ?? 2048,
-      maxExportBatchSize: options.processor?.maxExportBatchSize ?? 512,
-      scheduledDelayMillis: options.processor?.scheduledDelayMillis ?? 1000,
-      exportTimeoutMillis: options.processor?.exportTimeoutMillis ?? 30000,
-    }, options.onFailure)
-    this.provider = new LoggerProvider({
-      logRecordLimits: { attributeValueLengthLimit: Infinity, attributeCountLimit: Infinity },
-      resource: resourceFromAttributes(options.resourceAttributes),
-      processors: [this.processor],
-    })
-    this.logger = this.provider.getLogger(options.scope.name, options.scope.version)
+    this.options = options
+    this.sdkLoad = new SdkLoad(loadSdk, (error) => { options.onFailure('Session log SDK failed to load', error) })
+    this.limit = resolveSessionLogLimits(options)
   }
 
   /**
-   * Enqueue one complete event without acknowledging network delivery.
-   * @param record - event with redacted data and its original Session id.
+   * Build the SDK pipeline once and return the logger that owns its queue.
+   * @param sdk - loaded SDK entry points.
+   * @returns the channel's logger.
    */
-  reportSessionLog(record: SessionLogRecord): void {
-    const severityNumber = record.severityNumber ?? SeverityNumber.INFO
-    this.logger.emit({
+  private open(sdk: SessionLogSdk): Logger {
+    const connected = this.logger
+    if (connected !== undefined) return connected
+    const processor = new SessionLogProcessor(sdk.transport.createLogExporter(this.options.exporter), sdk, this.limit, {
+      maxQueueSize: this.options.processor?.maxQueueSize ?? 2048,
+      maxExportBatchSize: this.options.processor?.maxExportBatchSize ?? 512,
+      scheduledDelayMillis: this.options.processor?.scheduledDelayMillis ?? 1000,
+      exportTimeoutMillis: this.options.processor?.exportTimeoutMillis ?? 30000,
+    }, this.options.onFailure)
+    const provider = new sdk.sdkLogs.LoggerProvider({
+      logRecordLimits: { attributeValueLengthLimit: Infinity, attributeCountLimit: Infinity },
+      resource: sdk.resources.resourceFromAttributes(this.options.resourceAttributes),
+      processors: [processor],
+    })
+    const logger = provider.getLogger(this.options.scope.name, this.options.scope.version)
+    this.processor = processor
+    this.provider = provider
+    this.logger = logger
+    return logger
+  }
+
+  /** Emit one record through a connected logger, keeping the SDK record shape. */
+  private write(logger: Logger, sdk: SessionLogSdk, record: SessionLogRecord): void {
+    const severityNumber = record.severityNumber ?? sdk.apiLogs.SeverityNumber.INFO
+    logger.emit({
       eventName: 'session-log', body: 'session-log',
       timestamp: record.event.time, observedTimestamp: record.event.time,
-      severityNumber, severityText: SeverityNumber[severityNumber],
+      severityNumber, severityText: sdk.apiLogs.SeverityNumber[severityNumber],
       attributes: { ...record.attributes, sessionId: record.sessionId, content: JSON.stringify(record.event) },
     })
   }
 
-  /** Stop queued requests after the owning backend's shutdown deadline; an active transport may still settle. */
-  stopPending(): void { this.processor.stopPending() }
+  /** Deliver queued records and then the current one; a stopped channel builds nothing and drops them all. */
+  private flush(sdk: SessionLogSdk, record?: SessionLogRecord): void {
+    if (this.stopped) {
+      this.pending.length = 0
+      return
+    }
+    const logger = this.open(sdk)
+    const queued = this.pending.splice(0)
+    if (record !== undefined) queued.push(record)
+    for (const item of queued) this.write(logger, sdk, item)
+  }
 
   /**
-   * Drain queued requests and release the SDK transport.
+   * Import the SDK graph at the first report. A failed load is reported through
+   * `onFailure` and leaves the queued records for the next report's retry.
+   */
+  private startLoading(): void {
+    if (this.logger !== undefined) return
+    this.sdkLoad.start((sdk) => { this.flush(sdk) })
+  }
+
+  /**
+   * Enqueue one complete event without acknowledging network delivery. The first
+   * report imports the OTLP SDK graph; records reported while it loads are delivered
+   * in report order. Once loaded, this call stays synchronous.
+   * @param record - event with redacted data and its original Session id.
+   */
+  reportSessionLog(record: SessionLogRecord): void {
+    if (this.stopped) return
+    const sdk = loaded
+    // While this channel's load is outstanding, a report joins the queue behind the
+    // earlier ones, even after the shared graph finished loading.
+    if (sdk === undefined || this.sdkLoad.pending) {
+      if (this.pending.length >= (this.options.processor?.maxQueueSize ?? 2048)) {
+        this.options.onFailure('Session log queue is full; record rejected')
+        return
+      }
+      this.pending.push(record)
+      this.startLoading()
+      return
+    }
+    this.flush(sdk, record)
+  }
+
+  /** Stop queued requests after the owning backend's shutdown deadline; an active transport may still settle. */
+  stopPending(): void {
+    this.stopped = true
+    this.pending.length = 0
+    this.processor?.stopPending()
+  }
+
+  /**
+   * Drain queued requests and release the SDK transport. A load started by an
+   * earlier report is awaited first; a channel that never reported imports and
+   * shuts down no SDK state.
    * @returns completion after queued requests settle and the SDK transport shuts down.
    */
-  shutdown(): Promise<void> { return this.provider.shutdown() }
+  shutdown(): Promise<void> {
+    return this.sdkLoad.settled().then(() => this.provider?.shutdown())
+  }
 }

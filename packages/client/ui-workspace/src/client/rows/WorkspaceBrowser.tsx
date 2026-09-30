@@ -33,8 +33,8 @@ import type { PropsRenderSlots } from '@deepseek-ai/dsh-client-ui-slots'
 import type { WorkspaceBrowserProps } from '../contract/slots.ts'
 import type { ArchivedFilter, GroupNode, SessionNode, SessionOrderBy, SessionRowState } from '../tree.ts'
 import {
-  deriveFlat, deriveGroups, deriveSearchResults, orderByRecency, owningGroupKey, owningParentFolder,
-  pinCurrentBlank, reconcileManualOrder, sessionMemberIds, UNGROUPED_KEY,
+  deriveFlat, deriveGroups, deriveSearchResults, equalTreeList, orderByRecency, owningGroupKey,
+  owningParentFolder, pinCurrentBlank, reconcileManualOrder, sessionMemberIds, UNGROUPED_KEY,
 } from '../tree.ts'
 import { ProjectRowItem, SearchResultItem, SessionNodeItem } from './Rows.tsx'
 import { AnimatedRows } from './AnimatedRows.tsx'
@@ -444,7 +444,7 @@ function SessionTree({
     const hoverWorkspace = workspaceId === undefined || !compatibleDrag
       ? undefined
       : (half: 'before' | 'after') => {
-        setWorkspaceDrag(active => active === null
+        setWorkspaceDrag(active => active === null || (active.over?.id === workspaceId && active.over.half === half)
           ? active
           : { ...active, over: { id: workspaceId, half } })
       }
@@ -546,9 +546,16 @@ function SessionTree({
             marker: sameGroupDrag && drag.over?.id === node.id ? drag.over.half : null,
             hover: (half: 'before' | 'after') => {
             /* v8 ignore next -- narrowing guard: Rows gates hover on `active`, which is false while the drag state is null. */
-              setDrag(d => (d === null ? d : {
-                ...d, over: { id: node.id, half: normalizeHalf(half) },
-              }))
+              setDrag((d) => {
+                if (d === null) return d
+                const normalized = normalizeHalf(half)
+                // The pointer resting on the same half repeats dragover: keep
+                // the state object so no row re-renders for a marker that
+                // already sits there.
+                return d.over?.id === node.id && d.over.half === normalized
+                  ? d
+                  : { ...d, over: { id: node.id, half: normalized } }
+              })
             },
             drop: (half: 'before' | 'after') => {
             /* v8 ignore next -- narrowing guard: Rows gates drop on `active`, which is false while the drag state is null. */
@@ -705,8 +712,12 @@ function FlatList({
                 active,
                 marker: active && drag.over?.id === node.id ? drag.over.half : null,
                 hover: (half) => {
-                  setDrag(current => current === null ? current : {
-                    ...current, over: { id: node.id, half: normalizeHalf(half) },
+                  setDrag((current) => {
+                    if (current === null) return current
+                    const normalized = normalizeHalf(half)
+                    return current.over?.id === node.id && current.over.half === normalized
+                      ? current
+                      : { ...current, over: { id: node.id, half: normalized } }
                   })
                 },
                 drop: (half) => {
@@ -761,7 +772,10 @@ function SearchResults({
   resultLimit: number
 }) {
   const panelActive = usePanelInfo(info => info.activePanelId !== null)
-  const list = useSessions(s => s)
+  // The result rows read a subset of the tree's Session-list fields, so the
+  // tree's equality covers them too: a frame that changed only another
+  // session's values must not re-derive the results or re-render their rows.
+  const list = useSessions(s => s, equalTreeList)
   const statuses = useSessionStatus(s => s)
   const currentRemote = remote.query === query
     ? remote
@@ -871,7 +885,9 @@ export function WorkspaceBrowser({
   const addShortcut = shortcuts.find(row => row.id === 'workspace.add')
   const shortcutState = useWorkspaceShortcuts(state => state)
   // Ordering remains live while the rail or search replaces the list body.
-  const list = useSessions(state => state)
+  // The tree reads a fixed field set (see equalTreeList): a frame that changed
+  // only another session's values must not re-derive or re-render any row.
+  const list = useSessions(state => state, equalTreeList)
   const storedWorkspaces = useWorkspaces(state => state.items)
   // The resolved name, not `t`, is the memo dependency: the bound seat keeps
   // its identity across a language switch.

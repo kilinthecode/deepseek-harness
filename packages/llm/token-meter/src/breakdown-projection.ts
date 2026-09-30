@@ -67,7 +67,13 @@ export const contextBreakdownProjectionDefinition = {
       ...plan,
       node: { seq: event.seq, heuristicTokens: plan.tokens, system: event.type === 'system/message' },
     })
-    const systemTokens = nodes.findLast(node => node.system && node.heuristicTokens > 0)?.heuristicTokens ?? 0
+    // An appended non-system node cannot change which system node survives, so
+    // the last nonempty system is re-derived only when a `system/message`
+    // append or a replacement may have shadowed the previous one. Every other
+    // append carries the figure forward in O(1).
+    const systemTokens = (event.type === 'system/message' || event.surfaceOp !== 'append')
+      ? nodes.findLast(node => node.system && node.heuristicTokens > 0)?.heuristicTokens ?? 0
+      : state.breakdown.systemTokens
     const messageTokens = state.breakdown.systemTokens + state.breakdown.messageTokens + plan.deltaTokens - systemTokens
     const breakdown = systemTokens === state.breakdown.systemTokens && messageTokens === state.breakdown.messageTokens
       ? state.breakdown

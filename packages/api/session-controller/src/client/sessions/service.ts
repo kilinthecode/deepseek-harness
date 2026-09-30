@@ -607,7 +607,8 @@ export class ClientSessions implements ISessions {
 
   /** Project the manager's list snapshot into the store (title derivation is display-only). */
   private projectList(): void {
-    const previousById = this.list.getSnapshot().byId
+    const previousState = this.list.getSnapshot()
+    const previousById = previousState.byId
     const {
       items, phase, projectionsBySession,
     } = this.manager.getListSnapshot()
@@ -676,6 +677,19 @@ export class ClientSessions implements ISessions {
         ...(title === undefined ? {} : { title, displayTitle: title }),
       }
     }
+    // Row identity reuse: a projection frame changes one session's values, so
+    // every other row keeps its published object — consumers select per row
+    // (React memos, `retainedBy` publication, ordered-membership memos).
+    for (const [id, row] of Object.entries(byId)) {
+      byId[id as SessionId] = reuseRow(previousById[id as SessionId], row)
+    }
+    // A publication that changed no id, row, phase, or projection snapshot is
+    // a no-op: the store keeps its state identity, so subscribers (sidebar
+    // tree, session status, task detail) do not recompute.
+    if (phase === previousState.phase
+      && projectionsBySession === previousState.projectionsBySession
+      && sameIds(previousState.ids, ids)
+      && sameRows(previousState.byId, byId)) return
     this.list.set({ ids, byId, phase, projectionsBySession })
   }
 
@@ -707,4 +721,54 @@ export class ClientSessions implements ISessions {
   ): Promise<void> {
     await Promise.allSettled([sessionDisposal, ...disposeFiber ? [record.fiber.dispose()] : []])
   }
+}
+
+/**
+ * Keep one session's published row while every projected field matches, so a
+ * publication that changed no field of this row leaves consumers keyed on row
+ * identity (React memos, retention publications) untouched.
+ * @param previous - row from the published snapshot, when the id was present.
+ * @param next - freshly projected row.
+ * @returns `previous` when every field matches, otherwise `next`.
+ */
+function reuseRow(previous: SessionSummary | undefined, next: SessionSummary): SessionSummary {
+  if (previous === undefined) return next
+  return previous.id === next.id
+    && previous.title === next.title
+    && previous.displayTitle === next.displayTitle
+    && previous.running === next.running
+    && previous.retainedBy === next.retainedBy
+    && previous.blank === next.blank
+    && previous.updatedAt === next.updatedAt
+    && previous.parentId === next.parentId
+    && previous.cwd === next.cwd
+    && previous.origin === next.origin
+    && previous.projectionValues === next.projectionValues
+    ? previous
+    : next
+}
+
+/**
+ * Whether two id sequences are equal in length, order, and membership.
+ * @param left - published order.
+ * @param right - projected order.
+ * @returns whether the sequences are identical.
+ */
+function sameIds(left: readonly SessionId[], right: readonly SessionId[]): boolean {
+  return left.length === right.length && left.every((id, index) => id === right[index])
+}
+
+/**
+ * Whether two row maps bind exactly the same ids to the same row objects.
+ * @param left - published rows.
+ * @param right - projected rows.
+ * @returns whether the maps are identical.
+ */
+function sameRows(
+  left: Record<SessionId, SessionSummary>,
+  right: Record<SessionId, SessionSummary>,
+): boolean {
+  const ids = Object.keys(left)
+  return ids.length === Object.keys(right).length
+    && ids.every(id => left[id as SessionId] === right[id as SessionId])
 }

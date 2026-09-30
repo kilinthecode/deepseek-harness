@@ -1104,6 +1104,46 @@ describe('tab drags', () => {
       Reflect.deleteProperty(HTMLElement.prototype, 'setPointerCapture')
     }
   })
+
+  it('keeps the tab bodies still while a drag preview stays inside one drop target', () => {
+    const controller = seededController()
+    controller.setExpanded(true)
+    controller.splitPane()
+    const [first, second] = dockPaneIds(controller.getSnapshot().state)
+    if (first === undefined || second === undefined) throw new Error('expected two docked panes')
+    const fileTabId = controller.openContent({ contentId: 'a.txt', title: 'a.txt', kind: 'file', paneId: first })
+    layOut([first, second], 520)
+    const bodies = vi.fn((tab: { contentId: string }) => <p data-testid="body">{tab.contentId}</p>)
+    render(
+      <DockSurface
+        state={controller.getSnapshot().state}
+        canSplit
+        intents={spyIntents()}
+        labels={TEST_LABELS}
+        renderTab={bodies}
+      />,
+    )
+    const chip = document.querySelector<HTMLElement>(`[data-dockkit-tab="${fileTabId}"]`)
+    if (chip === null) throw new Error('expected the dragged chip')
+    const drawn = bodies.mock.calls.length
+    expect(drawn).toBeGreaterThan(0)
+    drag(chip, FILE_CHIP, [520 + 260, 300], false)
+    expect(document.querySelector(`[data-dockkit-pane="${second}"] [data-dockkit-dock-zone]`)).not.toBeNull()
+    // The drag's first frame is a new preview — the zone hint and the caret
+    // appear — and the preview, the caret and the hints live in the same tree as
+    // the bodies, so that one commit redraws them. The baseline the frames below
+    // must hold is the count that commit left, not the count before the press.
+    const moved = bodies.mock.calls.length
+    expect(moved).toBeGreaterThan(drawn)
+
+    for (let step = 1; step <= 10; step += 1) {
+      fireEvent.pointerMove(window, { pointerId: 7, clientX: 520 + 260 + step, clientY: 300 })
+    }
+    // The pointer stayed inside one drop target, so the preview never changed
+    // again and no tab body was rendered again.
+    expect(bodies).toHaveBeenCalledTimes(moved)
+    fireEvent.pointerUp(window, { pointerId: 7, clientX: 520 + 260, clientY: 300 })
+  })
 })
 
 describe('horizontal workbench drops', () => {

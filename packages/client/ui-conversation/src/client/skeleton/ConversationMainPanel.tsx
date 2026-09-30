@@ -1,5 +1,5 @@
 import type { ConversationSlotProps } from '../contract/slots.ts'
-import { conversationPhase } from '../contract/snapshot.ts'
+import { conversationPhase, sameConversationActivity, sameShellSession } from '../contract/snapshot.ts'
 import { ConversationWidthControls } from './ConversationWidthControls.tsx'
 import css from './ConversationRoot.module.css'
 
@@ -12,8 +12,11 @@ const CONTENT_SLOTS = { widthControls: ConversationWidthControls }
  */
 export function ConversationMainPanel(props: ConversationSlotProps) {
   const { sessionId, useSession, useSessions, useConversation, renderSlot, renderFactorySlot } = props
-  const session = useSession(s => s)
-  const conversation = useConversation(s => s)
+  // This panel reads the phase fields plus `openState` and `subagent`; the
+  // shared session equality compares exactly those, so paging and error
+  // churn on the same snapshot object shape re-renders nothing here.
+  const session = useSession(s => s, sameShellSession)
+  const conversation = useConversation(s => s, sameConversationActivity)
   const shellPhase = session === undefined || conversation === undefined
     ? 'blank'
     : conversationPhase(session, conversation)

@@ -6,7 +6,7 @@ import type { ImageAttachmentLimits } from '@deepseek-ai/dsh-attachment'
 import type { Session, SessionEvent, SessionHeader, SessionId } from '@deepseek-ai/dsh-session'
 import type { ProjectionSnapshot } from '@deepseek-ai/dsh-session-projection'
 import type {} from '@deepseek-ai/dsh-session-projection-cache'
-import { SessionQueryError, type SessionSearchCursor } from '@deepseek-ai/dsh-session-query'
+import { SessionQueryError, sessionQuerySearchDisabled, type SessionSearchCursor } from '@deepseek-ai/dsh-session-query'
 import { RemoteError } from '@deepseek-ai/dsh-typert-protocol'
 import { z } from 'zod'
 import {
@@ -176,12 +176,20 @@ export class ApiSessionList {
       )
     }
     try {
-      const visible = await provider.listSessions(signal)
-      signal.throwIfAborted()
-      const visibleIds = new Set(visible
-        .filter(record => record.header.cwd !== undefined)
-        .map(record => record.header.id))
-      if (visibleIds.size === 0) return { items: [], hasMore: false }
+      // A provider that refuses search rejects its first search call without
+      // observing any source, so the visibility listing whose result that
+      // rejection would discard is skipped; the rejection itself still travels
+      // through the error mapping below.
+      const searchDisabled = provider[sessionQuerySearchDisabled]()
+      let visibleIds = new Set<SessionId>()
+      if (!searchDisabled) {
+        const visible = await provider.listSessions(signal)
+        signal.throwIfAborted()
+        visibleIds = new Set(visible
+          .filter(record => record.header.cwd !== undefined)
+          .map(record => record.header.id))
+        if (visibleIds.size === 0) return { items: [], hasMore: false }
+      }
       const authorized: SessionSearchItem[] = []
       const acceptedIds = new Set<SessionId>()
       const seenCursors = new Set<SessionSearchCursor>()

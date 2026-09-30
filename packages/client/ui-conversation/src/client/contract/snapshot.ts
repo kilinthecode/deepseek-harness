@@ -32,3 +32,67 @@ export function conversationPhase(
     || session.running
   return active ? 'active' : session.promptAttempted ? 'engaging' : 'blank'
 }
+
+/**
+ * Equality for Conversation subscriptions whose only read is the shell phase.
+ * `conversationPhase` consults whether any target is active and nothing else in
+ * the Conversation snapshot, and its callers branch on an absent Conversation
+ * before calling it — so a publication that keeps both facts re-renders
+ * nothing, while either fact changing still re-renders.
+ * @param left - previously selected Conversation snapshot.
+ * @param right - newly published Conversation snapshot.
+ * @returns whether both agree on presence and on target activity.
+ */
+export function sameConversationActivity(
+  left: ConversationSnapshot | undefined,
+  right: ConversationSnapshot | undefined,
+): boolean {
+  if (left === undefined || right === undefined) return left === right
+  return (left.activeTargets.size > 0) === (right.activeTargets.size > 0)
+}
+
+/**
+ * Equality for Session subscriptions whose reads are the shell phase plus the
+ * open-state and subagent facts ConversationMainPanel branches on.
+ * `conversationPhase` consults `blank`, `awaitingFirstTurn`, `running`, and
+ * `promptAttempted`; the main panel additionally reads `openState` and
+ * `subagent`, and every other Session field — submission echoes, history
+ * paging, prompt and agent errors — churns on each durable publication without
+ * moving a rendered shell decision. A publication that keeps these facts
+ * re-renders nothing, while a change in any of them still re-renders.
+ * @param left - previously selected Session snapshot.
+ * @param right - newly published Session snapshot.
+ * @returns whether both agree on every Session fact the shell reads.
+ */
+export function sameShellSession(
+  left: SessionSnapshot | undefined,
+  right: SessionSnapshot | undefined,
+): boolean {
+  if (left === undefined || right === undefined) return left === right
+  return left.blank === right.blank
+    && left.awaitingFirstTurn === right.awaitingFirstTurn
+    && left.running === right.running
+    && left.promptAttempted === right.promptAttempted
+    && left.openState === right.openState
+    && sameSubagentFacts(left.subagent, right.subagent)
+}
+
+/**
+ * Field comparison for the one nested Session fact the shell branches on: the
+ * subagent value is rebuilt with its snapshot, so identity alone would keep
+ * re-rendering a continuable child whose routing facts never moved.
+ * @param left - previously selected subagent fact.
+ * @param right - newly published subagent fact.
+ * @returns whether both agree on presence, routing, and parent availability.
+ */
+function sameSubagentFacts(
+  left: SessionSnapshot['subagent'],
+  right: SessionSnapshot['subagent'],
+): boolean {
+  if (left === right) return true
+  if (left === null || right === null) return false
+  return left.parentAvailable === right.parentAvailable
+    && left.address.parentSessionId === right.address.parentSessionId
+    && left.address.childSessionId === right.address.childSessionId
+    && left.address.mode === right.address.mode
+}

@@ -104,6 +104,7 @@ function tailData(context: ConversationNodeContext<TurnTailState>): TurnTailChat
 export const turnTailDefinition: ConversationNodeDefinition<TurnTailState> = {
   kind: 'turn-tail',
   target: 'chat',
+  foldReadsLocation: false,
   match: (event) => {
     if (event.type === 'turn/start') return { id: String(event.data.turn), role: 'start' }
     if (event.type === 'turn/end') return { id: String(event.data.turn), role: 'update' }

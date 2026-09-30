@@ -1,6 +1,7 @@
 /** Public dsh commands using the immutable runtime carried by the Desktop installation. */
 
 import { delimiter, dirname, join, resolve } from 'node:path'
+import { enableDshCompileCache } from '@deepseek-ai/dsh-app-boot'
 import { runCli } from '@deepseek-ai/dsh/lib/bin.js'
 import { installOfficeEngineResolution, runtimeArchivePath } from './office-engine.ts'
 
@@ -27,6 +28,9 @@ export async function runDesktopCli(runtimeDir: string, supportDir: string): Pro
 }
 
 if (import.meta.main) {
+  // Desktop's dsh command reaches runCli without the npm bin's entry block,
+  // so this launcher enables the shared Node compile cache itself.
+  await enableDshCompileCache('dsh', process.argv.slice(2))
   if (process.platform === 'win32') {
     const { installWindowsCliSignals } = await import('./windows-cli-signals.ts')
     await installWindowsCliSignals()

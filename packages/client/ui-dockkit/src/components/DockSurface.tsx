@@ -153,6 +153,15 @@ function draggedSizes(drag: DividerDrag, x: number, y: number, minimum: number):
 /** Fractions closer than this are the same split: renormalizing recorded sizes moves them by no more. */
 const SIZE_TOLERANCE = 1e-9
 
+/** Whether two drop targets are the same one under the pointer. */
+function sameDropTarget(a: DropTarget | undefined, b: DropTarget | undefined): boolean {
+  if (a === b) return true
+  if (a === undefined || b === undefined || a.kind !== b.kind) return false
+  if (a.kind === 'strip' && b.kind === 'strip') return a.paneId === b.paneId && a.index === b.index
+  if (a.kind === 'zone' && b.kind === 'zone') return a.paneId === b.paneId && a.zone === b.zone
+  return false
+}
+
 /** Whether two fraction lists describe the same split. */
 function sameSizes(a: readonly number[], b: readonly number[]): boolean {
   return a.length === b.length && a.every((size, index) => {
@@ -226,11 +235,13 @@ function Surface({
               if (!passedThreshold(startX, startY, moved.clientX, moved.clientY)) return
               dragging = true
             }
-            setPreview({
-              ...NO_PREVIEW,
-              draggingTabId: tabId,
-              dropTarget: hitTest(root, moved.clientX, moved.clientY, canSplit, fits, dropZones),
-            })
+            const dropTarget = hitTest(root, moved.clientX, moved.clientY, canSplit, fits, dropZones)
+            // Moving inside one drop target is not a new preview: keeping the
+            // previous object leaves the tab bodies alone until the target, the
+            // dragged tab, or the divider fractions change.
+            setPreview(previous => previous.draggingTabId === tabId && sameDropTarget(previous.dropTarget, dropTarget)
+              ? previous
+              : { ...NO_PREVIEW, draggingTabId: tabId, dropTarget })
           },
           up: (released) => {
             if (!dragging) return

@@ -434,6 +434,22 @@ describe('typert loader', () => {
     }, { timeout: 10_000 })
     expect(ctx.typert.getPackage('@fixture/steady-failure')).toBeUndefined()
   })
+
+  it('scans loader entries once per activation flush instead of once per dirty name', LOADER_TEST_TIMEOUT, async () => {
+    root = await mkdtemp(join(tmpdir(), 'dsh-typert-loader-'))
+    const ctx = await boot()
+    const names = Array.from({ length: 12 }, (_, index) => `@fixture/scan-${String(index)}`)
+    for (const name of names) await writePackage(root, name)
+    for (const name of names) await ctx.loader.create({ name })
+    await ctx.loader.await()
+
+    const walks = vi.spyOn(ctx.loader, 'entries')
+    await mountTypertLoader(ctx)
+
+    // One walk seeds the dirty set and one builds the flush index; a per-name
+    // rescan would walk the tree once per row (linear in the row count).
+    expect(walks.mock.calls.length).toBeLessThan(names.length / 2)
+  })
 })
 
 describe('validateTypertManifest', () => {

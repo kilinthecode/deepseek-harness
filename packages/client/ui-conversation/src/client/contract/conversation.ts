@@ -106,6 +106,13 @@ export interface TurnLocation {
 export type ConversationLocation =
   | { readonly kind: 'session' }
   | { readonly kind: 'turn'; readonly turn: TurnLocation }
+  /**
+   * Step placement. A live boundary keeps the TurnLocation this Match was
+   * resolved with while only the owning Turn's `steps` membership grew, so
+   * `turn.steps` may lag there; `turn.start`, `turn.end`, `turn.status`,
+   * `turn.data`, and the whole StepLocation stay current. Replacement and
+   * prepend re-resolve this Location strictly.
+   */
   | { readonly kind: 'step'; readonly turn: TurnLocation; readonly step: StepLocation }
   | { readonly kind: 'unresolved' }
 
@@ -197,6 +204,15 @@ export interface ConversationNodeDefinition<State = unknown> {
   readonly kind: string
   /** Sole view target owned by this Definition; omitted for state-only Contexts. */
   readonly target?: string
+  /**
+   * Declare that `start` and `update` never read a Match Location. A Turn/Step
+   * boundary that only re-resolved Match Locations then reuses the folded State
+   * and re-materializes Location data and the view Node from the current
+   * `context.start.location`. Set exactly `false` to opt in; omit it for every
+   * fold that reads a Location, including a Location reached through
+   * `context.matches`.
+   */
+  readonly foldReadsLocation?: false
   /**
    * Extract this Definition's stable business identity from one event.
    * @param event - standard or compact Client history event; no Context or history access is available.

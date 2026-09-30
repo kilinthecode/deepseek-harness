@@ -54,7 +54,7 @@ await ctx.sessionPersistence.flush()                           // backend-wide d
 
 ### 实时写路径与关闭排空
 
-实时写路径由后端自持：它一次性安装会话监听器，把每个已发布会话的事件按 id 路由到该会话的活跃写句柄——`session/event` 复制进有界的内部批处理窗口，`session/flush` 是即时的持久性与错误观察屏障，`session/disposed` 执行最终排空并关闭句柄。没有活跃写句柄的已发布会话不做任何持久化。后台写入失败时按序保留其事件、暂停自动路径并记入日志；下一次显式 flush 会重试，并在再次失败时明确返回拒绝。`close()` 本身会先经由仍然打开的存储排空路由缓冲区再释放所有权，因此即便根 fiber 的 dispose（资源释放）并发运行各 fiber 的 disposer，后端拆卸时的关闭清扫也能保证应用关闭不丢数据。
+实时写路径由后端自持：它一次性安装会话监听器，把每个已发布会话的事件按 id 路由到该会话的活跃写句柄——`session/event` 进入有界的内部批处理窗口，`session/flush` 是即时的持久性与错误观察屏障，`session/disposed` 执行最终排空并关闭句柄。没有活跃写句柄的已发布会话不做任何持久化。后台写入失败时按序保留其事件、暂停自动路径并记入日志；下一次显式 flush 会重试，并在再次失败时明确返回拒绝。`close()` 本身会先经由仍然打开的存储排空路由缓冲区再释放所有权，因此即便根 fiber 的 dispose（资源释放）并发运行各 fiber 的 disposer，后端拆卸时的关闭清扫也能保证应用关闭不丢数据。
 
 ### 恢复与崩溃恢复
 
@@ -82,7 +82,7 @@ await ctx.sessionPersistence.flush()                           // backend-wide d
 
 - **仅追加，连续 `seq`。** 已提交事件绝不重写；`append` 的第一个 `seq` 必须等于已存储 next-seq，缺口会被拒绝。
 - **撕裂的物理尾部绝不到达读取方。** 它属于一次从未完成的 append；写路径在第一次新 append 之前将其持久截断。
-- **无损 JSON 数据。** 批次与 header 经过共享的单遍校验并快照边界（`materializeAppendBatch`/`materializeCreateHeader`）；无法序列化的载荷在调用处被拒绝。
+- **无损 JSON 数据。** 经由 `handle.append`/`create` 进入的批次与 header 经过共享的单遍校验并快照边界（`materializeAppendBatch`/`materializeCreateHeader`），经路由到达的 `session/event` 批次则已由 `Session.append` 校验、分离并深度冻结；无法序列化的载荷在调用处被拒绝。
 - **持久性。** `append` 尽力而为地持久化；`flush`——逐句柄或服务级——是承诺存储并同时把空会话实体化的屏障。
 - **遇到未知或无效格式时拒绝读取。** `validateStoredEvents` 拒绝未知事件词汇与已废弃的预发布形态；`assertVersion` 拒绝外来格式版本。
 - **每个后端实例单写者。** 提供方的进程内认领在 `create`/`open('write')` 时取得，在句柄关闭时释放。
@@ -100,7 +100,7 @@ await ctx.sessionPersistence.flush()                           // backend-wide d
 
 ### 写入路径概览
 
-写入器会话的每个 `session/event` 都复制进该句柄的内部缓冲。第一个待处理事件开启固定批处理窗口；后续事件加入但不重置截止时间。窗口到期后经由句柄的修改链排空待处理前缀；排空期间接纳的事件按顺序合并进下一个链上的批次。`session/flush` 取消等待并排空至完全停稳，随后运行 `handle.flush()`，因此 loop 在下一轮次前把它用作排序与错误观察检查点。失败的后台排空保留其事件并暂停自动计时器；显式 flush、写入器 close 或后端拆卸会立即重试，并在再次失败时明确返回拒绝。构造 seed 事件绝不发出 `session/event`，因此发布前通过句柄追加的 seed 绝不会被重新入队。
+写入器会话的每个 `session/event` 都以已发布事件本身进入该句柄的内部缓冲；`Session.append` 已将其分离并深度冻结。第一个待处理事件开启固定批处理窗口；后续事件加入但不重置截止时间。窗口到期后经由句柄的修改链排空待处理前缀；排空期间接纳的事件按顺序合并进下一个链上的批次。`session/flush` 取消等待并排空至完全停稳，随后运行 `handle.flush()`，因此 loop 在下一轮次前把它用作排序与错误观察检查点。失败的后台排空保留其事件并暂停自动计时器；显式 flush、写入器 close 或后端拆卸会立即重试，并在再次失败时明确返回拒绝。构造 seed 事件绝不发出 `session/event`，因此发布前通过句柄追加的 seed 绝不会被重新入队。
 
 ### 存储记录校验
 

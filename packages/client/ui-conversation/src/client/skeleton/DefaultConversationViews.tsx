@@ -1,6 +1,6 @@
 import { useEffect } from 'react'
 import type { ConversationSessionSlotProps } from '../contract/slots.ts'
-import { conversationPhase } from '../contract/snapshot.ts'
+import { conversationPhase, sameConversationActivity, sameShellSession } from '../contract/snapshot.ts'
 import { resolveActiveView } from '../view-selection.ts'
 import css from './ConversationRoot.module.css'
 
@@ -18,8 +18,10 @@ export function DefaultConversationViews({
   const inspectCall = useInspectCall(value => value)
   const selectedId = useStore(s => s.view)
   const active = resolveActiveView(tabs, selectedId)
-  const session = useSession(s => s)
-  const conversation = useConversation(s => s)
+  // Only `blank` and the shell phase are read here, both covered by the
+  // shared session equality.
+  const session = useSession(s => s, sameShellSession)
+  const conversation = useConversation(s => s, sameConversationActivity)
   const inputState = useInput(s => s)
   const storedDraft = useStore(s => s.draft)
   const viewRequest = useStore(s => s.viewRequest ?? null)

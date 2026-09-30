@@ -12,6 +12,7 @@ import {
   PROFILE_COMPATIBILITY_FILENAME, PluginPackages, boot, getDshRuntimeVersion,
   prepareProfileEntries, prepareProfilePatches, type ProfileContext,
 } from '../src/index.ts'
+import * as pluginCompatibility from '../src/plugin-compatibility.ts'
 
 const runtime = getDshRuntimeVersion()
 
@@ -349,6 +350,24 @@ describe('manifest resolution', () => {
     const f = fixture()
     expect(() => { prepareProfileEntries(context(f), [{ id: 'row', name: 'allowed-plugin' }], undefined) })
       .toThrow('requires a resolution base')
+  })
+
+  it('reads the runtime version once for a composition instead of once per row', () => {
+    const f = fixture()
+    f.plugin('allowed-plugin')
+    f.plugin('second-plugin')
+    f.plugin('third-plugin')
+    const ctx = context(f)
+    const read = vi.spyOn(pluginCompatibility, 'getDshRuntimeVersion')
+    onTestFinished(() => { read.mockRestore() })
+    const base = pathToFileURL(f.dir).href + '/'
+    expect(prepareProfileEntries(ctx, [
+      { id: 'a', name: 'allowed-plugin' },
+      { id: 'b', name: 'second-plugin' },
+      { id: 'c', name: 'third-plugin' },
+    ], base).every(row => row.disabled === undefined)).toBe(true)
+    // One read for the whole composition: the per-row default re-read the manifest for every row.
+    expect(read).toHaveBeenCalledTimes(1)
   })
 
 })

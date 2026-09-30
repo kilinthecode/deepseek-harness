@@ -60,6 +60,53 @@ describe('createFilesStore', () => {
     expect(store.getSnapshot().byTab[TAB]!.levels[ROOT]).toEqual({ kind: 'ready', level: LEVEL })
   })
 
+  it('keeps the previous level, and the whole bucket, when a relist returns the same entries', () => {
+    const store = createFilesStore().create()
+    const { actions } = store
+    actions.start(TAB, ROOT)
+    actions.loaded(TAB, ROOT, LEVEL)
+    const bucket = store.getSnapshot().byTab[TAB]!
+    const level = bucket.levels[ROOT]
+
+    // A watcher event for an in-place write reports the same entries: the level
+    // the tree is already showing is not replaced.
+    actions.loaded(TAB, ROOT, { entries: LEVEL.entries.map(entry => ({ ...entry })), truncated: false })
+    expect(store.getSnapshot().byTab[TAB]).toBe(bucket)
+    expect(store.getSnapshot().byTab[TAB]!.levels[ROOT]).toBe(level)
+  })
+
+  it('writes a level whose listing changed in any way', () => {
+    const changed: readonly DirLevel[] = [
+      { entries: [...LEVEL.entries, { name: 'b.ts', type: 'file' }], truncated: false },
+      { entries: [LEVEL.entries[0]!], truncated: false },
+      { entries: [{ name: 'src-other', type: 'directory' }, LEVEL.entries[1]!], truncated: false },
+      { entries: [{ name: 'src', type: 'file' }, LEVEL.entries[1]!], truncated: false },
+      { entries: LEVEL.entries, truncated: true },
+    ]
+    for (const next of changed) {
+      const store = createFilesStore().create()
+      const { actions } = store
+      actions.start(TAB, ROOT)
+      actions.loaded(TAB, ROOT, LEVEL)
+      const bucket = store.getSnapshot().byTab[TAB]!
+      actions.loaded(TAB, ROOT, next)
+      expect(store.getSnapshot().byTab[TAB]).not.toBe(bucket)
+      expect(store.getSnapshot().byTab[TAB]!.levels[ROOT]).toEqual({ kind: 'ready', level: next })
+    }
+  })
+
+  it('clears a stale refresh failure with a listing that changed nothing', () => {
+    const store = createFilesStore().create()
+    const { actions } = store
+    const failure = new RemoteError('workspace-file/not-found', 'gone', { path: ROOT })
+    actions.start(TAB, ROOT)
+    actions.loaded(TAB, ROOT, LEVEL)
+    actions.failed(TAB, ROOT, failure)
+    expect(store.getSnapshot().byTab[TAB]!.levels[ROOT]).toEqual({ kind: 'ready', level: LEVEL, failure })
+    actions.loaded(TAB, ROOT, { entries: LEVEL.entries, truncated: false })
+    expect(store.getSnapshot().byTab[TAB]!.levels[ROOT]).toEqual({ kind: 'ready', level: LEVEL })
+  })
+
   it('toggles a directory in and out of the expanded set without touching its level', () => {
     const store = createFilesStore().create()
     const { actions } = store

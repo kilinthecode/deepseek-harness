@@ -24,6 +24,7 @@ import SessionQueryEngine, {
   assertSessionHeadersCompatible,
   buildSessionEventSearchDocuments,
   readColdSessionLog,
+  sessionQuerySearchDisabled,
 } from '@deepseek-ai/dsh-session-query'
 import type {
   Config as SessionQueryConfig,
@@ -336,11 +337,20 @@ export class SqliteSessionQueryEngine extends SessionQueryEngine {
    * node:sqlite, opens the index, or observes sources.
    */
   private _assertSearchEnabled(): void {
-    if (this.config.openAt !== 'never') return
+    if (!this[sessionQuerySearchDisabled]()) return
     throw new SessionQueryError(
       'session search is disabled: this deployment configures the session-query index with openAt "never"',
       'SESSION_QUERY_SEARCH_DISABLED',
     )
+  }
+
+  /**
+   * Report the configured opening policy to the provider seam, so a consumer
+   * can skip a corpus listing this deployment's search calls would discard.
+   * @returns whether this deployment refuses every full-text search.
+   */
+  override [sessionQuerySearchDisabled](): boolean {
+    return this.config.openAt === 'never'
   }
 
   private async _close(): Promise<void> {
@@ -510,6 +520,7 @@ export class SqliteSessionQueryEngine extends SessionQueryEngine {
           const before = await persistence.list(listOptions)
           assertNotAborted(signal)
           persisted = materializePersistenceSnapshots(before)
+          let coldLoaded = false
           for (const entry of persisted.values()) {
             if (canReuseIndexed && indexed.get(entry.header.id)?.revision === entry.revision) continue
             // Skip work already shadowed by a live owner. The cold read is
@@ -523,12 +534,18 @@ export class SqliteSessionQueryEngine extends SessionQueryEngine {
             assertNotAborted(signal)
             assertSessionHeadersCompatible(entry.header, loaded.header)
             entry.loaded = observeSession(loaded.header, loaded.inheritedEventCount, loaded.events)
+            coldLoaded = true
           }
           assertNotAborted(signal)
-          const afterSnapshots = await persistence.list(listOptions)
-          assertNotAborted(signal)
-          const after = materializePersistenceSnapshots(afterSnapshots)
-          if (!samePersistenceSnapshots(persisted, after)) continue
+          // The second listing exists to prove that no cold read raced a
+          // changed revision. With nothing cold-loaded this attempt only
+          // re-derived the population it already holds, so it is skipped.
+          if (coldLoaded) {
+            const afterSnapshots = await persistence.list(listOptions)
+            assertNotAborted(signal)
+            const after = materializePersistenceSnapshots(afterSnapshots)
+            if (!samePersistenceSnapshots(persisted, after)) continue
+          }
           if (this._persistenceBinding !== persistenceBinding) continue
         } catch (error: unknown) {
           if (isAbort(error) || signal?.aborted) {

@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
-import type { ReactNode } from 'react'
-import { cleanup, render } from '@testing-library/react'
+import { useRef, useSyncExternalStore, type ReactNode } from 'react'
+import { act, cleanup, render } from '@testing-library/react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import type { Context } from '@deepseek-ai/cordis'
 import type {
@@ -8,13 +8,14 @@ import type {
 } from '@deepseek-ai/dsh-api-session-controller/client'
 import type { ResourceProvider } from '@deepseek-ai/dsh-client-resources/client'
 import { sessionSnapshot } from '@deepseek-ai/dsh-client-test-runtime'
-import type { ConversationViewsProps } from '@deepseek-ai/dsh-client-ui-conversation/client'
+import type { ConversationSnapshot, ConversationViewsProps } from '@deepseek-ai/dsh-client-ui-conversation/client'
 import type { SidebarRightTabDefinition } from '@deepseek-ai/dsh-client-ui-sidebar-right/client'
 import type { SessionId } from '@deepseek-ai/dsh-session/types'
 import type { SubagentAddress } from '@deepseek-ai/dsh-subagent/client'
 import {
   ConversationSlotPanel, FixedChatConversationView, parseSubagentChatAddress,
-  registerSidebarChat, subagentChatAddress, SUBAGENT_CHAT_ID, type SidebarChatTabProps,
+  registerSidebarChat, subagentChatAddress, SUBAGENT_CHAT_ID,
+  type ConversationSlotPanelProps, type SidebarChatTabProps,
 } from '../src/client/sidebar-chat/index.tsx'
 import { SidebarChatTab } from '../src/client/sidebar-chat/index.tsx'
 
@@ -224,5 +225,155 @@ describe('Sidebar chat components', () => {
     const renderSlot = vi.fn(() => null)
     render(<FixedChatConversationView {...({ renderSlot } as unknown as ConversationViewsProps)} />)
     expect(renderSlot).toHaveBeenCalledWith('conversation.session', { view: 'chat' })
+  })
+})
+
+/**
+ * Minimal observable snapshot source for the panel's own subscriptions.
+ * `publish` replaces the snapshot and notifies subscribers; the bound hook
+ * re-renders its consumer only when the value its own selector reads moves,
+ * which is the contract the production uSES bridge gives real subscribers.
+ */
+interface TestSnapshotStore<T> {
+  read(): T
+  publish(next: T): void
+  subscribe(listener: () => void): () => void
+}
+
+function createTestSnapshotStore<T>(initial: T): TestSnapshotStore<T> {
+  let snapshot = initial
+  const listeners = new Set<() => void>()
+  return {
+    read: () => snapshot,
+    publish: (next) => {
+      snapshot = next
+      for (const listener of [...listeners]) listener()
+    },
+    subscribe: (listener) => {
+      listeners.add(listener)
+      return () => { listeners.delete(listener) }
+    },
+  }
+}
+
+/** Bind one store to the selector-hook shape the Conversation slot props carry. */
+function bindTestStore<T>(store: TestSnapshotStore<T>) {
+  return function useSelector<S>(
+    select: (value: T) => S,
+    equal: (left: S, right: S) => boolean = Object.is,
+  ): S {
+    const cache = useRef<{ source: T; selected: S } | undefined>(undefined)
+    return useSyncExternalStore(listener => store.subscribe(listener), () => {
+      const source = store.read()
+      const current = cache.current
+      if (current !== undefined && current.source === source) return current.selected
+      const selected = select(source)
+      if (current !== undefined && equal(current.selected, selected)) {
+        // Keep the previously rendered identity so React bails out of this render.
+        cache.current = { source, selected: current.selected }
+        return current.selected
+      }
+      cache.current = { source, selected }
+      return selected
+    })
+  }
+}
+
+describe('Sidebar chat Conversation panel subscriptions', () => {
+  it('re-renders the embedded phase only for the Session and Conversation facts it reads', () => {
+    const session = createTestSnapshotStore<SessionSnapshot>({
+      ...sessionSnapshot(CHILD),
+      blank: true,
+      awaitingFirstTurn: true,
+    })
+    // The empty production value: no registered target means no activity, so a
+    // re-publication with a fresh Set keeps the same Conversation fact.
+    const conversation = createTestSnapshotStore<ConversationSnapshot>({
+      views: { get: () => undefined, grouped: () => undefined },
+      activeTargets: new Set<string>(),
+    })
+    const sessions = createTestSnapshotStore<SessionListState>({
+      ids: [CHILD],
+      byId: {
+        [CHILD]: {
+          id: CHILD, displayTitle: 'Child', running: false, retainedBy: {}, blank: false, updatedAt: 1,
+        },
+      },
+      phase: 'ready',
+      projectionsBySession: {},
+    })
+    const renderFactorySlot = vi.fn(() => null)
+    const unused = (): never => { throw new Error('the embedded phase reads no other slot source') }
+    const props: ConversationSlotPanelProps = {
+      sessionId: CHILD,
+      useSession: bindTestStore(session),
+      useConversation: bindTestStore(conversation),
+      useSessions: bindTestStore(sessions),
+      renderFactorySlot,
+      usePanelInfo: unused,
+      useResource: unused,
+      useWorkspaces: unused,
+      useSessionStatus: unused,
+      useSessionRetainInfo: unused,
+      useProjection: unused,
+      useInput: unused,
+      useChat: unused,
+      useTrajectory: unused,
+      inputActions: {
+        captureInsertion: unused,
+        insertText: unused,
+        setDraft: unused,
+        addAttachments: unused,
+        removeAttachment: unused,
+        pruneAttachments: unused,
+        submit: unused,
+      },
+    }
+    render(<ConversationSlotPanel {...props} />)
+    expect(renderFactorySlot).toHaveBeenCalledWith(
+      'conversation.content',
+      { variant: 'embedded', phase: 'hero', hero: true },
+      { slots: { views: FixedChatConversationView } },
+    )
+    const initial = renderFactorySlot.mock.calls.length
+
+    // Durable publications that keep every fact this panel reads must not
+    // re-render it: submission echoes, history paging, the last agent error,
+    // and the target set's identity all churn without moving the phase. An
+    // identity selector over either snapshot re-renders here — exactly the
+    // regression this case pins.
+    act(() => {
+      session.publish({
+        ...session.read(),
+        pendingSubmissions: [],
+        hasMore: true,
+        loadingOlder: true,
+        lastAgentError: 'transient failure',
+      })
+      conversation.publish({
+        ...conversation.read(),
+        activeTargets: new Set(conversation.read().activeTargets),
+      })
+    })
+    expect(renderFactorySlot.mock.calls.length).toBe(initial)
+
+    // The facts this panel does read still reach it: the open state moves the
+    // embedded phase hero -> settling, then running moves it on to active.
+    act(() => { session.publish({ ...session.read(), openState: 'loading' }) })
+    expect(renderFactorySlot).toHaveBeenLastCalledWith(
+      'conversation.content',
+      { variant: 'embedded', phase: 'settling', hero: false },
+      { slots: { views: FixedChatConversationView } },
+    )
+    expect(renderFactorySlot.mock.calls.length).toBeGreaterThan(initial)
+
+    const settling = renderFactorySlot.mock.calls.length
+    act(() => { session.publish({ ...session.read(), running: true }) })
+    expect(renderFactorySlot).toHaveBeenLastCalledWith(
+      'conversation.content',
+      { variant: 'embedded', phase: 'active', hero: false },
+      { slots: { views: FixedChatConversationView } },
+    )
+    expect(renderFactorySlot.mock.calls.length).toBeGreaterThan(settling)
   })
 })

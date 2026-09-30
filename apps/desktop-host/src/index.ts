@@ -2,7 +2,7 @@
 
 import { delimiter, join } from 'node:path'
 import { inspect } from 'node:util'
-import { loadLayeredEnv, loadProfileDirectory, reportSkippedBundles } from '@deepseek-ai/dsh-app-boot'
+import { enableDshCompileCache, loadLayeredEnv, loadProfileDirectory, reportSkippedBundles } from '@deepseek-ai/dsh-app-boot'
 import { runProfile } from '@deepseek-ai/dsh/profile-boot'
 import type {} from '@deepseek-ai/dsh-client-connection'
 import type {} from '@deepseek-ai/dsh-host-webserver'
@@ -16,6 +16,9 @@ import { installPlatformSessionPublisher } from './platform-session.ts'
 import { installOfficeEngineResolution } from './office-engine.ts'
 
 async function main(): Promise<void> {
+  // No CLI launcher runs before this entry, so the Host enables the shared
+  // Node compile cache itself, before any profile module is compiled.
+  await enableDshCompileCache('dsh-desktop-host', process.argv.slice(2))
   const runtimeDir = process.argv[2] as string
   const projectDir = process.argv[3] as string
   installOfficeEngineResolution(runtimeDir)

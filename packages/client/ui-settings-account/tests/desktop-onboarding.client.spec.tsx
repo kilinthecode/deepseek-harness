@@ -1,14 +1,15 @@
 // @vitest-environment jsdom
-import { act, cleanup, fireEvent, render, screen } from '@testing-library/react'
+import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { useState } from 'react'
 import { afterEach, expect, it, vi } from 'vitest'
 import { DesktopOnboarding } from '../src/client/DesktopOnboarding.tsx'
 import type { DesktopOnboardingProps, DesktopOnboardingState } from '../src/client/onboarding-contract.ts'
 import { en, zh } from '../src/client/locales.ts'
+import css from '../src/client/DesktopOnboarding.module.css'
 
 afterEach(() => { cleanup(); vi.unstubAllGlobals() })
 
-function mount(step: DesktopOnboardingState['progress']['step'] = 'welcome', balance: 'zero' | 'positive' | 'bonus' | 'failed' | 'loading' = 'positive', status: DesktopOnboardingState['status'] = 'ready', copy: typeof zh = zh, creditFunded = false) {
+function mount(step: DesktopOnboardingState['progress']['step'] = 'welcome', balance: 'zero' | 'positive' | 'bonus' | 'failed' | 'loading' = 'positive', status: DesktopOnboardingState['status'] = 'ready', copy: typeof zh = zh, creditFunded = false, Onboarding: typeof DesktopOnboarding = DesktopOnboarding) {
   vi.stubGlobal('ResizeObserver', class { observe() {} disconnect() {} })
   const track = vi.fn()
   const complete = vi.fn(async () => true)
@@ -28,7 +29,7 @@ function mount(step: DesktopOnboardingState['progress']['step'] = 'welcome', bal
       progress: { version: 1, step, purpose: null, process: null, completion: null, usage: 'compact', developerTools: false },
     })
     changeStatus = (value) => { setState(current => ({ ...current, status: value })) }
-    return <DesktopOnboarding track={track} locale={copy === zh ? 'zh' : 'en'} state={state} t={key => copy[key]} complete={complete} retry={retry}
+    return <Onboarding track={track} locale={copy === zh ? 'zh' : 'en'} state={state} t={key => copy[key]} complete={complete} retry={retry}
       update={async (change) => {
         setState(current => ({ ...current, status: 'saving' }))
         const saved = await update(change)
@@ -368,4 +369,32 @@ it('reports closing the skip-settings popup', () => {
   b.track.mockClear()
   fireEvent.click(screen.getByRole('button', { name: zh.close }))
   expect(b.track).toHaveBeenCalledExactlyOnceWith('onboarding_popup_click', { popup_name: 'skip_setting', button_name: 'close' })
+})
+
+it.each([
+  { step: 'welcome', locale: 'zh', copy: zh, geometry: css.welcomeArtwork, lightName: 'onboarding-welcome-zh.png', darkName: 'onboarding-welcome-zh-dark.png' },
+  { step: 'welcome', locale: 'en', copy: en, geometry: css.welcomeArtwork, lightName: 'onboarding-welcome.png', darkName: 'onboarding-welcome-dark.png' },
+  { step: 'credit', locale: 'zh', copy: zh, geometry: css.creditIllustration, lightName: 'onboarding-recharge-zh.png', darkName: 'onboarding-recharge-zh-dark.png' },
+  { step: 'credit', locale: 'en', copy: en, geometry: css.creditIllustration, lightName: 'onboarding-recharge.png', darkName: 'onboarding-recharge-dark.png' },
+] as const)('loads the deferred $step $locale artwork chunk as the $lightName and $darkName pair', async ({ step, copy, geometry, lightName, darkName }) => {
+  // A fresh module graph per case keeps the artwork chunk unrequested until
+  // this mount, so every case observes the deferral itself rather than riding
+  // on the chunk an earlier test already resolved.
+  vi.resetModules()
+  const { DesktopOnboarding: DeferredOnboarding } = await import('../src/client/DesktopOnboarding.tsx')
+  mount(step, 'positive', 'ready', copy, false, DeferredOnboarding)
+  // Before the chunk arrives the fallback carries the artwork root's exact
+  // classes and aria-hidden geometry without images, so the credit column
+  // reserves its illustration and the landing pair cannot reflow the page.
+  const root = [...document.querySelectorAll('[class*="illustration"]')]
+    .find(node => node.getAttribute('class') === `${css.illustration} ${geometry}`)
+  expect(root?.getAttribute('aria-hidden')).toBe('true')
+  expect(root?.querySelectorAll('img')).toHaveLength(0)
+  expect(document.querySelectorAll('[class*="illustration"] img')).toHaveLength(0)
+  await waitFor(() => { expect(document.querySelectorAll('[class*="illustration"] img')).toHaveLength(2) }, { timeout: 5000 })
+  expect([...document.querySelectorAll('[class*="illustration"] img')].map(image => image.getAttribute('src')))
+    .toEqual([expect.stringContaining(lightName), expect.stringContaining(darkName)])
+  // The loaded pair lands inside the placeholder's root classes unchanged.
+  expect([...document.querySelectorAll('[class*="illustration"]')].map(node => node.getAttribute('class')))
+    .toContain(`${css.illustration} ${geometry}`)
 })

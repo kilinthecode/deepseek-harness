@@ -21,6 +21,7 @@ import { createConversationStore } from '../src/client/stores.ts'
 import { SessionInputShell } from '../src/client/input/facade.ts'
 import { en, zh } from '../src/client/locales.ts'
 import { ConversationContent } from '../src/client/skeleton/ConversationContent.tsx'
+import { DefaultConversationViews } from '../src/client/skeleton/DefaultConversationViews.tsx'
 import { ConversationHeader } from '../src/client/skeleton/ConversationHeader.tsx'
 import { ConversationMainPanel } from '../src/client/skeleton/ConversationMainPanel.tsx'
 import { ConversationSession, ConversationSessionHeader } from '../src/client/skeleton/ConversationSession.tsx'
@@ -183,6 +184,7 @@ function mount(
   const stop = vi.fn()
   const open = vi.fn()
   const slotCalls: string[] = []
+  const factoryCalls: string[] = []
   const lineageOwners: ConversationHeaderLineageOwnerProps[] = []
   const viewTabs = options.viewTabs ?? [
     { id: 'chat', label: 'Chat' },
@@ -320,9 +322,11 @@ function mount(
       : (opts?.fallback ?? null)
   )) as ConversationContentProps['renderSlotChain']
   const SessionProvider: ConversationContentProps['SessionProvider'] = ({ children }) => children
-  const renderFactorySlot = ((_name: string, input: ConversationContentInputProps, factoryOptions?: {
+  const renderFactorySlot = ((name: string, input: ConversationContentInputProps, factoryOptions?: {
     slots?: Record<string, (props: never) => ReactNode>
   }) => {
+    // One call per shell render: the render count the streaming cases assert on.
+    factoryCalls.push(name)
     const common: ConversationViewsProps = {
       sessionId: SID,
       SessionProvider,
@@ -373,7 +377,7 @@ function mount(
   const props: ConversationSlotProps = { ...runtimeProps, renderSlot, renderFactorySlot }
   const view = render(<ConversationMainPanel {...props} />)
   return {
-    view, store, wiring, sink, retargetWorkspace, session, conversation, slotCalls, lineageOwners, seatOwners, open,
+    view, store, wiring, sink, retargetWorkspace, session, conversation, slotCalls, factoryCalls, lineageOwners, seatOwners, open,
     pickerOwner: () => pickerOwner,
     rerender: () => { view.rerender(<ConversationMainPanel {...props} />) },
   }
@@ -424,6 +428,92 @@ describe('ConversationRoot resident composer', () => {
     })
 
     expect(dispatchCount()).toBe(before)
+  })
+
+  it('does not re-render the shell for a Conversation publication that keeps target activity', () => {
+    const b = mount(sessionSnapshotOf())
+    // Per-render slot traffic, one entry per render of the layer that owns the
+    // slot: the main panel's factory call, the resident header's leading slot,
+    // and the default views' view slot. Counting the slot each layer renders
+    // keeps that layer's own Conversation subscription under test, not only the
+    // root's.
+    const shellRenders = () => ({
+      mainPanel: b.factoryCalls.length,
+      header: b.slotCalls.filter(key => key === 'conversation.header.leading').length,
+      views: b.slotCalls.filter(key => key === 'conversation.view').length,
+    })
+    const initial = shellRenders()
+    // Every layer rendered on mount, so a later unchanged count is a real
+    // bail-out rather than a layer that never rendered at all.
+    expect(initial.mainPanel).toBeGreaterThan(0)
+    expect(initial.header).toBeGreaterThan(0)
+    expect(initial.views).toBeGreaterThan(0)
+
+    // The target-activity edge is real: this render is expected. The phase
+    // itself does not move here — the fixture is non-blank, so
+    // `conversationPhase` stays 'active' before and after.
+    act(() => {
+      b.conversation.set({ ...b.conversation.getSnapshot(), activeTargets: new Set(['alpha']) })
+    })
+    const rendered = shellRenders()
+    expect(rendered.mainPanel).toBeGreaterThan(initial.mainPanel)
+    expect(rendered.header).toBeGreaterThan(initial.header)
+    expect(rendered.views).toBeGreaterThan(initial.views)
+
+    // Same activity in a fresh snapshot and a fresh target set: the only
+    // Conversation fact the shell phase reads is unchanged, so no shell layer
+    // renders — an identity selector in any of the three would re-render here,
+    // which is exactly what the base revisions of ConversationHeader.tsx and
+    // DefaultConversationViews.tsx do.
+    act(() => {
+      b.conversation.set({ ...b.conversation.getSnapshot(), activeTargets: new Set(['beta']) })
+    })
+    expect(shellRenders()).toEqual(rendered)
+
+    // The target-activity edge itself must still reach every shell layer: an
+    // equality that ignored publications outright would leave the shell stale.
+    act(() => {
+      b.conversation.set({ ...b.conversation.getSnapshot(), activeTargets: new Set() })
+    })
+    const after = shellRenders()
+    expect(after.mainPanel).toBeGreaterThan(rendered.mainPanel)
+    expect(after.header).toBeGreaterThan(rendered.header)
+    expect(after.views).toBeGreaterThan(rendered.views)
+  })
+
+  it('does not re-render the shell for a Session publication that keeps the shell fields', () => {
+    const b = mount(sessionSnapshotOf())
+    // Per-render traffic of the two layers whose own Session subscription is
+    // under test: the main panel's Factory dispatch, and the resident header's
+    // leading slot (its parent is the main panel, which bails out here).
+    const shellRenders = () => ({
+      mainPanel: b.factoryCalls.length,
+      header: b.slotCalls.filter(key => key === 'conversation.header.leading').length,
+    })
+    const initial = shellRenders()
+    expect(initial.mainPanel).toBeGreaterThan(0)
+    expect(initial.header).toBeGreaterThan(0)
+
+    // A fresh SessionSnapshot per durable publication with only fields the
+    // shell never reads moving (history paging, last agent error): an identity
+    // selector re-renders both layers here, the shallow session slice does not.
+    const current = b.session.getSnapshot()
+    act(() => {
+      b.session.set({
+        ...current,
+        hasMore: !current.hasMore,
+        loadingOlder: true,
+        lastAgentError: 'transient failure',
+      })
+    })
+    expect(shellRenders()).toEqual(initial)
+
+    // A field the shell does read still reaches every layer: an equality that
+    // ignored publications outright would leave the shell stale.
+    act(() => { b.session.set({ ...b.session.getSnapshot(), running: true }) })
+    const after = shellRenders()
+    expect(after.mainPanel).toBeGreaterThan(initial.mainPanel)
+    expect(after.header).toBeGreaterThan(initial.header)
   })
 
   it('renders the composer inert with the blocker\u2019s own reason', () => {
@@ -839,5 +929,78 @@ describe('ConversationRoot resident composer', () => {
   it('hero phase renders no width handles (no transcript to size)', () => {
     const b = mount(sessionSnapshotOf({ blank: true }))
     expect(b.view.container.querySelector('[data-width-handle]')).toBeNull()
+  })
+})
+
+describe('Conversation view area session subscription', () => {
+  // This layer is mounted alone on purpose: inside the shell the content
+  // Factory above it re-renders it anyway, so only a direct mount proves that
+  // its own Session subscription bails out on unrelated publications.
+  function mountViews(snapshot: SessionSnapshot) {
+    const session = createSnapshotStore<SessionSnapshot>(snapshot)
+    const conversation = createSnapshotStore<ConversationSnapshot>(EMPTY_CONVERSATION_SNAPSHOT)
+    const store = createConversationStore().create()
+    const { wiring } = fakeWiring()
+    const viewRenders: string[] = []
+    const unused = (): never => { throw new Error('the view area reads no other Session source') }
+    const props: ConversationSessionSlotProps = {
+      sessionId: SID,
+      useProjection: unused,
+      useChat: unused,
+      useTrajectory: unused,
+      usePanelInfo: unused,
+      useSessions: unused,
+      useSessionStatus: unused,
+      useSessionRetainInfo: unused,
+      useResource: unused,
+      useWorkspaces: unused,
+      SessionProvider: ({ children }: { children: ReactNode }) => children,
+      useSession: bindSnapshotSelector(session),
+      useConversation: bindSnapshotSelector(conversation),
+      useConversationViews: ((selector: (tabs: readonly ViewTab[]) => unknown) =>
+        selector([{ id: 'chat', label: 'Chat' }])) as ConversationSessionSlotProps['useConversationViews'],
+      useInspectCall: bindSnapshotSelector(createSnapshotStore<((callId: string) => void) | undefined>(undefined)),
+      useInput: bindSnapshotSelector(wiring.state),
+      inputActions: wiring.actions,
+      useStore: bindSnapshotSelector(store),
+      actions: store.actions,
+      renderSlot: ((key: string) => {
+        viewRenders.push(key)
+        return null
+      }) as ConversationContentProps['renderSlot'],
+      bindDraftMirror: (write: (text: string) => void) => wiring.bindMirror(write),
+      openView: () => {},
+    }
+    return { session, view: render(<DefaultConversationViews {...props} />), viewRenders }
+  }
+
+  it('does not re-render for a Session publication that keeps the shell fields', () => {
+    const address = {
+      parentSessionId: sid('parent'),
+      childSessionId: sid('child'),
+      mode: 'continuable' as const,
+    }
+    const b = mountViews(sessionSnapshotOf({ subagent: { address, parentAvailable: true } }))
+    // One View dispatch per render of this layer.
+    const viewRenders = () => b.viewRenders.filter(key => key === 'conversation.view').length
+    const base = viewRenders()
+    expect(base).toBeGreaterThan(0)
+
+    // Fresh snapshot, fresh nested subagent object, identical shell facts: an
+    // identity selector re-renders this layer on every Session publication,
+    // while the shallow slice compares the subagent by its fields.
+    act(() => {
+      b.session.set({
+        ...b.session.getSnapshot(),
+        hasMore: !b.session.getSnapshot().hasMore,
+        loadingOlder: true,
+        lastAgentError: 'transient failure',
+        subagent: { address: { ...address }, parentAvailable: true },
+      })
+    })
+    expect(viewRenders()).toBe(base)
+
+    act(() => { b.session.set({ ...b.session.getSnapshot(), running: true }) })
+    expect(viewRenders()).toBeGreaterThan(base)
   })
 })

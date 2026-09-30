@@ -539,6 +539,43 @@ describe('built-in conversation node Definitions', () => {
     })
   })
 
+  it('folds Turn process identically to a full replay across Step boundaries', () => {
+    const entries = [
+      at(1, 'turn/start', { turn: 1 }),
+      at(2, 'step/start', { turn: 1, step: 1 }),
+      at(3, 'assistant/message', {
+        turn: 1, step: 1, message: assistantMessage('message-1', 'checking'),
+      }, { surfaceOp: 'append' }),
+      at(4, 'tool/call', { turn: 1, step: 1, callId: 'call-read', name: 'read', arguments: '{}' }),
+      at(5, 'tool/result', {
+        turn: 1, step: 1, message: toolResult('call-read', 'read done'),
+      }, { surfaceOp: 'append' }),
+      at(6, 'step/end', { turn: 1, step: 1 }),
+      at(7, 'step/start', { turn: 1, step: 2 }),
+      at(8, 'assistant/message', {
+        turn: 1, step: 2, message: assistantMessage('message-2', 'final answer'),
+      }, { surfaceOp: 'append' }),
+      at(9, 'step/end', { turn: 1, step: 2 }),
+    ]
+    const turnProcess = (assembled: ConversationNodeAssembler) => (
+      snapshot(assembled).timeline.turns.get(1)?.data.get('turn-process')
+    )
+    const value = assembler()
+    for (const [index, entry] of entries.entries()) {
+      value.append(entry)
+      value.flush()
+      expect(turnProcess(value)).toEqual(turnProcess(assembler(entries.slice(0, index + 1))))
+    }
+
+    expect(turnProcess(value)).toMatchObject({
+      messageCount: 1,
+      toolCallCount: 1,
+      subagentCount: 0,
+      answerStep: 2,
+      answerAnchorSeq: 8,
+    })
+  })
+
   it('orders the opening User before its process control and later steering', () => {
     const steering = textMessage('steer-1', 'change direction')
     const value = assembler([

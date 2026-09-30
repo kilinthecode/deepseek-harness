@@ -7363,7 +7363,7 @@ export const TYPE_API: readonly TypeApiEntry[] = [
   },
   {
     name: 'SubprocessTerminalHandle',
-    declaration: 'export interface SubprocessTerminalHandle {\n    readonly pid: number;\n    readonly output: Readable;\n    readonly done: Promise<SubprocessOutcome>;\n    write(data: string): Promise<void>;\n    resize(cols: number, rows: number): Promise<void>;\n    inspectForeground(): Promise<SubprocessTerminalForeground | undefined>;\n    inspectActivity(): Promise<SubprocessTerminalActivity>;\n    signalForeground(signal: SubprocessTerminalSignal): Promise<number>;\n    terminate(): Promise<void>;\n}',
+    declaration: 'export interface SubprocessTerminalHandle {\n    readonly pid: number;\n    readonly output: Readable;\n    readonly done: Promise<SubprocessOutcome>;\n    write(data: string): Promise<void>;\n    resize(cols: number, rows: number): Promise<void>;\n    inspectForeground(forceAdoption?: boolean): Promise<SubprocessTerminalForeground | undefined>;\n    inspectActivity(): Promise<SubprocessTerminalActivity>;\n    signalForeground(signal: SubprocessTerminalSignal): Promise<number>;\n    terminate(): Promise<void>;\n}',
   },
   {
     name: 'SubprocessTerminalSignal',
@@ -7371,7 +7371,7 @@ export const TYPE_API: readonly TypeApiEntry[] = [
   },
   {
     name: 'SubprocessTerminalSpawnSpec',
-    declaration: 'export interface SubprocessTerminalSpawnSpec {\n    argv: readonly string[];\n    cwd: string;\n    env?: Record<string, string> | undefined;\n    rows: number;\n    cols: number;\n    terminalType: string;\n    shellActivity?: boolean | undefined;\n    graceMs: number;\n    signal?: AbortSignal | undefined;\n}',
+    declaration: 'export interface SubprocessTerminalSpawnSpec {\n    argv: readonly string[];\n    cwd: string;\n    env?: Record<string, string> | undefined;\n    rows: number;\n    cols: number;\n    terminalType: string;\n    shellActivity?: boolean | undefined;\n    graceMs: number;\n    descendantScanIntervalMs?: number | undefined;\n    signal?: AbortSignal | undefined;\n}',
   },
   {
     name: 'SurfaceEvent',

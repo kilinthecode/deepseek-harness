@@ -40,6 +40,8 @@ const cache = dshCachePath('models')         // $DSH_HOME/cache/models, default 
 
 `dshCachePath(...segments)` 从解析出的主目录下的 `cache` 目录派生路径。不传路径段时返回缓存目录本身。传入首个选项对象 `dshCachePath({ dshHome: home }, ...segments)` 可使用显式配置的主目录，遵循相同的优先级与波浪号展开规则。它返回绝对路径，不会创建目录。
 
+`cache` 目录还存放 Node 的模块编译缓存，位于 `$DSH_HOME/cache/node-compile-cache`（默认 `~/.dsh/cache/node-compile-cache`）。`dsh` 启动器在每次启动时启用它，使后续启动复用已编译的源码；Node 以源码内容与 Node 版本作为条目键，该目录在首次使用时创建，删除它只会多付出一次重新编译的代价。显式设置的 `NODE_COMPILE_CACHE` 或 `NODE_DISABLE_COMPILE_CACHE` 仍遵循 Node 自身的优先级。
+
 ### 展示主目录
 
 面向用户的路径请以符号形式渲染根目录，而不是机器路径：默认主目录显示为 `~/.dsh`，任何已配置的主目录显示为 `$DSH_HOME`。展示形式绝不会泄露机器的绝对路径。

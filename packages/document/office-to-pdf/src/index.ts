@@ -4,7 +4,7 @@ import { mkdtemp, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { extname, isAbsolute, join } from 'node:path'
 import { Context } from '@deepseek-ai/cordis'
-import { createConverter, type Converter, type ConverterOptions } from '@deepseek-ai/libreoffice-kit'
+import type { Converter, ConverterOptions } from '@deepseek-ai/libreoffice-kit'
 import z from '@deepseek-ai/schemastery'
 import type { WorkspaceFileScope, WorkspaceFileStat } from '@deepseek-ai/dsh-api-workspace-files'
 import type {} from '@deepseek-ai/dsh-fs'
@@ -95,6 +95,18 @@ export const Config: z<Partial<Config>, Config> = z.object({
 interface Slot {
   busy: boolean
   converter?: Promise<Converter>
+}
+
+/**
+ * The kit module, imported on the first conversion rather than with this plugin.
+ * Only a successful import is retained, so a failed load is retried by the next conversion.
+ */
+let kit: typeof import('@deepseek-ai/libreoffice-kit') | undefined
+
+/** Create one converter through the on-demand kit import. */
+async function createKitConverter(options: ConverterOptions): Promise<Converter> {
+  kit ??= await import('@deepseek-ai/libreoffice-kit')
+  return kit.createConverter(options)
 }
 
 /** A provider lifetime owns all converters, queued calls, and temporary files. */
@@ -238,7 +250,7 @@ export class OfficeToPdf extends TypertRemoteService {
     let directory: string | undefined
     try {
       if (slot.converter === undefined) {
-        slot.converter = createConverter(this.options).catch((error: unknown) => {
+        slot.converter = createKitConverter(this.options).catch((error: unknown) => {
           delete slot.converter
           throw error
         })

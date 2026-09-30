@@ -693,8 +693,7 @@
     "9173285d1c600b0eeb00bc3f852d2e3c8c46ea83cd36488a422d5fd05194935a": 1
   },
   "packages/client/ui-sidebar-documentpreview/tests/text-preview.client.spec.tsx": {
-    "6061de0a1e01547eb1abf9d4e1b5fa79fda112fa35dda980775491123413dcce": 1,
-    "fb9804cc2774409af6935d5a1369497b433c34cd9305cac88e3400eae0f70936": 2
+    "6061de0a1e01547eb1abf9d4e1b5fa79fda112fa35dda980775491123413dcce": 1
   },
   "packages/client/ui-sidebar-documentpreview/tests/text-title.client.spec.tsx": {
     "1bbd18e22567ce0529d02b770533f9bda84ff379b161dda8b9548053a18a0e97": 1

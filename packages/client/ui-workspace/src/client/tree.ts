@@ -646,3 +646,58 @@ export function owningParentFolder(path: string, parents: readonly string[]): st
   }
   return owner
 }
+
+/**
+ * Row fields the tree derivations read: title, blank/running/recency, origin,
+ * lineage parent, working directory, and the retained-main-view bit. Projection
+ * values are read through `projectionsBySession` by other consumers, which
+ * keep their own selectors and still see the changed session.
+ */
+function sameRowPresentation(left: SessionSummary, right: SessionSummary): boolean {
+  return left.id === right.id
+    && left.title === right.title
+    && left.displayTitle === right.displayTitle
+    && left.blank === right.blank
+    && left.running === right.running
+    && left.updatedAt === right.updatedAt
+    && left.origin === right.origin
+    && left.parentId === right.parentId
+    && left.cwd === right.cwd
+    && (left.retainedBy.mainView ?? 0) === (right.retainedBy.mainView ?? 0)
+}
+
+/**
+ * Equality for Session-list snapshots as the workspace browser reads them.
+ * The controller republishes the list for any session's projection frame and
+ * reuses row objects for the untouched sessions, so identity comparison of the
+ * whole snapshot would re-derive the tree and re-render every row even when no
+ * tree-visible input changed. Compares membership and order (`ids`), phase,
+ * every row's tree-visible fields, and each row's subagent catalog, whose child
+ * ids the running-subagent count reads.
+ * @param left - previous snapshot.
+ * @param right - next snapshot.
+ * @returns whether every input the tree derivations read is unchanged.
+ */
+export function equalTreeList(left: SessionListState, right: SessionListState): boolean {
+  if (left === right) return true
+  if (left.phase !== right.phase) return false
+  const leftIds = left.ids
+  const rightIds = right.ids
+  if (leftIds.length !== rightIds.length) return false
+  for (let index = 0; index < leftIds.length; index++) {
+    if (leftIds[index] !== rightIds[index]) return false
+  }
+  const leftKeys = Object.keys(left.byId)
+  const rightKeys = Object.keys(right.byId)
+  if (leftKeys.length !== rightKeys.length) return false
+  for (let index = 0; index < leftKeys.length; index++) {
+    const key = leftKeys[index] as string
+    if (key !== rightKeys[index]) return false
+    const before = left.byId[key as SessionId]
+    const after = right.byId[key as SessionId]
+    if (before === undefined || after === undefined || !sameRowPresentation(before, after)) return false
+    if (left.projectionsBySession[key as SessionId]?.values.subagentCatalog
+      !== right.projectionsBySession[key as SessionId]?.values.subagentCatalog) return false
+  }
+  return true
+}

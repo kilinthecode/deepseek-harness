@@ -70,6 +70,27 @@ function bucket(state: FilesState, tabId: TabId): FilesTabState {
   return tree
 }
 
+/**
+ * Whether a relist names the same entries, in the same order, as the level it
+ * would replace.
+ *
+ * Entries are compared by name and type only: an entry's reported size is not
+ * part of the level the tree shows, so a write that changed nothing but a size
+ * is not a new listing — which is what a watcher reports for an in-place file
+ * write, the dominant event in an expanded directory.
+ * @param previous - the level now displayed.
+ * @param next - the listing just read.
+ * @returns whether the two describe the same level.
+ */
+function sameListing(previous: DirLevel, next: DirLevel): boolean {
+  return previous.truncated === next.truncated
+    && previous.entries.length === next.entries.length
+    && previous.entries.every((entry, index) => {
+      const other = next.entries[index]
+      return other !== undefined && entry.name === other.name && entry.type === other.type
+    })
+}
+
 /** The tree store's write set; every action names the tab it writes. */
 type FilesActions = {
   autoRefresh: (draft: FilesState, tabId: TabId, enabled: boolean) => void
@@ -116,6 +137,11 @@ export function createFilesStore(): EngineStoreHandle<FilesState, FilesActions> 
       },
       /**
        * Record one directory's contents.
+       *
+       * A listing that names the entries already shown, in the same order, is
+       * not a new level: the previous one stays, so an unchanged relist renders
+       * nothing — and its stale refresh failure is cleared, since a directory
+       * that listed the same entries did not fail.
        * @param d - draft state.
        * @param tabId - the tab being drawn.
        * @param path - absolute directory path.
@@ -125,6 +151,14 @@ export function createFilesStore(): EngineStoreHandle<FilesState, FilesActions> 
         const state = bucket(d, tabId)
         const previous = state.levels[path]
         if (previous?.kind === 'ready') {
+          // Nothing changed, so the level the tree is already showing keeps its
+          // identity: every expanded row's props stay identical and React hands
+          // the same elements back. No entry left the listing either, so the
+          // retired-directory cleanup below has nothing to do.
+          if (sameListing(previous.level, level)) {
+            if (previous.failure !== undefined) state.levels[path] = { kind: 'ready', level: previous.level }
+            return
+          }
           const directories = new Set(level.entries.filter(entry => entry.type === 'directory').map(entry => entry.name))
           for (const entry of previous.level.entries) {
             if (entry.type !== 'directory' || directories.has(entry.name)) continue

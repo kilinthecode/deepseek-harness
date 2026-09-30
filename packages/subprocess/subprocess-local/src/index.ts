@@ -315,6 +315,7 @@ export class LocalSubprocessRuntime extends SubprocessRuntime {
       activity,
       () => { this.terminals.delete(handle as LocalTerminalHandle) },
       spec.shellActivity === true,
+      spec.descendantScanIntervalMs,
     )
     this.terminals.add(handle)
     const release = async (): Promise<void> => {

@@ -213,6 +213,7 @@ export class BashTerminalBackend implements TerminalBackend {
       cols: this.config.cols,
       terminalType: 'dumb',
       graceMs: this.config.disposeGraceMs,
+      descendantScanIntervalMs: this.config.descendantScanIntervalMs,
       signal: spec.signal,
     })
     let session: LocalPtySession
