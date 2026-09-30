@@ -139,6 +139,27 @@ describe('session.search', () => {
     expect(searchSessions).toHaveBeenCalledOnce()
   })
 
+  it('reports disabled search even when no session is visible', async () => {
+    const ctx = await baseContext()
+    const list = vi.fn((_signal?: AbortSignal) => Promise.resolve([]))
+    ctx.provide('sessionPersistence', testSessionPersistence(ctx, { list }) as never)
+    const disabled = new SessionQueryError(
+      'session search is disabled: this deployment configures the session-query index with openAt "never"',
+      'SESSION_QUERY_SEARCH_DISABLED',
+    )
+    installSearchQuery(ctx, vi.fn(() => Promise.reject(disabled)), true)
+
+    const response = await createSessionTestRemote(ctx, defaults).search(
+      request('disabled-empty'),
+      new AbortController().signal,
+    )
+
+    // Without the visibility listing an empty corpus no longer short-circuits to an
+    // empty page; the disabled provider answers, and the sidebar renders both alike.
+    expect(response).toMatchObject({ ok: false, error: { code: 'gateway/internal' } })
+    expect(list).not.toHaveBeenCalled()
+  })
+
   it('searches only list-visible ids and current conversation-message events', async () => {
     const ctx = await baseContext()
     const live = ctx.sessions.create(sid('live'), { meta: header('live', '/live') })
