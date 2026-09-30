@@ -128,7 +128,8 @@ export function TextPreview({
 
   // Come back where the reader was once there is content to scroll: on a remount,
   // after a reload rebuilt the content, or after the selected renderer changed.
-  // Scroll writes preserve both identities, so they never re-land.
+  // The landing and unmount writes this component makes preserve both
+  // identities, so they never re-land.
   useEffect(() => {
     const body = scrollportRef.current
     if (hasContent && body !== null && seeded) body.scrollTop = storedScrollTopRef.current
