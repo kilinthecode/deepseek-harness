@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { resolveDesktopEdition } from '../scripts/desktop-release-environment.mjs'
+import { resolveDesktopClientBuildProfile, resolveDesktopEdition } from '../scripts/desktop-release-environment.mjs'
 
 describe('Desktop edition', () => {
   it('defaults to Portal and derives its packaging and runtime identities', () => {
@@ -10,6 +10,7 @@ describe('Desktop edition', () => {
       updateChannel: 'nightly',
       defaultDshHomeDirectoryName: '.dsh',
       displayName: 'Portal Harness',
+      clientBuildProfile: 'portal',
     })
   })
 
@@ -21,11 +22,37 @@ describe('Desktop edition', () => {
       updateChannel: 'dev',
       defaultDshHomeDirectoryName: '.dsh-dev',
       displayName: 'Portal Dev Harness',
+      clientBuildProfile: 'portal-dev',
     })
   })
 
   it('rejects an unknown edition with the variable name', () => {
     expect(() => resolveDesktopEdition({ DSH_DESKTOP_EDITION: 'staging' }))
       .toThrow(/DSH_DESKTOP_EDITION.*portal.*portal-dev/u)
+  })
+})
+
+describe('Desktop client build profile', () => {
+  it('pairs each edition with the profile that renders its own brand', () => {
+    expect(resolveDesktopClientBuildProfile({})).toBe('portal')
+    expect(resolveDesktopClientBuildProfile({ DSH_DESKTOP_EDITION: 'portal-dev' })).toBe('portal-dev')
+  })
+
+  it('accepts the edition’s own profile as an explicit selection', () => {
+    expect(resolveDesktopClientBuildProfile({
+      DSH_DESKTOP_EDITION: 'portal-dev',
+      DSH_BUILD_CLIENT_PROFILE: 'portal-dev',
+    })).toBe('portal-dev')
+  })
+
+  it('rejects a selection that contradicts the edition instead of shipping its brand', () => {
+    expect(() => resolveDesktopClientBuildProfile({
+      DSH_DESKTOP_EDITION: 'portal-dev',
+      DSH_BUILD_CLIENT_PROFILE: 'portal',
+    })).toThrow(/DSH_BUILD_CLIENT_PROFILE.*"portal".*"portal-dev".*"portal-dev"/u)
+    expect(() => resolveDesktopClientBuildProfile({
+      DSH_DESKTOP_EDITION: 'portal',
+      DSH_BUILD_CLIENT_PROFILE: 'official',
+    })).toThrow(/DSH_BUILD_CLIENT_PROFILE.*"official".*"portal".*"portal"/u)
   })
 })

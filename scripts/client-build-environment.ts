@@ -267,6 +267,27 @@ export function clientBuildProcessEnvironment(
 }
 
 /**
+ * Resolve the public client environment a release may pack.
+ *
+ * A selected client build profile is the profile its artifacts must carry, so a
+ * fork release proves its own values instead of upstream's. Without a
+ * selection the release requires the official profile, which is what a
+ * published dsh artifact ships.
+ *
+ * @param root - repository root supplying version and Git metadata.
+ * @param environment - release environment carrying an optional profile selector.
+ * @returns complete public client environment the packed artifacts must embed.
+ */
+export function releaseClientBuildEnvironment(
+  root: string,
+  environment: NodeJS.ProcessEnv = process.env,
+): ClientBuildEnvironment {
+  const profile = environment[CLIENT_BUILD_PROFILE_SELECTOR]?.trim()
+  if (profile === undefined || profile === '') return officialClientBuildEnvironment(root)
+  return resolveClientBuildEnvironment(repositoryClientBuildEnvironment(root, environment), profile)
+}
+
+/**
  * Require the public client environment to match an artifact profile exactly.
  *
  * An exact key set matters because every prefixed value is eligible for

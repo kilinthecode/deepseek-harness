@@ -46,7 +46,7 @@ function supervisor(failure?: string) {
 it('requires one signing preflight before building, then records only the complete release', async () => {
   const { run, stages } = supervisor()
   await packageTarget(parseDesktopPackageInvocation(['win-x64'], 'win32', 'x64'), environment, run)
-  expect(stages.slice(0, 2)).toEqual(['preflight:windows-signing', 'run build:official'])
+  expect(stages.slice(0, 2)).toEqual(['preflight:windows-signing', 'run build:portal'])
   expect(stages.filter(stage => stage === 'preflight:windows-signing')).toHaveLength(1)
   expect(vi.mocked(withWindowsSigningStage).mock.calls.map(([options]) => options.stage))
     .toEqual(['preflight', 'artifacts'])
@@ -68,6 +68,27 @@ it('requires one signing preflight before building, then records only the comple
   expect(record.publicUrl).toBe('https://updates.example.com/dsh-desk/0123456789abcdef0123456789abcdef/feeds/win-x64/')
 })
 
+it('builds and packs the client profile of the edition it packages', async () => {
+  const { run, stages } = supervisor()
+  await packageTarget(parseDesktopPackageInvocation(['win-x64'], 'win32', 'x64'), {
+    ...environment, DSH_DESKTOP_EDITION: 'portal-dev',
+  }, run)
+  const build = run.run.mock.calls.find(call => call[0] === 'run build:portal-dev')
+  expect(build).toBeDefined()
+  expect(build![3].env).toMatchObject({ DSH_BUILD_CLIENT_PROFILE: 'portal-dev' })
+  const pack = run.run.mock.calls.find(call => call[0].startsWith('run release:pack --family dsh'))
+  expect(pack![3].env).toMatchObject({ DSH_BUILD_CLIENT_PROFILE: 'portal-dev' })
+  expect(stages).not.toContain('run build:official')
+})
+
+it('refuses a client profile that contradicts the edition before building anything', async () => {
+  const { run, stages } = supervisor()
+  await expect(packageTarget(parseDesktopPackageInvocation(['win-x64'], 'win32', 'x64'), {
+    ...environment, DSH_DESKTOP_EDITION: 'portal-dev', DSH_BUILD_CLIENT_PROFILE: 'portal',
+  }, run)).rejects.toThrow(/DSH_BUILD_CLIENT_PROFILE/u)
+  expect(stages).toEqual([])
+})
+
 it('initializes shared storage only after acquiring the preflight stage lock', async () => {
   const { run } = supervisor()
   vi.mocked(withWindowsSigningStage).mockImplementationOnce(async (_options, operation) => {
@@ -78,7 +99,7 @@ it('initializes shared storage only after acquiring the preflight stage lock', a
   await packageTarget(parseDesktopPackageInvocation(['win-x64'], 'win32', 'x64'), environment, run)
 })
 
-it.each(['preflight:windows-signing', 'run build:official', 'run sign:primary-runtime', 'run prepare:dsh --defer-runtime-smoke', 'run sign:primary-runtime --dsh',
+it.each(['preflight:windows-signing', 'run build:portal', 'run sign:primary-runtime', 'run prepare:dsh --defer-runtime-smoke', 'run sign:primary-runtime --dsh',
   'exec tsx scripts/smoke-packaged-runtime.ts',
   'exec electron-builder --config electron-builder.config.mjs --win --x64 --publish never'])
 ('never continues or records a release after %s fails', async (failure) => {
@@ -92,7 +113,7 @@ it.each(['preflight:windows-signing', 'run build:official', 'run sign:primary-ru
 it.each(['--unsigned', '--prepare-only'])('keeps %s hardware-free and creates no release record', async (mode) => {
   const { run, stages } = supervisor()
   await packageTarget(parseDesktopPackageInvocation(['win-x64', mode], 'win32', 'x64'), environment, run)
-  expect(stages[0]).toBe('run build:official')
+  expect(stages[0]).toBe('run build:portal')
   expect(stages).not.toContain('preflight:windows-signing')
   expect(stages).not.toContain('run sign:primary-runtime')
   expect(stages).not.toContain('run sign:primary-runtime --dsh')

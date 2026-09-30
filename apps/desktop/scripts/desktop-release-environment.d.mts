@@ -4,8 +4,14 @@ export const DESKTOP_APP_ID_ENV: 'DSH_DESKTOP_APP_ID'
 /** Environment variable that selects the packaged Desktop edition. */
 export const DESKTOP_EDITION_ENV: 'DSH_DESKTOP_EDITION'
 
+/** Environment variable that selects the client build profile a complete build produces. */
+export const CLIENT_BUILD_PROFILE_ENV: 'DSH_BUILD_CLIENT_PROFILE'
+
 /** Supported Desktop edition. */
 export type DesktopEditionName = 'portal' | 'portal-dev'
+
+/** Supported client build profile. */
+export type ClientBuildProfileName = 'portal' | 'portal-dev'
 
 /** Packaging and runtime identities derived from one Desktop edition. */
 export interface DesktopEditionConfiguration {
@@ -15,6 +21,7 @@ export interface DesktopEditionConfiguration {
   readonly updateChannel: 'nightly' | 'dev'
   readonly defaultDshHomeDirectoryName: '.dsh' | '.dsh-dev'
   readonly displayName: 'Portal Harness' | 'Portal Dev Harness'
+  readonly clientBuildProfile: ClientBuildProfileName
 }
 
 /**
@@ -23,6 +30,13 @@ export interface DesktopEditionConfiguration {
  * @returns Edition identity and derived settings.
  */
 export function resolveDesktopEdition(env: NodeJS.ProcessEnv): DesktopEditionConfiguration
+
+/**
+ * Resolve the client build profile the Desktop edition being packaged ships.
+ * @param env Packaging environment.
+ * @returns Client build profile this edition packages.
+ */
+export function resolveDesktopClientBuildProfile(env: NodeJS.ProcessEnv): ClientBuildProfileName
 
 /** Environment variable that supplies electron-builder's macOS certificate qualifier. */
 export const MACOS_SIGNING_IDENTITY_ENV: 'DSH_DESKTOP_MACOS_SIGNING_IDENTITY'
