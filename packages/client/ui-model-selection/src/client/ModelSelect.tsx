@@ -564,7 +564,7 @@ export function ModelSelect(
                         const selected = state.current?.provider === group.id && state.current.model === model.id
                         // The capability caption describes the option; the accessible name stays the model name.
                         const imageCaptionId = model.inputModalities?.includes('image') === true
-                          ? `${headingId}-${model.id}-image`
+                          ? `${id}-${group.id}-${model.id}-image`
                           : undefined
                         return (
                           <button
