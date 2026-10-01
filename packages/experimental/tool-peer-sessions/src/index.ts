@@ -4,8 +4,8 @@ import type { Context } from '@deepseek-ai/cordis'
 import type { Agent, PreStepDecision } from '@deepseek-ai/dsh-agent'
 import type { PeerEntry } from '@deepseek-ai/dsh-experimental-peer-sessions'
 import { createUserMessage } from '@deepseek-ai/dsh-llm'
-import { defineTool } from '@deepseek-ai/dsh-tools'
-import type { InferValue, ValueSchemaSpec } from '@deepseek-ai/dsh-tools'
+import { applyAgentScopedTools, callingAgent, defineTool, jsonOutput } from '@deepseek-ai/dsh-tools'
+import type { InferValue } from '@deepseek-ai/dsh-tools'
 
 /** Cordis plugin name. */
 export const name = 'tool-peer-sessions'
@@ -59,30 +59,6 @@ const NOTICE_VALUE_SCHEMA = {
     status: { type: 'string', required: true, enum: ['watching', 'delivered', 'queued'] },
   },
 } as const
-
-/**
- * Declare one compact output schema for a peer tool. The declared schema is
- * what makes the compiler check `execute` against the value the model is
- * promised, and what renders that value as a single JSON line.
- * @param schema - canonical value schema for one tool.
- * @returns the `output` declaration accepted by {@link defineTool}.
- */
-function jsonOutput<const S extends ValueSchemaSpec>(schema: S): {
-  schema: S
-  render: (args: unknown, value: InferValue<S>) => [{ type: 'text'; text: string }]
-} {
-  return {
-    schema,
-    render: (_args: unknown, value: InferValue<S>) => [{ type: 'text', text: JSON.stringify(value) }],
-  }
-}
-
-/** Recover the exact caller guaranteed by Agent-scoped tool discovery. */
-function callingAgent(agent: Agent | undefined, toolName: string): Agent {
-  /* v8 ignore next 2 -- peer tools are registered only in an exact Agent scope, so discovery supplies this carrier. */
-  if (agent === undefined) throw new Error(`${toolName} requires a calling Agent`)
-  return agent
-}
 
 /** Render one live peer as the compact record the model is promised. */
 function peerValue(entry: PeerEntry): InferValue<typeof PEER_ENTRY_SCHEMA> {
@@ -185,19 +161,5 @@ function qualifies(agent: Agent): boolean {
 
 /** Install peer tools and the coordination section in every live or subsequently published top-level agent scope. */
 export function apply(ctx: Context): void {
-  const installed = new Map<Agent, () => void>()
-  const maybeInstall = (agent: Agent): void => {
-    if (installed.has(agent) || !qualifies(agent)) return
-    installed.set(agent, install(agent, ctx))
-  }
-  for (const agent of ctx.agents.list()) maybeInstall(agent)
-  ctx.on('agent/created', ({ agent }) => { maybeInstall(agent) })
-  ctx.on('agent/disposed', ({ agent }) => {
-    installed.get(agent)?.()
-    installed.delete(agent)
-  })
-  ctx.effect(() => () => {
-    for (const dispose of installed.values()) dispose()
-    installed.clear()
-  }, 'tool-peer-sessions.scopedTools()')
+  applyAgentScopedTools(ctx, qualifies, agent => install(agent, ctx), 'tool-peer-sessions.scopedTools()')
 }
