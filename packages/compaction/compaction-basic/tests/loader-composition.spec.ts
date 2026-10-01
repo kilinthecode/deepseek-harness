@@ -154,7 +154,7 @@ describe('real Loader composition', () => {
 })
 
 const WEB_PRESETS_DIR = resolve(import.meta.dirname, '../../../bundle/web-app/presets')
-const WEB_PRESETS = ['standard', 'ptc', 'cordis'] as const
+const WEB_PRESET_FILES = ['standard.patch.yml', 'ptc.patch.yml', 'cordis.patch.yml'] as const
 const DEEPSEEK_PROVIDERS = ['deepseek-official', 'deepseek-account'] as const
 // Pressure and retained tail the Web presets ship for each DeepSeek model, in
 // tokens at the catalog's 1M window.
@@ -165,13 +165,13 @@ const DEEPSEEK_SHIPPED = [
 
 /**
  * Slice the compaction-basic row out of one shipped Web preset as a top-level list item.
- * @param preset - preset file stem.
+ * @param file - preset patch file name.
  * @returns the row's lines dedented to column zero.
  */
-function presetCompactionRow(preset: string): string[] {
-  const lines = readFileSync(resolve(WEB_PRESETS_DIR, `${preset}.patch.yml`), 'utf8').split('\n')
+function presetCompactionRow(file: string): string[] {
+  const lines = readFileSync(resolve(WEB_PRESETS_DIR, file), 'utf8').split('\n')
   const starts = lines.flatMap((line, index) => (/^\s*- id: compaction-basic$/.test(line) ? [index] : []))
-  expect(starts, `${preset}.patch.yml mounts exactly one compaction-basic row`).toHaveLength(1)
+  expect(starts, `${file} mounts exactly one compaction-basic row`).toHaveLength(1)
   const start = starts[0]!
   const indent = lines[start]!.indexOf('-')
   const row = [lines[start]!]
@@ -184,16 +184,16 @@ function presetCompactionRow(preset: string): string[] {
 
 /**
  * Load one shipped preset's compaction-basic row through the real Loader.
- * @param preset - preset file stem.
+ * @param file - preset patch file name.
  * @returns the mounted engine.
  */
-async function loadPresetCompaction(preset: string): Promise<BasicCompactionEngine> {
+async function loadPresetCompaction(file: string): Promise<BasicCompactionEngine> {
   const loaded = await loadYaml([
     "- name: '@deepseek-ai/dsh-llm'",
     "- name: '@deepseek-ai/dsh-session'",
     "- name: '@deepseek-ai/dsh-session-projection'",
     "- name: '@deepseek-ai/dsh-token-meter'",
-    ...presetCompactionRow(preset),
+    ...presetCompactionRow(file),
   ])
   const unloaded = [...loaded.loader.entries()]
     .filter(entry => entry.fiber === undefined && !entry.disabled)
@@ -203,8 +203,8 @@ async function loadPresetCompaction(preset: string): Promise<BasicCompactionEngi
 }
 
 describe('shipped Web preset compaction rows', () => {
-  it.each(WEB_PRESETS)('the %s preset condenses every DeepSeek route at its measured optimum', async (preset) => {
-    const engine = await loadPresetCompaction(preset)
+  it.each(WEB_PRESET_FILES)('%s condenses every DeepSeek route at its measured optimum', async (file) => {
+    const engine = await loadPresetCompaction(file)
     for (const provider of DEEPSEEK_PROVIDERS) {
       for (const { model, thresholdTokens, retainTokens } of DEEPSEEK_SHIPPED) {
         const spec = resolveCompactSpec(
@@ -212,21 +212,21 @@ describe('shipped Web preset compaction rows', () => {
           DEFAULT_CONTEXT_WINDOW,
           DEFAULT_MAX_TOKENS,
         )
-        expect(spec, `${preset}: ${provider}/${model}`).toMatchObject({ thresholdTokens, retainTokens })
+        expect(spec, `${file}: ${provider}/${model}`).toMatchObject({ thresholdTokens, retainTokens })
       }
     }
   })
 
   it('leaves routes without a policy on the 80% default', async () => {
-    const engine = await loadPresetCompaction('standard')
+    const engine = await loadPresetCompaction('standard.patch.yml')
     expect(resolveTargetPolicy(engine.config, { provider: 'xiaomi', model: 'mimo-v2.6-pro' }))
       .toMatchObject({ thresholdRatio: 0.8, retainRatio: 0.16 })
   })
 
   it('carries an identical policy table in every Web preset', async () => {
     const tables: unknown[] = []
-    for (const preset of WEB_PRESETS) {
-      tables.push(structuredClone((await loadPresetCompaction(preset)).config.modelPolicies))
+    for (const file of WEB_PRESET_FILES) {
+      tables.push(structuredClone((await loadPresetCompaction(file)).config.modelPolicies))
       await disposeLoaded()
     }
     expect(tables[1]).toEqual(tables[0])
