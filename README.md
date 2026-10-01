@@ -44,7 +44,7 @@ pnpm dsh web
 
 - Submit feedback or bug reports through [GitHub Issues](https://github.com/kilinthecode/portal/issues).
 - Add the [`dsh-plugin`](https://github.com/topics/dsh-plugin) topic to your plugin repository for discoverability.
-- Join the upstream <a href="https://discord.gg/Ycq5dCaS4">DeepSeek Harness Discord community</a>.
+- Join the upstream <a href="https://discord.gg/4MrtZUhpxg">DeepSeek Harness Discord community</a>.
 
 ## Contributing
 

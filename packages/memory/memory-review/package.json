@@ -1,7 +1,7 @@
 {
   "name": "@deepseek-ai/dsh-memory-review",
   "description": "Cache-parity unattended memory review: a fork child that may only add new memories, started from the parent idle notification in the DeepSeek Harness",
-  "version": "0.1.7-rc.2",
+  "version": "0.2.0-rc.2",
   "publishConfig": {
     "access": "public"
   },

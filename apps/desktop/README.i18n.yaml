@@ -3,8 +3,11 @@
 # After editing either side, bring the other along and re-record with:
 #   pnpm run verify-translation-pairing --write apps/desktop/README.md
 /portal-desktop:
-  en: 1e796c37611cc677
-  zh: 750c94a2efbedd92
+  en: 8ac57d79b34cf782
+  zh: fc74f31d774c33a3
+/portal-desktop/terminal-command:
+  en: bef92953c237363f
+  zh: d21d6effd21b8c00
 /portal-desktop/closing-the-window-and-quitting:
   en: 66ecbfaa40b42c12
   zh: 384c9e18f4126780
@@ -12,14 +15,20 @@
   en: 069fdfd72d2ea26a
   zh: 76ae549d43c99bb4
 /portal-desktop/key-technical-decisions/bundled-workspace-dependencies:
-  en: 31cbb7452be8e1ad
-  zh: 502ec556e2ec301e
+  en: 320733f93ede61a4
+  zh: 33206c3c4753c802
+/portal-desktop/bundled-command-runtime:
+  en: beecf076aa2f0796
+  zh: c9001ce0f22d2379
 /portal-desktop/installation-ownership:
-  en: d186d3cfc9597688
-  zh: 5f7094355c5f562c
+  en: 22153a298a6662e1
+  zh: 3600803c8c9d0274
 /portal-desktop/installation-ownership/runtime-and-plugin-activation:
   en: 4efa9e3d88f1c9d0
   zh: 2210ce3df7efb81b
+/portal-desktop/installation-ownership/host-environment:
+  en: 84a9cc7ca9455aa8
+  zh: 4091b8aa8231b74a
 /portal-desktop/develop:
   en: 40d2ad4014bf445b
   zh: 6a08de06df9ed042
@@ -39,8 +48,8 @@
   en: f0e345fd89868803
   zh: fd2c775ad23fa2f0
 /portal-desktop/package/upload-updates:
-  en: c64d7fe2fe2534b7
-  zh: 2188e1ae99ab4b33
+  en: 72073b2e72590067
+  zh: 63b1f9790395c37d
 /portal-desktop/package/unsigned-windows-test-installer:
   en: cfd5780dd26a8e46
   zh: f7a16b1ede793b7b
