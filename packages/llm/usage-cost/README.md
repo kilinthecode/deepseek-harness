@@ -67,6 +67,8 @@ The rollup is a pure function over `UsageIndexRecord` values: projection-cache r
 | `src/rollup.ts` | Rate-table validation, bucket pricing, and the window rollup. |
 | `src/types.ts` | Durable record shape and priced result types. |
 
+**Runtime invariant:** No companion is published. The rollup is a pure function over caller-supplied records and a rate table and owns no resource, so there is no independently observed state to compare.
+
 </details>
 
 -----

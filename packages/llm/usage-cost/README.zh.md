@@ -67,6 +67,8 @@ const rollup = rollupUsageCost(records, { from: Date.UTC(2026, 8, 21), to: Date.
 | `src/rollup.ts` | 价格表校验、用量桶计价与窗口汇总。 |
 | `src/types.ts` | 持久记录结构与计价结果类型。 |
 
+**运行时不变式：** 不发布伴生入口。该汇总是对调用方提供的记录与价格表的纯函数，不持有任何资源，因此没有可独立观察并比对的状态。
+
 </details>
 
 -----
