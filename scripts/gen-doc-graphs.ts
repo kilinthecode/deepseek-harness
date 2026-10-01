@@ -228,7 +228,7 @@ const SERVICE_ROLES: ServiceRole[] = [
     title: 'Model-free tool-result pruning',
     mode: 'core',
     consumers: ['compaction-basic'],
-    note: 'Rewrites oversized current tool results through replayable single-node surface replacements; a decisive preview lands the rewrite before summary compaction, otherwise it follows each compaction instead.',
+    note: 'Rewrites oversized current tool results through replayable single-node surface replacements; a prune that alone would clear the threshold lands first, with compaction following only if that landed prune still falls short — otherwise compaction runs first and the prune follows each compaction, even the one that finds nothing to compact.',
   },
   {
     key: 'sessions',
@@ -1572,7 +1572,7 @@ function renderLifecycle(): string {
     '',
     'The `assistant/message` event records every successful provider call, including content-less and `max-tokens` finishes, and embeds the exact compact timed stream. Empty content stays out of derived history. A failed, retried, cancelled, or stream-error attempt that reaches settlement without a surface message records its stream as `assistant/attempt`. Live `agent/assistant-stream` chunk frames are transient; replay reads either durable settlement, and a hard process loss before settlement leaves no durable attempt stream.',
     '',
-    '`dsh-compaction-basic` uses `agent/pre-step` for pressure before request derivation and `agent/request-error` only for canonical context overflow. Once either trigger qualifies, optional tool-result pruning runs before summary selection. Recovery runs within the open step and retries only when pruning or summarization advances the surface replacement generation; otherwise the original request error remains authoritative. Each retry prepares its call and reconciles the retained rendered assembly before request derivation, without repeating assembly, pre-step, or user admission.',
+    '`dsh-compaction-basic` uses `agent/pre-step` for pressure before request derivation and `agent/request-error` only for canonical context overflow. Once pressure qualifies, compaction-basic previews optional tool-result pruning against a threshold-relative headroom: a qualifying prune lands first, and summarization is skipped only if that landed prune actually clears the threshold; otherwise — whether the landed prune fell short or the preview never qualified — summarization runs (on the already-pruned surface in the former case, first on the unpruned surface in the latter) with a trailing prune of the surviving surface after each successful compaction, and a mounted pruner still lands a prune even when no compactable range remains; context overflow always prunes first. Recovery runs within the open step and retries only when pruning or summarization advances the surface replacement generation; otherwise the original request error remains authoritative. Each retry prepares its call and reconciles the retained rendered assembly before request derivation, without repeating assembly, pre-step, or user admission.',
     '',
     'The returned `agent/pre-step` decision is authoritative; listeners wrapping `next()` preserve downstream messages and `startsRequestSeries` unless replacement is intentional. Steering and injected context pass through the same waterfall after a later claim operation takes their next-step batch.',
     '',

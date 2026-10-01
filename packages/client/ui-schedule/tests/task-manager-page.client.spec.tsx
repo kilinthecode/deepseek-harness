@@ -18,7 +18,7 @@ import {
 } from '../src/client/schedule-format.ts'
 import { timingSnapshot } from '../src/client/task-timing.ts'
 import { en, zh } from '../src/client/task-manager-locales.ts'
-import { zoneDifferingFrom, zoneOffsetMinutes } from './zone-fixture.ts'
+import { zoneDifferingFromAll, zoneOffsetMinutes } from './zone-fixture.ts'
 import css from '../src/client/TaskManagerPage.module.css'
 import taskMenuCss from '../src/client/TaskMenu.module.css'
 import modalCss from '../../ui-primitives/src/Modal.module.css'
@@ -153,7 +153,10 @@ beforeEach(() => {
 // runner's own, so a task-zone render is distinguishable from a browser-zone
 // render on any host. The zone is chosen per instant by that offset rather than
 // by name, because two names can hold the same offset at one instant.
-const taskZone = (instant: string): string => zoneDifferingFrom(instant)
+/** The runner's own zone, read before the suite pins the system zone. */
+const RUNNER_ZONE = Intl.DateTimeFormat().resolvedOptions().timeZone
+const taskZone = (instant: string): string =>
+  zoneDifferingFromAll(instant, [RUNNER_ZONE, DEVICE_ZONE])
 
 function mount(
   initial: Partial<CatalogSnapshot<ScheduleCatalogEntry>> = {},
@@ -1563,11 +1566,15 @@ describe('Task manager details', () => {
   })
 
   it('states the next run in the device zone even when the rule stores another one', () => {
-    const stored: ScheduleCatalogEntry = { ...daily, timeZone: 'America/New_York' }
+    // The stored zone must differ from the runner's own at this instant: a name
+    // that happens to share the device offset renders the same wall clock and
+    // would assert nothing.
+    const storedZone = taskZone(daily.scheduledAt)
+    const stored: ScheduleCatalogEntry = { ...daily, timeZone: storedZone }
     mount({ records: [stored] })
     const locale = en['time.locale']
     const ruleZone = new Intl.DateTimeFormat(locale, {
-      timeZone: 'America/New_York', month: 'short', day: 'numeric', year: 'numeric',
+      timeZone: storedZone, month: 'short', day: 'numeric', year: 'numeric',
       hour: '2-digit', minute: '2-digit', hour12: false,
     }).format(Date.parse(stored.scheduledAt))
     const device = absoluteNextRun(stored.scheduledAt, en)
@@ -1579,7 +1586,7 @@ describe('Task manager details', () => {
     const detail = screen.getByRole('complementary', { name: en['detail.label'] })
     expect(nextRunTime(detail)?.textContent).toBe(device)
     // The rule keeps stating its own zone where the zone belongs.
-    expect(zoneButton().textContent).toContain(displayedZone('America/New_York'))
+    expect(zoneButton().textContent).toContain(displayedZone(storedZone))
   })
 
   /**

@@ -6,7 +6,9 @@ import { Context } from '@deepseek-ai/cordis'
 import type { Agent } from '@deepseek-ai/dsh-agent'
 import AgentLoop from '@deepseek-ai/dsh-agent-loop'
 import { mountAgentLoopTestDependencies } from '@deepseek-ai/dsh-agent-loop-testkit'
-import { ReasoningEffortId, ToolCallId, createUserMessage } from '@deepseek-ai/dsh-llm'
+import { AttachmentId } from '@deepseek-ai/dsh-attachment'
+import { ReasoningEffortId, ToolCallId, createToolResultMessage, createUserMessage } from '@deepseek-ai/dsh-llm'
+import type { ImageInputSupport } from '@deepseek-ai/dsh-llm'
 import { scopeOf } from '@deepseek-ai/dsh-scope'
 import { SessionId, SessionLogOffset } from '@deepseek-ai/dsh-session'
 import JsonlSessionPersistence from '@deepseek-ai/dsh-session-persistence-jsonl'
@@ -209,6 +211,8 @@ describe('dsh-tool-team', () => {
         expect(schema?.properties).toHaveProperty('target')
         expect(schema?.properties).not.toHaveProperty('id')
         expect(schema?.properties).not.toHaveProperty('name')
+        expect(schema?.properties).toHaveProperty('acceptsImages')
+        expect(schema?.properties?.acceptsImages?.enum).toEqual(['supported', 'unsupported', 'undeclared'])
         expect(schema?.properties?.status?.enum).toEqual(['running', 'inactive', 'provisioning', 'failed'])
       }
       expect(ctx.agentTeams.listMembers(lead)).toEqual([member])
@@ -790,6 +794,41 @@ describe('dsh-tool-team', () => {
     await vi.waitFor(() => { expect(ctx.agents.get(childId)).toBeUndefined() }, { timeout: 5_000 })
   })
 
+  it('merges acceptsImages into list_agents rows and omits it when resolution fails', async () => {
+    const { ctx, lead } = await setup(['hang'])
+    const spawned = await execute(ctx, lead, 'spawn_teammate', {
+      name: 'reviewer', description: 'review changes', prompt: 'wait for work',
+    })
+    const childId = spawnedChildId(ctx, lead, spawned)
+    const child = await waitRunning(ctx, childId)
+    vi.spyOn(lead.session, 'requestHeader').mockReturnValue({
+      config: { provider: 'mock', model: 'lead-model' },
+    })
+    vi.spyOn(ctx.llm, 'resolveModelInfo').mockImplementation(async (_provider, model) => (
+      model === 'lead-model'
+        ? { inputModalities: ['text', 'image'] }
+        : { inputModalities: ['text'] }
+    ) as never)
+    const listed = JSON.parse(text(await execute(ctx, child, 'list_agents', {}))) as Array<{
+      target: string
+      acceptsImages?: ImageInputSupport
+    }>
+    expect(listed).toEqual([
+      expect.objectContaining({ target: 'lead', acceptsImages: 'supported' }),
+      expect.objectContaining({ target: 'reviewer', acceptsImages: 'unsupported' }),
+    ])
+    vi.spyOn(ctx.llm, 'resolveModelInfo').mockRejectedValue(new Error('catalog down'))
+    const omitted = JSON.parse(text(await execute(ctx, lead, 'list_agents', {}))) as Array<{
+      target: string
+      acceptsImages?: ImageInputSupport
+    }>
+    expect(omitted).toHaveLength(2)
+    expect(omitted.map(row => row.target)).toEqual(['lead', 'reviewer'])
+    expect(omitted.every(row => row.acceptsImages === undefined)).toBe(true)
+    await execute(ctx, lead, 'interrupt_agent', { target: 'reviewer' })
+    await waitNoAgent(ctx, childId)
+  })
+
   it('fails safely without a calling Agent and has the function-plugin export shape', async () => {
     const { ctx } = await setup([])
     const result = await execute(ctx, undefined, 'list_agents', {})
@@ -1069,6 +1108,264 @@ describe('dsh-tool-team', () => {
     const childId = spawnedChildId(ctx, lead, result)
     await vi.waitFor(() => { expect(ctx.agents.get(childId)).toBeUndefined() }, { timeout: 5_000 })
     expect(ctx.agentTeams.listMembers(lead)[1]).toMatchObject({ provider: 'team-fresh' })
+  })
+
+  describe('image handoff', () => {
+    const IMAGE_ID = `sha256:${'7'.repeat(64)}`
+    const USER_IMAGE_ID = `sha256:${'a'.repeat(64)}`
+    const TOOL_IMAGE_ID = `sha256:${'b'.repeat(64)}`
+    const imageBlock = {
+      type: 'image' as const,
+      attachment: {
+        attachmentId: AttachmentId(IMAGE_ID),
+        mediaType: 'image/png' as const,
+        bytes: 75,
+        width: 8,
+        height: 8,
+        name: 'image-1.png',
+      },
+    }
+
+    /** Put the image into the caller's derived history once. */
+    function showImage(agent: Agent): void {
+      agent.session.append('user/message', createUserMessage({
+        content: [{ type: 'text', text: 'reference image' }, imageBlock],
+        source: { kind: 'user' },
+      }), { surfaceOp: 'append' })
+    }
+
+    const userImageRef = {
+      attachmentId: AttachmentId(USER_IMAGE_ID),
+      mediaType: 'image/png' as const,
+      bytes: 75,
+      width: 8,
+      height: 8,
+      name: 'user.png',
+    }
+    const toolImageRef = {
+      attachmentId: AttachmentId(TOOL_IMAGE_ID),
+      mediaType: 'image/png' as const,
+      bytes: 75,
+      width: 8,
+      height: 8,
+      name: 'tool.png',
+    }
+
+    /** User-message image plus a nested tool-result image; citing one must not copy the other. */
+    function showUserAndToolResultImages(agent: Agent): void {
+      agent.session.append('user/message', createUserMessage({
+        content: [{ type: 'text', text: 'user image' }, { type: 'image', attachment: userImageRef }],
+        source: { kind: 'user' },
+      }), { surfaceOp: 'append' })
+      agent.session.append('tool/result', {
+        turn: 1,
+        step: 1,
+        message: createToolResultMessage({
+          callId: ToolCallId('history-image'),
+          content: [{ type: 'image', attachment: toolImageRef }],
+          isError: false,
+        }),
+      }, { surfaceOp: 'append' })
+    }
+
+    it('hands cited conversation images to a spawned teammate after the prompt text', async () => {
+      const { ctx, lead } = await setup([textResponse('image child answer')])
+      showImage(lead)
+      const spawned = await execute(ctx, lead, 'spawn_teammate', {
+        name: 'image-worker',
+        description: 'image worker responsibility',
+        prompt: 'Describe the image.',
+        images: [IMAGE_ID],
+      })
+      expect(spawned.isError, text(spawned)).toBe(false)
+      const childId = spawnedChildId(ctx, lead, spawned)
+      await waitNoAgent(ctx, childId)
+      await using persisted = await ctx.sessionPersistence.open(childId, 'read')
+      const { events } = await persisted.read()
+      const initial = events.find(event => event.type === 'user/message' && event.data.source.kind === 'user')
+      expect(initial?.type === 'user/message' ? initial.data.content.at(-2) : undefined)
+        .toEqual({ type: 'text', text: 'Describe the image.' })
+      expect(initial?.type === 'user/message' ? initial.data.content.at(-1) : undefined).toEqual(imageBlock)
+    })
+
+    it('delivers cited conversation images to a teammate after the message text', async () => {
+      const { ctx, lead } = await setup([
+        textResponse('first turn'),
+        textResponse('image follow-up'),
+      ])
+      showImage(lead)
+      const spawned = await execute(ctx, lead, 'spawn_teammate', {
+        name: 'image-peer', description: 'image peer responsibility', prompt: 'wait',
+      })
+      expect(spawned.isError, text(spawned)).toBe(false)
+      const childId = spawnedChildId(ctx, lead, spawned)
+      await waitNoAgent(ctx, childId)
+
+      const sent = await execute(ctx, lead, 'send_message', {
+        target: 'image-peer', message: 'see the image', images: [IMAGE_ID],
+      })
+      expect(sent.isError, text(sent)).toBe(false)
+      expect(JSON.parse(text(sent))).toMatchObject({ status: 'accepted' })
+      await waitNoAgent(ctx, childId)
+      await using persisted = await ctx.sessionPersistence.open(childId, 'read')
+      const { events } = await persisted.read()
+      const contents = events.flatMap((event) => {
+        if (event.type === 'agent/inbox/spliced') return (event.data.inserted ?? []).map(message => message.content)
+        if (event.type === 'user/message') return [event.data.content]
+        return []
+      })
+      const delivered = contents.find(content => content.some(block => block.type === 'image'))
+      expect(delivered?.at(-2)).toEqual({ type: 'text', text: 'see the image' })
+      expect(delivered?.at(-1)).toEqual(imageBlock)
+    })
+
+    it('rejects an image id the conversation never showed before any durable Team work', async () => {
+      const { ctx, lead } = await setup([])
+      const sent = await execute(ctx, lead, 'send_message', { target: 'lead', message: 'm', images: [IMAGE_ID] })
+      expect(sent.isError).toBe(true)
+      expect(text(sent)).toContain(`"${IMAGE_ID}" is not an image shown in this conversation`)
+      const spawned = await execute(ctx, lead, 'spawn_teammate', {
+        name: 'image-worker', description: 'image worker responsibility', prompt: 'p', images: [IMAGE_ID],
+      })
+      expect(spawned.isError).toBe(true)
+      expect(text(spawned)).toContain('is not an image shown in this conversation')
+      expect(ctx.agentTeams.listMembers(lead)).toHaveLength(1)
+    })
+
+    it('surfaces the Team image-route refusal unchanged to the model', async () => {
+      const { ctx, lead } = await setup([textResponse('image-peer done')])
+      showImage(lead)
+      const spawned = await execute(ctx, lead, 'spawn_teammate', {
+        name: 'image-peer', description: 'image peer responsibility', prompt: 'wait',
+      })
+      expect(spawned.isError, text(spawned)).toBe(false)
+      await waitNoAgent(ctx, spawnedChildId(ctx, lead, spawned))
+      vi.spyOn(ctx.llm, 'resolveModelInfo').mockResolvedValue({ inputModalities: ['text'] } as never)
+      const sent = await execute(ctx, lead, 'send_message', {
+        target: 'image-peer', message: 'see this', images: [IMAGE_ID],
+      })
+      expect(sent.isError).toBe(true)
+      expect(text(sent)).toContain('Model "mock" does not support image input.')
+    })
+
+    it('enforces the deployment per-message image limit when the attachments service is present', async () => {
+      const { ctx, lead } = await setup([])
+      ctx.provide('attachments', { imageLimits: { maxImagesPerMessage: 1 } } as never)
+      showImage(lead)
+      const sent = await execute(ctx, lead, 'send_message', {
+        target: 'lead', message: 'm', images: [IMAGE_ID, `sha256:${'8'.repeat(64)}`],
+      })
+      expect(sent.isError).toBe(true)
+      expect(text(sent)).toContain('images lists 2 attachments, over the per-message image limit of 1')
+    })
+
+    it('hands only the cited tool-result image to a spawned teammate when the conversation also shows a user image', async () => {
+      const { ctx, lead } = await setup([textResponse('select child answer')])
+      showUserAndToolResultImages(lead)
+      const spawned = await execute(ctx, lead, 'spawn_teammate', {
+        name: 'image-select',
+        description: 'image select responsibility',
+        prompt: 'Describe the cited image.',
+        images: [TOOL_IMAGE_ID],
+      })
+      expect(spawned.isError, text(spawned)).toBe(false)
+      const childId = spawnedChildId(ctx, lead, spawned)
+      await waitNoAgent(ctx, childId)
+      await using persisted = await ctx.sessionPersistence.open(childId, 'read')
+      const { events } = await persisted.read()
+      const initial = events.find(event => event.type === 'user/message' && event.data.source.kind === 'user')
+      const content = initial?.type === 'user/message' ? initial.data.content : []
+      expect(content.filter(block => block.type === 'image')).toEqual([{ type: 'image', attachment: toolImageRef }])
+      expect(content.at(-2)).toEqual({ type: 'text', text: 'Describe the cited image.' })
+      expect(content.at(-1)).toEqual({ type: 'image', attachment: toolImageRef })
+    })
+
+    it('rejects duplicated spawn_teammate image ids before provisioning a teammate', async () => {
+      const { ctx, lead } = await setup([])
+      showImage(lead)
+      const spawned = await execute(ctx, lead, 'spawn_teammate', {
+        name: 'dup-worker', description: 'dup worker responsibility', prompt: 'p', images: [IMAGE_ID, IMAGE_ID],
+      })
+      expect(spawned.isError).toBe(true)
+      expect(text(spawned)).toContain(`images lists attachment id "${IMAGE_ID}" more than once`)
+      const listed = JSON.parse(text(await execute(ctx, lead, 'list_agents', {}))) as Array<{ target: string }>
+      expect(listed.map(row => row.target)).toEqual(['lead'])
+    })
+
+    it('enforces the spawn_teammate per-message image limit before provisioning a teammate', async () => {
+      const { ctx, lead } = await setup([])
+      ctx.provide('attachments', { imageLimits: { maxImagesPerMessage: 1 } } as never)
+      showUserAndToolResultImages(lead)
+      const spawned = await execute(ctx, lead, 'spawn_teammate', {
+        name: 'limit-worker',
+        description: 'limit worker responsibility',
+        prompt: 'p',
+        images: [USER_IMAGE_ID, TOOL_IMAGE_ID],
+      })
+      expect(spawned.isError).toBe(true)
+      expect(text(spawned)).toContain('images lists 2 attachments, over the per-message image limit of 1')
+      const listed = JSON.parse(text(await execute(ctx, lead, 'list_agents', {}))) as Array<{ target: string }>
+      expect(listed.map(row => row.target)).toEqual(['lead'])
+    })
+
+    it('strips the history offload mark from spawn_teammate image blocks', async () => {
+      const { ctx, lead } = await setup([textResponse('offload child answer')])
+      lead.session.append('user/message', createUserMessage({
+        content: [{ type: 'text', text: 'reference image' }, { ...imageBlock, offloaded: true as const }],
+        source: { kind: 'user' },
+      }), { surfaceOp: 'append' })
+      const spawn = vi.spyOn(ctx.agentTeams, 'spawnTeammate')
+      const spawned = await execute(ctx, lead, 'spawn_teammate', {
+        name: 'offload-worker',
+        description: 'offload worker responsibility',
+        prompt: 'Describe the image.',
+        images: [IMAGE_ID],
+      })
+      expect(spawned.isError, text(spawned)).toBe(false)
+      const delivered = spawn.mock.calls[0]?.[1].prompt.at(-1)
+      expect(delivered).toEqual({ type: 'image', attachment: imageBlock.attachment })
+      expect(delivered).not.toHaveProperty('offloaded')
+      await waitNoAgent(ctx, spawnedChildId(ctx, lead, spawned))
+    })
+
+    it('rejects duplicated send_message image ids before any mailbox enqueue', async () => {
+      const { ctx, lead } = await setup([])
+      showImage(lead)
+      const sent = await execute(ctx, lead, 'send_message', {
+        target: 'lead', message: 'm', images: [IMAGE_ID, IMAGE_ID],
+      })
+      expect(sent.isError).toBe(true)
+      expect(text(sent)).toContain(`images lists attachment id "${IMAGE_ID}" more than once`)
+      expect(lead.session.snapshotEvents().some(event => event.type === 'team/message/queued')).toBe(false)
+    })
+
+    it('strips the history offload mark from send_message image blocks', async () => {
+      const { ctx, lead } = await setup([
+        textResponse('first turn'),
+        textResponse('offload follow-up'),
+      ])
+      const spawned = await execute(ctx, lead, 'spawn_teammate', {
+        name: 'offload-peer', description: 'offload peer responsibility', prompt: 'wait',
+      })
+      expect(spawned.isError, text(spawned)).toBe(false)
+      const childId = spawnedChildId(ctx, lead, spawned)
+      await waitNoAgent(ctx, childId)
+      lead.session.append('user/message', createUserMessage({
+        content: [{ type: 'text', text: 'reference image' }, { ...imageBlock, offloaded: true as const }],
+        source: { kind: 'user' },
+      }), { surfaceOp: 'append' })
+      const send = vi.spyOn(ctx.agentTeams, 'sendMessage')
+      const sent = await execute(ctx, lead, 'send_message', {
+        target: 'offload-peer', message: 'see the image', images: [IMAGE_ID],
+      })
+      expect(sent.isError, text(sent)).toBe(false)
+      expect(send.mock.calls[0]?.[1].content).toEqual([
+        { type: 'text', text: 'see the image' },
+        { type: 'image', attachment: imageBlock.attachment },
+      ])
+      expect(send.mock.calls[0]?.[1].content.at(-1)).not.toHaveProperty('offloaded')
+      await waitNoAgent(ctx, childId)
+    })
   })
 })
 
@@ -1500,8 +1797,8 @@ describe('plain fork parity with Team installation', () => {
     await toolFilterRun.dispose()
   })
 
-  it('does not install Team tools on a plain fork of a non-member parent', async () => {
-    const { ctx, lead } = await setup([
+  it('extends Team tools transitively through a plain fork of a plain fork', async () => {
+    const { ctx, lead, adapter } = await setup([
       textResponse('lead answer'), textResponse('fork1 answer'), textResponse('fork2 answer'),
     ])
     await runTurn(lead, 'Lead task')
@@ -1514,15 +1811,58 @@ describe('plain fork parity with Team installation', () => {
     // is not itself a member — the roster still rejects it as a caller.
     expect(ctx.tools.get('spawn_teammate', fork1)).toBeDefined()
     expect(() => ctx.agentTeams.membership(fork1)).toThrow(expect.objectContaining({ code: 'TEAM_NOT_MEMBER' }))
+    const fork1Request = serializeRequest(adapter.requests[1]!)
 
     const fork2Run = await ctx.subagents.start('fork', {
       label: 'fork2', prompt: [{ type: 'text', text: 'fork2 task' }], parent: fork1, signal: SIGNAL,
     })
     const fork2 = fork2Run.localAgent!
-    expect(ctx.tools.get('spawn_teammate', fork2)).toBeUndefined()
+    await fork2Run.result
+    // fork2's immediate parent (fork1) is not itself a Team member, so only a
+    // transitive walk through fork1's own plain-fork parent (the member Lead)
+    // extends the section and tools here; a one-hop check would stop at
+    // fork1 and drop them, missing the provider prompt cache on fork2's
+    // first request.
+    expect(ctx.tools.get('spawn_teammate', fork2)).toBeDefined()
+    const fork2Request = serializeRequest(adapter.requests[2]!)
+    expect(fork2Request.tools).toEqual(fork1Request.tools)
+    expect(fork2Request.system).toEqual(fork1Request.system)
+    const denied = await execute(ctx, fork2, 'spawn_teammate', {
+      name: 'rogue', description: 'unauthorized', prompt: 'act as the lead',
+    })
+    expect(denied.isError).toBe(true)
+    expect(denied.error?.info?.code).toBe('TEAM_NOT_MEMBER')
 
     await fork2Run.dispose()
     await fork1Run.dispose()
+  })
+
+  it('does not extend Team tools through a plain fork chain whose root is not a member', async () => {
+    const { ctx, lead } = await setup([
+      textResponse('lead answer'), textResponse('fresh answer'), textResponse('fork-of-fresh answer'),
+    ])
+    await runTurn(lead, 'Lead task')
+    const freshRun = await ctx.subagents.start('spawn', {
+      label: 'fresh', prompt: [{ type: 'text', text: 'fresh task' }], parent: lead, signal: SIGNAL,
+    })
+    const freshChild = freshRun.localAgent!
+    await freshRun.result
+    // A fresh child is not seeded, so plainForkParentOf never resolves a
+    // parent for it: it terminates the lineage walk, and it is not a Team
+    // member.
+    expect(ctx.tools.get('spawn_teammate', freshChild)).toBeUndefined()
+
+    const forkOfFreshRun = await ctx.subagents.start('fork', {
+      label: 'fork-of-fresh', prompt: [{ type: 'text', text: 'fork of fresh task' }], parent: freshChild, signal: SIGNAL,
+    })
+    const forkOfFresh = forkOfFreshRun.localAgent!
+    // forkOfFresh's plain-fork walk reaches freshChild and stops there:
+    // freshChild is neither a member nor itself a plain fork, so the
+    // lineage's root is not a member and the walk finds nothing to inherit.
+    expect(ctx.tools.get('spawn_teammate', forkOfFresh)).toBeUndefined()
+
+    await forkOfFreshRun.dispose()
+    await freshRun.dispose()
   })
 
   it('re-installs Team tools after a cold resume of a continuable plain fork of the Lead', async () => {

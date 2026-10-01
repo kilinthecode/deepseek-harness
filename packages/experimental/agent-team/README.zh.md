@@ -142,15 +142,21 @@ Lead 可以停止 teammate 的当前轮次，而不会删除其排队的消息�
 
 每个普通运行时 root 都是一个隐式 Team 的 Lead，其 `TeamId` 等于 `SessionId`；不存在创建事件，持久状态从第一条成员、消息或任务记录开始。`spawnTeammate()` 先追加并 flush 一条 `provisioning` 成员记录，再要求配置的提供方创建预留 child；提供方失败会追加一条持久的 `failed` 成员。fresh child 不携带 Lead 历史；fork child 只捕获一次 Lead 的已完成 turn 前缀。恢复把未终结的 provisioning 记录对照 child 独立持久化的会话进行对账：直接 parent 与 continuable descriptor 匹配、且初始用户消息已记录则产生 `active`，其他任何情况都产生 `failed`。如果恢复在同进程竞争中先完成，creator 会接受终态，或报告 `TEAM_PROVISIONING_CONFLICT` 并 drain 该 child。名字由第一条 provisioning 记录保留，且永不复用。分工记录在 provisioning 记录上，之后不能改变；Team 不保存工具限制的副本，该限制位于 child 自己的 subagent descriptor 中。durable roster 之外的直接 child 仅依据其持久化会话 header 的 `origin` 字段分类，该字段在创建时同步写入：provider-owned 的 subagent child 绝不会成为嵌套 Team 身份或隐式的新 Lead。
 
+当首条提示词包含图片时，`spawnTeammate()` 会先对照 teammate 继承的路由（由于 spawn 请求不携带按 child 的覆盖，即 Lead 当前的委派路由）进行检查，然后才追加 `provisioning` 成员记录，因此被拒绝时名字与成员名额仍可用于重试。
+
+`resolveMemberImageSupport()` 把每个成员的实时 LLM 路由——Lead 当前的委派路由，或 teammate 相对 Team Lead 的 continuable-child 探测——映射为 `'supported'`、`'unsupported'` 或 `'undeclared'`，并在解析失败时省略该成员的 map 条目。`listMembers()` 保持同步。
+
 ### 持久 mailbox
 
 `sendMessage()` 校验 peer 成员关系，追加 `team/message/queued` 并在尝试投递前 flush。目标消息以 `Team message <id> from <name>:` 开头，并在 `TeamMessageSource` 中保留同一 id 与发送者。只有目标会话在 pending inbox 或已记录历史中持久持有消息身份后，才会以 `team/message/delivered` 确认投递。即时准入按目标与持久队列顺序串行化；恢复按同一顺序重新投递 queued-minus-delivered 记录。重试前会同时折叠 live 与持久目标 inbox／历史状态，因此 inbox 已接受但模型尚未 claim 时发生崩溃不会复制消息。该保证是进程内重试加 target 会话去重，而不是跨进程 exactly-once 投递。
 
 投递给 Lead 时直接调用 `Agent.steer()`。投递给 teammate 时使用 continuation owner 的 host-only Steer 路径；该路径会保留 Team 发送者 source，同时授权 Lead-to-child edge 并冷恢复 inactive target。sibling 消息绝不会通过公开的相邻 Agent 消息操作伪装成 Lead。
 
+当内容包含图片时，`sendMessage()` 会在追加 `team/message/queued` 之前、且在日志事务之外，检查解析出的目标路由——Lead 用的是在线 root Agent 当前的委派路由，teammate 用的是 `dsh-subagent` 的 continuable-child 探测——因此 LLM 路由查询不会占用日志锁。Lead 当前的委派路由跟随其最新记录的请求，与 teammate 自身创建时继承的来源相同，因此一个在创建后切换过模型的 Lead 会按其当前模型而非最初模型接受检查。被拒绝时从不入队：不会追加任何记录，且后续发往同一目标的消息不受影响。准入还会在内容进入 mailbox 或 spawn 提示词之前，剥离发送者或重放副本上每个图片块的 `offloaded` 标记，因为 offload 是接收方对自身请求历史做出的按目标压缩决策。
+
 ### 共享任务板
 
-任务是完整版本化快照；每次变更都携带 `expectedRevision`，陈旧调用方会收到 `TEAM_TASK_STALE_REVISION`，而不会覆盖更新的值。数字 `task-<n>` id 的后缀必须是安全整数，id 空间耗尽时报告 `TEAM_TASK_LIMIT`，而不是复用最后一个 id。已删除任务作为 tombstone 保留以供回放与维持 id 稳定，但不占用 `maxTasks`，也不出现在 `listTasks()` 中。`writeScopes` 是规范化后的 workspace 相对前缀；视图会对与 in-progress 任务的重叠发出警告，但绝不阻止 claim 或授予写权限。分工检查在变更执行前读取调用方的成员关系，其中携带来自持久成员记录的分工，因此有分工的 teammate 无法通过任何工具绕过这些检查。
+任务是完整版本化快照；每次变更都携带 `expectedRevision`，陈旧调用方会收到 `TEAM_TASK_STALE_REVISION`，而不会覆盖更新的值。任务等待另一位成员给出验证结论时，`claim`、`release`、`edit`、`set_dependencies`、`submit` 和 `reassign` 均会被拒绝；`delete` 会取消待处理的验证。数字 `task-<n>` id 的后缀必须是安全整数，id 空间耗尽时报告 `TEAM_TASK_LIMIT`，而不是复用最后一个 id。已删除任务作为 tombstone 保留以供回放与维持 id 稳定，但不占用 `maxTasks`，也不出现在 `listTasks()` 中。`writeScopes` 是规范化后的 workspace 相对前缀；视图会对与 in-progress 任务的重叠发出警告，但绝不阻止 claim 或授予写权限。分工检查在变更执行前读取调用方的成员关系，其中携带来自持久成员记录的分工，因此有分工的 teammate 无法通过任何工具绕过这些检查。
 
 ### 等待与中断
 
@@ -170,13 +176,13 @@ Mailbox 投影与 checkpoint 准入保留本地声明的校验器之外获准内
 
 参与者就是尚未失败的 roster 成员，包括仍处于 provisioning 的成员；这与 roster 解析在线成员 Team 身份所用的规则一致。`roomPrompt` 通过发送目标自己上次发言之后记录的 transcript 条目把发言权交给某个参与者，条目数量受 `roomTranscriptWindow` 限制。参与者不会因他人的发言而被唤醒，因此 room 只会在有人交出发言权时推进。
 
-接受与否只由 `room-quorum.ts` 根据记录在案的 review 计算。每个有资格的 reviewer 都是 proposer 之外的参与者；只有当全部 reviewer 都已投票、其中至少 `roomApprovalRatio` 比例批准，且没有任何反对成立时，决策才会被接受。反对一旦达到 quorum，决策立即结清。proposer 不能 review 自己的决策，已结清的决策是最终的，被拒绝的决策只能通过携带修订后 statement 的新 revision 解决，其上限为 `roomMaxProposalRevisions`。没有任何操作可以强行给出结论；`roomEscalate` 会把未决决策交给人类。每条已记录的立场都带有理由，而每个参与者都能读到整块决策板，因此 proposer 能回应反对意见，而不是只知道有人反对。
+接受与否只由 `room-quorum.ts` 根据记录在案的 review 计算。每个有资格的 reviewer 都是 proposer 之外的参与者；只有当全部 reviewer 都已投票、其中至少 `roomApprovalRatio` 比例批准，且没有任何反对成立时，决策才会被接受。反对一旦达到 quorum，决策立即结清。proposer 不能 review 自己的决策，已结清的决策是最终的，被拒绝的决策只能由其 proposer 提出携带修订后 statement 的新 revision 来解决，其上限为 `roomMaxProposalRevisions`；其他参与者提出的 revision 会以 `TEAM_ROOM_NOT_PROPOSER` 失败。没有任何操作可以强行给出结论；`roomEscalate` 会把未决决策交给人类。每条已记录的立场都带有理由，而每个参与者都能读到整块决策板，因此 proposer 能回应反对意见，而不是只知道有人反对。room 决策需要挂载 `timer` 插件以执行评审期限；未挂载时，`roomPropose` 会在记录开放决策前以 `TEAM_TIMER_REQUIRED` 失败。
 
-每个 participant view 都会报告该在线参与者在 `roomReviewGraceMs` 内是否没有产生任何被观察到的工作，用的正是停滞巡检所读的同一个窗口，因此决策板点名的正是 room 正在等待的那个参与者。读取方通过 `roomStream` 这个 Remote stream 跟随一个 room：先收到完整的 room，随后在每次已提交变化后收到新的 view，并为参与者流式输出的每个 text chunk 收到一帧，因此 panel 无需轮询即可展示正在进行的审议。判定 reviewer 沉默的依据是该参与者自身被观察到的工作 —— 它自己 turn 的持久 Session event 与实时 `agent/assistant-stream` 帧 —— 而绝不是 room 自身的记录：Lead Session 保存着每个角色的记录。请求一次 standing 会启动该 reviewer 的 `roomReviewGraceMs` 窗口，至多 `roomReviewReminders` 次提醒各自会重启被提醒者的窗口；只有当所有仍欠 standing 的 reviewer 都用尽窗口后，决策才会升级，因此慢模型不会被误判为卡住。升级后的决策会把沉默的 reviewer 记入 `room/review-timeout`，绝不代替它们编造 standing。
+每个 participant view 都会报告该在线参与者在 `roomReviewGraceMs` 内是否没有产生任何被观察到的工作，用的正是停滞巡检所读的同一个窗口，因此决策板点名的正是 room 正在等待的那个参与者。读取方通过 `roomStream` 这个 Remote stream 跟随一个 room：先收到完整的 room，随后每当发言记录、成员名单或决策板发生持久化更新时，读取方都会收到新的 view；参与者输出的每个 text chunk 也会带来一帧，因此 panel 无需轮询即可展示正在进行的审议。判定 reviewer 沉默的依据是该参与者自身被观察到的工作 —— 它自己 turn 的持久 Session event 与实时 `agent/assistant-stream` 帧 —— 而绝不是 room 自身的记录：Lead Session 保存着每个角色的记录。请求一次 standing 会启动该 reviewer 的 `roomReviewGraceMs` 窗口，至多 `roomReviewReminders` 次提醒各自会重启被提醒者的窗口；只有当所有仍欠 standing 的 reviewer 都用尽窗口后，决策才会升级，因此慢模型不会被误判为卡住。升级后的决策会把沉默的 reviewer 记入 `room/review-timeout`，绝不代替它们编造 standing。
 
 ### Dispose
 
-dispose 会关闭准入、中止并等待已获准的创建与 mailbox dispatch 事务，再让 continuation owner 释放 roster 中确切的 live direct child 及其后代；Lead 的非 Team continuable child 不受影响。cleanup 失败会让 dispose 明确失败，并以 `disposalTimeoutMs` 为上限。
+dispose 会关闭准入、中止并等待已获准的创建与 mailbox dispatch 事务，再让 continuation owner 释放 roster 中确切的 live direct child 及其后代，最后等待仍在进行的 room transcript 追加（包括停止 teammate 时才开始的追加）；Lead 的非 Team continuable child 不受影响。cleanup 失败会让 dispose 明确失败，并以 `disposalTimeoutMs` 为上限。
 
 </details>
 
@@ -250,7 +256,10 @@ transcript 条目与决策绝不触及参与者复用的前缀。每次 prompt �
 - **mailbox 不保证跨进程 exactly-once**——不支持多个 harness 进程并发操作同一 Team。
 - **多成员流程没有录制会话用例** — Lead 与其同行会在取决于墙钟的时刻被唤醒，因此 session replay 通道无法复现它们的顺序；Team 与 room 行为改由包测试、无密钥 vendor adapter 套件和实时 real-API e2e 运行覆盖，而不是 corpus snapshot 用例。
 - **沉默只会升级，不会结清** — reviewer 用尽 `roomReviewGraceMs` 与 `roomReviewReminders` 后，决策会连同沉默者一并升级；没有任何操作会代替它们记录 standing，因此该决策仍在等待人类。
-- **room 复用 Team roster** — 一个 room 只有一个 Lead Session、一份共享 checkout，没有独立成员资格，因此成员不可能只属于 room 而不属于 roster。
+- **room 复用 Team roster** — 一个 room 只有一个 Lead Session、一份共享 checkout，没有独立成员资格，因此成员不可能只属于 room 而不属于 roster。teammate 继承 Lead 的委派路由**——`spawnTeammate()` 不请求按 child 的 `agentOptions`，因此带图片的初始提示词或 peer 消息只能到达继承路由接受图片的 teammate；为单个 teammate 选择不同模型属于本包之外的模型选择特性。
+- **Teammate 继承 Lead 的委派路由** — `spawnTeammate()` 不请求按子级的 `agentOptions`，因此带图片的首条提示词或同伴消息只能送达继承路由接受图片的 teammate；为单个 teammate 选择不同模型属于本包之外的模型选择功能。
+- **以 Lead 为目标的路由检查可能落后于尚未生效的模型切换**——mailbox 的 Lead 目标网关与 `sendToParent` 读取 `parentAgentOptionsForDelegation`，即 Lead 最近一次已记录请求的路由：切换到支持图片的模型如果尚未记录，仍可能拒绝发给 Lead 的 teammate 图片，直到 Lead 下一次请求记录新路由；切换到纯文本模型若尚未记录则会放行该图片，之后运行时会把它投影为占位文本。
+- **图片路由检查先于持久追加，而 Lead 的路由可能在检查之后改变**——`sendMessage()` 与 `spawnTeammate()` 在其 Team 事务之前检查路由，事务不会重复该检查，因为它需要 await 一次模型信息读取。Lead 以不同模型记录一次请求时，其路由就会改变，而检查之后发生的这种改变有两个失败方向。若 Lead 目标的路由变为纯文本，已入队的图片仍会通过不施加任何图片网关的 `Agent.steer()` 投递，Lead 的模型看到的是占位文本而非图片。若 spawn 继承的路由变为纯文本，subagent 服务自身的创建检查会在 `provisioning` 记录之后拒绝该 child，于是 Team 记录一个 `failed` 成员，该名字与一个成员名额被用掉。改为支持图片的模型只会产生调用方可以重试的拒绝。
 
 <a id="dev-note"></a>
 ### 开发备注

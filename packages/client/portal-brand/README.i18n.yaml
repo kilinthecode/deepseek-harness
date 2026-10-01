@@ -3,14 +3,14 @@
 # After editing either side, bring the other along and re-record with:
 #   pnpm run verify-translation-pairing --write packages/client/portal-brand/README.md
 /:
-  en: 49f51e35dbac8d4c
-  zh: 9b9493864b77fca9
+  en: 03fe4e239120aedf
+  zh: c7a8eec69ecc6e8b
 /deepseek-ai-dsh-client-portal-brand:
   en: 9ca308f68b4276fc
   zh: caee5fe66946f925
 /deepseek-ai-dsh-client-portal-brand/summary:
-  en: ed97ef977fcdc3a1
-  zh: 2241322e4e1e99e5
+  en: 17f190f0f1aad743
+  zh: c865da17f8b50753
 /deepseek-ai-dsh-client-portal-brand/table-of-contents:
   en: d152484eb41ac6b4
   zh: 09388d293f9be9cb
@@ -18,14 +18,14 @@
   en: 102b0e0e0d65dc00
   zh: a1622723175e415c
 /deepseek-ai-dsh-client-portal-brand/use-this-package/choosing-the-profile:
-  en: fe850f0413fb6c5b
-  zh: 1d0697e8d6f0b7ce
+  en: 045603c4702f971f
+  zh: b28434c1591cd1de
 /deepseek-ai-dsh-client-portal-brand/use-this-package/changing-the-brand:
   en: 86f7615b8711f94f
   zh: 10ce9208d802c456
 /deepseek-ai-dsh-client-portal-brand/understand-the-implementation:
-  en: c804e7e581834636
-  zh: 38287f0dc7282463
+  en: 8b10041b96b07b85
+  zh: 4dd43fc45b8c1351
 /deepseek-ai-dsh-client-portal-brand/further-exploration:
   en: eba1241a25d634c2
   zh: c77e7044a3f31ad2

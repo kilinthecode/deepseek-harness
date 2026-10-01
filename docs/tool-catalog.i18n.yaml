@@ -9,8 +9,8 @@
   en: 6cc2cd9ced70bb09
   zh: 1c0e6cb4ba2ed637
 /tool-schema-catalog/tool-package-map:
-  en: 66ac24e4276e1866
-  zh: 4b8fbcbd8b997dd5
+  en: db523d140373e404
+  zh: 0e4e3877b2630443
 /tool-schema-catalog/deepseek-ai-dsh-plugin-manager:
   en: e0143916bb634762
   zh: e0143916bb634762
@@ -181,7 +181,7 @@
   zh: 3d0063a1e529377f
 /tool-schema-catalog/deepseek-ai-dsh-schedule/schedule-list:
   en: d8543c8503d0947e
-  zh: 205e6c813ad2b37c
+  zh: 14ea17e2b009ebc0
 /tool-schema-catalog/deepseek-ai-dsh-schedule/schedule-update:
   en: 3d5e2517b510238b
   zh: d6e5c4c4465c9645
@@ -225,8 +225,8 @@
   en: 841abe0dd5913ea7
   zh: 841abe0dd5913ea7
 /tool-schema-catalog/deepseek-ai-dsh-tool-subagent/list-subagent-models:
-  en: c89084b31ffccbce
-  zh: d7b3b7000f2d2be9
+  en: be76399b9328a1b9
+  zh: db75ffd20c378d1b
 /tool-schema-catalog/deepseek-ai-dsh-tool-subagent/subagent:
   en: 55cbd29d70bcf3d7
   zh: 886a1b57446bd5e1
@@ -261,8 +261,8 @@
   en: c3c7af05ceb9f8c9
   zh: ec379e0b42110c6a
 /tool-schema-catalog/deepseek-ai-dsh-experimental-tool-agent-team/list-agents:
-  en: f9457f033f75f00a
-  zh: a2d60ec44118c34c
+  en: 4010e8909b1f85ac
+  zh: b742ef90cd7c6a64
 /tool-schema-catalog/deepseek-ai-dsh-experimental-tool-agent-team/send-message:
   en: e99455aec4656ff2
   zh: a8f88ec35cfe38b8
@@ -312,8 +312,20 @@
   en: 7972383fe3abeab0
   zh: 3eb89691df634be7
 /tool-schema-catalog/deepseek-ai-dsh-tool-memory/memory-write:
-  en: d5f92247cdd44de8
-  zh: 88c1c0718d26fc7f
+  en: ce99b83ace339194
+  zh: eaf249f67da6a647
+/tool-schema-catalog/deepseek-ai-dsh-experimental-tool-peer-sessions:
+  en: 5be4f8115e835ad6
+  zh: 5be4f8115e835ad6
+/tool-schema-catalog/deepseek-ai-dsh-experimental-tool-peer-sessions/list-peers:
+  en: bacf201e6a86f262
+  zh: feef48adbd26bcdd
+/tool-schema-catalog/deepseek-ai-dsh-experimental-tool-peer-sessions/notify-peer-idle:
+  en: d4c62ce389a4e6e0
+  zh: 588dcfa9966fcb7f
+/tool-schema-catalog/deepseek-ai-dsh-experimental-tool-peer-sessions/send-peer-message:
+  en: 80b41a8232f3bedf
+  zh: 021db386fa6d1ac0
 /tool-schema-catalog/deepseek-ai-dsh-tool-todo:
   en: dea62d26fb18ff68
   zh: dea62d26fb18ff68

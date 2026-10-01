@@ -42,11 +42,13 @@ interface TeamMemberSnapshot {
 }
 ```
 
-Every member starts in `provisioning` and reaches exactly one terminal roster phase, `active` or `failed`. Roster `running`/`inactive` status is derived separately and never rewrites this record. `agentProvider` and `agentModel` record the teammate's resolved route, so a roster row or room participant still reports the model it was seated on while that teammate's Agent is not live. `duty` is recorded on the first provisioning record and the projection refuses any later change to it. A `planner` creates tasks, revises tasks no one has claimed, and verifies submissions but never claims or owns a task; an `executor` claims and submits tasks but neither creates nor verifies them; refused actions report `TEAM_DUTY_UNAUTHORIZED`. The tool restriction a duty implies is not a Team record: the subagent provider keeps it in the teammate's own descriptor.
+Every member starts in `provisioning` and reaches exactly one terminal roster phase, `active` or `failed`. Roster `running`/`inactive` status is derived separately and never rewrites this record. `agentProvider` and `agentModel` record the teammate's resolved route, so a roster row or room participant still reports the model it was seated on while that teammate's Agent is not live. `duty` is recorded on the first provisioning record and the projection refuses any later change to it. A `planner` creates tasks, revises tasks no one has claimed, and verifies submissions but never claims or owns a task; an `executor` claims and submits tasks but neither creates nor verifies them; refused actions report `TEAM_DUTY_UNAUTHORIZED`. The tool restriction a duty implies is not a Team record: the subagent provider keeps it in the teammate's own descriptor. The model-facing `spawn_teammate` adapter accepts an optional `images` list of attachment ids already shown in the caller's conversation, resolves it against the caller's derived history, and appends those image blocks after the initial task text; an unknown id fails the call before the provisioning `team/member` record.
+
+Image-input support is not a durable roster field. `resolveMemberImageSupport()` reads each member's live LLM route at listing time and omits that member's map entry when resolution fails; `list_agents` still returns the row without `acceptsImages`.
 
 ## Durable mailbox
 
-The Lead Session first stores the complete queued message. A target receipt is acknowledged only after its pending inbox item or recorded user message is durable, leaving queued-minus-delivered as the recovery mailbox.
+The Lead Session first stores the complete queued message. A target receipt is acknowledged only after its pending inbox item or recorded user message is durable, leaving queued-minus-delivered as the recovery mailbox. The model-facing `send_message` adapter accepts an optional `images` list of attachment ids already shown in the caller's conversation, resolves it against the caller's derived history, and appends those image blocks after the text; an unknown id fails the call before any durable mailbox record.
 
 ```ts type-equiv
 /** One peer message retained until its target Session records it. */
@@ -202,7 +204,7 @@ interface RoomReviewSnapshot {
 
 Participants are the Team roster itself: the Lead plus every member that has not failed. A member is a participant from the moment provisioning records it, matching the rule the roster uses to resolve a live member's Team identity. Reading a room is total: a composition without rooms reports `enabled: false` and empty collections rather than failing, while every mutating room operation still refuses with `TEAM_ROOM_DISABLED`. `RoomView` exposes that flag, the roster, the transcript, the decisions, and the rotated chair; `RoomPromptRequest` and `RoomPromptResult` describe giving one participant the floor, `ProposeRoomDecisionRequest`, `ReviewRoomDecisionRequest`, and `EscalateRoomDecisionRequest` describe the decision operations, and `RoomStreamFrame` carries one live participant frame on the `room/stream` event. `RoomParticipantView.quiet` reports a live participant that produced no observed work within `roomReviewGraceMs`, the same window the stall sweep reads, and `roomStream` follows one room through the Remote face: the complete view first, then a view after every committed change and a frame for every text chunk a participant streams. `PanelRoomPromptRequest`, `PanelProposeRoomDecisionRequest`, and `PanelEscalateRoomDecisionRequest` carry the browser panel's own calls to those same operations.
 
-Acceptance requires every eligible reviewer to have voted, at least `roomApprovalRatio` of them to approve, and no standing rejection. A proposer cannot review its own decision, a settled decision is final, and a rejected one is resolved only by carrying a revised statement back to the room. The chair rotates with the transcript and carries no decision authority. A reviewer's silence is measured from that participant's own observed work, never from the room's records: the ask starts a window of `roomReviewGraceMs`, each of at most `roomReviewReminders` reminders restarts the window of the reviewer it reaches, and a decision escalates only once every reviewer still owing a standing has exhausted its window, naming them in `room/review-timeout` without inventing the standing it never received. Every recorded standing carries its reviewer's reason and is visible to the whole room. Shared work follows the same rule: a task owner submits the current revision, only another member's `verify` verdict with a reason carries it to `completed`, and the fold refuses any record whose verification cannot be true.
+Acceptance requires every eligible reviewer to have voted, at least `roomApprovalRatio` of them to approve, and no standing rejection. A proposer cannot review its own decision, a settled decision is final, and a rejected one is resolved only when its proposer carries a revised statement back to the room. The chair rotates with the transcript and carries no decision authority. A reviewer's silence is measured from that participant's own observed work, never from the room's records: the ask starts a window of `roomReviewGraceMs`, each of at most `roomReviewReminders` reminders restarts the window of the reviewer it reaches, and a decision escalates only once every reviewer still owing a standing has exhausted its window, naming them in `room/review-timeout` without inventing the standing it never received. Every recorded standing carries its reviewer's reason and is visible to the whole room. Shared work follows the same rule: a task owner submits the current revision, only another member's `verify` verdict with a reason carries it to `completed`, and the fold refuses any record whose verification cannot be true.
 
 ## Replay
 
@@ -238,10 +240,28 @@ membership(agent: Agent): TeamMembership
 listMembers(agent: Agent): TeamMemberView[]
 
 /**
- * Create one named, continuable direct child of the Team Lead.
+ * Resolve each roster member's image-input support from its live LLM route.
+ * The Lead uses the root's current delegation route; a teammate uses the
+ * continuable-child probe against that same root so a teammate caller cannot
+ * fail the probe. A member whose route or model info cannot be resolved has
+ * its map entry omitted.
+ * @param caller - exact live Team member requesting the listing.
+ * @param signal - caller cancellation for route and model-info resolution.
+ * @returns member ids mapped to `'supported'`, `'unsupported'`, or `'undeclared'`.
+ */
+async resolveMemberImageSupport( caller: Agent, signal: AbortSignal, ): Promise<ReadonlyMap<TeamMemberView['id'], ImageInputSupport>>
+
+/**
+ * Create one named, continuable direct child of the Team Lead. When the
+ * first prompt has an image, the inherited child route (the Lead's current
+ * delegation route; spawn requests no per-child override) is checked before
+ * the provisioning `team/member` record, so a refusal leaves the name and a
+ * member slot available for a retry.
  * @param caller - exact live Lead Agent.
  * @param request - immutable name, description, prompt, context mode, provider, and cancellation.
  * @returns the active roster row.
+ * @throws {TeamError} `TEAM_IMAGES_UNSUPPORTED` when the first prompt has an
+ *   image and the inherited route's declared modalities omit `image`.
  */
 async spawnTeammate(caller: Agent, request: SpawnTeammateRequest): Promise<SpawnTeammateResult>
 
@@ -261,10 +281,17 @@ async setSubject(caller: Agent, subject: string): Promise<void>
 subjectOf(agent: Agent): string | undefined
 
 /**
- * Queue one durable peer message, then attempt immediate delivery.
+ * Queue one durable peer message, then attempt immediate delivery. When
+ * content has an image, the resolved target route — the live root Agent's
+ * current delegation route for the Lead, or `dsh-subagent`'s
+ * continuable-child probe for a teammate — is checked before the
+ * `team/message/queued` append, so a refusal never queues and a later
+ * message to the same target is unaffected.
  * @param caller - exact live sending Team member.
  * @param request - target name, content, and pre-queue cancellation.
  * @returns durable message identity and immediate-delivery observation.
+ * @throws {TeamError} `TEAM_IMAGES_UNSUPPORTED` when content has an image
+ *   and the resolved target route's declared modalities omit `image`.
  */
 async sendMessage(caller: Agent, request: SendTeamMessageRequest): Promise<SendTeamMessageResult>
 
@@ -403,7 +430,7 @@ roomView(caller: Agent): RoomView
 @Remote('roomEscalate') remoteRoomEscalate(agent: Agent, request: PanelEscalateRoomDecisionRequest): Promise<RoomProposalView>
 ```
 
-Types: [Agent](core.md)
+Types: [Agent](core.md) · [ImageInputSupport](llm-streaming.md)
 
 Source: [`packages/experimental/agent-team/src/index.ts`](../../packages/experimental/agent-team/src/index.ts)
 

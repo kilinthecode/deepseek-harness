@@ -25,7 +25,7 @@ import type {
   StreamChunk,
   TokenUsage,
 } from '@deepseek-ai/dsh-llm'
-import SessionStore, { Session, SessionId, SessionSeq } from '@deepseek-ai/dsh-session'
+import SessionStore, { SESSION_FORMAT_VERSION, Session, SessionId, SessionSeq } from '@deepseek-ai/dsh-session'
 import SessionProjectionRegistry from '@deepseek-ai/dsh-session-projection'
 import TokenMeter from '@deepseek-ai/dsh-token-meter'
 import { agentEvents, type Agent, type RequestErrorAction } from '@deepseek-ai/dsh-agent'
@@ -98,10 +98,17 @@ function createContext(contextWindow = 1_000): Context {
   return ctx
 }
 
-function agent(session: Session, model?: string): Agent {
+/**
+ * `ancestors` fakes the live session registry `delegationTreeRoot` consults
+ * while stamping `GenerateOptions.cacheKey`; omitting it leaves every lookup
+ * unresolved, which is correct for every fixture session below (none carry a
+ * `parentSession`, so the lookup is never actually called).
+ */
+function agent(session: Session, model?: string, ancestors: ReadonlyMap<SessionId, Session> = new Map()): Agent {
   return {
     session,
     options: model === undefined ? {} : { provider: model, model },
+    ctx: { sessions: { get: (id: SessionId) => ancestors.get(id) } },
   } as Agent
 }
 
@@ -1055,11 +1062,11 @@ describe('optional model-free tool-result pruning', () => {
       retainTokens: 100,
     })
     const session = oversizedToolResult()
-    const previewSession = vi.spyOn(prune, 'previewSession')
+    const projectTokenSavings = vi.spyOn(prune, 'projectTokenSavings')
     const pruneSession = vi.spyOn(prune, 'pruneSession')
 
     expect(await compactIfNeeded(compact, session)).toBeNull()
-    expect(previewSession).not.toHaveBeenCalled()
+    expect(projectTokenSavings).not.toHaveBeenCalled()
     expect(pruneSession).not.toHaveBeenCalled()
     expect(compact.calls).toHaveLength(0)
     expect(session.surface.replaceGeneration).toBe(0)
@@ -1091,7 +1098,7 @@ describe('optional model-free tool-result pruning', () => {
   it('proceeds to compaction when a preview finds no prune candidates', async () => {
     const ctx = createContext(1_000)
     const prune = new ToolResultPruner(ctx, pruneConfig)
-    const previewSession = vi.spyOn(prune, 'previewSession')
+    const projectTokenSavings = vi.spyOn(prune, 'projectTokenSavings')
     const compact = new TestCompactionEngine(ctx, {
       headroomTokens: 0,
       maxTokens: 8192,
@@ -1102,7 +1109,7 @@ describe('optional model-free tool-result pruning', () => {
     const session = conversation(4)
 
     expect(await compactIfNeeded(compact, session)).not.toBeNull()
-    expect(previewSession).toHaveReturnedWith({ nodes: 0, tokensSaved: 0 })
+    expect(projectTokenSavings).toHaveReturnedWith(0)
     expect(compact.calls).toHaveLength(1)
   })
 
@@ -1138,7 +1145,7 @@ describe('optional model-free tool-result pruning', () => {
     // Over-report tokensSaved so the qualifying check lands the prune; the
     // real prune it drives still only saves what the fixture actually
     // allows, which is not enough to clear the threshold on its own.
-    vi.spyOn(prune, 'previewSession').mockReturnValue({ nodes: 3, tokensSaved: 1_000_000 })
+    vi.spyOn(prune, 'projectTokenSavings').mockReturnValue(1_000_000)
     const compact = new TestCompactionEngine(ctx, {
       headroomTokens: 0,
       maxTokens: 8192,
@@ -1186,7 +1193,7 @@ describe('optional model-free tool-result pruning', () => {
     // this exact value and fall through to compaction instead of landing the
     // prune-only pass.
     const tokensSaved = measured - (spec.thresholdTokens - spec.pruneHeadroomTokens)
-    vi.spyOn(prune, 'previewSession').mockReturnValue({ nodes: 1, tokensSaved })
+    vi.spyOn(prune, 'projectTokenSavings').mockReturnValue(tokensSaved)
 
     expect(await compactIfNeeded(compact, session)).toBeNull()
     expect(compact.calls).toHaveLength(0)
@@ -1217,7 +1224,7 @@ describe('optional model-free tool-result pruning', () => {
     // dropping the `< thresholdTokens` guard would let this tie qualify and
     // prune before compaction instead of leaving the surface untouched.
     const tokensSaved = measured - spec.thresholdTokens
-    vi.spyOn(prune, 'previewSession').mockReturnValue({ nodes: 1, tokensSaved })
+    vi.spyOn(prune, 'projectTokenSavings').mockReturnValue(tokensSaved)
 
     // A tie against the threshold itself must fall through to compaction
     // instead of landing the prune-only pass, so the leading message is
@@ -1268,6 +1275,15 @@ describe('optional model-free tool-result pruning', () => {
       pruneHeadroomRatio: 0.95,
     })
     const session = oversizedToolResult()
+
+    // Pin the precondition this test's name claims: at this retainTokens
+    // budget, the fixture's single indivisible tool-call/result pair leaves
+    // no compactable range, so the prune-before-decline fallback — not real
+    // compaction — is what lands the prune. If the fixture ever grows a
+    // compactable range, this fails before the outcome assertions below could
+    // pass for the wrong reason.
+    expect(selectCompactableRange(session, ctx.tokenMeter.measure(session), compact.config.retainTokens!))
+      .toBeNull()
 
     expect(await compactIfNeeded(compact, session)).toBeNull()
     expect(compact.calls).toHaveLength(0)
@@ -1815,11 +1831,33 @@ describe('default one-shot summarizer', () => {
       maxTokens: 321,
       signal: SIGNAL,
       sessionId: session.id,
+      cacheKey: session.id,
       toolHistory: session.toolHistory(),
       purpose: 'compaction',
     })
     const instruction = adapter.lastOptions?.messages.at(-1)?.content[0]
     expect(instruction?.type === 'text' ? instruction.text : '').toContain('## Primary Request and Intent')
+  })
+
+  it('stamps a delegated child session\'s cacheKey with its live parent\'s id, not its own', async () => {
+    const { adapter, compact } = await summarizerHarness([{ type: 'text', text: 'child summary' }], undefined, MODEL, {
+      auto: false,
+      summarizationProvider: MODEL,
+      summarizationModel: MODEL,
+      maxTokens: 64,
+    })
+    const parent = conversation(2)
+    const child = Session.create(SessionId('delegated-child'), undefined, {
+      version: SESSION_FORMAT_VERSION,
+      id: SessionId('delegated-child'),
+      createdAt: 0,
+      isSeeded: false,
+      parentSession: parent.id,
+      origin: 'subagent',
+      delegationDepth: 1,
+    })
+    await compact.runSummarize(promptInput('transcript'), agent(child, undefined, new Map([[parent.id, parent]])), SIGNAL)
+    expect(adapter.lastOptions).toMatchObject({ sessionId: child.id, cacheKey: parent.id })
   })
 
   it('replays the conversation prefix and appends the instruction as the final message', async () => {

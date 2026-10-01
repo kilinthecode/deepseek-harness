@@ -321,12 +321,12 @@ export class BasicCompactionEngine extends CompactionEngine {
     )
     if (measurement.totalTokens < spec.thresholdTokens) return null
 
-    // The preview uses the heuristic estimateMessage while measure() is
+    // The projection uses the heuristic estimateMessage while measure() is
     // route-priced, so a landed prune can still leave the surface at or above
     // threshold; compaction then proceeds on the pruned surface.
     if (prune !== undefined) {
-      const preview = prune.previewSession(agent.session)
-      const projected = measurement.totalTokens - preview.tokensSaved
+      const projectedSavings = prune.projectTokenSavings(agent.session)
+      const projected = measurement.totalTokens - projectedSavings
       if (projected <= spec.thresholdTokens - spec.pruneHeadroomTokens
         && projected < spec.thresholdTokens) {
         prune.pruneSession(agent.session)

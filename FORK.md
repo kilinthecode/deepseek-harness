@@ -41,8 +41,42 @@ Rules:
    conflicted record, resolve the prose, then re-record every pair the fork added or modified:
    `pnpm run verify-translation-pairing --write <the .md path>`
 4. **Re-assert the fork's invariants** after every sync — these tests exist only to catch a sync clobbering the fork:
-   - `scripts/client-build-environment.portal.spec.ts` (the `portal` profile block)
-   - `packages/client/portal-brand/tests/` (the brand occupants)
+   - `scripts/client-build-environment.portal.spec.ts` (the `portal` and `portal-dev` profile blocks)
+   - `packages/client/portal-brand/tests/` (the brand occupants and the dev variant)
+
+---
+
+## Dev channel — promoting a change through Portal Dev
+
+`portal-dev` is the fork's dev channel: a change ships to the **Portal Dev** app first and reaches the production
+**Portal** app only when the validated commit is re-cut with the `portal` identity. The two apps install side by
+side and keep separate data.
+
+| | Dev build | Production build |
+|---|---|---|
+| Client build profile (`DSH_BUILD_CLIENT_PROFILE`) | `portal-dev` | `portal` |
+| Browser title (`DSH_CLIENT_TITLE`) | `Portal Dev` | `Portal Harness` |
+| Desktop edition (`DSH_DESKTOP_EDITION`) | `portal-dev` | `portal` |
+| Product name | `Portal Dev` | `Portal` |
+| Application id (`DSH_DESKTOP_APP_ID`) | the dev id you allocate | the production id |
+| Data root | `~/.dsh-dev` (`DSH_HOME` still overrides) | `~/.dsh` (`DSH_HOME` still overrides) |
+| Update channel | `dev` (`dev.yml`, `dev-mac.yml`) | `nightly` (`nightly.yml`, `nightly-mac.yml`) |
+
+Ship a change:
+
+1. Package the desktop target with `DSH_DESKTOP_EDITION=portal-dev` and the dev application id. Packaging builds the
+   `portal-dev` client profile itself — the edition owns the profile, so it repeats the complete build with the
+   matching brand and refuses a `DSH_BUILD_CLIENT_PROFILE` that names another one. Packaging and upload need the
+   release-signing and COS credentials documented in `apps/desktop/README.md`.
+2. Upload with the `upload:<target>` scripts in `apps/desktop`. Portal Dev installations auto-update from the `dev`
+   channel.
+3. Validate in Portal Dev. Fix forward; each new candidate repeats steps 1–2.
+4. Promote the validated commit: re-cut the same commit with `DSH_DESKTOP_EDITION=portal` and the production
+   application id, then upload it. The production Portal app auto-updates from the `nightly` channel, and Portal Dev
+   keeps tracking `dev`.
+
+Give the editions different application ids. Electron's single-instance lock and its per-application user data
+follow the id, so a shared id would make the two apps contend for each other even though the harness homes differ.
 
 ---
 
@@ -52,7 +86,12 @@ These are upstream files the fork edits with the smallest possible change, delib
 
 | File | Fork divergence | Since |
 |---|---|---|
-| `scripts/client-build-environment.ts` | Adds the `PORTAL_CLIENT_BUILD_ENVIRONMENT` block and the `portal` branch in `resolveClientBuildEnvironment`. Upstream's `official` values are untouched. | 2026-09-21 |
+| `scripts/client-build-environment.ts` | Adds the `PORTAL_CLIENT_BUILD_ENVIRONMENT` and `PORTAL_DEV_CLIENT_BUILD_ENVIRONMENT` blocks and their branches in `resolveClientBuildEnvironment`. Upstream's `official` values are untouched. | 2026-09-21 |
+| `scripts/client-build-environment.ts` | Adds `releaseClientBuildEnvironment`: a selected `DSH_BUILD_CLIENT_PROFILE` is the profile release packing verifies, and no selection still requires `officialClientBuildEnvironment`. | 2026-09-29 |
+| `scripts/release/families.ts` | `DshFamily.verifyBuildArtifacts` checks the record from `releaseClientBuildEnvironment`, so a fork release proves its own client values instead of upstream's. | 2026-09-29 |
+| `package.json` | Adds `build:portal` and `build:portal-dev` beside upstream's `build:official`, so each client profile has a script. | 2026-09-29 |
+| `apps/desktop/scripts/desktop-release-environment.{mjs,d.mts}` | Each edition declares the `clientBuildProfile` it ships, and `resolveDesktopClientBuildProfile` refuses a `DSH_BUILD_CLIENT_PROFILE` that contradicts the edition. | 2026-09-29 |
+| `apps/desktop/scripts/package-target.ts`, `apps/desktop/scripts/desktop-package-environment.mjs` | Packaging runs `build:<profile>` for the edition and passes the selection to the dsh release pack, instead of always running `build:official`. | 2026-09-29 |
 | `scripts/verify-package-readme-model-experience.ts` | Adds `packages/client/portal-brand` to `SENTENCE_MODEL_EXPERIENCE` with `kind: 'none'`. | 2026-09-21 |
 | `tsconfig.base.json` | Adds the `@deepseek-ai/dsh-client-portal-brand` path alias. | 2026-09-21 |
 | `tsconfig.client.json` | Adds the `packages/client/portal-brand` project reference. | 2026-09-21 |
@@ -178,10 +217,6 @@ Regenerate after every sync. Listed so a conflict here is not mistaken for a rea
 - **Optional bundle exclusivity — open as of 2026-09-24.** `agent-team-profile` and `agent-room-profile` both insert
   the `agent-team`, `tool-agent-team`, and `ui-agent-team` rows, so enabling both lets one layer's config replace the
   other's without a diagnostic. Only the room bundle's Plugins page description says to pick one.
-- **Packaged client profile — open as of 2026-09-24.** Desktop packaging (`apps/desktop/scripts/package-target.ts`)
-  runs `build:official`, and no script builds the `portal` profile, so `portal-brand` renders in no produced
-  artifact. The boot page draws the Portal brand under every profile, so a packaged `Portal.app` hands off from the
-  Portal boot brand to upstream's official in-app brand.
 - **Browser task controls — follows upstream as of 2026-09-23.** Upstream made the Team panel read-only and
   projection-driven. The room section keeps the floor, decision, and escalation actions, but
   the browser no longer creates, edits, submits, or verifies tasks.

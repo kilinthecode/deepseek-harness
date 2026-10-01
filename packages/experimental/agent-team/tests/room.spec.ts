@@ -7,7 +7,7 @@ import TimerService from '@deepseek-ai/cordis-plugin-timer'
 import type { Agent } from '@deepseek-ai/dsh-agent'
 import AgentLoop from '@deepseek-ai/dsh-agent-loop'
 import { mountAgentLoopTestDependencies } from '@deepseek-ai/dsh-agent-loop-testkit'
-import { SessionId } from '@deepseek-ai/dsh-session'
+import { SessionId, SessionSeq } from '@deepseek-ai/dsh-session'
 import JsonlSessionPersistence from '@deepseek-ai/dsh-session-persistence-jsonl'
 import SubagentService from '@deepseek-ai/dsh-subagent'
 import * as SubagentFork from '@deepseek-ai/dsh-subagent-fork-in-process'
@@ -16,6 +16,10 @@ import { createUserMessage } from '@deepseek-ai/dsh-llm'
 import { MockAdapter, textResponse } from '../../../core/agent-loop/tests/mock-adapter.ts'
 import TeamService, { TeamError } from '../src/index.ts'
 import type { RoomFollowFrame, RoomProposalId, RoomStreamFrame } from '../src/index.ts'
+import type { TeamJournal } from '../src/journal.ts'
+import type { TeamMailbox } from '../src/mailbox.ts'
+import type { TeamRoom } from '../src/room.ts'
+import type { TeamRoster } from '../src/roster.ts'
 import { TeamId } from '../src/index.ts'
 import { TestSessionQuery } from './test-session-query.ts'
 
@@ -99,6 +103,27 @@ async function addLiveParticipant(ctx: Context, lead: Agent, name: string): Prom
   await vi.waitFor(() => { expect(ctx.agents.get(id)?.status).toBe('running') }, { timeout: 5_000 })
   cleanups.push(() => { ctx.agents.get(id)?.cancel({ kind: 'parent' }) })
   return id
+}
+
+/**
+ * Hold the next flush of the Lead log that commits a room transcript entry, so a
+ * test can observe what waits for that append.
+ * @returns a promise for the moment the flush is held, and the function that lets it finish.
+ */
+function holdNextTranscriptFlush(ctx: Context, lead: Agent): { entered: Promise<undefined>; release: () => void } {
+  const entered = Promise.withResolvers<undefined>()
+  const release = Promise.withResolvers<undefined>()
+  const flush = ctx.sessions.flush.bind(ctx.sessions)
+  let held = false
+  vi.spyOn(ctx.sessions, 'flush').mockImplementation(async (session) => {
+    if (!held && session === lead.session && lead.session.snapshotEvents().at(-1)?.type === 'room/message') {
+      held = true
+      entered.resolve(undefined)
+      await release.promise
+    }
+    return flush(session)
+  })
+  return { entered: entered.promise, release: () => { release.resolve(undefined) } }
 }
 
 /**
@@ -373,6 +398,63 @@ describe('room transcript', () => {
     await fiber.dispose()
     await pump
     expect(frames).toHaveLength(1)
+  }, 15_000)
+
+  it('settles a transcript append still in flight before disposal completes', async () => {
+    const { ctx, lead, fiber } = await setup(acks(4))
+    const room: TeamRoom = ctx.agentTeams['room']
+    const observed = vi.spyOn(room, 'observeSessionEvent')
+    await addParticipant(ctx, lead, 'bob', 'ack')
+    // A committed assistant message of another participant stands in for the
+    // Lead's next utterance, under a sequence number the transcript has not recorded.
+    const utterance = observed.mock.calls.map(([, event]) => event).find(event => event.type === 'assistant/message')
+    expect(utterance).toBeDefined()
+
+    const hold = holdNextTranscriptFlush(ctx, lead)
+    const entries = (): number => lead.session.snapshotEvents().filter(event => event.type === 'room/message').length
+    const before = entries()
+    room.observeSessionEvent(lead.session, { ...utterance!, seq: SessionSeq(utterance!.seq + 1_000) })
+    await hold.entered
+
+    // Nothing else is queued behind the held append, so only disposal can wait for it.
+    let disposed = false
+    const disposal = fiber.dispose().then(() => { disposed = true })
+    await new Promise(resolve => setTimeout(resolve, 50))
+    const disposedBeforeRelease = disposed
+    hold.release()
+    await disposal
+
+    expect(disposedBeforeRelease).toBe(false)
+    expect(entries()).toBeGreaterThan(before)
+  }, 15_000)
+
+  it('settles a transcript append that stopping a teammate starts', async () => {
+    const { ctx, lead, fiber } = await setup([HANGING, ack(), ...acks(4)])
+    const room: TeamRoom = ctx.agentTeams['room']
+    const roster: TeamRoster = ctx.agentTeams['roster']
+    const observed = vi.spyOn(room, 'observeSessionEvent')
+    await addLiveParticipant(ctx, lead, 'alice')
+    await addParticipant(ctx, lead, 'bob', 'ack')
+    const utterance = observed.mock.calls.map(([, event]) => event).find(event => event.type === 'assistant/message')
+    expect(utterance).toBeDefined()
+
+    const hold = holdNextTranscriptFlush(ctx, lead)
+    // The last event a stopped teammate commits reaches the room while the stop
+    // is still running, after any list of pending appends taken before it.
+    const stop = roster.stopTeammates.bind(roster)
+    vi.spyOn(roster, 'stopTeammates').mockImplementation(async (root, childIds) => {
+      await stop(root, childIds)
+      room.observeSessionEvent(lead.session, { ...utterance!, seq: SessionSeq(utterance!.seq + 1_000) })
+    })
+    let disposed = false
+    const disposal = fiber.dispose().then(() => { disposed = true })
+    await hold.entered
+    await new Promise(resolve => setTimeout(resolve, 50))
+    const disposedBeforeRelease = disposed
+    hold.release()
+    await disposal
+
+    expect(disposedBeforeRelease).toBe(false)
   }, 15_000)
 
   it('ends a reader whose Lead is gone without failing the change that notified it', async () => {
@@ -685,6 +767,34 @@ describe('room collective decisions', () => {
     expect(ctx.agentTeams.roomView(lead).proposals).toEqual([revised])
   })
 
+  it('refuses a revision from a participant that did not propose the decision', async () => {
+    const { ctx, lead, alice } = await room()
+    const opened = await ctx.agentTeams.roomPropose(lead, { statement: 'ship on Friday', signal: SIGNAL })
+    await ctx.agentTeams.roomReview(ctx.agents.get(alice)!, {
+      proposalId: opened.id,
+      proposalRevision: 1,
+      verdict: 'reject',
+      reason: 'no release cover',
+      signal: SIGNAL,
+    })
+    await expect(ctx.agentTeams.roomPropose(ctx.agents.get(alice)!, {
+      statement: 'ship on Monday instead',
+      supersedes: opened.id,
+      signal: SIGNAL,
+    })).rejects.toMatchObject({ code: 'TEAM_ROOM_NOT_PROPOSER' })
+    // The refused revision leaves the decided revision on the board, so no
+    // recorded proposal ever carries a proposer other than the one that opened it.
+    expect(ctx.agentTeams.roomView(lead).proposals).toEqual([
+      expect.objectContaining({ id: opened.id, revision: 1, phase: 'rejected' }),
+    ])
+    const revised = await ctx.agentTeams.roomPropose(lead, {
+      statement: 'ship on Monday with release cover',
+      supersedes: opened.id,
+      signal: SIGNAL,
+    })
+    expect(revised).toMatchObject({ id: opened.id, revision: 2, phase: 'open' })
+  })
+
   it('refuses a revision beyond the configured limit so the room must escalate', async () => {
     const { ctx, lead } = await setup([HANGING, ...acks(4)], { roomMaxProposalRevisions: 1 })
     await addLiveParticipant(ctx, lead, 'alice')
@@ -971,6 +1081,65 @@ describe('room collective decisions', () => {
     expect(timeouts.every(timeout => timeout.stalled.length === 1)).toBe(true)
   })
 
+  it('escalates a decision whose reminder could not be delivered', async () => {
+    const { ctx, lead } = await setup([HANGING, ...acks(8)], {
+      roomReviewGraceMs: 30,
+      roomReviewReminders: 1,
+    })
+    await addLiveParticipant(ctx, lead, 'alice')
+    // The review request reaches alice and the one reminder after it fails at the
+    // mailbox, so the deadline re-armed before that send is all that carries the
+    // decision to its escalation. Queued before the proposal, the failure lands on
+    // the reminder however slowly the machine runs.
+    const mailbox: TeamMailbox = ctx.agentTeams['mailbox']
+    const send = mailbox.send.bind(mailbox)
+    const sends = vi.spyOn(mailbox, 'send')
+      .mockImplementationOnce(send)
+      .mockRejectedValueOnce(new Error('mailbox unavailable'))
+    await ctx.agentTeams.roomPropose(lead, { statement: 'a reminder nobody receives', signal: SIGNAL })
+
+    await vi.waitFor(() => {
+      expect(ctx.agentTeams.roomView(lead).proposals[0]?.phase).toBe('escalated')
+    }, { timeout: 5_000 })
+    expect(sends).toHaveBeenCalledTimes(2)
+    const timeouts = lead.session.snapshotEvents()
+      .flatMap(event => event.type === 'room/review-timeout' ? [event.data.timeout] : [])
+    expect(timeouts.map(timeout => timeout.kind)).toEqual(['reminder', 'escalated'])
+  })
+
+  it('leaves a revision opened during an escalation with its own windows', async () => {
+    const { ctx, lead, fiber } = await setup([HANGING, ...acks(8)], {
+      roomReviewGraceMs: 400,
+      roomReviewReminders: 0,
+    })
+    await addLiveParticipant(ctx, lead, 'alice')
+    const infos: string[] = []
+    ctx.logger.info = ((value: unknown) => { infos.push(String(value)) }) as typeof ctx.logger.info
+    const opened = await ctx.agentTeams.roomPropose(lead, { statement: 'v1', signal: SIGNAL })
+    // The escalation record commits, and the Lead revises the decision before the
+    // sweep's next transaction, the one that closes the decision, runs.
+    let revised: Promise<unknown> | undefined
+    ctx.on('room/updated', () => {
+      const escalating = lead.session.snapshotEvents().some(event => event.type === 'room/review-timeout')
+      if (!escalating || revised !== undefined) return
+      revised = ctx.agentTeams.roomPropose(lead, { statement: 'v2', supersedes: opened.id, signal: SIGNAL })
+    })
+    await vi.waitFor(() => { expect(revised).toBeDefined() }, { timeout: 5_000 })
+    await revised
+    // Transactions run in the order they were requested, so this empty one
+    // returns only after the sweep's queued transaction has run against the
+    // revised decision.
+    const journal: TeamJournal = ctx.agentTeams['journal']
+    await journal.transact(lead.id, async () => undefined)
+
+    expect(ctx.agentTeams.roomView(lead).proposals).toEqual([
+      expect.objectContaining({ id: opened.id, revision: 2, phase: 'open' }),
+    ])
+    // The sweep escalated nothing, so nothing announces an escalation.
+    expect(infos.filter(line => line.includes('escalated'))).toEqual([])
+    await fiber.dispose()
+  }, 15_000)
+
   it('keeps a decision open while a slower reviewer still has its window', async () => {
     const config = { roomReviewGraceMs: 300, roomReviewReminders: 0 }
     const { ctx, lead } = await setup([HANGING, ...acks(6)], config)
@@ -1020,6 +1189,9 @@ describe('room collective decisions', () => {
     await addLiveParticipant(ctx, lead, 'alice')
     await expect(ctx.agentTeams.roomPropose(lead, { statement: 'no timer here', signal: SIGNAL }))
       .rejects.toMatchObject({ code: 'TEAM_TIMER_REQUIRED' })
+    // The refusal precedes the append, so the room owns no decision that
+    // nothing could ever settle.
+    expect(ctx.agentTeams.roomView(lead).proposals).toEqual([])
   })
 
 

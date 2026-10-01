@@ -329,10 +329,17 @@ export const SERVICE_API: readonly ServiceApiEntry[] = [
         returns: 'Lead and teammate rows in creation order.',
       },
       {
+        signature: 'async resolveMemberImageSupport( caller: Agent, signal: AbortSignal, ): Promise<ReadonlyMap<TeamMemberView[\'id\'], ImageInputSupport>>',
+        description: 'Resolve each roster member\'s image-input support from its live LLM route. The Lead uses the root\'s current delegation route; a teammate uses the continuable-child probe against that same root so a teammate caller cannot fail the probe. A member whose route or model info cannot be resolved has its map entry omitted.',
+        parameters: [{ name: 'caller', description: 'exact live Team member requesting the listing.' }, { name: 'signal', description: 'caller cancellation for route and model-info resolution.' }],
+        returns: 'member ids mapped to `\'supported\'`, `\'unsupported\'`, or `\'undeclared\'`.',
+      },
+      {
         signature: 'async spawnTeammate(caller: Agent, request: SpawnTeammateRequest): Promise<SpawnTeammateResult>',
-        description: 'Create one named, continuable direct child of the Team Lead.',
+        description: 'Create one named, continuable direct child of the Team Lead. When the first prompt has an image, the inherited child route (the Lead\'s current delegation route; spawn requests no per-child override) is checked before the provisioning `team/member` record, so a refusal leaves the name and a member slot available for a retry.',
         parameters: [{ name: 'caller', description: 'exact live Lead Agent.' }, { name: 'request', description: 'immutable name, description, prompt, context mode, provider, and cancellation.' }],
         returns: 'the active roster row.',
+        throws: ['{TeamError} `TEAM_IMAGES_UNSUPPORTED` when the first prompt has an image and the inherited route\'s declared modalities omit `image`.'],
       },
       {
         signature: 'async setSubject(caller: Agent, subject: string): Promise<void>',
@@ -347,9 +354,10 @@ export const SERVICE_API: readonly ServiceApiEntry[] = [
       },
       {
         signature: 'async sendMessage(caller: Agent, request: SendTeamMessageRequest): Promise<SendTeamMessageResult>',
-        description: 'Queue one durable peer message, then attempt immediate delivery.',
+        description: 'Queue one durable peer message, then attempt immediate delivery. When content has an image, the resolved target route — the live root Agent\'s current delegation route for the Lead, or `dsh-subagent`\'s continuable-child probe for a teammate — is checked before the `team/message/queued` append, so a refusal never queues and a later message to the same target is unaffected.',
         parameters: [{ name: 'caller', description: 'exact live sending Team member.' }, { name: 'request', description: 'target name, content, and pre-queue cancellation.' }],
         returns: 'durable message identity and immediate-delivery observation.',
+        throws: ['{TeamError} `TEAM_IMAGES_UNSUPPORTED` when content has an image and the resolved target route\'s declared modalities omit `image`.'],
       },
       {
         signature: 'async createTask(caller: Agent, request: CreateTeamTaskRequest): Promise<TeamTaskView>',
@@ -3419,10 +3427,10 @@ export const SERVICE_API: readonly ServiceApiEntry[] = [
         throws: ['when the session rejects a replacement; replacements committed earlier in the pass remain durable.'],
       },
       {
-        signature: 'previewSession(session: Session): PrunePreview',
-        description: 'Preview the replacements `pruneSession` would land for the current surface, without appending anything. A caller compares `tokensSaved` against a pressure margin to decide whether a prune-only reduction is worth landing on its own, before paying for a second cache break by also summarizing.',
+        signature: 'projectTokenSavings(session: Session): number',
+        description: 'Project the token savings `pruneSession` would land for the current surface, without appending anything. A caller compares the projection against a pressure margin to decide whether a prune-only reduction is worth landing on its own, before paying for a second cache break by also summarizing.',
         parameters: [{ name: 'session', description: 'session whose current surface is inspected.' }],
-        returns: 'the candidate count and aggregate estimated token savings `pruneSession` would currently produce.',
+        returns: 'aggregate estimated tokens `pruneSession` would currently remove, summed per candidate as `tokenMeter.estimateMessage(original) - tokenMeter.estimateMessage(replacement)`.',
       },
     ],
   },
@@ -5434,7 +5442,7 @@ export const TYPE_API: readonly TypeApiEntry[] = [
   },
   {
     name: 'GenerateOptions',
-    declaration: 'export interface GenerateOptions {\n    provider: string;\n    model: string;\n    reasoningEffort?: ReasoningEffortId;\n    messages: RequestMessage[];\n    system?: string;\n    tools?: ToolSchema[];\n    toolHistory?: ToolHistory;\n    temperature?: number;\n    maxTokens?: number;\n    stop?: string[];\n    signal?: AbortSignal;\n    sessionId?: Branded<\'SessionId\'>;\n    purpose?: \'compaction\' | \'session-title\';\n}',
+    declaration: 'export interface GenerateOptions {\n    provider: string;\n    model: string;\n    reasoningEffort?: ReasoningEffortId;\n    messages: RequestMessage[];\n    system?: string;\n    tools?: ToolSchema[];\n    toolHistory?: ToolHistory;\n    temperature?: number;\n    maxTokens?: number;\n    stop?: string[];\n    signal?: AbortSignal;\n    sessionId?: Branded<\'SessionId\'>;\n    cacheKey?: Branded<\'SessionId\'>;\n    purpose?: \'compaction\' | \'session-title\';\n}',
   },
   {
     name: 'GenericCallView',
@@ -5507,6 +5515,10 @@ export const TYPE_API: readonly TypeApiEntry[] = [
   {
     name: 'ImageBlock',
     declaration: 'export interface ImageBlock {\n    type: \'image\';\n    attachment: ImageAttachmentRef;\n    offloaded?: true;\n}',
+  },
+  {
+    name: 'ImageInputSupport',
+    declaration: 'export type ImageInputSupport = \'supported\' | \'unsupported\' | \'undeclared\';',
   },
   {
     name: 'ImageMediaType',
@@ -6018,7 +6030,7 @@ export const TYPE_API: readonly TypeApiEntry[] = [
   },
   {
     name: 'ModelCatalogModel',
-    declaration: 'export interface ModelCatalogModel {\n    readonly id: string;\n    readonly name: string;\n    readonly description?: string;\n    readonly reasoning?: ModelReasoning;\n}',
+    declaration: 'export interface ModelCatalogModel {\n    readonly id: string;\n    readonly name: string;\n    readonly description?: string;\n    readonly reasoning?: ModelReasoning;\n    readonly inputModalities?: readonly ModelModality[];\n}',
   },
   {
     name: 'ModelMessageSource',
@@ -6327,10 +6339,6 @@ export const TYPE_API: readonly TypeApiEntry[] = [
   {
     name: 'PrunedEntry',
     declaration: 'export interface PrunedEntry {\n    readonly originalSeq: SessionSeq;\n    readonly replacementSeq: SessionSeq;\n    readonly callId: ToolCallId;\n    readonly charsBefore: number;\n    readonly charsAfter: number;\n}',
-  },
-  {
-    name: 'PrunePreview',
-    declaration: 'export interface PrunePreview {\n    readonly nodes: number;\n    readonly tokensSaved: number;\n}',
   },
   {
     name: 'PruneResult',
@@ -7566,7 +7574,7 @@ export const TYPE_API: readonly TypeApiEntry[] = [
   },
   {
     name: 'SubagentProvider',
-    declaration: 'export interface SubagentProvider {\n    readonly name: string;\n    readonly capabilities: SubagentCapabilities;\n    readonly inheritsParentContext: boolean;\n    readonly agentRouteDefaults?: Readonly<{\n        provider: string;\n        model: string;\n    }>;\n    start(request: ResolvedSubagentStartRequest): Promise<SubagentRun>;\n    prepareContinuable?(request: ContinuableCreateRequest): Promise<ContinuableCreateSpec>;\n}',
+    declaration: 'export interface SubagentProvider {\n    readonly name: string;\n    readonly capabilities: SubagentCapabilities;\n    readonly inheritsParentContext: boolean;\n    readonly imageInput: boolean;\n    readonly agentRouteDefaults?: Readonly<{\n        provider: string;\n        model: string;\n    }>;\n    start(request: ResolvedSubagentStartRequest): Promise<SubagentRun>;\n    prepareContinuable?(request: ContinuableCreateRequest): Promise<ContinuableCreateSpec>;\n}',
   },
   {
     name: 'SubagentResult',

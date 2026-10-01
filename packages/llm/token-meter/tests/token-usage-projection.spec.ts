@@ -83,8 +83,15 @@ const projected = (ctx: Context, session: Session): TokenUsageProjection => {
  * Meter one upcoming replacement the way compaction-basic does: price the
  * replaced span from the measurement service's own nodes and log the
  * shadow-price event directly before the replace.
+ * @param usage - provider usage the summarization call reported, when the fixture models one.
  */
-function appendSummaryMeter(ctx: Context, session: Session, start: SessionSeq, end: SessionSeq): void {
+function appendSummaryMeter(
+  ctx: Context,
+  session: Session,
+  start: SessionSeq,
+  end: SessionSeq,
+  usage?: TokenUsage,
+): void {
   const nodes = ctx.tokenMeter.measure(session).nodes
   const startIdx = nodes.findIndex(node => node.seq === start)
   const endIdx = nodes.findIndex(node => node.seq === end)
@@ -97,6 +104,7 @@ function appendSummaryMeter(ctx: Context, session: Session, start: SessionSeq, e
     shadowedTokenCount: shadowed.reduce((total, node) => total + node.tokens, 0),
     provider: 'mock',
     model: 'mock',
+    ...usage === undefined ? {} : { usage },
   })
 }
 
@@ -289,6 +297,46 @@ describe('tokenUsage session projection', () => {
     expect(projected(ctx, session)).toEqual({
       uncachedInputTokens: 12,
       outputTokens: 3,
+      cacheReadTokens: 0,
+      cacheWriteTokens: 0,
+    })
+  })
+
+  it('bills the provider usage a compaction summary reports', async () => {
+    const { ctx, session } = await harness()
+    startStep(session, 1, 1)
+    finalUsage(session, { inputTokens: 12, outputTokens: 3 }, 1, 1)
+    const replaced = appendUser(session, 'a question the summary replaces')
+    appendSummaryMeter(ctx, session, replaced, replaced, { inputTokens: 1_000_000, outputTokens: 200 })
+
+    expect(projected(ctx, session)).toEqual({
+      uncachedInputTokens: 1_000_012,
+      outputTokens: 203,
+      cacheReadTokens: 0,
+      cacheWriteTokens: 0,
+    })
+  })
+
+  it('counts only the events a forked session produced', async () => {
+    const { ctx, session } = await harness()
+    startStep(session, 1, 1)
+    finalUsage(session, { inputTokens: 1_000_000, outputTokens: 10 }, 1, 1)
+    const child = ctx.sessions.fork(session)
+    // The child inherited the parent's request, whose usage the parent already reports.
+    expect(projected(ctx, child)).toEqual(ZERO)
+
+    startStep(child, 2, 1)
+    finalUsage(child, { inputTokens: 500, outputTokens: 5 }, 2, 1)
+
+    expect(projected(ctx, child)).toEqual({
+      uncachedInputTokens: 500,
+      outputTokens: 5,
+      cacheReadTokens: 0,
+      cacheWriteTokens: 0,
+    })
+    expect(projected(ctx, session)).toEqual({
+      uncachedInputTokens: 1_000_000,
+      outputTokens: 10,
       cacheReadTokens: 0,
       cacheWriteTokens: 0,
     })

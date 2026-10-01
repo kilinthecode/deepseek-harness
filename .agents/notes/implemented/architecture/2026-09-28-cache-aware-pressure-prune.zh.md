@@ -12,7 +12,7 @@ Status: implemented
 
 ## Decision
 
-`compaction-tool-result-pruner` 提供 `previewSession(session): PrunePreview`，它与 `pruneSession` 共享剪枝器的候选规划逻辑，因此预览结果不会与实际落地的结果产生分歧。`compaction-basic` 把 `pruneHeadroomRatio`（默认 `0.2`，校验范围为 `[0, 1)`）解析为 `pruneHeadroomTokens = floor(thresholdTokens * pruneHeadroomRatio)`——这是已解析压力阈值的一个比例，而不是上下文窗口的比例：阈值比例本身就追踪着压力出现时的上下文规模，因此这一门槛会随「仅剪枝失败时需要重新发送的量」一起变化。
+`compaction-tool-result-pruner` 提供 `projectTokenSavings(session): number`，它与 `pruneSession` 共享剪枝器的候选规划逻辑，因此预测结果不会与实际落地的结果产生分歧。`compaction-basic` 把 `pruneHeadroomRatio`（默认 `0.2`，校验范围为 `[0, 1)`）解析为 `pruneHeadroomTokens = floor(thresholdTokens * pruneHeadroomRatio)`——这是已解析压力阈值的一个比例，而不是上下文窗口的比例：阈值比例本身就追踪着压力出现时的上下文规模，因此这一门槛会随「仅剪枝失败时需要重新发送的量」一起变化。
 
 压力触发时，`compactIfNeeded` 会在选择摘要范围之前先预览已挂载的剪枝器。当落地该次剪枝能在阈值以下留出至少 `pruneHeadroomTokens` 的余量时，剪枝会作为唯一的缩减手段落地，摘要随之跳过——只产生一次缓存失效。否则，范围选择与摘要生成会先在未剪枝的表层上运行，以匹配会话的热前缀，随后每次成功压缩后都会对剩余表层执行一次剪枝，这不会产生额外代价，因为摘要替换本身已经使缓存失效。即便会话没有可压缩的范围，`compactIfNeeded` 在拒绝之前仍会先执行一次剪枝。上下文溢出恢复保持不变：它仍然在选择范围之前无条件先剪枝，因为重试请求本身必须能放入窗口。
 
@@ -26,9 +26,8 @@ Status: implemented
 
 **压力阶段完全不剪枝，只在上下文溢出时剪枝。** 这会放弃单个确实过大的工具结果本可以独自提供的、廉价且不涉及模型调用的缩减，使每次压力事件都必须经过一次付费的摘要调用，即便仅靠剪枝本就足够。
 
-**为 `llm-pi-ai` 适配器，把摘要器的前导系统提示词表示成历史内的 user 角色消息，而不是使用该适配器自身的请求字段。** `llm-pi-ai` 的请求上下文只携带一个前导的 `systemPrompt` 字段，外加 `user`/`assistant`/`toolResult` 消息；把系统提示词包装成 user 角色消息，会在不同提供方之间以不同方式改变指令遵循的语义，因此回放仍然使用每个适配器自身原生的系统提示词字段。
-
 ## Consequences
 
 - 常见情形下，一次压力事件现在只产生一次 prompt 缓存失效：要么仅剪枝的缩减独自落地，要么压缩先在仍与会话热前缀匹配的表层上运行。已通过一次真实的 DeepSeek 往返请求验证：采用本修复后，压力摘要请求的 `cacheReadTokens` 在 5442 token 的提示词中达到 5504；而在此前先剪枝再压缩的顺序下只有 3584（66%）。
 - `pruneHeadroomRatio: 0` 只会在仅靠剪枝就能达到阈值时才恢复"跳过摘要"这一效果；它不会恢复此前那种先剪枝再压缩的顺序。在通常的未达标路径上，表层保持未剪枝状态，摘要读取的是原始文本；只有当预览达标、但落地的剪枝仍未把表层降到阈值以下时，才会转入压缩并对已剪枝的文本做摘要。
+- 本决策部分取代了[调用后压缩压力与上下文溢出恢复](2026-07-10-after-call-compaction-pressure-and-overflow-recovery.zh.md)与[压缩作为能力 seam](../feature/2026-06-18-compaction-capability-seam.zh.md)两份记录中关于压力路径顺序的描述；这两份记录在其余范围内仍然有效，现在反向链接到本记录以获取剪枝与摘要之间的确切顺序。

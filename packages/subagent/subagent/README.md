@@ -179,6 +179,20 @@ One fixed statement in each child's runtime-context snapshot; none in the parent
 
 Prefix-stable within a child: the statement never changes during the child's lifetime, so it is written once into the first runtime-context snapshot. Parent-side, no direct invalidation; the named tool consumers own any request-prefix changes.
 
+### Provider cache routing
+
+#### What the model sees
+
+Cache routing is transport metadata carried on the request, not prompt content, so it never reaches the model.
+
+#### Token effect
+
+Cache routing changes provider selection of a cached prefix, not request content, so it adds no tokens.
+
+#### KV Cache effect
+
+Every child in one delegation tree — including a continuable fork's descendants — carries `GenerateOptions.cacheKey` set to that tree's root session id (`dsh-agent-loop`'s per-request stamping from the child's own `parentSession` header lineage), so sibling and fork children route to the same provider-side cached prefix on an adapter that honors it, instead of each starting a separate one under its own session id.
+
 ## Known Limitations and Deferred Work
 
 <a id="known-limitations-and-deferred-work"></a>
@@ -188,6 +202,7 @@ These limits define when the seam is a poor fit or needs special operational car
 
 - **Descendant reads are sequential** — each reachable catalog, including one-shot children, takes one observation. A cold Session without a valid prepared observation requires a full-log read; large cold trees can accumulate storage latency.
 - **ACP children remain one-shot and are not trace-enumerable** — an ACP run has no local child session in the parent's session corpus, and remote providers need an Activation ownership contract before they can support continuable children.
+- **Only same-process children accept image prompts** — `spawn` and `fork` share the parent's attachment store and declare `imageInput: true`; ACP, Claude Code, Codex, and the DSH SDK provider declare `imageInput: false` and refuse an image prompt at `start()`, before any child process or Agent. A capable provider's resolved child route is checked the same way at continuable creation, one-shot `start()`, and every follow-up delivery; a route whose declared modalities omit `image` refuses with `MODEL_DOES_NOT_SUPPORT_IMAGES`. Two edges stay text-only: workflow `agent(prompt)` composes a text-only child prompt, and a child's own result content returns to the parent as text.
 - **Adjacent model messaging only** — `sendMessage()` requires an exact live sender; every sender may target a direct continuable child, while only a sender with a resident continuable Activation may target its direct parent. Browser prompts use a separate human Queue-or-Steer control path.
 - **A direct parent must remain live for child-to-parent delivery** — the service has no durable parent mailbox; a missing parent rejects the message instead of accepting work it cannot wake.
 - **Wake gap during cancellation convergence** — a follow-up accepted after an interrupt signal but before the driver becomes idle stays queued until another waking send.

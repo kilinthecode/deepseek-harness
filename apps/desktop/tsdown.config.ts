@@ -32,9 +32,20 @@ if (clientVersion === undefined) throw new Error('desktop build: the client envi
 /** Inline the one public build value the Node entry reads; every other variable stays a runtime lookup. */
 const clientVersionDefine = { 'process.env.DSH_CLIENT_VERSION': JSON.stringify(clientVersion) }
 
+/**
+ * `lib/types/main.js` keeps the source's `../scripts` specifier, which the
+ * entry's move into `lib/` turns into `lib/scripts`. Point it back at the real
+ * module so the edition lookup stays one implementation for the shell and the
+ * packaging scripts.
+ */
+const desktopScriptAliases = {
+  '../scripts/desktop-release-environment.mjs': fileURLToPath(new URL('./scripts/desktop-release-environment.mjs', import.meta.url)),
+}
+
 export default defineConfig([
   {
     entry: ['lib/types/main.js'],
+    alias: desktopScriptAliases,
     plugins: [packagedImportsPlugin(mainProcessImports)],
     define: clientVersionDefine,
     onSuccess: async () => {

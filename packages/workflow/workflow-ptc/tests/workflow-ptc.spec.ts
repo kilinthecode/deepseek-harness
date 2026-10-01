@@ -48,6 +48,7 @@ class StubProvider implements SubagentProvider {
     persona: false,
   }
   readonly inheritsParentContext = false
+  readonly imageInput = false
   readonly runs: ControlledRun[] = []
 
   constructor(
@@ -466,6 +467,7 @@ describe('dsh-workflow-ptc', { timeout: 120_000 }, () => {
         name: 'rejecting',
         capabilities: { agentOptions: true, outputSchema: true, depthLimit: true, toolFilter: true, persona: false },
         inheritsParentContext: false,
+        imageInput: false,
         start: async () => ({
           id: SessionId('reject-child'),
           localAgent: undefined,
@@ -527,6 +529,7 @@ describe('dsh-workflow-ptc', { timeout: 120_000 }, () => {
         name: 'bad-dispose',
         capabilities: { agentOptions: true, outputSchema: true, depthLimit: true, toolFilter: true, persona: false },
         inheritsParentContext: false,
+        imageInput: false,
         start: async () => ({
           id: SessionId('bad-dispose-child'),
           localAgent: undefined,
@@ -551,6 +554,7 @@ describe('dsh-workflow-ptc', { timeout: 120_000 }, () => {
         name: 'coercion-trap-dispose',
         capabilities: { agentOptions: true, outputSchema: true, depthLimit: true, toolFilter: true, persona: false },
         inheritsParentContext: false,
+        imageInput: false,
         start: async () => ({
           id: SessionId('trap-child'),
           localAgent: undefined,
@@ -769,6 +773,7 @@ describe('dsh-workflow-ptc', { timeout: 120_000 }, () => {
         name: 'signal-only',
         capabilities: { agentOptions: true, outputSchema: true, depthLimit: true, toolFilter: true, persona: false },
         inheritsParentContext: false,
+        imageInput: false,
         start: async (request) => {
           let settle!: (result: SubagentResult) => void
           const result = new Promise<SubagentResult>((resolve) => { settle = resolve })
@@ -892,6 +897,7 @@ describe('dsh-workflow-ptc', { timeout: 120_000 }, () => {
         name: 'late-publication',
         capabilities: { agentOptions: false, outputSchema: false, depthLimit: false, toolFilter: false, persona: false },
         inheritsParentContext: false,
+        imageInput: false,
         start: async (request) => {
           requested.resolve(request)
           await release.promise

@@ -1,0 +1,43 @@
+# Bilingual-pair consistency record for README.md (docs/i18n/README.md): per heading
+# section, a hash of its English and Chinese blocks outside code blocks and generated regions.
+# After editing either side, bring the other along and re-record with:
+#   pnpm run verify-translation-pairing --write packages/llm/usage-cost/README.md
+/:
+  en: e496db53fb8253d1
+  zh: bd5884b498678a1b
+/deepseek-ai-dsh-usage-cost:
+  en: 12b99e11481db8e6
+  zh: aa2c7ef515b1e908
+/deepseek-ai-dsh-usage-cost/summary:
+  en: 8259523e8c5decc1
+  zh: befa4369c1056a87
+/deepseek-ai-dsh-usage-cost/table-of-contents:
+  en: d152484eb41ac6b4
+  zh: 09388d293f9be9cb
+/deepseek-ai-dsh-usage-cost/use-this-package:
+  en: bbff250eba0f1b89
+  zh: 0a618f05cc88ee2b
+/deepseek-ai-dsh-usage-cost/use-this-package/when-to-use-it:
+  en: c38b93d047f35540
+  zh: 843dbc926beeff79
+/deepseek-ai-dsh-usage-cost/use-this-package/entry-point:
+  en: ac0556ea7fac4c09
+  zh: 3b3565e9336b9ba3
+/deepseek-ai-dsh-usage-cost/understand-the-implementation:
+  en: 1e51fd32611185c2
+  zh: 9cf542adc5f6a16c
+/deepseek-ai-dsh-usage-cost/further-exploration:
+  en: b829d585a97c1af3
+  zh: ec489800f74331f7
+/deepseek-ai-dsh-usage-cost/model-experience:
+  en: 1743cd5d9dd03b5b
+  zh: 89419cc4ab20e165
+/deepseek-ai-dsh-usage-cost/model-experience/kv-cache-effect:
+  en: 47f982e326fe77fd
+  zh: c2241315dc0c89c9
+/deepseek-ai-dsh-usage-cost/known-limitations-and-deferred-work:
+  en: 4c6edce91782092f
+  zh: 03d130594f956ebe
+/deepseek-ai-dsh-usage-cost/known-limitations-and-deferred-work/dev-note:
+  en: e67f633dc6fe7773
+  zh: 3bb0c20c93f16f98

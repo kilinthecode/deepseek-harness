@@ -16,7 +16,7 @@ Agent Teams 协调的是工作：Lead 把任务委派给具名 teammate，持久
 
 transcript 是一种派生，而不是第二个存储。`TeamRoom` 的 observer 读取每个参与者已提交的 `assistant/message`，并追加一条 `room/message`，只携带作者身份与该 assistant 消息的 text block。名字留在 roster 中，署名因此只有一个归属。`room/message`、`room/proposal` 与 `room/review` 都是 log-only event：它们绝不进入派生的模型历史，从而在不让 surface 变宽的前提下保持 loop 的「模型可见即已记录」不变式。
 
-参与者就是 roster 本身。成员从 provisioning 记录它的那一刻起就是参与者，直到它失败为止；这与 `TeamRoster.tryMembership` 解析在线成员 Team 身份所用的规则一致，因此由同一条规则决定谁可以行动、谁计入 quorum。
+参与者就是 roster 本身：成员一经 provisioning 记录就会显示，直到失败为止；这与 `TeamRoster.tryMembership` 解析 live member Team 身份的规则相同。provisioning 成员可见但尚不可达；只有可达参与者（Lead 与 active teammate）有资格担任 reviewer，因此 provisioning 成员不会让 quorum 一直无法结清。
 
 发言不会唤醒 peer。`roomPrompt` 通过发送目标自己上次发言之后记录的 transcript 条目把发言权交给某个参与者，条目数量受 `roomTranscriptWindow` 限制，随后接上调用方的 instruction。由于参与者自己的上次发言总是排在它被展示过的一切之后，这个边界不需要额外记账，而未激活的参与者也不需要在线 Agent：持久 mailbox 会冷启动它。因此 room 只在人类或某个参与者交出发言权时推进，成本由结构而非提示词纪律来约束。
 

@@ -270,7 +270,7 @@ export interface RoomReviewSnapshot {
 
 /** One frame of a live room follow: a complete view, or live participant text. */
 export type RoomFollowFrame =
-  /** A complete room view, delivered first and after every committed room change. */
+  /** A complete view, delivered first and after every committed transcript, roster, or decision change. */
   | { readonly type: 'view'; readonly view: RoomRemoteView }
   /** Text one participant is streaming into its in-flight turn. */
   | { readonly type: 'stream'; readonly participant: string; readonly delta: string }

@@ -16,6 +16,8 @@ interface DraftViewGate {
   busyEnter: BusyEnterBehavior
   intakeFiles: (files: readonly File[], directories?: ReadonlySet<File>) => void
   uploadsPending: boolean
+  /** The rail holds an image the current route refuses; submit announces the refusal instead. */
+  imagesRefused: boolean
   showToast: (text: string) => void
   t: ComposerBarProps['t']
   canAcceptDrop: boolean
@@ -127,6 +129,10 @@ export function installDraftKeymap(
       }
       if (g.uploadsPending) {
         g.showToast(g.t('file.stillUploading'))
+        return
+      }
+      if (g.imagesRefused) {
+        g.showToast(g.t('image.modelUnsupported'))
         return
       }
       keyboard.submit(resolveSubmitMode(

@@ -1,5 +1,5 @@
 ---
-description: "Portal fork 的品牌占用组件，用于侧边栏与对话 hero，仅在 portal 构建中生效；面向把产品身份保留在上游文件之外的 fork 维护者。"
+description: "Portal fork 的品牌占用组件，用于侧边栏与对话 hero，仅在 portal 或 portal-dev 构建中生效；面向把产品身份保留在上游文件之外的 fork 维护者。"
 kind: "package-reference"
 ---
 
@@ -9,7 +9,7 @@ kind: "package-reference"
 
 ## 概述
 
-该包让 `portal` 构建在侧边栏显示 Portal 方形结标记、Portal 字标与 HARNESS 铭牌，并在空白会话 hero 中显示 Portal 标记。它由 fork 自有：其存在是为了让 fork 的产品身份留在上游品牌包之外，而上游仍会持续改动那些包。上游的占用组件位于 [`dsh-client-ui-brand-official`](../ui-brand-official/README.zh.md)，仅在 `official` 构建 profile 下注册，因此两者永远不会争用同一个 slot。它不保存运行时状态，也不影响模型请求。
+该包让 `portal` 构建在侧边栏显示 Portal 方形结标记、Portal 字标与 HARNESS 铭牌，并在空白会话 hero 中显示 Portal 标记。`portal-dev` 构建额外显示开发渠道徽标与紫色强调色，使开发构建不会被误认为正式版。它由 fork 自有：其存在是为了让 fork 的产品身份留在上游品牌包之外，而上游仍会持续改动那些包。上游的占用组件位于 [`dsh-client-ui-brand-official`](../ui-brand-official/README.zh.md)，仅在 `official` 构建 profile 下注册，因此两者永远不会争用同一个 slot。它不保存运行时状态，也不影响模型请求。
 
 ## 目录
 
@@ -29,7 +29,7 @@ kind: "package-reference"
 
 ### 选择 profile
 
-`DSH_CLIENT_BUILD_PROFILE` 决定渲染哪套品牌。`portal` 构建在侧边栏显示 Portal 标记与名称，并在 hero 中显示 Portal 标记；`official` 构建在这些位置显示上游的 DeepSeek Harness 品牌。其他取值则保留外壳兜底 —— fish 标记与本地构建标签。任何情况下插件都会加载并通过校验，只有注册受 profile 门控。启动页不是 slot：`dsh-client-web` 在所有构建 profile 下都在启动页上绘制 Portal 标记与名称，因此 `official` 或本地构建会先显示 Portal 启动品牌，再显示各自的应用内品牌。
+`DSH_CLIENT_BUILD_PROFILE` 决定渲染哪套品牌。`portal` 构建在侧边栏显示 Portal 标记与名称，并在 hero 中显示 Portal 标记；`portal-dev` 构建显示同一套品牌，并在铭牌之后附上开发渠道徽标与紫色开发强调色；`official` 构建在这些位置显示上游的 DeepSeek Harness 品牌。其他取值则保留外壳兜底 —— fish 标记与本地构建标签。任何情况下插件都会加载并通过校验，只有注册受 profile 门控。启动页不是 slot：`dsh-client-web` 在所有构建 profile 下都在启动页上绘制 Portal 标记与名称，因此 `official` 或本地构建会先显示 Portal 启动品牌，再显示各自的应用内品牌。
 
 ### 更换品牌
 
@@ -43,7 +43,7 @@ kind: "package-reference"
 <details>
 <summary>实现细节 —— 点击展开</summary>
 
-侧边栏的两个占用组件作为一组声明感知的注册集合安装：嵌套的 `ctx.slots.inject()` 会等待侧边栏声明，因此无论本行是在声明方之前还是之后激活都成立，声明塌缩时同时撤回两个占用组件，并且 HMR 期间不会出现品牌混用。浏览器半边是 [`src/client/index.ts`](src/client/index.ts)；node 半边是空的 Loader 席位。浏览器标题属于构建环境事务（`DSH_CLIENT_TITLE`，由 `portal` profile 提供），不在 slot 体系内。
+侧边栏的两个占用组件作为一组声明感知的注册集合安装：嵌套的 `ctx.slots.inject()` 会等待侧边栏声明，因此无论本行是在声明方之前还是之后激活都成立，声明塌缩时同时撤回两个占用组件，并且 HMR 期间不会出现品牌混用。浏览器半边是 [`src/client/index.ts`](src/client/index.ts)；node 半边是空的 Loader 席位。浏览器标题属于构建环境事务（`DSH_CLIENT_TITLE`，由各 fork profile 提供），不在 slot 体系内。在 `portal-dev` 下，同一组占用组件注册开发渠道名称，并通过主题服务的 token 覆盖栈叠加紫色强调色；因此未组合 `ui-theme` 时保留基础强调色，开发徽标仍然标记该构建。
 
 标记、字标与铭牌图形放在这里而不是 `dsh-client-ui-primitives`，是为了让上游的 primitive barrel 保持上游所有。字标文本通过本包自己的 `portal-brand` locale 命名空间传入。
 

@@ -179,6 +179,20 @@ You are a delegated subagent: your permission scope was fixed when you were star
 
 子级内部前缀稳定：该声明在子 agent 生命周期内绝不变化，因此只写入第一份运行时上下文快照一次。父级侧不会直接使缓存失效；具名工具消费方共同负责请求前缀的任何变化。
 
+### 提供方缓存路由
+
+#### 模型看到什么
+
+缓存路由是请求上携带的传输层元数据，不是提示词内容，因此永不到达模型。
+
+#### Token 影响
+
+缓存路由只改变对已缓存前缀的提供方选择，不改变请求内容，因此不增加任何 token。
+
+#### KV Cache 影响
+
+同一委派树中的每个子级——包括可续写 fork 的后代——都携带设为该树根会话 id 的 `GenerateOptions.cacheKey`（由 `dsh-agent-loop` 依据子级自身 `parentSession` 表头谱系逐请求标注），使兄弟与 fork 子级在支持该字段的适配器上路由到同一个提供方侧已缓存前缀，而非各自使用自己的会话 id 各起一份。
+
 ## 已知限制与延期工作
 
 <a id="known-limitations-and-deferred-work"></a>
@@ -188,6 +202,7 @@ You are a delegated subagent: your permission scope was fixed when you were star
 
 - **后代读取串行执行**——每个可达目录（包括一次性子级）都需要一次观察。冷 Session 缺少有效的 prepared 观察时需要读取完整日志；大型冷会话树可能累积存储延迟。
 - **ACP 子级仍为一次性，且无法通过追踪枚举**——ACP 运行在父级会话语料中没有本地子会话，远程提供方需要 Activation 所有权约定才能支持可继续子级。
+- **只有同进程 child 接受图片提示词**——`spawn` 与 `fork` 共享 parent 的附件存储，声明 `imageInput: true`；ACP、Claude Code、Codex 与 DSH SDK 提供方声明 `imageInput: false`，在 `start()` 阶段、任何子进程或 Agent 出现之前拒绝图片提示词。具备该能力的提供方，其解析出的 child 路由会在可继续创建、一次性 `start()` 与每次后续投递时以同一方式检查；声明的输入模态省略 `image` 的路由会以 `MODEL_DOES_NOT_SUPPORT_IMAGES` 拒绝。仍有两处边界保持纯文本：workflow 的 `agent(prompt)` 组合的是纯文本子级提示词，子级自身的结果内容也以文本形式返回给父级。
 - **仅允许相邻模型消息**——`sendMessage()` 要求确切在线 sender；每个 sender 都可以指定直接可继续 child，只有具备驻留可继续 Activation 的 sender 可以指定自己的直接 parent。浏览器提示使用独立的人类 Queue 或 Steer 控制路径。
 - **child 到 parent 的投递要求直接 parent 保持在线**——服务没有持久 parent mailbox；parent 缺失时会拒绝消息，而非接受无法唤醒的工作。
 - **取消收敛期间存在唤醒缺口**——中断信号发出后、driver 进入 idle 前被接受的后续消息会保持排队，直到另一条唤醒发送到达。

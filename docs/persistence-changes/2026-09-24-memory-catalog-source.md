@@ -27,20 +27,20 @@ id: 2026-09-24-memory-catalog-source
 baseline: false
 changes:
   - root: "event:agent/inbox/spliced"
-    previous: "2026-09-16-session-format-v4"
-    after: "3ee73ce8ae9a1eb6b8a08da854eba7780eeef15e0f0927e66f143dfba4360d43"
+    previous: "2026-09-30-peer-activity-source"
+    after: "72faca5ef2adafdf12c70286f336489aaf1733264c7cac60492fa6b7af1d4920"
     decision: same-version
   - root: "event:developer/message"
-    previous: "2026-09-16-session-format-v4"
-    after: "49dc7dcbdf82006eba9f75aebc32ba9b3004503185518cef44a10729a8e97e49"
+    previous: "2026-09-30-peer-activity-source"
+    after: "81e3a9087e0b3efddf0fd9d36cc79ee39455b8b1931fcc9a681037bdc562847b"
     decision: same-version
   - root: "event:session/title-llm-request"
-    previous: "2026-09-16-session-format-v4"
-    after: "0ed198589af45c87e413a50be0b1524be51629241b9919ad9e7da1118df6e74f"
+    previous: "2026-09-30-peer-activity-source"
+    after: "03b51916ae6ed18d3d96655a1828520022001c6d761f3bf70e99e06f9ab00fd5"
     decision: same-version
   - root: "event:user/message"
-    previous: "2026-09-16-session-format-v4"
-    after: "ccd57d9a60cd7d3d3c15ad392ee6ad103d5e414fca805f71f906356bd1704d6a"
+    previous: "2026-09-30-peer-activity-source"
+    after: "a69cf4bb04d9411c5f0fa3d645036cb01fb8dc67e57158305e0922c59988eef8"
     decision: same-version
 ```
 

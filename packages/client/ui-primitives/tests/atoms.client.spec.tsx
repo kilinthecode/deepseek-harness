@@ -670,7 +670,7 @@ describe('ConnectionIndicator', () => {
     rerender(<ConnectionIndicator state="connecting" {...labels} />)
     const connecting = screen.getByRole('button', { name: 'Connecting, restart now' })
     expect(connecting.textContent).toContain('Connecting...')
-    expect(connecting.querySelector('[data-state="ongoing"]')).not.toBeNull()
+    expect(connecting.querySelector('svg[aria-hidden="true"]')).not.toBeNull()
 
     rerender(<ConnectionIndicator state="recovered" {...labels} />)
     expect(screen.queryByRole('button')).toBeNull()

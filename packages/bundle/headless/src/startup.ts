@@ -1,6 +1,6 @@
 /**
  * The one-shot app's command-line provider: it parses the task positional,
- * `--session-id`, `--json`, and `--help`, then publishes
+ * `--session-id`, `--json`, repeatable `--image`, and `--help`, then publishes
  * {@link HEADLESS_STARTUP_SERVICE}. The runner is an ordinary consumer whose
  * lazy config waits for that service.
  * @module @deepseek-ai/dsh-headless/startup
@@ -29,6 +29,13 @@ export interface HeadlessStartupValues {
   sessionId: string | undefined
   /** Whether stdout carries the machine-readable event stream instead of final text. */
   json: boolean
+  /** Image file paths to attach, in invocation order; empty when `--image` was not given. */
+  images: string[]
+}
+
+/** Commander accumulator collecting one repeatable `--image <path>` occurrence per invocation. */
+function collectImage(value: string, previous: string[]): string[] {
+  return [...previous, value]
 }
 
 /**
@@ -42,6 +49,7 @@ function headlessCommand(): Command {
     .helpOption('-h, --help', 'show this help')
     .option('--json', 'write newline-delimited run events to stdout instead of the final message')
     .option('--session-id <id>', 'adopt the persisted Session with this id; an unknown id is an error')
+    .option('--image <path>', 'attach an image file to the task; repeat to attach more than one', collectImage, [])
     .argument('[task...]', 'the task text; multiple words are joined by spaces, and `-` reads stdin')
     .addHelpText('after', `
 Examples:
@@ -49,13 +57,15 @@ Examples:
   echo "run the tests" | dsh --profile headless   read the task from stdin
   dsh --profile headless --json "run the tests"   emit machine-readable run events
   dsh --profile headless --session-id session-… "continue"   resume an existing Session
+  dsh --profile headless --image ./screenshot.png "what is wrong here?"   attach an image
 `)
 }
 
 /**
  * Whether the raw invocation asks for the machine-readable stream. The scan
- * stops at `--` and skips a `--session-id` value, so a literal `--json` used as
- * an option value or a positional never installs the JSON error override.
+ * stops at `--` and skips a `--session-id` or `--image` value, so a literal
+ * `--json` used as an option value or a positional never installs the JSON
+ * error override.
  * @param argv - the invocation's raw arguments.
  * @returns whether `--json` is a real flag of this invocation.
  */
@@ -64,7 +74,7 @@ function jsonRequested(argv: readonly string[]): boolean {
     const argument = argv[index]
     if (argument === '--') return false
     if (argument === '--json') return true
-    if (argument === '--session-id') index += 1
+    if (argument === '--session-id' || argument === '--image') index += 1
   }
   return false
 }
@@ -104,17 +114,21 @@ export function apply(ctx: Context): void {
     if (task === undefined && internals.stdinIsTty()) {
       program.error('error: a task is required, for example: dsh --profile headless "run the tests"')
     }
-    const options = program.opts<{ json?: boolean; sessionId?: string }>()
+    const options = program.opts<{ json?: boolean; sessionId?: string; image: string[] }>()
     // A SessionId is opaque, so whitespace is part of the identity: validate
     // emptiness on the trimmed value but hand the runner the exact string.
     const sessionId = options.sessionId
     if (sessionId !== undefined && sessionId.trim() === '') {
       program.error('error: --session-id requires a non-empty session id')
     }
+    if (options.image.some(path => path.trim() === '')) {
+      program.error('error: --image requires a non-empty path')
+    }
     ctx.provide(HEADLESS_STARTUP_SERVICE, {
       task,
       sessionId,
       json: options.json === true,
+      images: options.image,
     } satisfies HeadlessStartupValues)
   })
   parseCmdline(ctx, program)

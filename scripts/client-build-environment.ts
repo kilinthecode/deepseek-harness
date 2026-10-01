@@ -35,6 +35,20 @@ const PORTAL_CLIENT_BUILD_ENVIRONMENT = {
   DSH_CLIENT_TITLE: 'Portal Harness',
 } as const
 
+/**
+ * Public client environment for the fork's dev-channel artifacts.
+ *
+ * `portal-dev` is the identity of the side-by-side dev build that receives
+ * changes before the `portal` build does. It differs from `portal` only in
+ * product identity: `packages/client/portal-brand` renders its dev variant
+ * under this profile, and the dev desktop edition pairs it with its own data
+ * root and update channel.
+ */
+const PORTAL_DEV_CLIENT_BUILD_ENVIRONMENT = {
+  DSH_CLIENT_BUILD_PROFILE: 'portal-dev',
+  DSH_CLIENT_TITLE: 'Portal Dev',
+} as const
+
 /** Public variable carrying the source commit embedded in client artifacts. */
 const CLIENT_COMMIT_HASH_VARIABLE = 'DSH_CLIENT_COMMIT_HASH'
 
@@ -192,6 +206,16 @@ function clientBuildEnvironment(environment: NodeJS.ProcessEnv): ClientBuildEnvi
 }
 
 /**
+ * Public environments of every named client build profile, in reporting order.
+ * The key set is the accepted profile names and the diagnostic's expected list.
+ */
+const CLIENT_BUILD_PROFILE_ENVIRONMENTS = {
+  official: OFFICIAL_CLIENT_BUILD_ENVIRONMENT,
+  portal: PORTAL_CLIENT_BUILD_ENVIRONMENT,
+  'portal-dev': PORTAL_DEV_CLIENT_BUILD_ENVIRONMENT,
+} as const
+
+/**
  * Resolve the exact public environment selected for a complete client build.
  * @param environment - parent process environment.
  * @param profile - explicit profile, or the non-public selector when omitted.
@@ -202,11 +226,12 @@ export function resolveClientBuildEnvironment(
   profile: string | undefined = environment[CLIENT_BUILD_PROFILE_SELECTOR],
 ): ClientBuildEnvironment {
   if (profile === undefined) return clientBuildEnvironment(environment)
-  const named = profile === 'official'
-    ? OFFICIAL_CLIENT_BUILD_ENVIRONMENT
-    : profile === 'portal' ? PORTAL_CLIENT_BUILD_ENVIRONMENT : undefined
+  const named = Object.hasOwn(CLIENT_BUILD_PROFILE_ENVIRONMENTS, profile)
+    ? CLIENT_BUILD_PROFILE_ENVIRONMENTS[profile as keyof typeof CLIENT_BUILD_PROFILE_ENVIRONMENTS]
+    : undefined
   if (named === undefined) {
-    throw new Error(`unknown client build profile ${JSON.stringify(profile)}; expected "official" or "portal"`)
+    const expected = Object.keys(CLIENT_BUILD_PROFILE_ENVIRONMENTS).map(name => JSON.stringify(name)).join(', ')
+    throw new Error(`unknown client build profile ${JSON.stringify(profile)}; expected ${expected}`)
   }
   const commitHash = environment[CLIENT_COMMIT_HASH_VARIABLE]
   const version = environment[CLIENT_VERSION_VARIABLE]
@@ -239,6 +264,27 @@ export function clientBuildProcessEnvironment(
     child[name] = value
   }
   return { ...child, ...clientEnvironment }
+}
+
+/**
+ * Resolve the public client environment a release may pack.
+ *
+ * A selected client build profile is the profile its artifacts must carry, so a
+ * fork release proves its own values instead of upstream's. Without a
+ * selection the release requires the official profile, which is what a
+ * published dsh artifact ships.
+ *
+ * @param root - repository root supplying version and Git metadata.
+ * @param environment - release environment carrying an optional profile selector.
+ * @returns complete public client environment the packed artifacts must embed.
+ */
+export function releaseClientBuildEnvironment(
+  root: string,
+  environment: NodeJS.ProcessEnv = process.env,
+): ClientBuildEnvironment {
+  const profile = environment[CLIENT_BUILD_PROFILE_SELECTOR]?.trim()
+  if (profile === undefined || profile === '') return officialClientBuildEnvironment(root)
+  return resolveClientBuildEnvironment(repositoryClientBuildEnvironment(root, environment), profile)
 }
 
 /**

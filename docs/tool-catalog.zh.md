@@ -47,6 +47,7 @@
 | `@deepseek-ai/dsh-experimental-tool-agent-team` | `interrupt_agent`、`list_agents`、`send_message`、`spawn_teammate`、`team_task_create`、`team_task_get`、`team_task_list`、`team_task_update`、`wait_agent` | `ctx.tools`、`ctx.systemPrompt`、`ctx.agentTeams`、`an exact live Team member Agent` | `tool/call`、`team/member`、`team/message/queued`、`team/message/delivered`、`team/task`、`tool/result` | - | 这 9 个工具限定于隐式 Team Lead 与持久 teammate 作用域。随产品发布的 dsh-base bundle 默认禁用该包；文档中的 Agent Teams profile patch 会启用它，并禁用旧 continuable child 的同名控制工具。 |
 | `@deepseek-ai/dsh-experimental-tool-agent-room` | `room_escalate`、`room_prompt`、`room_propose`、`room_review`、`room_view` | `ctx.tools`、`ctx.systemPrompt`、`ctx.agentTeams`、`an exact live room participant Agent` | `tool/call`、`room/message`、`room/proposal`、`room/review`、`team/message/queued`、`team/message/delivered`、`tool/result` | - | 这 5 个工具限定于 room 参与者作用域。随产品发布的组合默认不挂载它们；部署会在开启 `roomEnabled: true` 的 `@deepseek-ai/dsh-experimental-agent-team` 旁启用它们，而每个结果都由服务端 quorum 而非工具决定。 |
 | `@deepseek-ai/dsh-tool-memory` | `memory_forget`、`memory_recall`、`memory_write` | `ctx.tools`、`ctx.memory`、`ctx.systemPrompt`、`ctx.sessionProjections`、`owning Agent session` | `tool/call`、`tool/result`、`user/message snapshot at pre-step` | - | 这三个工具读写由 dsh-memory 拥有的持久记忆存储；会话工作目录决定项目作用域。注入的快照是 source 为 `tool-memory` 的 user/message，每次 surface generation 注入一次，并在压缩（compaction）之后重新加入，受 `injectMaxBytes` 约束，因此本目录记录随产品发布的预算与回忆上限。 |
+| `@deepseek-ai/dsh-experimental-tool-peer-sessions` | `list_peers`、`notify_peer_idle`、`send_peer_message` | `ctx.tools`、`ctx.systemPrompt`、`ctx.peers`、`an exact live top-level Agent` | `tool/call`、`tool/result` | - | list_peers、send_peer_message 与 notify_peer_idle 限定于顶层会话；subagent 永远看不到它们。该包随可选的 peer-sessions profile bundle 发布，随产品发布的组合默认不挂载它；每个结果都由 peer 服务而非工具本身决定。 |
 | `@deepseek-ai/dsh-tool-todo` | `todo_write` | `ctx.tools`、`owning Agent session` | `tool/call`、`todo/write`、`tool/result` | - | todo_write 是会话所有的状态；UI 将最新的 todo/write 事件渲染为检查清单。`allowParallelInProgress` 是没有默认值的必填项，因此本目录明确选择 `true`，对应描述允许同时存在多个 `in_progress` 项。选择 `false` 的部署会获得同一工具，但描述会要求只能有 1 个活动任务。 |
 | `@deepseek-ai/dsh-tool-workflow` | `workflow` | `ctx.tools`、`ctx.workflowEngine`、`ctx.systemPrompt`、`a calling Agent (exec.agent parents the script children)` | `tool/call`、`tool/result` | - | - |
 | `@deepseek-ai/dsh-tool-workspace-dependencies` | `load_workspace_dependencies` | `ctx.tools` | `tool/call`, `tool/result` | - | - |
@@ -1552,8 +1553,6 @@ create、edit、pause 和 resume 要求直接来自人类的根权限；complete
 
 选择启用的 Schedule 服务加载期间，在 live 根 Agent scope 内注册。接受 after_seconds、显式绝对 at、有界固定速率 every_seconds、带显式 IANA 时区的每日与每周本地时间，以及作为五字段表达式的 cron。管理使用宿主 storage domain；到期消息会恢复原 Session。
 
-<a id="deepseek-aidsh-tool-lsp"></a>
-
 ### `schedule_update`
 
 原地修改一条提醒并保留其 id。提供新的 title、prompt，或至多一个时间参数；未提供的字段保持原值。需要相对延迟时请新建一条提醒。
@@ -2027,7 +2026,7 @@ lsp 工具将提供方选择和语言服务器子进程置于 ctx.lsp 之后，�
 
 ### `list_subagent_models`
 
-发现 subagent 可用的 LLM 路由，不更改当前 Agent。无参数调用会列出已注册提供方；提供 `provider` 时会列出其公布的模型；同时提供 `provider` 和 `model` 时会检查该精确模型及其推理强度。目录条目只提供建议：adapter 可能接受未列出的模型 id。把返回的 id 用于委派工具的 `provider`、`model` 与 `reasoning_effort` 字段。
+发现 subagent 可用的 LLM 路由，不更改当前 Agent。无参数调用会列出已注册提供方；提供 `provider` 时会列出其公布的模型；同时提供 `provider` 和 `model` 时会检查该精确模型及其推理强度。模型条目包含图片输入支持。目录条目只提供建议：adapter 可能接受未列出的模型 id。把返回的 id 用于委派工具的 `provider`、`model` 与 `reasoning_effort` 字段。
 
 ```json
 {
@@ -2062,6 +2061,13 @@ lsp 工具将提供方选择和语言服务器子进程置于 ctx.lsp 之后，�
     "prompt": {
       "type": "string",
       "description": "The complete, self-contained task for the subagent. It does not share this conversation's context, so include everything it needs."
+    },
+    "images": {
+      "type": "array",
+      "description": "Attachment ids of images already shown in this conversation, appended to the prompt.",
+      "items": {
+        "type": "string"
+      }
     },
     "run_in_background": {
       "type": "boolean",
@@ -2141,6 +2147,13 @@ lsp 工具将提供方选择和语言服务器子进程置于 ctx.lsp 之后，�
     "message": {
       "type": "string",
       "description": "The message to deliver to the agent."
+    },
+    "images": {
+      "type": "array",
+      "description": "Attachment ids of images already shown in this conversation, appended to the message.",
+      "items": {
+        "type": "string"
+      }
     }
   },
   "required": [
@@ -2254,7 +2267,7 @@ lsp 工具将提供方选择和语言服务器子进程置于 ctx.lsp 之后，�
 
 ### `list_agents`
 
-列出 Lead 与所有持久 teammate，以及可用于寻址的 target 和当前可用状态。inactive 表示没有轮次在执行，不表示任务结果。provisioning 与 failed 描述成员创建状态。
+列出 Lead 与所有持久 teammate，以及可用于寻址的 target、当前可用状态和图片输入支持。inactive 表示没有轮次在执行，不表示任务结果。provisioning 与 failed 描述成员创建状态。
 
 ```json
 {
@@ -2280,6 +2293,13 @@ lsp 工具将提供方选择和语言服务器子进程置于 ctx.lsp 之后，�
     "message": {
       "type": "string",
       "description": "Self-contained message for the target."
+    },
+    "images": {
+      "type": "array",
+      "description": "Attachment ids of images already shown in this conversation, appended to the message.",
+      "items": {
+        "type": "string"
+      }
     }
   },
   "required": [
@@ -2310,6 +2330,13 @@ lsp 工具将提供方选择和语言服务器子进程置于 ctx.lsp 之后，�
     "prompt": {
       "type": "string",
       "description": "Complete initial task for the teammate."
+    },
+    "images": {
+      "type": "array",
+      "description": "Attachment ids of images already shown in this conversation, appended to the prompt.",
+      "items": {
+        "type": "string"
+      }
     },
     "context": {
       "type": "string",
@@ -2550,6 +2577,7 @@ lsp 工具将提供方选择和语言服务器子进程置于 ctx.lsp 之后，�
 来源：[`packages/experimental/tool-agent-team/src/index.ts`](../packages/experimental/tool-agent-team/src/index.ts)
 
 这 10 个工具限定于隐式 Team Lead 与持久 teammate 作用域。随产品发布的 dsh-base bundle 默认禁用该包；文档中的 Agent Teams profile patch 会启用它，并禁用旧 continuable child 的同名控制工具。
+
 
 <a id="deepseek-aidsh-experimental-tool-agent-room"></a>
 
@@ -2797,6 +2825,72 @@ lsp 工具将提供方选择和语言服务器子进程置于 ctx.lsp 之后，�
 来源：[`packages/memory/tool-memory/src/tools.ts`](../packages/memory/tool-memory/src/tools.ts)
 
 这三个工具读写由 dsh-memory 拥有的持久记忆存储；会话工作目录决定项目作用域。注入的快照是 source 为 `tool-memory` 的 user/message，每次 surface generation 注入一次，并在压缩（compaction）之后重新加入，受 `injectMaxBytes` 约束，因此本目录记录随产品发布的预算与回忆上限。
+
+<a id="deepseek-aidsh-experimental-tool-peer-sessions"></a>
+
+## `@deepseek-ai/dsh-experimental-tool-peer-sessions`
+
+### `list_peers`
+
+列出在此 git 仓库中（任意 worktree，或位于 git 之外的这个确切目录）工作且已启用 peer 协调的其他顶层会话。每个条目包含 id、name、status（idle、running 或 awaiting-user）、cwd，以及已设置时的 provider 与 model。两个 peer 同名时，请按 id 向 send_peer_message 寻址。空列表并不表示没有其他会话在工作。在 Windows 上，进程已死亡的 peer 仍可能被列出。
+
+```json
+{
+  "type": "object",
+  "properties": {}
+}
+```
+
+来源：[`packages/experimental/tool-peer-sessions/src/index.ts`](../packages/experimental/tool-peer-sessions/src/index.ts)
+
+### `notify_peer_idle`
+
+订阅一次某个 peer。它下一次空闲时，你会收到一条通知；若它已经空闲，则立即发送通知。这不会唤醒该 peer。若该 peer 消失，你将不会收到该通知。
+
+```json
+{
+  "type": "object",
+  "properties": {
+    "to": {
+      "type": "string",
+      "description": "Session id or unique peer name."
+    }
+  },
+  "required": [
+    "to"
+  ]
+}
+```
+
+来源：[`packages/experimental/tool-peer-sessions/src/index.ts`](../packages/experimental/tool-peer-sessions/src/index.ts)
+
+### `send_peer_message`
+
+按 id 或唯一名称向某个 peer 会话发送一条消息。运行中的 peer 会在其下一步收到；空闲的 peer 会开始一个 turn，除非该 peer 推迟接收消息——此时结果状态为 deferred，消息会等到该 peer 再次运行时才送达。deferred 只是时间上的延迟，不是审核批准关卡。该消息不授予任何权限。
+
+```json
+{
+  "type": "object",
+  "properties": {
+    "to": {
+      "type": "string",
+      "description": "Session id or unique peer name."
+    },
+    "message": {
+      "type": "string",
+      "description": "Self-contained message. The peer does not see your transcript."
+    }
+  },
+  "required": [
+    "to",
+    "message"
+  ]
+}
+```
+
+来源：[`packages/experimental/tool-peer-sessions/src/index.ts`](../packages/experimental/tool-peer-sessions/src/index.ts)
+
+list_peers、send_peer_message 与 notify_peer_idle 限定于顶层会话；subagent 永远看不到它们。该包随可选的 peer-sessions profile bundle 发布，随产品发布的组合默认不挂载它；每个结果都由 peer 服务而非工具本身决定。
 
 <a id="deepseek-aidsh-tool-todo"></a>
 

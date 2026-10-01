@@ -11,6 +11,8 @@ English | [中文](README.zh.md)
 
 `dsh-deque` lets Host and browser packages drain long-lived in-process queues without moving every remaining entry after each removal. Callers append or prepend entries and remove them from the front with amortized constant-time operations. The deque owns entry order and backing-storage release; each consumer still owns wake-up, failure, cancellation, capacity, and overload behavior.
 
+`FrameQueue<T>` composes that storage with the wake-up protocol many-to-one stream hand-offs repeat: producers push, one reader iterates, and the caller declares once whether a finish drains the backlog or discards it. Consumers whose wake-up, failure, or cancellation behavior differs keep their own queue.
+
 ## Table of Contents
 
 - [Use this package](#use-this-package)
@@ -47,6 +49,27 @@ while (frames.size > 0) {
 
 The methods do not impose a queue limit or translate consumer failures. See [`src/index.ts`](src/index.ts) for the exact TypeScript contract.
 
+### Hand-off to one asynchronous reader
+
+Use `FrameQueue<T>` when producers enqueue while a single reader consumes, and the reader must be woken on demand rather than polled. The construction-time drain policy is the one lifecycle decision this class makes on the caller's behalf: `'drain'` delivers entries still queued when the queue finishes, and `'discard'` ends the reader without them.
+
+```ts
+import { FrameQueue } from '@deepseek-ai/dsh-deque'
+
+const frames = new FrameQueue<string>('drain')
+const controller = new AbortController()
+
+const reader = (async () => {
+  for await (const frame of frames.iterate(controller.signal)) console.log(frame)
+})()
+
+frames.push('first')
+frames.finish()
+void reader
+```
+
+`finish()` is idempotent, and `push()` after it discards the entry. Aborting the iteration's signal finishes the queue and removes the listener the iteration installed. A queue retains its entries until the reader removes them; capacity and overload policy stay with the caller.
+
 -----
 
 <a id="understand-the-implementation"></a>
@@ -61,9 +84,10 @@ The deque stores entries in a circular array. Removing an entry clears that slot
 
 | File | Role |
 |---|---|
-| [`src/index.ts`](src/index.ts) | Circular deque operations and backing-storage lifecycle |
+| [`src/index.ts`](src/index.ts) | Circular deque operations, backing-storage lifecycle, and the `FrameQueue` wake-up protocol |
 | — | No runtime invariant companion is published because this collection owns no event stream or shared mutable state; unit tests cover its ordering and storage lifecycle. |
 | [`tests/deque.spec.ts`](tests/deque.spec.ts) | FIFO, front insertion, wrapping, growth, compaction, clearing, and reuse coverage |
+| [`tests/frame-queue.spec.ts`](tests/frame-queue.spec.ts) | Wake-up delivery, finish idempotence, both drain policies, and abort coverage |
 | [`benchmarks/drain.ts`](benchmarks/drain.ts) | Reproducible backlog-drain timing across increasing queue sizes |
 
 </details>
@@ -92,6 +116,8 @@ Nothing here enters a model request, so provider cache reuse is unaffected.
 <a id="known-limitations-and-deferred-work"></a>
 
 - **No capacity policy** — the deque does not bound, coalesce, or reject entries; each consumer must define overload behavior appropriate to its stream.
+- **One reader per `FrameQueue`** — the wake-up protocol releases the single reader waiting when an entry arrives, so concurrent readers would race for entries. Give each reader its own queue, and keep shared back-pressure outside this class.
+- **The drain policy is fixed at construction** — a queue that must observe the backlog and one torn down without further delivery differ only by that argument; changing it later is not supported.
 
 <a id="dev-note"></a>
 ### Dev Note

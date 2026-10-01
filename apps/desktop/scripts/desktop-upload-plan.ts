@@ -7,6 +7,7 @@ import { basename, join, resolve } from 'node:path'
 import { dump, load } from 'js-yaml'
 import { prerelease } from 'semver'
 import type { DesktopPackageTargetName } from './package-target.ts'
+import { resolveDesktopEdition } from './desktop-release-environment.mjs'
 import {
   desktopBuildRecordFilename,
   desktopUpdateMetadataFilename,
@@ -191,6 +192,7 @@ export async function createDesktopUploadPlan(
     throw new Error(`desktop upload: desktop version ${desktopVersion} does not match current dsh version ${dshVersion}`)
   }
 
+  const edition = resolveDesktopEdition(environment)
   const update = resolveDesktopUploadConfig(environment, target.platform, target.arch)
   const buildRecord = await jsonFile(
     join(artifactsRoot, desktopBuildRecordFilename(targetName)),
@@ -213,7 +215,7 @@ export async function createDesktopUploadPlan(
     throw new Error(`desktop upload: ${targetName} package completion record for ${buildVersion} does not match the ${update.environment} update destination`)
   }
 
-  const metadataFilename = desktopUpdateMetadataFilename(buildVersion, target.platform)
+  const metadataFilename = desktopUpdateMetadataFilename(buildVersion, target.platform, edition.edition)
   const metadataPath = join(artifactsRoot, metadataFilename)
   let metadataValue: unknown
   try {
@@ -231,7 +233,7 @@ export async function createDesktopUploadPlan(
     throw new Error(`desktop upload: ${metadataFilename}.files must contain exactly one target update file`)
   }
 
-  const base = `deepseek-harness-${buildVersion}-${target.os}-${target.arch}`
+  const base = `${edition.artifactNamePrefix}-${buildVersion}-${target.os}-${target.arch}`
   const updaterExtension = target.platform === 'darwin' ? 'zip' : 'exe'
   const updaterInfo = updateFileInfo(metadata.files[0], `${metadataFilename}.files[0]`, `${base}.${updaterExtension}`)
   const updaterPath = await verifyChecksummedArtifact(artifactsRoot, updaterInfo)
@@ -269,7 +271,7 @@ export async function createDesktopUploadPlan(
   }
   artifacts.push(channelArtifact)
   if (prerelease(buildVersion) === null) {
-    const stableFilename = metadataFilename.replace('nightly', 'latest')
+    const stableFilename = metadataFilename.replace(/^(?:nightly|dev)/u, 'latest')
     artifacts.push({ ...channelArtifact, filename: stableFilename, key: `${update.keyPrefix}/${stableFilename}` })
   }
   return {

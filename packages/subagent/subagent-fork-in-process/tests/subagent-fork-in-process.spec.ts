@@ -198,13 +198,19 @@ describe('dsh-subagent-fork-in-process', () => {
 
   it('advertises every start-time capability', async () => {
     const { ctx } = await setup([])
-    expect(ctx.subagents.getProvider('fork')!.capabilities).toEqual({
+    const provider = ctx.subagents.getProvider('fork')!
+    expect(provider.capabilities).toEqual({
       agentOptions: true,
       outputSchema: true,
       depthLimit: true,
       toolFilter: true,
       persona: true,
     })
+    // A forked child IS seeded with the parent's completed-turn prefix, and
+    // shares the parent process and attachment store: durable image
+    // references, seeded or fresh, stay valid.
+    expect(provider.inheritsParentContext).toBe(true)
+    expect(provider.imageInput).toBe(true)
   })
 
   it('unregisters the provider when its fiber is disposed (HMR safety)', async () => {

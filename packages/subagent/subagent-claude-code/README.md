@@ -179,6 +179,7 @@ These limits define when this provider is a poor fit or needs special operationa
 - **No human interaction path** — `AskUserQuestion` is disabled, permission prompts are denied, MCP elicitation is declined, and blocking dialogs fail closed instead of suspending.
 - **Assistant payload is final text only** — reasoning, intermediate messages, tool traffic, usage, stderr, and workspace diffs remain product-local.
 - **No optional shared capabilities** — `agentOptions`, output schemas, child personas, tool filtering, and harness depth enforcement are rejected by the shared service for this provider.
+- **No image prompts** — this provider declares `imageInput: false`; the seam refuses an image-bearing prompt before the child process starts, because the provider maps the task to a text-only CLI prompt and rejects any non-text block.
 - **No wall-clock timeout or side-effect rollback** — the caller cancels long work, and files or external systems changed before cancellation are not restored.
 
 <a id="dev-note"></a>

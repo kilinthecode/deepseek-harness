@@ -1,0 +1,16 @@
+{
+  "patches": [
+    {
+      "at": 1,
+      "entry": {
+        "kind": "chunks",
+        "chunks": [
+          { "type": "block-start", "index": 0, "blockType": "text" },
+          { "type": "block-end", "index": 0, "block": { "type": "text", "text": "{{fromRequest:(\\[image omitted because this model accepts text only; \"[^\"]+\" \\(sha256:[0-9a-f]{64}\\)\\.) Normalized copy \\(read-only; may be resized or re-encoded\\): \"[^\"]+\" \\([^)]+\\)\\. Source dimensions, format, and byte size may differ\\. Copy to a writable path ending in \\.[a-z]+ before editing\\.\\]}}" } },
+          { "type": "usage", "usage": { "inputTokens": 3, "outputTokens": 3 } },
+          { "type": "finish", "reason": { "kind": "stop" } }
+        ]
+      }
+    }
+  ]
+}

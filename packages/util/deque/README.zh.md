@@ -11,6 +11,8 @@ kind: "package-library"
 
 `dsh-deque` 让 Host 和浏览器包可以排空长期存在的进程内队列，而无需在每次移除后移动所有剩余条目。调用方可以追加或前插条目，并以摊销常数时间从前端移除。双端队列负责条目顺序和后备存储释放；唤醒、失败、取消、容量和过载行为仍由各消费方负责。
 
+`FrameQueue<T>` 把该存储与许多「多生产者对单读者」流交接反复实现的唤醒协议组合在一起：生产者推入，一个读者迭代，调用方一次性声明结束时是排空积压还是丢弃积压。唤醒、失败或取消行为不同的消费方保留各自的队列。
+
 ## 目录
 
 - [使用本包](#use-this-package)
@@ -47,6 +49,27 @@ while (frames.size > 0) {
 
 这些方法不施加队列限制，也不转换消费方失败。准确的 TypeScript 约定见 [`src/index.ts`](src/index.ts)。
 
+### 交接给单个异步读者
+
+当多个生产者入队、单个读者消费，且读者必须按需被唤醒而非轮询时，使用 `FrameQueue<T>`。构造时传入的排空策略是该类代调用方做出的唯一生命周期决定：`'drain'` 在队列结束前交付仍在排队的条目，`'discard'` 结束读者且不交付它们。
+
+```ts
+import { FrameQueue } from '@deepseek-ai/dsh-deque'
+
+const frames = new FrameQueue<string>('drain')
+const controller = new AbortController()
+
+const reader = (async () => {
+  for await (const frame of frames.iterate(controller.signal)) console.log(frame)
+})()
+
+frames.push('first')
+frames.finish()
+void reader
+```
+
+`finish()` 是幂等的，其后的 `push()` 会丢弃条目。中止迭代的信号会结束队列并移除该迭代安装的监听器。队列会保留条目直到读者移除它们；容量与过载策略仍由调用方负责。
+
 -----
 
 <a id="understand-the-implementation"></a>
@@ -61,9 +84,10 @@ while (frames.size > 0) {
 
 | 文件 | 职责 |
 |---|---|
-| [`src/index.ts`](src/index.ts) | 环形双端队列操作与后备存储生命周期 |
+| [`src/index.ts`](src/index.ts) | 环形双端队列操作、后备存储生命周期，以及 `FrameQueue` 唤醒协议 |
 | — | 不发布运行时不变式伴生入口；这个集合不拥有事件流或共享可变状态，其顺序与存储生命周期由单元测试覆盖。 |
 | [`tests/deque.spec.ts`](tests/deque.spec.ts) | FIFO、前插、环绕、扩容、压缩（compaction）、清空和复用覆盖 |
+| [`tests/frame-queue.spec.ts`](tests/frame-queue.spec.ts) | 唤醒交付、finish 幂等性、两种排空策略与中止覆盖 |
 | [`benchmarks/drain.ts`](benchmarks/drain.ts) | 随队列规模增长的可复现 backlog 排空计时 |
 
 </details>
@@ -92,6 +116,8 @@ while (frames.size > 0) {
 <a id="known-limitations-and-deferred-work"></a>
 
 - **没有容量策略**——双端队列不会限制、合并或拒绝条目；每个消费方必须定义适合其流的过载行为。
+- **每个 `FrameQueue` 只服务一个读者**——唤醒协议只释放条目到达时正在等待的那个读者，因此并发读者会竞争条目。请为每个读者使用各自的队列，并把共享背压保留在该类之外。
+- **排空策略在构造时固定**——需要观察积压的队列与拆除后不再交付的队列仅由该参数区分；之后不再支持更改。
 
 <a id="dev-note"></a>
 ### 开发备注

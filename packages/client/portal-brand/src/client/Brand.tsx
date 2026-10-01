@@ -10,6 +10,7 @@
 import type { HeroBrandMarkOwnerProps } from '@deepseek-ai/dsh-client-ui-conversation/client'
 import type { SidebarBrandMarkOwnerProps } from '@deepseek-ai/dsh-client-ui-sidebar/client'
 import type { PropsLocale } from '@deepseek-ai/dsh-client-ui-slots'
+import { DevBadge } from './DevBadge.tsx'
 import { HarnessNameplate } from './HarnessNameplate.tsx'
 import { PortalMark } from './PortalMark.tsx'
 import { PortalWordmark } from './PortalWordmark.tsx'
@@ -38,6 +39,22 @@ export function PortalBrandName({ t }: PortalBrandNameProps) {
     <>
       <PortalWordmark text={t('portal')} />
       <HarnessNameplate />
+    </>
+  )
+}
+
+/**
+ * Render the dev-channel product name: the Portal wordmark and HARNESS
+ * nameplate of the production name, followed by the dev-channel chip.
+ * @param props.t - translate seat bound to this package's brand namespace.
+ * @returns the Portal wordmark with its Harness nameplate and dev chip.
+ */
+export function PortalDevBrandName({ t }: PortalBrandNameProps) {
+  return (
+    <>
+      <PortalWordmark text={t('portal')} />
+      <HarnessNameplate />
+      <DevBadge label={t('devBadge')} />
     </>
   )
 }

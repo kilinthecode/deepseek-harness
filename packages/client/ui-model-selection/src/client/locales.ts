@@ -27,11 +27,12 @@ export const zh = {
   'effort.providerDefault': 'Default',
   'status.loading': '正在刷新模型列表…',
   'error.action': '模型操作失败：{message}',
-  'error.sessionInUse': '当前会话已被占用，可能是其他正在运行的 DSH 导致的（如其他 dsh web、桌面端），请退出其他正在运行的 DSH 后重试。',
+  'error.sessionInUse': '当前会话已被占用，可能是其他正在运行的 Portal Harness 导致的（如其他 dsh web、桌面端），请退出其他正在运行的 Portal Harness 后重试。',
   'action.reload': '重新加载',
   'warning.groupLoad': '{name} 加载失败：{message}',
   'empty.models': '没有可用的模型。',
   'empty.efforts': '当前模型未提供推理等级。',
+  'capability.image': '图片',
 } satisfies Record<string, string>
 
 /** The model namespace key union. */
@@ -56,9 +57,10 @@ export const en = {
   'effort.providerDefault': 'Default',
   'status.loading': 'Refreshing model list…',
   'error.action': 'Model operation failed: {message}',
-  'error.sessionInUse': 'This session is already in use, possibly by another running DSH instance (such as dsh web or the desktop app). Quit other running DSH instances and try again.',
+  'error.sessionInUse': 'This session is already in use, possibly by another running Portal Harness instance (such as dsh web or the desktop app). Quit other running Portal Harness instances and try again.',
   'action.reload': 'Reload',
   'warning.groupLoad': '{name} failed to load: {message}',
   'empty.models': 'No models available.',
   'empty.efforts': 'This model provides no reasoning effort levels.',
+  'capability.image': 'Image',
 } satisfies Record<ModelKey, string>

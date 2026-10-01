@@ -16,6 +16,7 @@
     { "path": "../../core/session" },
     { "path": "../../core/system-prompt" },
     { "path": "../../core/tools" },
+    { "path": "../../attachment/attachment" },
     { "path": "../../interaction/commands" },
     { "path": "../../session/session-title" },
     { "path": "../../subagent/subagent" },

@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 import { IconCheckOutlineRegular, IconRefreshOutlineRegular } from './icons/index.tsx'
-import { StateDot } from './StateDot.tsx'
+import { TesseractSpinner } from './TesseractSpinner.tsx'
 import css from './ConnectionIndicator.module.css'
 
 /** Visual state rendered by {@link ConnectionIndicator}. */
@@ -81,7 +81,7 @@ export function ConnectionIndicator({
     >
       <span className={css.icon} aria-hidden="true">
         {connecting
-          ? <StateDot state="ongoing" />
+          ? <TesseractSpinner size={14} />
           : <IconRefreshOutlineRegular size={14} />}
       </span>
       <span className={css.label}>

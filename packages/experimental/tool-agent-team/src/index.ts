@@ -3,11 +3,13 @@
 import type { Context } from '@deepseek-ai/cordis'
 import z from '@deepseek-ai/schemastery'
 import type { Agent, AgentOptions } from '@deepseek-ai/dsh-agent'
+import type {} from '@deepseek-ai/dsh-attachment'
 // `@deepseek-ai/dsh-commands` is an optional peer: name its brand in type
 // position so module scope loads nothing, and brand the id with the shared helper.
 import { brandString } from '@deepseek-ai/dsh-brand'
 import type { CommandDefinitionId, CommandResult } from '@deepseek-ai/dsh-commands'
-import { createUserMessage, ReasoningEffortId } from '@deepseek-ai/dsh-llm'
+import { createUserMessage, ReasoningEffortId, resolveDelegationImages } from '@deepseek-ai/dsh-llm'
+import type { ImageInputSupport } from '@deepseek-ai/dsh-llm'
 import { parentAgentOptionsForDelegation, plainForkParentOf } from '@deepseek-ai/dsh-subagent'
 import {
   hasConfiguredLlmSelection,
@@ -19,8 +21,8 @@ import type { DelegationModelRequest } from '@deepseek-ai/dsh-tool-subagent/mode
 import type {} from '@deepseek-ai/dsh-session-title'
 import { TeamError, TeamTaskId } from '@deepseek-ai/dsh-experimental-agent-team'
 import type { TeamDuty, TeamMemberView } from '@deepseek-ai/dsh-experimental-agent-team'
-import { defineTool } from '@deepseek-ai/dsh-tools'
-import type { InferValue, ToolRestriction, ValueSchemaSpec } from '@deepseek-ai/dsh-tools'
+import { applyAgentScopedTools, callingAgent, defineTool, jsonOutput, type InferValue } from '@deepseek-ai/dsh-tools'
+import type { ToolRestriction } from '@deepseek-ai/dsh-tools'
 
 /** Cordis plugin name. */
 export const name = 'tool-agent-team'
@@ -188,9 +190,13 @@ const MEMBER_VIEW_SCHEMA = {
     context: { type: 'string', enum: ['fresh', 'fork'] },
     duty: { type: 'string', enum: ['planner', 'executor'] },
     model: { type: 'string' },
+    acceptsImages: { type: 'string', enum: ['supported', 'unsupported', 'undeclared'] },
     diagnostics: { type: 'array', required: true, items: { type: 'string' } },
   },
 } as const
+
+/** One `list_agents` result row: the roster view plus listing-time image-input support. */
+type ListedMember = TeamMemberView & { acceptsImages?: ImageInputSupport }
 
 /** Expose the member name as its model-facing target. */
 function modelMember(member: TeamMemberView): InferValue<typeof MEMBER_VIEW_SCHEMA> {
@@ -279,30 +285,6 @@ const TASK_LIST_VALUE_SCHEMA = {
   },
 } as const
 
-/**
- * Declare one canonical output schema with compact model-facing JSON. Every
- * Team result is a fixed record, so the declared schema is what makes the
- * compiler check `execute` against the value the model is promised.
- * @param schema - canonical value schema for one tool.
- * @returns the `output` declaration accepted by {@link defineTool}.
- */
-function jsonOutput<const S extends ValueSchemaSpec>(schema: S): {
-  schema: S
-  render: (args: unknown, value: InferValue<S>) => [{ type: 'text'; text: string }]
-} {
-  return {
-    schema,
-    render: (_args: unknown, value: InferValue<S>) => [{ type: 'text', text: JSON.stringify(value) }],
-  }
-}
-
-/** Recover the exact caller guaranteed by Agent-scoped tool discovery. */
-function callingAgent(agent: Agent | undefined, toolName: string): Agent {
-  /* v8 ignore next 2 -- Team tools are registered only in an exact Agent scope, so discovery supplies this carrier. */
-  if (agent === undefined) throw new Error(`${toolName} requires a calling Agent`)
-  return agent
-}
-
 /** Compose a teammate's first-message reminder: its identity, then its duty instructions when it has a duty. */
 function teammateReminder(name: string, duty: TeamDuty | undefined, config: ResolvedConfig): string {
   const lines = [
@@ -319,13 +301,12 @@ function teammateReminder(name: string, duty: TeamDuty | undefined, config: Reso
 /** Register the complete Team tool set in one exact Agent scope. */
 function install(agent: Agent, ctx: Context, config: ResolvedConfig): () => void {
   const scoped = agent.ctx
-  const disposers: Array<() => unknown> = []
-  const register = (disposer: () => unknown): void => { disposers.push(disposer) }
   const configuredRoute = config.agentOptions?.provider !== undefined && config.agentOptions.model !== undefined
     ? { route: `${config.agentOptions.provider}/${config.agentOptions.model}`, model: config.agentOptions.model }
     : undefined
-  try {
-    register(scoped.systemPrompt.section({
+  // oxlint-disable-next-line typescript/no-misused-promises -- Cordis effect generators collect yielded disposers synchronously.
+  return scoped.effect(function* () {
+    yield scoped.systemPrompt.section({
       name: 'team:policy',
       order: scoped.systemPrompt.getSectionOrder('TEAM_POLICY'),
       // Every member of one Team reads the same subject, so the section stays
@@ -334,15 +315,20 @@ function install(agent: Agent, ctx: Context, config: ResolvedConfig): () => void
         const subject = ctx.agentTeams.subjectOf(agent)
         return subject === undefined ? POLICY : `${POLICY}\n\n${subjectPolicy(subject)}`
       },
-    }))
+    })
 
-    register(scoped.tools.register(defineTool({
+    yield scoped.tools.register(defineTool({
       name: 'spawn_teammate',
       description: 'Create one named, durable teammate. Only the Team Lead may call this tool.',
       parameters: {
         name: { type: 'string', required: true, description: 'Unique lower-kebab-case teammate name.' },
         description: { type: 'string', required: true, description: 'Short description of the delegated responsibility.' },
         prompt: { type: 'string', required: true, description: 'Complete initial task for the teammate.' },
+        images: {
+          type: 'array',
+          items: { type: 'string' },
+          description: 'Attachment ids of images already shown in this conversation, appended to the prompt.',
+        },
         context: {
           type: 'string',
           enum: ['fresh', 'fork'],
@@ -375,6 +361,11 @@ function install(agent: Agent, ctx: Context, config: ResolvedConfig): () => void
       output: jsonOutput(SPAWN_VALUE_SCHEMA),
       async execute(args, exec) {
         const agent = callingAgent(exec.agent, 'spawn_teammate')
+        const imageBlocks = resolveDelegationImages(
+          agent.session.deriveMessages(),
+          args.images,
+          ctx.get('attachments')?.imageLimits.maxImagesPerMessage,
+        )
         const modelRequest = args as DelegationModelRequest
         const parentOptions = parentAgentOptionsForDelegation(agent)
         const requiresRoutePreflight = hasDelegationModelRequest(modelRequest)
@@ -403,6 +394,7 @@ function install(agent: Agent, ctx: Context, config: ResolvedConfig): () => void
           prompt: [
             { type: 'text', text: teammateReminder(args.name.trim(), duty, config) },
             { type: 'text', text: args.prompt },
+            ...imageBlocks,
           ],
           context,
           provider: context === 'fork' ? config.forkProvider : config.freshProvider,
@@ -413,36 +405,53 @@ function install(agent: Agent, ctx: Context, config: ResolvedConfig): () => void
         })
         return { member: modelMember(result.member) }
       },
-    })))
+    }))
 
-    register(scoped.tools.register(defineTool({
+    yield scoped.tools.register(defineTool({
       name: 'send_message',
       description: 'Send one durable message to another Team member. A running target receives it at the nearest step boundary; an inactive target starts or resumes a turn.',
       parameters: {
         target: { type: 'string', required: true, description: 'Member target returned by spawn_teammate or list_agents, including lead.' },
         message: { type: 'string', required: true, description: 'Self-contained message for the target.' },
+        images: {
+          type: 'array',
+          items: { type: 'string' },
+          description: 'Attachment ids of images already shown in this conversation, appended to the message.',
+        },
       },
       output: jsonOutput(SEND_VALUE_SCHEMA),
       execute(args, exec) {
-        return ctx.agentTeams.sendMessage(callingAgent(exec.agent, 'send_message'), {
+        const agent = callingAgent(exec.agent, 'send_message')
+        return ctx.agentTeams.sendMessage(agent, {
           target: args.target,
-          content: [{ type: 'text', text: args.message }],
+          content: [{ type: 'text', text: args.message }, ...resolveDelegationImages(
+            agent.session.deriveMessages(),
+            args.images,
+            ctx.get('attachments')?.imageLimits.maxImagesPerMessage,
+          )],
           signal: exec.signal,
         })
       },
-    })))
+    }))
 
-    register(scoped.tools.register(defineTool({
+    yield scoped.tools.register(defineTool({
       name: 'list_agents',
-      description: 'List the Lead and every durable teammate with an addressable target and current availability. inactive means no turn is executing, not a task result. provisioning and failed describe member creation.',
+      description: 'List the Lead and every durable teammate with an addressable target, current availability, and image-input support. inactive means no turn is executing, not a task result. provisioning and failed describe member creation.',
       parameters: {},
       output: jsonOutput(MEMBER_LIST_VALUE_SCHEMA),
-      execute(_args, exec) {
-        return Promise.resolve(ctx.agentTeams.listMembers(callingAgent(exec.agent, 'list_agents')).map(modelMember))
+      async execute(_args, exec) {
+        const caller = callingAgent(exec.agent, 'list_agents')
+        const members = ctx.agentTeams.listMembers(caller)
+        const imageSupport = await ctx.agentTeams.resolveMemberImageSupport(caller, exec.signal)
+        return members.map((member) => {
+          const view = modelMember(member)
+          const acceptsImages: ListedMember['acceptsImages'] = imageSupport.get(member.id)
+          return acceptsImages === undefined ? view : { ...view, acceptsImages }
+        })
       },
-    })))
+    }))
 
-    register(scoped.tools.register(defineTool({
+    yield scoped.tools.register(defineTool({
       name: 'wait_agent',
       description: 'Wait for the next teammate status, mailbox, or shared-task change after this call starts. This never wakes inactive members and returns noProgress immediately when no other member is running or provisioning. Re-list after wakeup or timeout instead of polling.',
       parameters: {
@@ -475,9 +484,9 @@ function install(agent: Agent, ctx: Context, config: ResolvedConfig): () => void
         }
         return await ctx.agentTeams.waitForChange(caller, timeoutMs, exec.signal)
       },
-    })))
+    }))
 
-    register(scoped.tools.register(defineTool({
+    yield scoped.tools.register(defineTool({
       name: 'interrupt_agent',
       description: 'Interrupt one teammate\'s current turn while preserving its pending inbox. Team Lead only.',
       parameters: {
@@ -487,9 +496,9 @@ function install(agent: Agent, ctx: Context, config: ResolvedConfig): () => void
       execute(args, exec) {
         return Promise.resolve(ctx.agentTeams.interrupt(callingAgent(exec.agent, 'interrupt_agent'), args.target))
       },
-    })))
+    }))
 
-    register(scoped.tools.register(defineTool({
+    yield scoped.tools.register(defineTool({
       name: 'team_task_create',
       description: 'Create one unowned pending task on the shared Team task board.',
       parameters: {
@@ -511,9 +520,9 @@ function install(agent: Agent, ctx: Context, config: ResolvedConfig): () => void
           ...args.write_scopes === undefined ? {} : { writeScopes: args.write_scopes },
         })
       },
-    })))
+    }))
 
-    register(scoped.tools.register(defineTool({
+    yield scoped.tools.register(defineTool({
       name: 'team_task_list',
       description: 'List shared tasks, including readiness, owner, revision, blockers, and write-scope warnings.',
       parameters: {
@@ -543,9 +552,9 @@ function install(agent: Agent, ctx: Context, config: ResolvedConfig): () => void
           ...(cursor + limit < filtered.length ? { nextCursor: cursor + limit } : {}),
         })
       },
-    })))
+    }))
 
-    register(scoped.tools.register(defineTool({
+    yield scoped.tools.register(defineTool({
       name: 'team_task_get',
       description: 'Read the complete latest value of one shared task before changing or executing it.',
       parameters: {
@@ -558,9 +567,9 @@ function install(agent: Agent, ctx: Context, config: ResolvedConfig): () => void
           TeamTaskId(args.task_id),
         ))
       },
-    })))
+    }))
 
-    register(scoped.tools.register(defineTool({
+    yield scoped.tools.register(defineTool({
       name: 'team_task_update',
       description: 'Compare-and-set a shared task action using the latest revision from team_task_get or team_task_list.',
       parameters: {
@@ -595,14 +604,8 @@ function install(agent: Agent, ctx: Context, config: ResolvedConfig): () => void
           ...args.reason === undefined ? {} : { reason: args.reason },
         })
       },
-    })))
-  } catch (error: unknown) {
-    for (const dispose of disposers.reverse()) void dispose()
-    throw error
-  }
-  return () => {
-    for (const dispose of disposers.reverse()) void dispose()
-  }
+    }))
+  }, 'tool-team.agentScope()')
 }
 
 /**
@@ -633,26 +636,39 @@ async function startTeam(ctx: Context, agent: Agent, rawInput: string): Promise<
 
 /**
  * Whether `agent` qualifies for the Team section and tool set: either it
- * currently has Team membership itself, or it is a plain fork
- * ({@link plainForkParentOf}) of a parent that currently does. A plain fork
- * of a member is not itself a member — `spawn_teammate`/`send_message`/etc.
- * still resolve and authorize the calling agent through `ctx.agentTeams` at
- * execution time and reject a non-member with `TEAM_NOT_MEMBER`, so a fork
- * can never act as its parent — but its assembled prompt must match the
- * parent's declared section and tools so a provider prompt cache keyed on
- * the exact prefix covers the inherited history instead of missing on a
- * dropped section.
+ * currently has Team membership itself, or walking its plain-fork lineage
+ * ({@link plainForkParentOf}, applied repeatedly) reaches an agent that
+ * currently does. Every agent on that lineage is a plain fork and not itself
+ * a member — `spawn_teammate`/`send_message`/etc. still resolve and
+ * authorize the calling agent through `ctx.agentTeams` at execution time and
+ * reject a non-member with `TEAM_NOT_MEMBER`, so no fork in the lineage can
+ * ever act as its ancestor — but its assembled prompt must match its
+ * immediate parent's declared section and tools, and therefore transitively
+ * the member's, so a provider prompt cache keyed on the exact prefix covers
+ * the inherited history instead of missing on a dropped section.
  * @param agent - the exact live candidate agent.
  * @param ctx - the context whose `agentTeams` resolves membership.
  * @returns whether `agent` qualifies for the Team installation.
  */
 function qualifiesForTeamInstall(agent: Agent, ctx: Context): boolean {
-  if (ctx.agentTeams.tryMembership(agent) !== undefined) return true
-  const forkParent = plainForkParentOf(agent)
-  return forkParent !== undefined && ctx.agentTeams.tryMembership(forkParent) !== undefined
+  const visited = new Set<Agent>()
+  let candidate: Agent | undefined = agent
+  while (candidate !== undefined) {
+    // Defensive only: plainForkParentOf walks toward an earlier-created
+    // ancestor session, so this lineage cannot cycle in practice.
+    /* v8 ignore next -- guards a defect elsewhere, not a reachable case. */
+    if (visited.has(candidate)) return false
+    if (ctx.agentTeams.tryMembership(candidate) !== undefined) return true
+    visited.add(candidate)
+    candidate = plainForkParentOf(candidate)
+  }
+  return false
 }
 
-/** Install Team tools in every live or subsequently published Team member scope. */
+/**
+ * Install Team tools in every live or subsequently published Team member scope
+ * and in each plain fork whose fork chain reaches a live member.
+ */
 export function apply(ctx: Context, config: Config = {}): void {
   const resolved = resolveConfig(config)
   // The command activates only when a command registry is composed.
@@ -665,19 +681,10 @@ export function apply(ctx: Context, config: Config = {}): void {
       handler: ({ agent, rawInput }) => startTeam(ctx, agent, rawInput),
     })
   })
-  const installed = new Map<Agent, () => void>()
-  const maybeInstall = (agent: Agent): void => {
-    if (installed.has(agent) || !qualifiesForTeamInstall(agent, ctx)) return
-    installed.set(agent, install(agent, ctx, resolved))
-  }
-  for (const agent of ctx.agents.list()) maybeInstall(agent)
-  ctx.on('agent/created', ({ agent }) => { maybeInstall(agent) })
-  ctx.on('agent/disposed', ({ agent }) => {
-    installed.get(agent)?.()
-    installed.delete(agent)
-  })
-  ctx.effect(() => () => {
-    for (const dispose of installed.values()) dispose()
-    installed.clear()
-  }, 'tool-team.scopedTools()')
+  applyAgentScopedTools(
+    ctx,
+    agent => qualifiesForTeamInstall(agent, ctx),
+    agent => install(agent, ctx, resolved),
+    'tool-team.scopedTools()',
+  )
 }

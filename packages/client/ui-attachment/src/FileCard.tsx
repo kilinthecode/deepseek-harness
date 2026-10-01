@@ -1,4 +1,4 @@
-import { fileExtension, FileTypeIcon, fileSizeText, IconCloseFillRegular } from '@deepseek-ai/dsh-client-ui-primitives'
+import { fileExtension, FileTypeIcon, fileSizeText, IconCloseFillRegular, TesseractSpinner } from '@deepseek-ai/dsh-client-ui-primitives'
 import css from './FileCard.module.css'
 
 /** Localized strings consumed by one pending-file card. */
@@ -44,7 +44,7 @@ export function FileCard({
     >
       <span className={css.icon} aria-hidden>
         {state === 'uploading'
-          ? <span className={css.spinner} />
+          ? <TesseractSpinner size={20} />
           : <FileTypeIcon path={name} />}
       </span>
       {retryable

@@ -353,6 +353,15 @@ export interface SubagentProvider {
    */
   readonly inheritsParentContext: boolean
   /**
+   * Whether a published child of this provider can receive image content in
+   * its prompt. Checked by the service before `start` for a one-shot child
+   * whose prompt has an image, so an incapable transport refuses before any
+   * process or Agent it cannot serve. Distinct from {@link SubagentCapabilities}:
+   * it names the child's request-content ceiling rather than a
+   * {@link SubagentStartRequest} option the caller opts into.
+   */
+  readonly imageInput: boolean
+  /**
    * Optional static provider-owned provider/model route for one-shot Agent
    * options. Consumers merge tool/model overrides over these values before
    * preflight; providers whose route derives from the parent omit it. The value

@@ -401,7 +401,7 @@ describe('dsh-tool-room', () => {
     expect((view.transcript as unknown[]).length).toBeLessThanOrEqual(2)
   })
 
-  it('refuses every room tool for a provider-owned subagent', async () => {
+  it('does not expose room tools to a provider-owned subagent', async () => {
     const { ctx, lead } = await setup(Array.from({ length: 4 }, () => textResponse('ack')))
     const run = await ctx.subagents.start('spawn', {
       parent: lead,

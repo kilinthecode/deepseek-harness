@@ -57,7 +57,7 @@ kind: "package-reference"
 
 ### 修剪何时运行
 
-修剪只在压缩触发条件满足后才会运行；低于压力阈值的对话永远不会被修剪或预览，修剪本身也不发起模型调用。溢出恢复会无条件先修剪、再选择要压缩的内容，因为重试请求本身必须能放入窗口。主动压力触发时会先预览修剪：只有当预览显示单靠修剪就能把压力清到阈值以下的配置余量时，修剪才会单独落地；否则会先压缩最旧的平衡范围，再对剩余部分修剪，因为该请求已经承担了修剪本会带来的缓存失效代价。
+修剪只在压缩触发条件满足后才会运行；低于压力阈值的对话永远不会被修剪或预览，修剪本身也不发起模型调用。溢出恢复会无条件先修剪、再选择要压缩的内容，因为重试请求本身必须能放入窗口。主动压力触发时会先预览修剪：预览显示单靠修剪就能把压力清到阈值以下的配置余量时，修剪会单独落地，但只有落地的修剪确实达标才不再压缩——如果不够，压缩仍会在修剪后的表层上继续进行。当预览未达到这一余量时，则会先压缩最旧的平衡范围，再对每次成功压缩后的剩余部分修剪，因为该请求已经承担了修剪本会带来的缓存失效代价。即便没有平衡范围可压缩，已挂载的剪枝器在检查拒绝之前仍会先修剪一次。
 
 -----
 
@@ -79,13 +79,13 @@ kind: "package-reference"
 
 ### 剪枝机制
 
-剪枝按 Unicode 码点测量 `text` 块（非文本块计为零），生成长度受限的替换——内容已在预算内时则不替换——并把每个超出预算的工具结果换为一条新追加的 `tool/result`，该事件替换原始事件并通过 `sourceEventSeqs` 引用它，前面紧跟一条 `compaction/prune` 影子价格事件。会话拒绝替换时，运行会同步失败；本次扫描中先前已提交的替换仍会保留。非文本块保持原始相对位置，切片绝不会拆分 UTF-16 代理项对。`previewSession` 以只读方式运行相同的候选规划，返回当前一次 `pruneSession` 调用会产生的节点数与估算 token 节省量，使调用方能在真正落地之前为一次仅剪枝的缩减定价。精确签名见 [`src/index.ts`](src/index.ts)。
+剪枝按 Unicode 码点测量 `text` 块（非文本块计为零），生成长度受限的替换——内容已在预算内时则不替换——并把每个超出预算的工具结果换为一条新追加的 `tool/result`，该事件替换原始事件并通过 `sourceEventSeqs` 引用它，前面紧跟一条 `compaction/prune` 影子价格事件。会话拒绝替换时，运行会同步失败；本次扫描中先前已提交的替换仍会保留。非文本块保持原始相对位置，切片绝不会拆分 UTF-16 代理项对。`projectTokenSavings` 以只读方式运行相同的候选规划，返回当前一次 `pruneSession` 调用会产生的估算 token 节省量，使调用方能在真正落地之前为一次仅剪枝的缩减定价。精确签名见 [`src/index.ts`](src/index.ts)。
 
 ### 源码地图
 
 | 文件 | 职责 |
 |---|---|
-| [`src/index.ts`](src/index.ts) | 插件入口：`ToolResultPruner` 服务、`pruneSession` / `previewSession` / `pruneContent` / `measureContent` |
+| [`src/index.ts`](src/index.ts) | 插件入口：`ToolResultPruner` 服务、`pruneSession` / `projectTokenSavings` / `pruneContent` / `measureContent` |
 | [`src/config.ts`](src/config.ts) | `PRUNE_MARKER`、默认值、码点计数、预算验证 |
 | [`src/types.ts`](src/types.ts) | `ToolResultPruneConfig`、`ResolvedConfig`、`PrunedEntry`、`PruneResult` |
 | — | 不发布运行时不变式伴生入口；Session 会验证每次仅改写内容的操作，其伴生条目负责维护跨事件包围关系。 |
@@ -99,7 +99,7 @@ kind: "package-reference"
 
 当包级约定不够用时阅读以下页面；它们从消费后端逐步进入共享 seam 与定价服务。
 
-- [压缩基础后端](../compaction-basic/README.zh.md)——在压缩前修剪超大工具输出的后端。
+- [压缩基础后端](../compaction-basic/README.zh.md)——由压力预览决定修剪单独落地还是先运行压缩的后端。
 - [压缩 seam](../compaction/README.zh.md)——本包接入的压缩约定。
 - [压缩子系统参考](../../../docs/subsystems/compaction.zh.md)——压缩词汇、结果与服务行为。
 - [Token meter](../../llm/token-meter/README.zh.md)——判定修剪是否缓解压力的测量服务。

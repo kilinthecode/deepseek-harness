@@ -986,6 +986,7 @@ describe('dsh-memory-review through the agent loop', () => {
     const remote: SubagentProvider = {
       name: 'fork',
       inheritsParentContext: true,
+      imageInput: false,
       capabilities: {
         agentOptions: false,
         outputSchema: false,
@@ -1045,6 +1046,7 @@ describe('dsh-memory-review through the agent loop', () => {
     const failing: SubagentProvider = {
       name: 'fork',
       inheritsParentContext: true,
+      imageInput: false,
       capabilities: {
         agentOptions: false,
         outputSchema: false,
@@ -1091,6 +1093,7 @@ describe('dsh-memory-review through the agent loop', () => {
     const failing: SubagentProvider = {
       name: 'fork',
       inheritsParentContext: true,
+      imageInput: false,
       capabilities: {
         agentOptions: false,
         outputSchema: false,
@@ -1130,6 +1133,7 @@ describe('dsh-memory-review through the agent loop', () => {
     const throwing: SubagentProvider = {
       name: 'fork',
       inheritsParentContext: true,
+      imageInput: false,
       capabilities: {
         agentOptions: false,
         outputSchema: false,

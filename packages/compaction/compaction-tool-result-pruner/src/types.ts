@@ -39,17 +39,3 @@ export interface PruneResult {
   /** Total Unicode code points removed across replacements. */
   readonly charsRemoved: number
 }
-
-/**
- * Aggregate outcome `pruneSession` would produce for the current surface,
- * computed without appending anything. A consumer prices a prune-only
- * reduction against a pressure threshold before deciding whether landing it
- * is worthwhile on its own.
- */
-export interface PrunePreview {
-  /** Tool-result surface nodes `pruneSession` would replace. */
-  readonly nodes: number
-  /** Total estimated tokens `pruneSession` would remove, summed per candidate
-   * as `tokenMeter.estimateMessage(original) - tokenMeter.estimateMessage(replacement)`. */
-  readonly tokensSaved: number
-}

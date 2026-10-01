@@ -33,7 +33,7 @@ interface ContentBlockMap {
 
 The block interfaces (full fields in source): `TextBlock` (`text`), `ReasoningBlock` (thinking, distinct from visible text), `ImageBlock` (a durable [image attachment](attachment.md)), `FileBlock` (a durable verbatim [file attachment](attachment.md) that request assembly projects to handle text for every route), and `ToolCallBlock` (`id: ToolCallId`, `name`, raw-JSON `arguments`). Tool results are first-class `ToolResultMessage` values with `toolCallId`, result `content`, and optional `isError`; they are not content blocks. `ContentBlock = ContentBlockMap[ContentBlockType]`. A new modality belongs in the merge-extensible map only when its adapter, UI, compaction, and durable replay paths honor it. Developer tool-change blocks are projected according to the resolved route capability.
 
-Image access belongs to request serialization rather than the durable attachment or deterministic request-image version. `resolveImageAttachmentAccess()` combines the attachment provider's optional host object path with a mapping supplied by the consumer for the current tool execution filesystem. The result is available only for that request and does not participate in `variantId`.
+Image access belongs to request serialization rather than the durable attachment or deterministic request-image version. `resolveImageAttachmentAccess()` combines the attachment provider's optional host object path with a mapping supplied by the consumer for the current tool execution filesystem. The result is available only for that request and does not participate in `variantId`. A text-only route receives a deterministic per-image placeholder including the full image identity and its read-only execution-world path (when available); it shares those with the limits-based offload placeholder, uses a different reason clause, and has no re-attach sentence, so the model can still read the bytes with file tools or delegate them.
 
 Source: [`packages/llm/llm/src/content.ts`](../../packages/llm/llm/src/content.ts)
 
@@ -640,6 +640,18 @@ interface GenerateOptions {
    * to separate cursors; adapters may map it to model-hidden transport metadata.
    */
   sessionId?: Branded<'SessionId'>
+  /**
+   * The session id whose provider-side cached prefix this request shares:
+   * the request's own session for a top-level session, or its delegation
+   * tree's root for a delegated child. It is transport metadata and never
+   * model-visible, so the session log does not record it — the
+   * `request/header` event carries only `config`, `adapterDefaults`, and
+   * `tools`. The loop recomputes it for each request from the live session
+   * registry. An adapter whose provider supports prompt-prefix cache routing
+   * may map it to that provider's cache-routing field, and an adapter
+   * without such a mechanism ignores it.
+   */
+  cacheKey?: Branded<'SessionId'>
   /**
    * Provider-neutral classification for an auxiliary model call. Adapters may
    * map the purpose to model-hidden transport metadata or purpose-specific

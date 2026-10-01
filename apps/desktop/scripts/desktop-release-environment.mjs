@@ -3,6 +3,66 @@
 /** Environment variable that supplies the Electron application identifier. */
 export const DESKTOP_APP_ID_ENV = 'DSH_DESKTOP_APP_ID'
 
+/** Environment variable that selects the packaged Desktop edition. */
+export const DESKTOP_EDITION_ENV = 'DSH_DESKTOP_EDITION'
+
+/** Environment variable that selects the client build profile a complete build produces. */
+export const CLIENT_BUILD_PROFILE_ENV = 'DSH_BUILD_CLIENT_PROFILE'
+
+const DESKTOP_EDITIONS = {
+  portal: {
+    productName: 'Portal',
+    artifactNamePrefix: 'deepseek-harness',
+    updateChannel: 'nightly',
+    defaultDshHomeDirectoryName: '.dsh',
+    displayName: 'Portal Harness',
+    clientBuildProfile: 'portal',
+  },
+  'portal-dev': {
+    productName: 'Portal Dev',
+    artifactNamePrefix: 'portal-dev',
+    updateChannel: 'dev',
+    defaultDshHomeDirectoryName: '.dsh-dev',
+    displayName: 'Portal Dev Harness',
+    clientBuildProfile: 'portal-dev',
+  },
+}
+
+/**
+ * Resolve one validated Desktop edition and its packaging and runtime identities.
+ * @param {NodeJS.ProcessEnv} env - Packaging or runtime environment.
+ * @returns {{ edition: 'portal' | 'portal-dev', productName: 'Portal' | 'Portal Dev', artifactNamePrefix: 'deepseek-harness' | 'portal-dev', updateChannel: 'nightly' | 'dev', defaultDshHomeDirectoryName: '.dsh' | '.dsh-dev', displayName: 'Portal Harness' | 'Portal Dev Harness', clientBuildProfile: 'portal' | 'portal-dev' }} Edition identity and derived settings.
+ */
+export function resolveDesktopEdition(env) {
+  const edition = env[DESKTOP_EDITION_ENV]?.trim() || 'portal'
+  if (!Object.hasOwn(DESKTOP_EDITIONS, edition)) {
+    throw new Error(`desktop release environment: ${DESKTOP_EDITION_ENV} must be "portal" or "portal-dev"`)
+  }
+  return { edition, ...DESKTOP_EDITIONS[edition] }
+}
+
+/**
+ * Resolve the client build profile the Desktop edition being packaged ships.
+ *
+ * Packaging repeats the complete client build instead of consuming whatever
+ * artifacts are on disk, so the edition — not the caller — decides the profile:
+ * the official profile renders upstream's DeepSeek brand in a Portal
+ * application, and only `portal-dev` renders the dev badge. An ambient
+ * `DSH_BUILD_CLIENT_PROFILE` naming another profile contradicts the edition's
+ * application identity, so it fails instead of silently shipping one edition's
+ * brand in the other's build.
+ * @param {NodeJS.ProcessEnv} env - Packaging environment.
+ * @returns {'portal' | 'portal-dev'} Client build profile this edition packages.
+ */
+export function resolveDesktopClientBuildProfile(env) {
+  const { edition, clientBuildProfile } = resolveDesktopEdition(env)
+  const selected = env[CLIENT_BUILD_PROFILE_ENV]?.trim()
+  if (selected !== undefined && selected !== '' && selected !== clientBuildProfile) {
+    throw new Error(`desktop release environment: ${CLIENT_BUILD_PROFILE_ENV} names the ${JSON.stringify(selected)} client profile, but the ${JSON.stringify(edition)} edition packages ${JSON.stringify(clientBuildProfile)}`)
+  }
+  return clientBuildProfile
+}
+
 /** Environment variable that supplies electron-builder's macOS certificate qualifier. */
 export const MACOS_SIGNING_IDENTITY_ENV = 'DSH_DESKTOP_MACOS_SIGNING_IDENTITY'
 

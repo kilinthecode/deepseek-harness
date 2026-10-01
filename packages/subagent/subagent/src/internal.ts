@@ -11,6 +11,12 @@ import type { ToolDefinition } from '@deepseek-ai/dsh-tools'
 import type SubagentRuntime from './index.ts'
 import type { SubagentDelivery } from './inbox.ts'
 
+// Constructs its refusal in this unbundled subpath
+// (`lib/types/internal.js` -> `lib/types/image-capability.js` ->
+// `lib/types/error.js`), a separate `SubagentError` class from the bundled
+// runtime entry's (`lib/index.js`). Match a caught refusal by `code`.
+export { assertImageCapableRoute } from './image-capability.ts'
+
 /** Process-stable identity carried only by the standard adjacent-Agent messaging tool. */
 export const adjacentAgentSendMessageTool = Symbol.for('dsh.subagent.adjacentAgentSendMessageTool')
 
@@ -107,4 +113,55 @@ export function steerHostSubagentPrompt(
     signal,
     'steer',
   )
+}
+
+/**
+ * Refuse image content for one continuable direct child whose resolved LLM
+ * route cannot accept it — the live Activation route, or else the persisted
+ * descriptor route, each taken whole, falling back to the parent's current
+ * delegation route only when that source names neither provider nor model.
+ * Reads the runtime's private continuation manager through its own
+ * fail-loud accessor instead of adding a public Service Definition member
+ * for this one caller: unlike `assertImageCapableRoute`'s re-export above,
+ * which constructs the unbundled `SubagentError` class local to this
+ * subpath when called directly, this function's refusal is constructed by
+ * the live `runtime`'s own bundled continuation manager, so it carries the
+ * bundled runtime entry's `SubagentError` class instead. Match the refusal
+ * this throws by `code`, not `instanceof SubagentError`, the same as every
+ * other caller reached through this subpath.
+ * @param runtime - subagent runtime owning continuation residency.
+ * @param parent - exact live delegating parent whose route is the fallback.
+ * @param childId - durable direct-child session id.
+ * @param signal - caller cancellation for the route resolution.
+ * @throws when continuation services are unavailable or the resolved route refuses images.
+ */
+export async function assertContinuableChildAcceptsImages(
+  runtime: SubagentRuntime,
+  parent: Agent,
+  childId: SessionId,
+  signal: AbortSignal,
+): Promise<void> {
+  const continuations = runtime['requireContinuations']()
+  await continuations.assertChildAcceptsImages(parent, childId, signal)
+}
+
+/**
+ * Resolve the exact model route for one continuable direct child: the live
+ * Activation route, or else the persisted descriptor route, each taken whole,
+ * falling back to the parent's current delegation route only when that source
+ * names neither provider nor model, so a source naming one field returns a
+ * route with the other absent.
+ * @param runtime - subagent runtime owning continuation residency.
+ * @param parent - exact live delegating parent whose route is the fallback when the child's source names no route field.
+ * @param childId - durable direct-child session id.
+ * @param signal - caller cancellation for the route resolution.
+ * @returns the resolved provider and model, when known.
+ */
+export function resolveContinuableChildRoute(
+  runtime: SubagentRuntime,
+  parent: Agent,
+  childId: SessionId,
+  signal: AbortSignal,
+): Promise<{ provider?: string; model?: string }> {
+  return runtime['requireContinuations']().resolveChildRoute(parent, childId, signal)
 }

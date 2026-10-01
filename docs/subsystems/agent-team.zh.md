@@ -42,11 +42,13 @@ interface TeamMemberSnapshot {
 }
 ```
 
-每个 member 都从 `provisioning` 开始，并且只到达一个终态 roster phase：`active` 或 `failed`。roster 的 `running`／`inactive` 状态单独派生，绝不会重写该记录。`agentProvider` 与 `agentModel` 记录该 teammate 解析后的路由，因此当该 teammate 的 Agent 不存活时，roster 行与房间参与者仍会报告它就座时使用的模型。`duty` 记录在第一条 provisioning 记录上，投影会拒绝之后对它的任何改动。`planner` 创建任务、修订尚无人 claim 的任务并验证提交，但从不 claim 或拥有任务；`executor` claim 并提交任务，但既不创建也不验证任务；被拒绝的操作报告 `TEAM_DUTY_UNAUTHORIZED`。分工对应的工具限制不是 Team 记录：subagent provider 把它保存在 teammate 自己的 descriptor 中。
+每个 member 都从 `provisioning` 开始，并且只到达一个终态 roster phase：`active` 或 `failed`。roster 的 `running`／`inactive` 状态单独派生，绝不会重写该记录。`agentProvider` 与 `agentModel` 记录该 teammate 解析后的路由，因此当该 teammate 的 Agent 不存活时，roster 行与房间参与者仍会报告它就座时使用的模型。`duty` 记录在第一条 provisioning 记录上，投影会拒绝之后对它的任何改动。`planner` 创建任务、修订尚无人 claim 的任务并验证提交，但从不 claim 或拥有任务；`executor` claim 并提交任务，但既不创建也不验证任务；被拒绝的操作报告 `TEAM_DUTY_UNAUTHORIZED`。分工对应的工具限制不是 Team 记录：subagent provider 把它保存在 teammate 自己的 descriptor 中。面向模型的 `spawn_teammate` 适配器接受可选的 `images` 列表（调用方会话中已展示图片的附件 id），对照调用方的派生历史解析，并把这些图片块追加在初始任务文本之后；未知 id 会在写入 provisioning 的 `team/member` 记录之前使调用失败。
+
+图像输入支持不是持久 roster 字段。`resolveMemberImageSupport()` 在列出时读取每个成员的实时 LLM 路由，解析失败时省略该成员的 map 条目；`list_agents` 仍返回该行，但不含 `acceptsImages`。
 
 ## 持久 mailbox
 
-Lead Session 首先存储完整 queued message。只有 target 的 pending inbox 条目或已记录用户消息完成持久化，才会写入独立 acknowledgement event，queued-minus-delivered 因而构成恢复 mailbox。
+Lead Session 首先存储完整 queued message。只有 target 的 pending inbox 条目或已记录用户消息完成持久化，才会写入独立 acknowledgement event，queued-minus-delivered 因而构成恢复 mailbox。面向模型的 `send_message` 适配器接受可选的 `images` 列表（调用方会话中已展示图片的附件 id），对照调用方的派生历史解析，并把这些图片块追加在文本之后；未知 id 会在任何持久 mailbox 记录之前使调用失败。
 
 ```ts type-equiv
 /** One peer message retained until its target Session records it. */
@@ -202,7 +204,7 @@ interface RoomReviewSnapshot {
 
 参与者就是 Team roster 本身：Lead 加上每个尚未失败的成员。成员从 provisioning 记录它的那一刻起就是参与者，与 roster 解析在线成员 Team 身份所用规则一致。读取 room 是全函数：没有 room 的组合会报告 `enabled: false` 与空集合，而不是失败；而每个会写入的 room 操作仍然以 `TEAM_ROOM_DISABLED` 拒绝。`RoomView` 暴露该标志、roster、transcript、决策与轮转 chair；`RoomPromptRequest` 与 `RoomPromptResult` 描述把发言权交给某个参与者，`ProposeRoomDecisionRequest`、`ReviewRoomDecisionRequest`、`EscalateRoomDecisionRequest` 描述决策操作，`RoomStreamFrame` 在 `room/stream` event 上承载一个参与者的实时 frame。`RoomParticipantView.quiet` 报告某个在线参与者在 `roomReviewGraceMs` 内没有产生任何被观察到的工作，用的正是停滞巡检所读的同一个窗口；`roomStream` 通过 Remote face 跟随一个 room：先收到完整 view，随后在每次已提交变化后收到新的 view，并为参与者流式输出的每个 text chunk 收到一帧。`PanelRoomPromptRequest`、`PanelProposeRoomDecisionRequest` 与 `PanelEscalateRoomDecisionRequest` 承载浏览器面板对这些同一操作的调用。
 
-接受需要每个有资格的 reviewer 都已投票、其中至少 `roomApprovalRatio` 比例批准，且没有任何反对成立。proposer 不能 review 自己的决策，已结清的决策是最终的，被拒绝的决策只能通过把修订后的 statement 重新提交给 room 来解决。chair 随 transcript 轮转，不携带任何决策权。reviewer 的沉默依据该参与者自身被观察到的工作衡量，绝不依据 room 自身的记录：请求会启动 `roomReviewGraceMs` 窗口，至多 `roomReviewReminders` 次提醒各自重启被提醒者的窗口，只有当所有仍欠 standing 的 reviewer 都用尽窗口后决策才升级，并把它们记入 `room/review-timeout`，绝不编造从未收到的 standing。每条已记录的立场都带有其 reviewer 的理由并对整个 room 可见。共享工作遵循同一规则：任务 owner 提交当前 revision，只有另一位成员带理由的 `verify` 裁决才会把它推进到 `completed`，而折叠会拒绝任何验证无法成立的记录。
+接受需要每个有资格的 reviewer 都已投票、其中至少 `roomApprovalRatio` 比例批准，且没有任何反对成立。proposer 不能 review 自己的决策，已结清的决策是最终的，被拒绝的决策只能由其 proposer 把修订后的 statement 重新提交给 room 来解决。chair 随 transcript 轮转，不携带任何决策权。reviewer 的沉默依据该参与者自身被观察到的工作衡量，绝不依据 room 自身的记录：请求会启动 `roomReviewGraceMs` 窗口，至多 `roomReviewReminders` 次提醒各自重启被提醒者的窗口，只有当所有仍欠 standing 的 reviewer 都用尽窗口后决策才升级，并把它们记入 `room/review-timeout`，绝不编造从未收到的 standing。每条已记录的立场都带有其 reviewer 的理由并对整个 room 可见。共享工作遵循同一规则：任务 owner 提交当前 revision，只有另一位成员带理由的 `verify` 裁决才会把它推进到 `completed`，而折叠会拒绝任何验证无法成立的记录。
 
 ## 回放
 
@@ -238,10 +240,28 @@ membership(agent: Agent): TeamMembership
 listMembers(agent: Agent): TeamMemberView[]
 
 /**
- * Create one named, continuable direct child of the Team Lead.
+ * Resolve each roster member's image-input support from its live LLM route.
+ * The Lead uses the root's current delegation route; a teammate uses the
+ * continuable-child probe against that same root so a teammate caller cannot
+ * fail the probe. A member whose route or model info cannot be resolved has
+ * its map entry omitted.
+ * @param caller - exact live Team member requesting the listing.
+ * @param signal - caller cancellation for route and model-info resolution.
+ * @returns member ids mapped to `'supported'`, `'unsupported'`, or `'undeclared'`.
+ */
+async resolveMemberImageSupport( caller: Agent, signal: AbortSignal, ): Promise<ReadonlyMap<TeamMemberView['id'], ImageInputSupport>>
+
+/**
+ * Create one named, continuable direct child of the Team Lead. When the
+ * first prompt has an image, the inherited child route (the Lead's current
+ * delegation route; spawn requests no per-child override) is checked before
+ * the provisioning `team/member` record, so a refusal leaves the name and a
+ * member slot available for a retry.
  * @param caller - exact live Lead Agent.
  * @param request - immutable name, description, prompt, context mode, provider, and cancellation.
  * @returns the active roster row.
+ * @throws {TeamError} `TEAM_IMAGES_UNSUPPORTED` when the first prompt has an
+ *   image and the inherited route's declared modalities omit `image`.
  */
 async spawnTeammate(caller: Agent, request: SpawnTeammateRequest): Promise<SpawnTeammateResult>
 
@@ -261,10 +281,17 @@ async setSubject(caller: Agent, subject: string): Promise<void>
 subjectOf(agent: Agent): string | undefined
 
 /**
- * Queue one durable peer message, then attempt immediate delivery.
+ * Queue one durable peer message, then attempt immediate delivery. When
+ * content has an image, the resolved target route — the live root Agent's
+ * current delegation route for the Lead, or `dsh-subagent`'s
+ * continuable-child probe for a teammate — is checked before the
+ * `team/message/queued` append, so a refusal never queues and a later
+ * message to the same target is unaffected.
  * @param caller - exact live sending Team member.
  * @param request - target name, content, and pre-queue cancellation.
  * @returns durable message identity and immediate-delivery observation.
+ * @throws {TeamError} `TEAM_IMAGES_UNSUPPORTED` when content has an image
+ *   and the resolved target route's declared modalities omit `image`.
  */
 async sendMessage(caller: Agent, request: SendTeamMessageRequest): Promise<SendTeamMessageResult>
 
@@ -403,7 +430,7 @@ roomView(caller: Agent): RoomView
 @Remote('roomEscalate') remoteRoomEscalate(agent: Agent, request: PanelEscalateRoomDecisionRequest): Promise<RoomProposalView>
 ```
 
-Types: [Agent](core.zh.md)
+Types: [Agent](core.zh.md) · [ImageInputSupport](llm-streaming.zh.md)
 
 Source: [`packages/experimental/agent-team/src/index.ts`](../../packages/experimental/agent-team/src/index.ts)
 

@@ -7,6 +7,7 @@ import { afterEach, describe, expect, it } from 'vitest'
 import { load } from 'js-yaml'
 import { createDesktopUploadPlan } from '../scripts/desktop-upload-plan.ts'
 import { desktopUpdateMetadataFilename } from '../scripts/desktop-auto-update-environment.mjs'
+import { resolveDesktopEdition } from '../scripts/desktop-release-environment.mjs'
 import type { DesktopPackageTargetName } from '../scripts/package-target.ts'
 
 const temporaryDirectories: string[] = []
@@ -35,6 +36,7 @@ async function fixture(
   target: DesktopPackageTargetName,
   version = '1.2.3',
   environment: 'test' | 'production' = 'test',
+  desktopEdition: 'portal' | 'portal-dev' = 'portal',
 ): Promise<Fixture> {
   const root = await mkdtemp(join(tmpdir(), 'dsh-desktop-upload-'))
   temporaryDirectories.push(root)
@@ -46,7 +48,8 @@ async function fixture(
   await writeFile(join(appRoot, 'package.json'), `${JSON.stringify({ version })}\n`)
 
   const [os, arch] = target.split('-') as ['mac' | 'win', 'arm64' | 'x64']
-  const base = `deepseek-harness-${version}-${os}-${arch}`
+  const edition = resolveDesktopEdition({ DSH_DESKTOP_EDITION: desktopEdition })
+  const base = `${edition.artifactNamePrefix}-${version}-${os}-${arch}`
   const origin = environment === 'test'
     ? TEST_ORIGIN
     : 'https://download.deepseek.com'
@@ -63,7 +66,7 @@ async function fixture(
     await writeFile(join(artifactsRoot, `${base}.zip`), zip)
     await writeFile(join(artifactsRoot, `${base}.zip.blockmap`), 'blockmap')
     await writeFile(join(artifactsRoot, `${base}.dmg`), 'notarized DMG fixture')
-    await writeFile(join(artifactsRoot, desktopUpdateMetadataFilename(version, 'darwin')), `${JSON.stringify({
+    await writeFile(join(artifactsRoot, desktopUpdateMetadataFilename(version, 'darwin', edition.edition)), `${JSON.stringify({
       version,
       path: `${base}.zip`,
       files: [{ url: `${base}.zip`, size: Buffer.byteLength(zip), sha512: digest(zip) }],
@@ -75,7 +78,7 @@ async function fixture(
     const info = await createBlockmap(join(artifactsRoot, `${base}.exe`), {},
       { info: { emitArtifactBuildCompleted: async () => {} } }, `${base}.exe`)
     expect(Object.hasOwn(info, 'blockMapSize')).toBe(false)
-    await writeFile(join(artifactsRoot, desktopUpdateMetadataFilename(version, 'win32')), `${JSON.stringify({
+    await writeFile(join(artifactsRoot, desktopUpdateMetadataFilename(version, 'win32', edition.edition)), `${JSON.stringify({
       version,
       path: `${base}.exe`,
       files: [{
@@ -90,12 +93,14 @@ async function fixture(
     artifactsRoot,
     environment: environment === 'test'
       ? {
+        DSH_DESKTOP_EDITION: edition.edition,
         DSH_DESKTOP_AUTO_UPDATE_ENV: 'test',
         DOWNLOAD_TEST_ORIGIN: TEST_ORIGIN,
         DOWNLOAD_TEST_RELEASE_ID: RELEASE_ID,
         DOWNLOAD_TEST_COS_BUCKET: TEST_BUCKET,
       }
       : {
+        DSH_DESKTOP_EDITION: edition.edition,
         DSH_DESKTOP_AUTO_UPDATE_ENV: 'production',
         DOWNLOAD_PROD_COS_BUCKET: PRODUCTION_BUCKET,
       },
@@ -128,6 +133,20 @@ describe('desktop upload plan', () => {
     })
     expect(plan.artifacts[2]!.contents).toBe(plan.artifacts[3]!.contents)
     expect(plan.artifacts.every(artifact => !('cacheControl' in artifact))).toBe(true)
+  })
+
+  it('publishes Portal Dev artifact names and Dev channel metadata', async () => {
+    const paths = await fixture('win-x64', '1.2.3', 'test', 'portal-dev')
+    const plan = await createDesktopUploadPlan('win-x64', paths)
+    expect(plan.artifacts.map(artifact => artifact.filename)).toEqual([
+      'portal-dev-1.2.3-win-x64.exe',
+      'portal-dev-1.2.3-win-x64.exe.blockmap',
+      'dev.yml',
+      'latest.yml',
+    ])
+    expect(load(plan.artifacts[2]!.contents!)).toMatchObject({
+      files: [{ url: 'https://desktop-updates.example.com/dsh-desk/bin/win-x64/portal-dev-1.2.3-win-x64.exe' }],
+    })
   })
 
   it('validates macOS artifacts and puts channel metadata last', async () => {

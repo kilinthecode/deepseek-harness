@@ -2018,7 +2018,7 @@ The five read-only tools hide provider cursors and authorize every result from t
 
 ### `list_subagent_models`
 
-Discover LLM routes for subagents without changing the current Agent. Call with no arguments to list registered providers, with `provider` to list its advertised models, or with `provider` and `model` to inspect that exact model and its reasoning efforts. Catalog membership is advisory: an adapter may accept an unlisted model id. Use the returned ids with a delegation tool's `provider`, `model`, and `reasoning_effort` fields.
+Discover LLM routes for subagents without changing the current Agent. Call with no arguments to list registered providers, with `provider` to list its advertised models, or with `provider` and `model` to inspect that exact model and its reasoning efforts. Model entries include image-input support. Catalog membership is advisory: an adapter may accept an unlisted model id. Use the returned ids with a delegation tool's `provider`, `model`, and `reasoning_effort` fields.
 
 ```json
 {
@@ -2053,6 +2053,13 @@ Delegate a self-contained task to a subagent (a separate agent that works in its
     "prompt": {
       "type": "string",
       "description": "The complete, self-contained task for the subagent. It does not share this conversation's context, so include everything it needs."
+    },
+    "images": {
+      "type": "array",
+      "description": "Attachment ids of images already shown in this conversation, appended to the prompt.",
+      "items": {
+        "type": "string"
+      }
     },
     "run_in_background": {
       "type": "boolean",
@@ -2132,6 +2139,13 @@ Send a message to an agent. A working agent receives it at its next step; an idl
     "message": {
       "type": "string",
       "description": "The message to deliver to the agent."
+    },
+    "images": {
+      "type": "array",
+      "description": "Attachment ids of images already shown in this conversation, appended to the message.",
+      "items": {
+        "type": "string"
+      }
     }
   },
   "required": [
@@ -2245,7 +2259,7 @@ Source: [`packages/experimental/tool-agent-team/src/index.ts`](../packages/exper
 
 ### `list_agents`
 
-List the Lead and every durable teammate with an addressable target and current availability. inactive means no turn is executing, not a task result. provisioning and failed describe member creation.
+List the Lead and every durable teammate with an addressable target, current availability, and image-input support. inactive means no turn is executing, not a task result. provisioning and failed describe member creation.
 
 ```json
 {
@@ -2271,6 +2285,13 @@ Send one durable message to another Team member. A running target receives it at
     "message": {
       "type": "string",
       "description": "Self-contained message for the target."
+    },
+    "images": {
+      "type": "array",
+      "description": "Attachment ids of images already shown in this conversation, appended to the message.",
+      "items": {
+        "type": "string"
+      }
     }
   },
   "required": [
@@ -2301,6 +2322,13 @@ Create one named, durable teammate. Only the Team Lead may call this tool.
     "prompt": {
       "type": "string",
       "description": "Complete initial task for the teammate."
+    },
+    "images": {
+      "type": "array",
+      "description": "Attachment ids of images already shown in this conversation, appended to the prompt.",
+      "items": {
+        "type": "string"
+      }
     },
     "context": {
       "type": "string",

@@ -291,11 +291,25 @@ export interface DesktopLocale {
   readonly messages: DesktopMessages
 }
 
-/** Resolve Electron's locale to one shipped Desktop dictionary. */
-export function resolveDesktopLocale(locale: string): DesktopLocale {
-  return locale.toLowerCase().startsWith('zh')
-    ? { id: 'zh-CN', messages: zh }
-    : { id: 'en', messages: en }
+/** Replace the production product name with one edition's display name. */
+function messagesForDisplayName(messages: DesktopMessages, displayName: string | undefined): DesktopMessages {
+  if (displayName === undefined || displayName === 'Portal Harness') return messages
+  return Object.fromEntries(Object.entries(messages).map(([key, value]) => [
+    key, value.replaceAll('Portal Harness', displayName),
+  ])) as DesktopMessages
+}
+
+/**
+ * Resolve Electron's locale to one shipped Desktop dictionary.
+ * @param locale - Electron locale identifier.
+ * @param displayName - edition-specific product display name, when one was resolved.
+ * @returns the selected dictionary, carrying the edition's product name.
+ */
+export function resolveDesktopLocale(locale: string, displayName?: string): DesktopLocale {
+  const selected = locale.toLowerCase().startsWith('zh')
+    ? { id: 'zh-CN' as const, messages: zh }
+    : { id: 'en' as const, messages: en }
+  return { ...selected, messages: messagesForDisplayName(selected.messages, displayName) }
 }
 
 /**

@@ -16,7 +16,6 @@ import type {} from '@deepseek-ai/dsh-token-meter'
 import { codePointLength, DEFAULTS, PRUNE_MARKER, resolveConfig } from './config.ts'
 import type {
   PrunedEntry,
-  PrunePreview,
   PruneResult,
   ResolvedConfig,
   ToolResultPruneConfig,
@@ -25,7 +24,6 @@ import type {
 export { codePointLength, DEFAULTS, PRUNE_MARKER, resolveConfig } from './config.ts'
 export type {
   PrunedEntry,
-  PrunePreview,
   PruneResult,
   ResolvedConfig,
   ToolResultPruneConfig,
@@ -136,7 +134,7 @@ export class ToolResultPruner extends Service {
   /**
    * Plan every over-budget tool-result replacement from one stable
    * current-surface snapshot without mutating the session. `pruneSession` and
-   * `previewSession` share this routine so what counts as prunable cannot
+   * `projectTokenSavings` share this routine so what counts as prunable cannot
    * diverge between the two.
    * @param session - session whose current surface is inspected.
    * @returns one entry per surface tool result whose text exceeds the
@@ -211,16 +209,17 @@ export class ToolResultPruner extends Service {
   }
 
   /**
-   * Preview the replacements `pruneSession` would land for the current
-   * surface, without appending anything. A caller compares `tokensSaved`
+   * Project the token savings `pruneSession` would land for the current
+   * surface, without appending anything. A caller compares the projection
    * against a pressure margin to decide whether a prune-only reduction is
    * worth landing on its own, before paying for a second cache break by also
    * summarizing.
    * @param session - session whose current surface is inspected.
-   * @returns the candidate count and aggregate estimated token savings
-   *   `pruneSession` would currently produce.
+   * @returns aggregate estimated tokens `pruneSession` would currently
+   *   remove, summed per candidate as
+   *   `tokenMeter.estimateMessage(original) - tokenMeter.estimateMessage(replacement)`.
    */
-  previewSession(session: Session): PrunePreview {
+  projectTokenSavings(session: Session): number {
     const plan = this.planPrune(session)
     let tokensSaved = 0
     for (const { original, content } of plan) {
@@ -228,7 +227,7 @@ export class ToolResultPruner extends Service {
       tokensSaved += this.ctx.tokenMeter.estimateMessage(original)
         - this.ctx.tokenMeter.estimateMessage(replacement)
     }
-    return { nodes: plan.length, tokensSaved }
+    return tokensSaved
   }
 }
 

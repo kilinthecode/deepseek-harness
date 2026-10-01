@@ -53,6 +53,7 @@ describe('product-provider public Loader composition', () => {
             persona: false,
           },
           inheritsParentContext: false,
+          imageInput: false,
         },
         {
           name: 'claude-code',
@@ -64,6 +65,7 @@ describe('product-provider public Loader composition', () => {
             persona: false,
           },
           inheritsParentContext: false,
+          imageInput: false,
         },
         {
           name: 'claude-primary',
@@ -75,6 +77,7 @@ describe('product-provider public Loader composition', () => {
             persona: false,
           },
           inheritsParentContext: false,
+          imageInput: false,
         },
         {
           name: 'claude-secondary',
@@ -86,6 +89,7 @@ describe('product-provider public Loader composition', () => {
             persona: false,
           },
           inheritsParentContext: false,
+          imageInput: false,
         },
       ],
       tools: [
