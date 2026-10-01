@@ -133,7 +133,7 @@ describe('adapter wiring: routes outside the OpenAI family are untouched', () =>
     await ctx.plugin(LlmPiAi, {
       providers: { deepseek: { apiKeyEnv: 'PI_CACHE_KEY_TEST', baseURL: server.url } },
     })
-    const request = { model: 'deepseek-v4-flash', messages: [{ role: 'user' as const, content: [{ type: 'text' as const, text: 'hi' }] }] }
+    const request = { model: 'deepseek-flash', messages: [{ role: 'user' as const, content: [{ type: 'text' as const, text: 'hi' }] }] }
     await assembleThroughLlm(ctx, { ...request, sessionId: fakeSessionId('child') })
     await assembleThroughLlm(ctx, { ...request, sessionId: fakeSessionId('child'), cacheKey: fakeSessionId('root') })
     expect(server.requests).toHaveLength(2)
