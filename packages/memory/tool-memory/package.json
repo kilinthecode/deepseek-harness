@@ -1,7 +1,7 @@
 {
   "name": "@deepseek-ai/dsh-tool-memory",
   "description": "Model-facing memory_write, memory_recall, and memory_forget tools, the injected memory snapshot, and the remember-when prompt section over ctx.memory for the DeepSeek Harness",
-  "version": "0.1.7-rc.2",
+  "version": "0.2.0-rc.2",
   "publishConfig": {
     "access": "public"
   },

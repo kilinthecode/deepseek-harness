@@ -1,7 +1,7 @@
 {
   "name": "@deepseek-ai/dsh-api-authorization-controller",
   "description": "Expose credential sign-in flows over authenticated Remote",
-  "version": "0.1.7-rc.2",
+  "version": "0.2.0-rc.2",
   "publishConfig": {
     "access": "public"
   },

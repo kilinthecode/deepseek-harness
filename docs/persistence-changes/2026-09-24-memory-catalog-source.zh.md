@@ -27,20 +27,20 @@ id: 2026-09-24-memory-catalog-source
 baseline: false
 changes:
   - root: "event:agent/inbox/spliced"
-    previous: "2026-09-16-session-format-v4"
-    after: "3ee73ce8ae9a1eb6b8a08da854eba7780eeef15e0f0927e66f143dfba4360d43"
+    previous: "2026-09-21-user-question-reply"
+    after: "10d2e59ec0553179548b58e6eae24159b5f21ef07bbe56381e2ed1dd98cb4d7b"
     decision: same-version
   - root: "event:developer/message"
-    previous: "2026-09-16-session-format-v4"
-    after: "49dc7dcbdf82006eba9f75aebc32ba9b3004503185518cef44a10729a8e97e49"
+    previous: "2026-09-21-user-question-reply"
+    after: "a75aba4fde1e9151726ef8a5425829af563d7678473cff5a0c5653052801234e"
     decision: same-version
   - root: "event:session/title-llm-request"
-    previous: "2026-09-16-session-format-v4"
-    after: "0ed198589af45c87e413a50be0b1524be51629241b9919ad9e7da1118df6e74f"
+    previous: "2026-09-21-user-question-reply"
+    after: "ef2a32be50cf7ede652accdd96b9b5a430556d353a6b29cfc6eaaaec73a2d00f"
     decision: same-version
   - root: "event:user/message"
-    previous: "2026-09-16-session-format-v4"
-    after: "ccd57d9a60cd7d3d3c15ad392ee6ad103d5e414fca805f71f906356bd1704d6a"
+    previous: "2026-09-21-user-question-reply"
+    after: "19156e0b778e0e3417bd792101c07f32d0ad9a1b2f7b5af89984cb090c678ec3"
     decision: same-version
 ```
 

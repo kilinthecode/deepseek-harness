@@ -9,6 +9,7 @@ import { Context } from '@deepseek-ai/cordis'
 import type { Model } from '@earendil-works/pi-ai'
 import { stream as streamCompletions } from '@earendil-works/pi-ai/api/openai-completions'
 import { stream as streamCodex } from '@earendil-works/pi-ai/api/openai-codex-responses'
+import { normalizeContext } from '@earendil-works/pi-ai/utils/transcript'
 import LlmRuntime from '@deepseek-ai/dsh-llm'
 import type { GenerateOptions, ResolvedRetryPolicy } from '@deepseek-ai/dsh-llm'
 import { brandString } from '@deepseek-ai/dsh-brand'
@@ -132,7 +133,7 @@ describe('adapter wiring: routes outside the OpenAI family are untouched', () =>
     await ctx.plugin(LlmPiAi, {
       providers: { deepseek: { apiKeyEnv: 'PI_CACHE_KEY_TEST', baseURL: server.url } },
     })
-    const request = { model: 'deepseek-v4-flash', messages: [{ role: 'user' as const, content: [{ type: 'text' as const, text: 'hi' }] }] }
+    const request = { model: 'deepseek-flash', messages: [{ role: 'user' as const, content: [{ type: 'text' as const, text: 'hi' }] }] }
     await assembleThroughLlm(ctx, { ...request, sessionId: fakeSessionId('child') })
     await assembleThroughLlm(ctx, { ...request, sessionId: fakeSessionId('child'), cacheKey: fakeSessionId('root') })
     expect(server.requests).toHaveLength(2)
@@ -312,7 +313,7 @@ describe('real pi-ai openai-completions module: wire-level prompt_cache_key over
       const target = input instanceof URL ? input : new URL(typeof input === 'string' ? input : input.url)
       return fetch(`${server.url}${target.pathname}${target.search}`, init)
     }
-    const context = { messages: [{ role: 'user' as const, content: 'hi', timestamp: 0 }] }
+    const context = normalizeContext({ messages: [{ role: 'user', content: 'hi', timestamp: 0 }] })
     const events = streamCompletions(model('openai-completions', 'openai', 'https://api.openai.com/v1'), context, {
       apiKey: 'test-key',
       sessionId: 'child-session',
@@ -331,7 +332,7 @@ describe('real pi-ai openai-completions module: wire-level prompt_cache_key over
 
   it('leaves prompt_cache_key alone against a non-OpenAI base URL', async () => {
     const server = await mockServer([{ events: textEvents }])
-    const context = { messages: [{ role: 'user' as const, content: 'hi', timestamp: 0 }] }
+    const context = normalizeContext({ messages: [{ role: 'user', content: 'hi', timestamp: 0 }] })
     const events = streamCompletions(model('openai-completions', 'openai', server.url), context, {
       apiKey: 'test-key',
       sessionId: 'child-session',
@@ -359,7 +360,7 @@ describe('real pi-ai openai-codex-responses module: wire-level prompt_cache_key 
     // pi-ai's real openai-codex provider baseUrl is chatgpt.com/backend-api,
     // not api.openai.com; this is the route sharesPromptCacheKey must accept.
     const codexModel = model('openai-codex-responses', 'openai-codex', 'https://chatgpt.com/backend-api')
-    const context = { messages: [{ role: 'user' as const, content: 'hi', timestamp: 0 }] }
+    const context = normalizeContext({ messages: [{ role: 'user', content: 'hi', timestamp: 0 }] })
     const events = streamCodex(codexModel, context, {
       apiKey: fakeCodexApiKey('acct_test'),
       sessionId: 'child-session',
