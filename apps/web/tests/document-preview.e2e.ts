@@ -1582,7 +1582,7 @@ describe.skipIf(MODE === 'record')('web e2e: Host Office preview', () => {
       for (const colorScheme of ['dark', 'light'] as const) {
         await page.emulateMedia({ colorScheme })
         await expect.poll(() => preview.locator('[data-pdf-preview]').evaluate(node => getComputedStyle(node).backgroundColor))
-          .toBe(colorScheme === 'dark' ? 'rgb(21, 21, 23)' : 'rgb(235, 238, 242)')
+          .toBe(colorScheme === 'dark' ? 'rgb(0, 0, 0)' : 'rgb(235, 238, 242)')
         await expectPdfPageSpacing(preview)
         await successShot(page, `office-background-${colorScheme}`)
       }

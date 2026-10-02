@@ -41,6 +41,7 @@ External packages installed for runtime use or distributed inside the prebuilt b
 | [`@eslint-community/regexpp`](https://github.com/eslint-community/regexpp) | MIT |
 | [`@fortune-sheet/core`](https://github.com/ruilisi/fortune-sheet) | MIT |
 | [`@fortune-sheet/react`](https://github.com/ruilisi/fortune-sheet) | MIT |
+| [`@inquirer/core`](https://github.com/SBoudrias/Inquirer.js) | MIT |
 | [`@joplin/turndown-plugin-gfm`](https://github.com/laurent22/joplin-turndown-plugin-gfm) | MIT |
 | [`@jridgewell/gen-mapping`](https://github.com/jridgewell/sourcemaps) | MIT |
 | [`@js-temporal/polyfill`](https://github.com/js-temporal/temporal-polyfill) | ISC |
@@ -125,6 +126,7 @@ External packages installed for runtime use or distributed inside the prebuilt b
 | [`sherpa-onnx-node`](https://github.com/csukuangfj/sherpa-onnx) | Apache-2.0 |
 | [`shiki`](https://github.com/shikijs/shiki) | MIT |
 | [`simple-icons`](https://github.com/simple-icons/simple-icons) | CC0-1.0 |
+| [`string-width`](https://github.com/sindresorhus/string-width) | MIT |
 | [`supports-color`](https://github.com/chalk/supports-color) | MIT |
 | [`tsx`](https://github.com/privatenumber/tsx) | MIT |
 | [`turndown`](https://github.com/mixmark-io/turndown) | MIT |
@@ -181,6 +183,7 @@ External packages **directly declared** for development, tests, types, or toolin
 | [`@braintree/sanitize-url`](https://github.com/braintree/sanitize-url) | MIT |
 | [`@electron/get`](https://github.com/electron/get) | MIT |
 | [`@electron/notarize`](https://github.com/electron/notarize) | MIT |
+| [`@inquirer/testing`](https://github.com/SBoudrias/Inquirer.js) | MIT |
 | [`@lexical/headless`](https://github.com/facebook/lexical) | MIT |
 | [`@modelcontextprotocol/node`](https://github.com/modelcontextprotocol/typescript-sdk) | MIT |
 | [`@modelcontextprotocol/server`](https://github.com/modelcontextprotocol/typescript-sdk) | MIT |
@@ -197,6 +200,7 @@ External packages **directly declared** for development, tests, types, or toolin
 | [`@types/jsdom`](https://github.com/DefinitelyTyped/DefinitelyTyped) | MIT |
 | [`@types/mdast`](https://github.com/DefinitelyTyped/DefinitelyTyped) | MIT |
 | [`@types/mime-types`](https://github.com/DefinitelyTyped/DefinitelyTyped) | MIT |
+| [`@types/mute-stream`](https://github.com/DefinitelyTyped/DefinitelyTyped) | MIT |
 | [`@types/negotiator`](https://github.com/DefinitelyTyped/DefinitelyTyped) | MIT |
 | [`@types/node`](https://github.com/DefinitelyTyped/DefinitelyTyped) | MIT |
 | [`@types/papaparse`](https://github.com/DefinitelyTyped/DefinitelyTyped) | MIT |
