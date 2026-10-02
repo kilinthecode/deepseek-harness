@@ -207,7 +207,7 @@ const packageFileExtras: Readonly<Record<string, readonly string[]>> = {
   // The argv-prefix runner entry ships beside the lib as its own bundle;
   // sandbox-local resolves it through the package's ./runner export. tsdown
   // also shares its generated FFI code through a hashed runtime chunk.
-  '@deepseek-ai/dsh-sandbox-windows-acl': ['lib/runner.js', 'lib/types-*.js'],
+  '@deepseek-ai/dsh-sandbox-windows-acl': ['lib/types-*.js'],
   '@deepseek-ai/dsh-skill-badge': ['assets'],
   '@deepseek-ai/dsh-skill-office': ['assets'],
   '@deepseek-ai/dsh-subprocess': ['lib/control.js'],
@@ -220,7 +220,6 @@ const packageFileExtras: Readonly<Record<string, readonly string[]>> = {
   // Ordinary native containment ships a path-loaded runner and its shared
   // runner chunk beside the existing node-pty permission repair.
   '@deepseek-ai/dsh-subprocess-local': [
-    'lib/runner.js',
     'lib/runner-*.js',
     'lib/output.js',
     'scripts/ensure-spawn-helper.mjs',
@@ -232,6 +231,9 @@ const packageFileExtras: Readonly<Record<string, readonly string[]>> = {
   // The headless entry and its startup row share the JSON projection code
   // through a hashed tsdown chunk; both import it by relative path.
   '@deepseek-ai/dsh-headless': ['lib/json-stream-*.js'],
+  // The terminal bundle's startup row and runner entry share the presentation
+  // code through a hashed tsdown chunk; both import it by relative path.
+  '@deepseek-ai/dsh-portal-app': ['lib/presentation-*.js'],
 }
 
 function sameStringList(actual: readonly string[] | undefined, expected: readonly string[]): boolean {
@@ -281,6 +283,9 @@ export function expectedDshPackageFiles(manifest: PackageManifest): readonly str
     // A surface bundle's startup row is its own bundle: the Loader imports it
     // as a row module, so it cannot ride inside the package entry.
     ...exportDefault(manifest, './startup') === './lib/startup.js' ? ['lib/startup.js'] : [],
+    // A bundle's runner subpath is loaded as a row module by its own patch, so
+    // it ships beside the entry rather than inside it.
+    ...exportDefault(manifest, './runner') === './lib/runner.js' ? ['lib/runner.js'] : [],
     ...extras,
     // Subpaths whose runtime default is the tsc-emitted tree (lib/types/*.js —
     // browser-safe source channels rehomed off src so plain Node can import

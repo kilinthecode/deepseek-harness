@@ -12,6 +12,8 @@
  *
  * `dsh <name>` abbreviates `dsh --profile <name>`; `plugin` manages a profile's
  * plugin dependencies by forwarding to pnpm.
+ *
+ * `dsh portal` abbreviates `dsh --profile portal`.
  * @module @deepseek-ai/dsh/args
  */
 
@@ -27,6 +29,8 @@ interface ProfileInvocation {
   patches: string[]
   /** Everything after the launcher's own flags, verbatim, for injected app plugins. */
   args: string[]
+  /** Existing profile supplying only model configuration for Portal. */
+  modelsFrom?: string
 }
 
 /** Print a composed profile tree and exit without booting. */
@@ -60,8 +64,11 @@ interface PluginInvocation {
 /** The resolved `dsh` invocation. Help, version, and errors exit inside {@link parseDshArgs}. */
 export type DshInvocation = ProfileInvocation | DumpConfigInvocation | DumpConfigSchemaInvocation | PluginInvocation
 
+const PORTAL_PROFILE = 'portal'
+
 /** Launcher flags for profile boot and configuration dumps. */
 interface BootOptions {
+  modelsFrom?: string
   patch?: string[]
   dumpConfig?: boolean
   dumpDefaultConfig?: boolean
@@ -93,6 +100,7 @@ Examples:
   dsh rescue --from-default-profile web
                                             create rescue from the shipped web template, then boot it
   dsh headless "run the tests"              answer one task, print the result, and exit
+  dsh portal                                open the Portal terminal conversation
   dsh tui --patch ./extra.yml               boot a custom profile with one extra overlay
   dsh tui --resume <session>                arguments after the launcher flags reach the app
   dsh web --help                            the web app's own flags and help
@@ -113,8 +121,17 @@ function resolveBoot(program: Command, profile: string, options: BootOptions, ar
   if (patches.includes('')) program.error('error: --patch needs a path')
   if (options.fromDefaultProfile === '') program.error('error: --from-default-profile needs a name')
   const dumps = [options.dumpConfig, options.dumpDefaultConfig, options.dumpConfigSchema].filter(Boolean)
+  if (options.modelsFrom !== undefined) {
+    if (options.modelsFrom.trim() === '') program.error('error: --models-from needs a profile name')
+    if (profile !== PORTAL_PROFILE || dumps.length > 0) {
+      program.error('error: --models-from is supported only when running the portal profile')
+    }
+  }
   if (dumps.length === 0) {
-    return { mode: 'profile', profile, fromDefaultProfile: options.fromDefaultProfile, patches, args }
+    return {
+      mode: 'profile', profile, fromDefaultProfile: options.fromDefaultProfile, patches, args,
+      ...options.modelsFrom === undefined ? {} : { modelsFrom: options.modelsFrom },
+    }
   }
   if (dumps.length > 1) {
     program.error('error: --dump-config, --dump-default-config, and --dump-config-schema are mutually exclusive')
@@ -167,12 +184,11 @@ export function parseDshArgs(argv: readonly string[], version: string): DshInvoc
     .option('--profile <name>', 'the profile under $DSH_HOME/profiles to boot', selectProfile)
     .option('--from-default-profile <name>', 'initialize a new custom profile from a shipped profile template')
     .option('--patch <path>', 'extra patch-list overlay applied after the profile layer (repeatable)', collect)
+    .option('--models-from <profile>', 'read model configuration from an existing profile for a portal run')
     .option('--dump-config', 'print the composed profile tree and exit')
     .option('--dump-config-schema', 'print JSON Schema for profile entries and patches without mounting')
     .option('--dump-default-config', 'print the profile tree without its user layer or --patch overlays and exit')
     .action((args: string[], options: BootOptions & { profile?: string }) => {
-      // With the app owning -h, the launcher's own help is what a bare
-      // `dsh -h` (no profile to hand it to) must print.
       if (options.profile === undefined) {
         if (args.some(argument => argument === '-h' || argument === '--help')) program.help()
         program.error('error: --profile <name> is required')
@@ -198,6 +214,7 @@ export function parseDshArgs(argv: readonly string[], version: string): DshInvoc
   }
 
   try {
+    // A leading profile name abbreviates the --profile option; plugin remains a management command.
     const expanded = first !== undefined && !first.startsWith('-') && first !== 'plugin'
       ? ['--profile', ...argv]
       : argv

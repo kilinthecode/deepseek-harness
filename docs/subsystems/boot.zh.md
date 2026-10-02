@@ -197,6 +197,14 @@ Compares public registry responses on the Host; the Client owns the initial sele
 
 Source: [`packages/client/ui-plugin-manager/src/index.ts`](../../packages/client/ui-plugin-manager/src/index.ts)
 
+<a id="ctxportalstartup--portalstartupvalues"></a>
+
+### `ctx.portalStartup` — `PortalStartupValues`
+
+Task and per-run options read by the runner's lazy configuration.
+
+Source: [`packages/bundle/portal-app/src/index.ts`](../../packages/bundle/portal-app/src/index.ts)
+
 <a id="ctxprofilecontext--profilecontext"></a>
 
 ### `ctx.profileContext` — `ProfileContext`

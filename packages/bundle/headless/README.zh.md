@@ -62,6 +62,7 @@ agent 会完成该任务，把提供方的每个非空推理（reasoning）增�
 dsh --profile headless --image ./before.png --image ./after.png "what changed between these two screenshots?"
 ```
 
+<a id="machine-readable-output"></a>
 ### 机器可读输出
 
 `--json` 用按行 JSON 事件流取代 stdout 的最终文本行，stderr 仅保留 `dsh:` 诊断信息。事件流以 `session`（携带本次运行使用的标识）开头、以 `final` 结尾，其间为 `status`、`text`、`thinking`、`tool_call` 与 `tool_result` 事件。`text` 与 `thinking` 只从已提交的 assistant 消息投影，因此被重试或丢弃的尝试不会进入事件流；它们在步骤提交时到达，而不是逐 token 到达，默认模式的 stderr 推理仍是唯一的实时文本通道。终止 `final` 事件携带与默认模式相同的无损答案，不做限长；其他每个字符串与对象键上限为 8 KiB，超出时标记 `truncated`，单条事件行（含换行）上限为 32 KiB——超长事件保留标量字段、丢弃结构化字段，极端情况下只剩 `type` 与 `truncated`，嵌套达到 64 层及以上的负载会在该深度被截断。空工具参数字符串会投影为 `{}`，与执行器实际运行的值一致；而 JSON 无法往返的参数——例如溢出为 `Infinity` 的数字 `1e400`——会保留原始文本，而不是 `JSON.stringify` 会报告的 `null`。runner 在轮次之外抛出的失败会写出 `error` 事件并在没有 `final` 的情况下结束事件流，同时向 stderr 写入 `dsh:` 行；若 profile 自身的插件加载失败，进程会在 runner 挂载前退出，该情形只保留 loader 的 stderr 诊断。轮次内失败的运行仍会以 `final` 事件（通常为空）结束且没有 `error` 事件，因此格式良好的事件流也可能描述一次失败的运行：请把退出码 1 与 `turn_end` 原因作为失败信号。
@@ -87,6 +88,8 @@ runner 是核心 API 载体之上的直接驱动器：它确定 Agent 标识—�
 ### 运行流程
 
 runner 等待整个应用结算（`ctx.get('loader')?.await()`），确保已组合的工具与适配器不会半挂载，读取共享的 [`agentDefaultModel`](../../core/agent-default-model/README.zh.md) 选择，从配置或 stdin 解析任务，解析并存储所有 `--image` 文件，然后确定 Agent 标识：默认是全新的 `session-<uuid>`，或是 `--session-id` 指名的持久化 Session——通过 [`sessionQuery`](../../session-query/session-query/README.zh.md) 沿用，日志不存在时拒绝。它把任务作为普通用户消息提交。不带 `--json` 时，它把该 Agent 的非空推理增量流式写入 stderr；带 `--json` 时改为投影本次运行。它等待完全停稳，然后对会话执行 flush，并把所属区间（从 `firstSeq` 起）折叠为最后一条非空 `assistant/message` 文本与最终 `turn/end` 原因。最后，它把最终文本写入 stdout（或 `final` 事件）并请求退出。
+
+可选的 `modelSelection` 配置提供仅用于本次调用的 provider、model 与 reasoning 覆盖；更改路由会清除继承的推理级别。`createTaskRunner()` 让 [Portal 终端](../portal-app/README.zh.md) 使用一个独占的 Agent 顺序执行任务，并在返回前 flush 每一轮。`cancel()` 中断准备过程或当前任务，返回状态码 130；`reset()` 在两次运行之间 flush 并释放 Agent。并发操作会被拒绝。调用方负责根上下文的释放。可选的 `onEvent` 接收类型化的已提交运行事件，并关闭纯文本回答和实时推理输出；JSON 模式仍输出事件流。观察器失败会记录到日志，且不会中断任务。
 
 ### 基于 base 的 patch 内容
 
