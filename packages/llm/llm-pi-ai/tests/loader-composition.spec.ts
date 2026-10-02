@@ -8,7 +8,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import { Context } from '@deepseek-ai/cordis'
 import Loader, { type ModuleLoaderV2 } from '@deepseek-ai/cordis-plugin-loader'
 import Include from '@deepseek-ai/cordis-plugin-include'
-import LlmRuntime, { createMessage, createUserMessage, userAgent } from '@deepseek-ai/dsh-llm'
+import LlmRuntime, { createMessage, createSystemMessage, createToolResultMessage, createUserMessage, ToolCallId, userAgent } from '@deepseek-ai/dsh-llm'
 import LocalCredentialProvider from '@deepseek-ai/dsh-credentials-local'
 import { profileComposition } from '../../../settings/settings/tests/profile-composition.ts'
 import * as LlmPiAi from '@deepseek-ai/dsh-llm-pi-ai'
@@ -209,6 +209,107 @@ describe('llm-pi-ai real dormant composition', () => {
     })
     const followup = server.requests[1] as { messages?: unknown[] }
     expect(followup.messages?.[0]).not.toHaveProperty('tool_calls')
+  })
+
+  it.each([
+    { provider: 'deepseek', model: 'deepseek-v4-pro' },
+    { provider: 'openai', model: 'gpt-4.1' },
+  ])('returns to the original model with its native request prefix after switching to $provider/$model', async ({ provider, model }) => {
+    vi.stubEnv('PI_COMPOSITION_KEY', '')
+    const callId = ToolCallId('call_A|item+A')
+    const server = await mockServer([
+      { events: [
+        JSON.stringify({ choices: [{ delta: { role: 'assistant', reasoning_content: 'Inspect the lookup result.' }, index: 0, finish_reason: null }] }),
+        JSON.stringify({ choices: [{ delta: { content: 'Checking.', tool_calls: [{ index: 0, id: callId, type: 'function', function: { name: 'lookup', arguments: '{}' } }] }, index: 0, finish_reason: null }] }),
+        JSON.stringify({ choices: [{ delta: {}, index: 0, finish_reason: 'tool_calls' }], usage: { prompt_tokens: 3, completion_tokens: 4 } }),
+        '[DONE]',
+      ] },
+      { events: textEvents },
+      { events: textEvents },
+      { events: textEvents },
+    ])
+    const { ctx, settingsPath } = await loadComposition()
+    await writeFile(settingsPath, [
+      '- id: llm-pi-ai',
+      '  config:',
+      '    providers:',
+      '      deepseek:',
+      '        apiKeyEnv: PI_COMPOSITION_KEY',
+      `        baseURL: ${server.url}`,
+      '      openai:',
+      '        apiKeyEnv: PI_COMPOSITION_KEY',
+      '        api: openai-completions',
+      `        baseURL: ${server.url}`,
+      '        models:',
+      '          - id: gpt-4.1',
+      '',
+    ].join('\n'))
+    await vi.waitFor(() => {
+      expect(ctx.llm.listProviders().map(provider => provider.id)).toEqual(['deepseek', 'openai'])
+    }, { timeout: 5000 })
+
+    const initial = [
+      createSystemMessage('Keep the completed lookup available for follow-up questions.'),
+      createUserMessage({ content: [{ type: 'text', text: 'Look up the saved result.' }], source: { kind: 'user' } }),
+    ]
+    const tools = [{ name: 'lookup', description: 'Read the saved result.', parameters: { type: 'object', properties: {} } }]
+    const first = await assemble(ctx, { model: 'deepseek-v4-flash', messages: initial, tools })
+    expect(first.finish).toEqual({ kind: 'tool-calls' })
+    const prefix = Object.freeze([
+      ...initial,
+      first.message,
+      createToolResultMessage({ callId, content: [{ type: 'text', text: 'Saved result: 42.' }], isError: false }),
+    ])
+    const canonicalPrefix = JSON.stringify(prefix)
+    const completed = await assemble(ctx, { model: 'deepseek-v4-flash', messages: [...prefix], tools })
+    expect(completed.finish).toEqual({ kind: 'stop' })
+
+    const switchedHistory = Object.freeze([
+      ...prefix,
+      completed.message,
+      createUserMessage({ content: [{ type: 'text', text: 'Review the same saved result.' }], source: { kind: 'user' } }),
+    ])
+    const canonicalSwitchedHistory = JSON.stringify(switchedHistory)
+    const switched = await assemble(ctx, { provider, model, messages: [...switchedHistory], tools })
+    expect(switched.finish).toEqual({ kind: 'stop' })
+    expect(JSON.stringify(switchedHistory)).toBe(canonicalSwitchedHistory)
+
+    const returned = await assemble(ctx, {
+      model: 'deepseek-v4-flash',
+      messages: [
+        ...switchedHistory,
+        switched.message,
+        createUserMessage({ content: [{ type: 'text', text: 'Continue with the saved result.' }], source: { kind: 'user' } }),
+      ],
+      tools,
+    })
+    expect(returned.finish).toEqual({ kind: 'stop' })
+    expect(JSON.stringify(prefix)).toBe(canonicalPrefix)
+    expect(server.requests).toHaveLength(4)
+    expect(server.requests.map(request => (request as { model: string }).model)).toEqual([
+      'deepseek-v4-flash', 'deepseek-v4-flash', model, 'deepseek-v4-flash',
+    ])
+
+    const nativeRequest = server.requests[1] as { messages: unknown[]; tools: unknown[] }
+    const switchedRequest = server.requests[2] as { messages: unknown[] }
+    const returnedRequest = server.requests[3] as { messages: unknown[]; tools: unknown[] }
+    expect(nativeRequest.messages[2]).toMatchObject({
+      role: 'assistant',
+      content: 'Checking.',
+      reasoning_content: 'Inspect the lookup result.',
+      tool_calls: [{ id: callId }],
+    })
+    expect(nativeRequest.messages[3]).toMatchObject({ role: 'tool', tool_call_id: callId, content: 'Saved result: 42.' })
+    expect(switchedRequest.messages[2]).toMatchObject({
+      role: 'assistant',
+      content: 'Inspect the lookup result.Checking.',
+      tool_calls: [{ id: 'call_A_item_A' }],
+    })
+    if (provider === 'deepseek') expect(switchedRequest.messages[2]).toHaveProperty('reasoning_content', '')
+    else expect(switchedRequest.messages[2]).not.toHaveProperty('reasoning_content')
+    expect(switchedRequest.messages[3]).toMatchObject({ role: 'tool', tool_call_id: 'call_A_item_A' })
+    expect(returnedRequest.messages.slice(0, nativeRequest.messages.length)).toEqual(nativeRequest.messages)
+    expect(returnedRequest.tools).toEqual(nativeRequest.tools)
   })
 
   it('continues a legacy session whose stored replay state no longer matches its content', async () => {
