@@ -1,0 +1,7 @@
+version: 1
+scenario: portal-cli
+profile: portal
+composition: default
+recording: authored
+header:
+  class: default

@@ -44,6 +44,8 @@ export type { ConnectionIndicatorState } from './ConnectionIndicator.tsx'
 export { FishLogo, FISH_LOGO_PATH, FISH_LOGO_VIEWBOX } from './FishLogo.tsx'
 export { BrandWordmark } from './BrandWordmark.tsx'
 export type { BrandWordmarkProps } from './BrandWordmark.tsx'
+export { BRAND_NAMEPLATE_CLIP_ID, BrandNameplateArtwork } from './BrandNameplate.tsx'
+export type { BrandNameplateArtworkProps } from './BrandNameplate.tsx'
 export {
   PermissionIconFullAccessMedium, PermissionIconFullAccessRegular,
   PermissionIconReadOnlyMedium, PermissionIconReadOnlyRegular,

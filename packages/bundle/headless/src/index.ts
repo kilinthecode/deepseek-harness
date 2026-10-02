@@ -16,12 +16,12 @@ import type { Context } from '@deepseek-ai/cordis'
 import z from '@deepseek-ai/schemastery'
 import { brandString } from '@deepseek-ai/dsh-brand'
 import { installModelSelection } from '@deepseek-ai/dsh-agent'
-import type { Agent, ModelSelection, ModelSelectionRef } from '@deepseek-ai/dsh-agent'
+import type { Agent, AgentHandle, ModelSelection, ModelSelectionRef } from '@deepseek-ai/dsh-agent'
 import type {} from '@deepseek-ai/dsh-agent-default-model'
 import { imageMediaTypeForPath, sniffImageMediaType } from '@deepseek-ai/dsh-attachment'
 import type { ImageMediaType, SaveImageAttachment } from '@deepseek-ai/dsh-attachment'
 import type {} from '@deepseek-ai/dsh-fs'
-import { createUserMessage, imageInputSupport } from '@deepseek-ai/dsh-llm'
+import { createUserMessage, imageInputSupport, ReasoningEffortId } from '@deepseek-ai/dsh-llm'
 import type { ContentBlock } from '@deepseek-ai/dsh-llm'
 import { assertNever } from '@deepseek-ai/dsh-util-values'
 import { SessionSeq } from '@deepseek-ai/dsh-session'
@@ -35,6 +35,9 @@ import type {} from '@deepseek-ai/dsh-cmdline'
 import type {} from '@deepseek-ai/dsh-session-query'
 import { internals } from './runner-internals.ts'
 import { projectJsonRun, boundJsonLine } from './json-stream.ts'
+import type { RunEvent } from './json-stream.ts'
+
+export type { RunEvent } from './json-stream.ts'
 
 /** Stable Cordis plugin name. */
 export const name = 'headless-runner'
@@ -52,6 +55,15 @@ export interface Config {
   json?: boolean
   /** Image file paths to attach to the task, in invocation order; absent or empty attaches none. */
   images?: string[]
+  /** Per-run model overrides; omitted fields retain the configured default, except reasoning resets when the route changes. */
+  modelSelection?: {
+    /** Provider route; specifying it also requires a model. */
+    provider?: string
+    /** Model id within the selected or default provider. */
+    model?: string
+    /** Provider-owned reasoning effort id for this run. */
+    reasoningEffort?: string
+  }
 }
 
 export const Config: z<Config> = z.object({
@@ -59,6 +71,7 @@ export const Config: z<Config> = z.object({
   sessionId: z.string(),
   json: z.boolean(),
   images: z.array(z.string()).default([]),
+  modelSelection: z.object({ provider: z.string(), model: z.string(), reasoningEffort: z.string() }).default({}),
 })
 
 /** Outcome of one owned run interval. */
@@ -75,6 +88,89 @@ interface HeadlessIo {
   exit(code: number): void
 }
 
+/** Sequential task execution over one exclusively owned live Agent. */
+export interface TaskRunner {
+  /**
+   * Run one submitted task and flush its Session before returning. Calls must be sequential; stdin is not read.
+   * @param config - required task, initial resume identity, and per-turn options.
+   * @returns exit status (130 after cancellation) and the owned Session identity, when creation succeeded.
+   */
+  run(config: Config & { task: string }): Promise<{ code: number; sessionId: SessionId | undefined }>
+  /**
+   * Cancel the active run, including task preparation before an Agent exists.
+   * @returns whether an active run received its first cancellation request.
+   */
+  cancel(): boolean
+  /**
+   * Flush and dispose the owned Agent between runs. Rejects while a run or reset is active.
+   * @returns fulfillment after the owned Agent has stopped and been released.
+   */
+  reset(): Promise<void>
+}
+
+/** One runner's exclusive Agent and mutable selection across terminal turns. */
+interface OwnedTaskAgent {
+  handle?: AgentHandle
+  selection?: ModelSelectionRef
+}
+
+/** One sequential runner operation, including cancellation before task submission. */
+type RunnerOperation = { kind: 'run'; cancelled: boolean } | { kind: 'reset' }
+
+/** Read cancellation after asynchronous preparation or observer callbacks. */
+function isCancelled(operation: Extract<RunnerOperation, { kind: 'run' }> | undefined): boolean {
+  return operation?.cancelled === true
+}
+
+/** Optional committed output observation for a sequential terminal consumer. */
+export interface TaskRunnerOptions {
+  /** Receive committed run events in order; suppress plain answer and live reasoning output when JSON is disabled. */
+  onEvent?: (event: RunEvent) => void
+}
+
+/**
+ * Create a sequential runner for an interactive terminal. Reset releases its Agent early; application disposal also owns teardown.
+ * @param ctx - fully composed application context.
+ * @param io - answer and diagnostic streams.
+ * @param options - optional committed output observer.
+ * @returns a task runner that retains one Agent without requesting process exit.
+ */
+export function createTaskRunner(ctx: Context, io: Pick<HeadlessIo, 'stdout' | 'stderr'>, options: TaskRunnerOptions = {}): TaskRunner {
+  const owned: OwnedTaskAgent = {}
+  let operation: RunnerOperation | undefined
+  return {
+    async run(config) {
+      if (operation !== undefined) throw new Error(`headless task runner cannot run during an active ${operation.kind}`)
+      const current: RunnerOperation = { kind: 'run', cancelled: false }
+      operation = current
+      let code = 1
+      const effects: HeadlessIo = { ...io, exit: (value) => { code = value } }
+      try { await run(ctx, config, effects, owned, current, options) }
+      catch (error) { fail(effects, error, config.json === true) }
+      finally { operation = undefined }
+      return { code, sessionId: owned.handle?.agent.session.id }
+    },
+    cancel() {
+      if (operation?.kind !== 'run' || operation.cancelled) return false
+      operation.cancelled = true
+      owned.handle?.agent.cancel({ kind: 'user' })
+      return true
+    },
+    async reset() {
+      if (operation !== undefined) throw new Error(`headless task runner cannot reset during an active ${operation.kind}`)
+      operation = { kind: 'reset' }
+      try {
+        if (owned.handle !== undefined) {
+          await ctx.sessions.flush(owned.handle.agent.session)
+          await owned.handle.dispose()
+        }
+        delete owned.handle
+        delete owned.selection
+      } finally { operation = undefined }
+    },
+  }
+}
+
 /** Aggregate the last assistant text and turn outcome in one owned interval. */
 function summarize(session: Session, firstSeq: SessionLogOffset): RunOutcome {
   let started = false
@@ -82,7 +178,6 @@ function summarize(session: Session, firstSeq: SessionLogOffset): RunOutcome {
   let reason: SessionEvent<'turn/end'>['data']['reason'] | undefined
   const length = session.seq
   for (let seq = firstSeq; seq < length; seq++) {
-    // oxlint-disable-next-line typescript/no-deprecated -- Existing Session history read; migration deferred.
     const event = session.eventAt(SessionSeq(seq))
     if (event === undefined) {
       throw new Error(`headless summary cannot read seq ${String(seq)} below captured length ${String(length)}`)
@@ -182,7 +277,6 @@ interface AdoptableHeader {
 function* liveEvents(session: Session): Generator<SessionEvent> {
   const length = session.seq
   for (let seq = 0; seq < length; seq++) {
-    // oxlint-disable-next-line typescript/no-deprecated -- Existing Session history read; migration deferred.
     const event = session.eventAt(SessionSeq(seq))
     if (event === undefined) {
       throw new Error(`headless adoption cannot read seq ${String(seq)} below captured length ${String(length)}`)
@@ -247,7 +341,7 @@ function assertAdoptable(header: AdoptableHeader, events: Iterable<SessionEvent>
  * @param agentOptions - provider/model pair for this run.
  * @param setup - per-Agent scope setup installing the model selection.
  * @param cwd - working directory resolved in the mounted filesystem.
- * @returns the resumed Agent.
+ * @returns the exclusively owned resumed Agent handle.
  */
 async function resolveAgent(
   ctx: Context,
@@ -256,7 +350,7 @@ async function resolveAgent(
   agentOptions: { provider: string; model: string },
   setup: (agentCtx: Context) => void,
   cwd: string,
-): Promise<Agent> {
+): Promise<AgentHandle> {
   // Resuming promises the caller a log a later process can continue. Without a
   // durable log the run would succeed, print the id, and still lose the whole
   // history at exit, so a miscomposed profile fails loud before the resume.
@@ -283,12 +377,16 @@ async function resolveAgent(
   try {
     using observation = await query.observeSession(sessionId)
     assertAdoptable(observation.header, observation.events, sessionId, cwd)
-    const { agent } = await agents.resume({ resumeSessionId: sessionId, agentOptions, setup })
+    const handle = await agents.resume({ resumeSessionId: sessionId, agentOptions, setup })
     // The observation is a snapshot: another writer may have appended a preset
     // selection before this process took the write lease. Re-check the log
     // resume actually attached, now that no other process can append.
-    assertAdoptable(agent.session.header, liveEvents(agent.session), sessionId, cwd)
-    return agent
+    try { assertAdoptable(handle.agent.session.header, liveEvents(handle.agent.session), sessionId, cwd) }
+    catch (error) {
+      await handle.dispose()
+      throw error
+    }
+    return handle
   } catch (error: unknown) {
     if (!(error instanceof SessionQueryError) || error.code !== 'SESSION_QUERY_SESSION_NOT_FOUND') throw error
     // --session-id resumes a conversation that already exists; starting a new
@@ -373,11 +471,15 @@ async function resolveImageContent(ctx: Context, images: readonly string[], sele
  * @param ctx - plugin context carrying the Agent, default model, Session, and launcher IO services.
  * @param config - task, optional exact Session identity, and output mode.
  * @param io - process-facing effects.
+ * @param owned - exclusively owned Agent retained by a sequential caller.
+ * @param operation - the active sequential run, when cancellation is supported.
+ * @param options - committed output observation for a terminal consumer.
  */
-async function run(ctx: Context, config: Config, io: HeadlessIo): Promise<void> {
+async function run(ctx: Context, config: Config, io: HeadlessIo, owned?: OwnedTaskAgent, operation?: Extract<RunnerOperation, { kind: 'run' }>, options: TaskRunnerOptions = {}): Promise<void> {
   // Loader siblings mount concurrently. Await the complete application before
   // creating an Agent so its scoped tools and adapters are not half-composed.
   await ctx.get('loader')?.await()
+  if (isCancelled(operation)) { io.exit(130); return }
   const agents = ctx.get('agents')
   const defaultModel = ctx.get('agentDefaultModel')
   const sessions = ctx.get('sessions')
@@ -389,19 +491,38 @@ async function run(ctx: Context, config: Config, io: HeadlessIo): Promise<void> 
   if (config.sessionId !== undefined && config.sessionId.trim() === '') {
     throw new Error('headless-runner: sessionId must not be blank')
   }
+  if (config.sessionId !== undefined && owned?.handle !== undefined && config.sessionId !== owned.handle.agent.id) {
+    throw new Error(`headless task runner owns session "${owned.handle.agent.id}"; reset before resuming "${config.sessionId}"`)
+  }
   const images = config.images ?? []
   if (images.some(path => path.trim() === '')) {
     throw new Error('headless-runner: images must not contain a blank path')
   }
 
-  const task = config.task === undefined || config.task === '-'
+  const task = owned === undefined && (config.task === undefined || config.task === '-')
     ? await internals.readStdin()
-    : config.task
+    : config.task ?? ''
+  if (isCancelled(operation)) { io.exit(130); return }
   if (task.trim() === '') {
     throw new Error('a task is required, for example: dsh --profile headless "run the tests"')
   }
 
-  const selection = defaultModel.currentSelection()
+  const defaults = defaultModel.currentSelection()
+  const override = config.modelSelection
+  if (override !== undefined && Object.values(override).some(value => value.trim() === '')) {
+    throw new Error('headless-runner: modelSelection values must not be blank')
+  }
+  if (override?.provider !== undefined && override.model === undefined) {
+    throw new Error('headless-runner: modelSelection.provider requires modelSelection.model')
+  }
+  const provider = override?.provider ?? defaults.provider
+  const model = override?.model ?? defaults.model
+  const reasoning = override?.reasoningEffort
+    ?? (provider === defaults.provider && model === defaults.model ? defaults.reasoningEffort : undefined)
+  const selection: ModelSelection = {
+    provider, model,
+    ...reasoning === undefined ? {} : { reasoningEffort: ReasoningEffortId(reasoning) },
+  }
   const agentOptions = { provider: selection.provider, model: selection.model }
   // This bundle composes no preset roster, so the model-facing rows sit in the
   // host plane and the agent reads them from the global layer. A deployment
@@ -410,20 +531,32 @@ async function run(ctx: Context, config: Config, io: HeadlessIo): Promise<void> 
   const setup = (agentCtx: Context): void => {
     const selected: ModelSelectionRef = { current: selection, assembled: undefined }
     installModelSelection(agentCtx, selected)
+    if (owned !== undefined) owned.selection = selected
   }
   const sessionId = brandString<SessionId>(config.sessionId ?? `session-${randomUUID()}`)
   const fs = ctx.get('fs')
   const cwd = fs === undefined ? process.cwd() : fs.processPath(await fs.resolve('.'))
   const imageBlocks = images.length === 0 ? [] : await resolveImageContent(ctx, images, selection)
-  const agent = config.sessionId === undefined
-    ? (await agents.create({
+  if (isCancelled(operation)) { io.exit(130); return }
+  const handle = owned?.handle ?? (config.sessionId === undefined
+    ? await agents.create({
       sessionId,
       meta: { cwd },
       agentOptions,
       setup,
-    })).agent
-    : await resolveAgent(ctx, agents, sessionId, agentOptions, setup, cwd)
+    })
+    : await resolveAgent(ctx, agents, sessionId, agentOptions, setup, cwd))
+  const { agent } = handle
+  if (owned !== undefined) {
+    owned.handle = handle
+    if (owned.selection !== undefined) owned.selection.current = selection
+  }
   await agent.whenIdle()
+  if (isCancelled(operation)) {
+    await sessions.flush(agent.session)
+    io.exit(130)
+    return
+  }
   if (config.sessionId !== undefined) {
     // The resume-time check read a snapshot; an overlay can still append a
     // preset selection between it and the interval this run now owns, so
@@ -431,9 +564,16 @@ async function run(ctx: Context, config: Config, io: HeadlessIo): Promise<void> 
     assertAdoptable(agent.session.header, liveEvents(agent.session), sessionId, cwd)
   }
   const firstSeq = agent.session.seq
-  const projection = config.json === true ? projectJsonRun(ctx, agent, io.stdout, { cwd }) : undefined
+  const projection = config.json === true || options.onEvent !== undefined
+    ? projectJsonRun(ctx, agent, config.json === true ? io.stdout : { write() {} }, { cwd, ...options })
+    : undefined
   const stopReasoning = projection === undefined ? streamReasoning(ctx, agent, io.stderr) : undefined
   try {
+    if (isCancelled(operation)) {
+      await sessions.flush(agent.session)
+      io.exit(130)
+      return
+    }
     try {
       agent.followup(createUserMessage({
         content: [{ type: 'text', text: task }, ...imageBlocks],
@@ -450,7 +590,7 @@ async function run(ctx: Context, config: Config, io: HeadlessIo): Promise<void> 
     if (outcome.reason?.kind === 'error') {
       io.stderr.write(`dsh: ${outcome.reason.error.code}: ${outcome.reason.error.message}\n`)
     }
-    io.exit(outcome.reason?.kind === 'completed' ? 0 : 1)
+    io.exit(isCancelled(operation) ? 130 : outcome.reason?.kind === 'completed' ? 0 : 1)
   } finally {
     projection?.dispose()
   }

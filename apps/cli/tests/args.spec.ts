@@ -3,20 +3,30 @@ import { parseDshArgs } from '../src/args.ts'
 
 const parse = (argv: string[]) => parseDshArgs(argv, '1.2.3')
 
-/** Capture the process exit code while muting Commander's output. */
-function exitCode(argv: string[]): number {
+/** What one exiting invocation produced. */
+interface Exited {
+  code: number
+  out: string
+}
+
+/** Capture the process exit code and the muted Commander output. */
+function runExit(argv: string[]): Exited {
   const exit = vi.spyOn(process, 'exit').mockImplementation(() => { throw new Error('exit') })
-  vi.spyOn(process.stdout, 'write').mockReturnValue(true)
-  vi.spyOn(process.stderr, 'write').mockReturnValue(true)
+  let out = ''
+  const collect = (chunk: unknown): boolean => { out += String(chunk); return true }
+  vi.spyOn(process.stdout, 'write').mockImplementation(collect)
+  vi.spyOn(process.stderr, 'write').mockImplementation(collect)
   try {
     parse(argv)
     throw new Error(`expected ${JSON.stringify(argv)} to exit`)
   } catch {
-    return exit.mock.calls.at(-1)?.[0] as number
+    return { code: exit.mock.calls.at(-1)?.[0] as number, out }
   } finally {
     vi.restoreAllMocks()
   }
 }
+
+const exitCode = (argv: string[]): number => runExit(argv).code
 
 afterEach(() => { vi.restoreAllMocks() })
 
@@ -56,7 +66,7 @@ describe('parseDshArgs', () => {
       .toEqual({ mode: 'profile', profile: 'web', fromDefaultProfile: 'web', patches: [], args: [] })
   })
 
-  it.each(['web', 'headless', 'sdk', 'sdk-minimal', 'acp', 'tui', 'custom', 'run', 'help'])('expands %s without looking up profiles', (profile) => {
+  it.each(['web', 'headless', 'portal', 'sdk', 'sdk-minimal', 'acp', 'tui', 'custom', 'run', 'help'])('expands %s without looking up profiles', (profile) => {
     for (const args of [
       [], ['task', 'words'], ['--help'], ['-h'], ['web'],
       ['--patch', 'a.yml', '--patch', 'b.yml'],
@@ -220,5 +230,27 @@ describe('parseDshArgs', () => {
     expect(stdout.mock.calls.map(([chunk]) => String(chunk)).join('')).not.toContain('help [command]')
     expect(exitCode(['-h'])).toBe(0)
     expect(exitCode(['--version'])).toBe(0)
+  })
+})
+
+describe('Portal profile shorthand', () => {
+  it('boots the portal profile and hands app arguments through dsh', () => {
+    expect(parse(['portal'])).toEqual({ mode: 'profile', profile: 'portal', patches: [], args: [] })
+    expect(parse(['portal', 'run', 'the', 'tests']))
+      .toEqual({ mode: 'profile', profile: 'portal', patches: [], args: ['run', 'the', 'tests'] })
+    expect(parse(['portal', '--session-id', 'session-x', 'go']))
+      .toEqual({ mode: 'profile', profile: 'portal', patches: [], args: ['--session-id', 'session-x', 'go'] })
+    expect(parse(['portal', '--help']))
+      .toEqual({ mode: 'profile', profile: 'portal', patches: [], args: ['--help'] })
+  })
+
+  it('accepts model configuration from an existing profile only for Portal runs', () => {
+    expect(parse(['portal', '--models-from', 'desktop', 'models', '--json']))
+      .toEqual({ mode: 'profile', profile: 'portal', patches: [], modelsFrom: 'desktop', args: ['models', '--json'] })
+    expect(parse(['portal', '--models-from', 'web', 'task']))
+      .toMatchObject({ mode: 'profile', profile: 'portal', modelsFrom: 'web', args: ['task'] })
+    expect(exitCode(['portal', '--models-from=', 'task'])).toBe(1)
+    expect(exitCode(['portal', '--models-from', 'desktop', '--dump-config'])).toBe(1)
+    expect(exitCode(['web', '--models-from', 'desktop'])).toBe(1)
   })
 })

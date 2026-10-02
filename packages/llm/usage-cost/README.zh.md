@@ -67,6 +67,8 @@ const rollup = rollupUsageCost(records, { from: Date.UTC(2026, 8, 21), to: Date.
 | `src/rollup.ts` | 价格表校验、用量桶计价与窗口汇总。 |
 | `src/types.ts` | 持久记录结构与计价结果类型。 |
 
+本包不发布 runtime invariant companion，因为它只是对调用方已加载记录做计价的纯函数：它不注册服务、不拥有缓存，也从不打开会话日志，因此没有可供 companion 断言的运行时状态。
+
 </details>
 
 -----

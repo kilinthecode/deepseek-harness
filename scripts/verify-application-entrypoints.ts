@@ -23,7 +23,7 @@ interface LauncherPolicy {
   readonly wrapper?: string
 }
 
-/** Public product launcher plus the build-only WebWorker packer. */
+/** Public dsh product launcher plus the build-only WebWorker packer. */
 const MANIFEST_BIN_ALLOWLIST = new Map<string, ManifestBin>([
   ['apps/cli/package.json', { dsh: 'lib/bin.js' }],
   ['packages/experimental/webworker-packer/package.json', { 'dsh-pack-vfs-image': './bin.js' }],

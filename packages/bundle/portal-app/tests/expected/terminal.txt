@@ -1,0 +1,47 @@
+      ⢀⣠⠴⢺⡗⠦⣄⡀
+  ⢀⣠⠴⠚⠉  ⢸⡇  ⠉⠓⠦⣄⡀     PORTAL
+⣴⣞⡉      ⢸⡇      ⢉⣳⣦   Your models. One terminal.
+⣿ ⠉⠳⢦⣄⣀⠤⠒⢹⡏⠒⠤⣀⣠⡴⠞⠋⠁⣿
+⣿    ⢸⡟⠳⢦⣼⣧⡴⠞⢻⡇    ⣿   Model: local/reasoning-model
+⣿    ⢸⣧⡴⠞⢻⡟⠳⢦⣼⡇    ⣿   Reasoning: high
+⣿ ⣀⡴⠞⠋⠉⠒⠤⣸⣇⠤⠒⠉⠙⠳⢦⣄⡀⣿   Workspace: /work/portal
+⠻⢯⣁      ⢸⡇      ⣈⡽⠟   Session: session-42
+  ⠈⠙⠲⢤⣀  ⢸⡇  ⣀⡤⠖⠋⠁
+      ⠈⠙⠲⢼⡧⠖⠋⠁
+
+/model  switch models  ·  /help  commands
+Ctrl-J  newline  ·  Escape  cancel
+
+◇ MODELS
+
+Local models (local)  ·  2 models
+  ● 1. Reasoning model  [current]
+     local/reasoning-model
+     [image] [reasoning] [128000 context]
+  ○ 2. Text model
+     local/text-model
+
+/model <number>  or  /model <provider> <model>
+
+❯ YOU
+
+Check the changes
+and explain the result.
+
+▸ read_file · src/app.ts
+
+✓ read_file · completed
+
+◇ ASSISTANT
+
+# Results
+
+The changes are ready.
+
+```ts
+const ready = true
+```
+
+✓ Completed  ·  1.3 s
+Tokens: 120 in / 24 out
+Session: session-42

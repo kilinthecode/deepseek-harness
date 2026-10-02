@@ -10,7 +10,7 @@
 import type { Context } from '@deepseek-ai/cordis'
 import type { Agent } from '@deepseek-ai/dsh-agent'
 import { lastAssistantStreamChunk } from '@deepseek-ai/dsh-llm/assistant-stream'
-import type { SessionEvent } from '@deepseek-ai/dsh-session'
+import type { SessionEvent, SessionId } from '@deepseek-ai/dsh-session'
 
 /** Default per-string and per-key cap applied to every bounded projected payload. */
 export const MAX_STRING_BYTES = 8 * 1024
@@ -27,12 +27,26 @@ export interface JsonSink {
   write(chunk: string): unknown
 }
 
+/** Committed run output before JSON byte limits are applied. */
+export type RunEvent =
+  | { type: 'session'; sessionId: SessionId; cwd: string }
+  | { type: 'status'; phase: 'turn_start'; turn: number }
+  | { type: 'status'; phase: 'step_start'; turn: number; step: number }
+  | { type: 'status'; phase: 'step_end'; turn: number; step: number; usage?: StepUsage }
+  | { type: 'status'; phase: 'turn_end'; turn: number; reason: SessionEvent<'turn/end'>['data']['reason'] }
+  | { type: 'thinking' | 'text'; text: string }
+  | { type: 'tool_call'; callId: SessionEvent<'tool/call'>['data']['callId']; tool: string; input: unknown }
+  | { type: 'tool_result'; callId: SessionEvent<'tool/result'>['data']['message']['toolCallId']; status: 'error' | 'completed'; result: string }
+  | { type: 'final'; text: string }
+
 /** Tunables for {@link projectJsonRun}; every field defaults. */
 export interface JsonProjectionOptions {
   /** Working directory reported by the opening `session` event. */
   cwd?: string
   /** Per-string and per-key byte cap; longer values are truncated and flagged. */
   maxStringBytes?: number
+  /** Observe original committed payloads after each write; callback failures are logged and contained. */
+  onEvent?: (event: RunEvent) => void
 }
 
 /** The live handle of one `--json` projection. */
@@ -250,8 +264,14 @@ export function projectJsonRun(
   let disposed = false
   let stepUsage: StepUsageState = { usage: undefined, complete: true }
 
-  const write = (event: Record<string, unknown>): void => {
+  const observe = (event: RunEvent): void => {
+    try { options.onEvent?.(event) }
+    catch (error) { ctx.logger.warn(`headless run observer failed: ${String(error)}`) }
+  }
+
+  const write = (event: RunEvent): void => {
     sink.write(`${boundJsonLine(event, maxStringBytes)}\n`)
+    observe(event)
   }
 
   const onSessionEvent = (session: unknown, event: SessionEvent): void => {
@@ -322,7 +342,9 @@ export function projectJsonRun(
     finish(text: string): void {
       // The answer is the lossless terminal contract, so it is not truncated.
       if (disposed) return
-      sink.write(`${JSON.stringify({ type: 'final', text })}\n`)
+      const event: RunEvent = { type: 'final', text }
+      sink.write(`${JSON.stringify(event)}\n`)
+      observe(event)
     },
     dispose(): void {
       disposed = true

@@ -1,5 +1,4 @@
 import { describe, expect, it } from 'vitest'
-import { Context } from '@deepseek-ai/cordis'
 import type { Agent } from '@deepseek-ai/dsh-agent'
 import { applyAgentScopedTools, callingAgent, jsonOutput } from '../src/index.ts'
 
@@ -25,7 +24,7 @@ function eventHarness(agents: Agent[]) {
       disposeEffect = register()
       return () => {}
     },
-  } as unknown as Context
+  } as never
   return {
     ctx,
     emit(name: AgentEventName, agent: Agent): void {
