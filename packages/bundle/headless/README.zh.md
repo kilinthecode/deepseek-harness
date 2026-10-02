@@ -89,7 +89,7 @@ runner 是核心 API 载体之上的直接驱动器：它确定 Agent 标识—�
 
 runner 等待整个应用结算（`ctx.get('loader')?.await()`），确保已组合的工具与适配器不会半挂载，读取共享的 [`agentDefaultModel`](../../core/agent-default-model/README.zh.md) 选择，从配置或 stdin 解析任务，解析并存储所有 `--image` 文件，然后确定 Agent 标识：默认是全新的 `session-<uuid>`，或是 `--session-id` 指名的持久化 Session——通过 [`sessionQuery`](../../session-query/session-query/README.zh.md) 沿用，日志不存在时拒绝。它把任务作为普通用户消息提交。不带 `--json` 时，它把该 Agent 的非空推理增量流式写入 stderr；带 `--json` 时改为投影本次运行。它等待完全停稳，然后对会话执行 flush，并把所属区间（从 `firstSeq` 起）折叠为最后一条非空 `assistant/message` 文本与最终 `turn/end` 原因。最后，它把最终文本写入 stdout（或 `final` 事件）并请求退出。
 
-可选的 `modelSelection` 配置提供仅用于本次调用的 provider、model 与 reasoning 覆盖；更改路由会清除继承的推理级别。`createTaskRunner()` 让 [Portal 终端](../portal-app/README.zh.md) 使用一个独占的 Agent 顺序执行任务，并在返回前 flush 每一轮。`cancel()` 中断准备过程或当前任务，返回状态码 130；`reset()` 在两次运行之间 flush 并释放 Agent。并发操作会被拒绝。调用方负责根上下文的释放。可选的 `onEvent` 接收类型化的已提交运行事件，并关闭纯文本回答和实时推理输出；JSON 模式仍输出事件流。观察器失败会记录到日志，且不会中断任务。
+可选的 `modelSelection` 配置提供仅用于本次调用的 provider、model 与 reasoning 覆盖；更改路由会清除继承的推理级别。`createTaskRunner()` 让 [Portal 终端](../portal-app/README.zh.md) 使用一个独占的 Agent 顺序执行已提交的任务，并在返回前 flush 每一轮。每次运行都必须传入任务字符串，且不会读取 stdin；单独的 `-` 会作为任务文本提交。`cancel()` 中断准备过程或当前任务，返回状态码 130；`reset()` 在两次运行之间 flush 并释放 Agent。并发操作会被拒绝。调用方负责根上下文的释放。可选的 `onEvent` 接收类型化的已提交运行事件，并关闭纯文本回答和实时推理输出；JSON 模式仍输出事件流。观察器失败会记录到日志，且不会中断任务。
 
 ### 基于 base 的 patch 内容
 

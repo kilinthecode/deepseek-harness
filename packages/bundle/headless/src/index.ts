@@ -91,11 +91,11 @@ interface HeadlessIo {
 /** Sequential task execution over one exclusively owned live Agent. */
 export interface TaskRunner {
   /**
-   * Run a task and flush its Session before returning. Calls must be sequential.
-   * @param config - task, initial resume identity, and per-turn options.
+   * Run one submitted task and flush its Session before returning. Calls must be sequential; stdin is not read.
+   * @param config - required task, initial resume identity, and per-turn options.
    * @returns exit status (130 after cancellation) and the owned Session identity, when creation succeeded.
    */
-  run(config: Config): Promise<{ code: number; sessionId: SessionId | undefined }>
+  run(config: Config & { task: string }): Promise<{ code: number; sessionId: SessionId | undefined }>
   /**
    * Cancel the active run, including task preparation before an Agent exists.
    * @returns whether an active run received its first cancellation request.
@@ -499,9 +499,9 @@ async function run(ctx: Context, config: Config, io: HeadlessIo, owned?: OwnedTa
     throw new Error('headless-runner: images must not contain a blank path')
   }
 
-  const task = config.task === undefined || config.task === '-'
+  const task = owned === undefined && (config.task === undefined || config.task === '-')
     ? await internals.readStdin()
-    : config.task
+    : config.task ?? ''
   if (isCancelled(operation)) { io.exit(130); return }
   if (task.trim() === '') {
     throw new Error('a task is required, for example: dsh --profile headless "run the tests"')

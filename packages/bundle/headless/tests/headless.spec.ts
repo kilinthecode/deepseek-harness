@@ -320,6 +320,26 @@ async function bench(script: Script, options: BenchOptions = {}): Promise<{
 }
 
 describe('headless runner', () => {
+  it('keeps a submitted dash literal instead of reading stdin in a sequential conversation', async () => {
+    let submitted: UserMessage | undefined
+    const test = await bench({
+      afterPrompt(session, message) {
+        submitted = message
+        appendTurn(session, 1, message, 'dash answer', true)
+      },
+    })
+    const readStdin = vi.fn(async () => { throw new Error('sequential runner must not read stdin') })
+    internals.readStdin = readStdin
+    try {
+      const result = await test.runner().run({ task: '-' })
+
+      expect(result.code).toBe(0)
+      expect(submitted?.content).toEqual([{ type: 'text', text: '-' }])
+      expect(readStdin).not.toHaveBeenCalled()
+      expect(test.output().out).toBe('dash answer\n')
+    } finally { await test.ctx.fiber.dispose() }
+  })
+
   it('keeps one sequential conversation and releases it before a fresh task', async () => {
     const prompts: SessionId[] = []
     const test = await bench({
