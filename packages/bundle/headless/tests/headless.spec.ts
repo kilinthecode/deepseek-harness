@@ -22,7 +22,7 @@ import SessionProjectionRegistry from '@deepseek-ai/dsh-session-projection'
 import type { Session, SessionId, UserMessage } from '@deepseek-ai/dsh-session'
 import { SessionQueryError } from '@deepseek-ai/dsh-session-query'
 import { createInboxStub } from '@deepseek-ai/dsh-agent-loop-testkit'
-import { apply, Config } from '../src/index.ts'
+import { apply, Config, createTaskRunner, type TaskRunner, type TaskRunnerOptions, type RunEvent } from '../src/index.ts'
 import { internals } from '../src/runner-internals.ts'
 
 const originalInternals = { ...internals }
@@ -42,6 +42,7 @@ interface ObservationStub {
 
 /** Runner invocation options layered over the scripted Agent factory. */
 interface BenchOptions {
+  modelSelection?: { provider?: string; model?: string; reasoningEffort?: string }
   /** Provider-resolved cwd, which can differ from the harness process directory. */
   filesystemCwd?: string
   task?: string
@@ -60,6 +61,14 @@ interface BenchOptions {
   preliveMeta?: { cwd?: string; origin?: 'subagent'; agentPreset?: string }
   /** Run when the runner awaits idle, e.g. to append to the attached log. */
   onWhenIdle?: (agent: Agent) => void
+  /** A preparation barrier before a fresh Agent is published. */
+  beforeCreate?: () => Promise<void>
+  /** Observe cancellation of the fixture's active Agent. */
+  onCancel?: (agent: Agent) => void
+  /** Observe disposal of the consumer-owned Agent handle. */
+  onDispose?: (agent: Agent) => Promise<void> | void
+  /** Mutate the attached log after resume acquires the persisted identity. */
+  onResume?: (agent: Agent) => void
   /** `--image` paths passed to the runner, in invocation order. */
   images?: string[]
   /**
@@ -154,6 +163,7 @@ async function bench(script: Script, options: BenchOptions = {}): Promise<{
   output(): { out: string; err: string; order: string[] }
   /** Every in-memory filesystem call as `<operation>:<path>` (reads add `:<maxBytes>`), in call order. */
   fsCalls(): string[]
+  runner(options?: TaskRunnerOptions): TaskRunner
   run(): Promise<{ code: number; out: string; err: string; order: string[] }>
 }> {
   const ctx = new Context()
@@ -203,6 +213,7 @@ async function bench(script: Script, options: BenchOptions = {}): Promise<{
   let out = ''
   let err = ''
   const order: string[] = []
+  const disposers = new WeakMap<Agent, () => Promise<void>>()
 
   const mount = async (
     ownerCtx: Context,
@@ -218,7 +229,7 @@ async function bench(script: Script, options: BenchOptions = {}): Promise<{
       inbox,
       status: 'idle',
       ctx: ownerCtx,
-      cancel: () => {},
+      cancel: () => { options.onCancel?.(agent) },
       runMaintenance: () => Promise.reject(new Error('not used')),
       send: () => {},
       followup: (message: UserMessage) => {
@@ -233,7 +244,12 @@ async function bench(script: Script, options: BenchOptions = {}): Promise<{
       },
     }
     await createOptions.setup?.(ownerCtx, agent)
-    await ctx.agents.register(agent)
+    const registration = ctx.agents.register(agent)
+    await registration
+    disposers.set(agent, async () => {
+      await registration()
+      await options.onDispose?.(agent)
+    })
     return agent
   }
 
@@ -243,18 +259,20 @@ async function bench(script: Script, options: BenchOptions = {}): Promise<{
   await ctx.plugin(AgentDefaultModelConfig, { provider: 'test-provider', model: 'test-model' })
   ctx.agents.setFactory({
     async createAgent(ownerCtx: Context, createOptions: CreateAgentOptions): Promise<AgentHandle> {
+      await options.beforeCreate?.()
       const session = ctx.sessions.create(createOptions.sessionId, {
         ...createOptions.meta === undefined ? {} : { meta: createOptions.meta },
       })
       script.before?.(session)
       const agent = await mount(ownerCtx, session, createOptions)
-      return { agent, dispose: () => Promise.resolve() }
+      return { agent, dispose: () => disposers.get(agent)?.() ?? Promise.resolve() }
     },
     async resume(ownerCtx: Context, resumeOptions: ResumeAgentOptions): Promise<AgentHandle> {
       const session = ctx.sessions.get(resumeOptions.resumeSessionId)
       if (session === undefined) throw new Error(`no attached Session ${resumeOptions.resumeSessionId}`)
       const agent = await mount(ownerCtx, session, resumeOptions)
-      return { agent, dispose: () => Promise.resolve() }
+      options.onResume?.(agent)
+      return { agent, dispose: () => disposers.get(agent)?.() ?? Promise.resolve() }
     },
   })
   if (options.omitSessionQuery !== true && (options.sessionId !== undefined || options.observe !== undefined)) {
@@ -268,6 +286,13 @@ async function bench(script: Script, options: BenchOptions = {}): Promise<{
     ctx,
     output: () => ({ out, err, order: [...order] }),
     fsCalls: () => [...fsCalls],
+    runner: (runnerOptions = {}) => {
+      ctx.on('session/flush', () => { order.push('flush') })
+      return createTaskRunner(ctx, {
+        stdout: { write: (chunk) => { out += chunk } },
+        stderr: { write: (chunk) => { err += chunk } },
+      }, runnerOptions)
+    },
     run: async () => {
       ctx.on('session/flush', () => { order.push('flush') })
       internals.stdout = { write: (chunk: string) => { out += chunk; return true } }
@@ -287,6 +312,7 @@ async function bench(script: Script, options: BenchOptions = {}): Promise<{
         ...options.sessionId === undefined ? {} : { sessionId: options.sessionId },
         ...options.json === undefined ? {} : { json: options.json },
         ...options.images === undefined ? {} : { images: options.images },
+        ...options.modelSelection === undefined ? {} : { modelSelection: options.modelSelection },
       })
       return { code: await exited, out, err, order }
     },
@@ -294,6 +320,212 @@ async function bench(script: Script, options: BenchOptions = {}): Promise<{
 }
 
 describe('headless runner', () => {
+  it('keeps one sequential conversation and releases it before a fresh task', async () => {
+    const prompts: SessionId[] = []
+    const test = await bench({
+      afterPrompt(session, message) {
+        prompts.push(session.id)
+        appendTurn(session, prompts.length, message, `answer ${String(prompts.length)}`, true)
+      },
+    }, { onDispose: () => { disposed.push('dispose') } })
+    const disposed: string[] = []
+    try {
+      const runner = test.runner()
+      const first = await runner.run({ task: 'first' })
+      const second = await runner.run({ task: 'second' })
+      expect(first.code).toBe(0)
+      expect(second).toEqual(first)
+      expect(prompts).toEqual([first.sessionId, first.sessionId])
+      expect(test.ctx.agents.get(first.sessionId!)).toBeDefined()
+      await runner.reset()
+      expect(disposed).toEqual(['dispose'])
+      expect(test.ctx.agents.get(first.sessionId!)).toBeUndefined()
+      const third = await runner.run({ task: 'third' })
+      expect(third.code).toBe(0)
+      expect(third.sessionId).not.toBe(first.sessionId)
+      expect(test.output().order).toEqual(['flush', 'flush', 'flush', 'flush'])
+      expect(test.output().out).toBe('answer 1\nanswer 2\nanswer 3\n')
+      expect(runner.cancel()).toBe(false)
+    } finally { await test.ctx.fiber.dispose() }
+  })
+
+  it('latches cancellation during Agent preparation and rejects concurrent operations', async () => {
+    const ready = Promise.withResolvers<undefined>()
+    const release = Promise.withResolvers<undefined>()
+    const prompt = vi.fn()
+    const test = await bench({ afterPrompt: prompt }, {
+      beforeCreate: async () => { ready.resolve(undefined); await release.promise },
+    })
+    const runner = test.runner()
+    const task = runner.run({ task: 'not submitted' })
+    try {
+      await ready.promise
+      await expect(runner.run({ task: 'concurrent' })).rejects.toThrow('cannot run during an active run')
+      await expect(runner.reset()).rejects.toThrow('cannot reset during an active run')
+      expect(runner.cancel()).toBe(true)
+      expect(runner.cancel()).toBe(false)
+      release.resolve(undefined)
+      const result = await task
+      expect(result.code).toBe(130)
+      expect(result.sessionId).toBeDefined()
+      expect(prompt).not.toHaveBeenCalled()
+      expect(test.output()).toEqual({ out: '', err: '', order: ['flush'] })
+    } finally {
+      release.resolve(undefined)
+      await task
+      await test.ctx.fiber.dispose()
+    }
+  })
+
+  it('requires reset before requesting a different Session identity', async () => {
+    const prompt = vi.fn((session: Session, message: UserMessage) => { appendTurn(session, 1, message, 'answer', true) })
+    const test = await bench({ afterPrompt: prompt })
+    try {
+      const runner = test.runner()
+      const first = await runner.run({ task: 'first' })
+      const refused = await runner.run({ task: 'wrong conversation', sessionId: 'another-session' })
+      expect(refused).toEqual({ code: 1, sessionId: first.sessionId })
+      expect(test.output().err).toContain('reset before resuming "another-session"')
+      expect(prompt).toHaveBeenCalledTimes(1)
+    } finally { await test.ctx.fiber.dispose() }
+  })
+
+  it('holds exclusive ownership until reset finishes disposing the Agent', async () => {
+    const disposing = Promise.withResolvers<undefined>()
+    const release = Promise.withResolvers<undefined>()
+    const test = await bench({
+      afterPrompt(session, message) { appendTurn(session, 1, message, 'answer', true) },
+    }, {
+      onDispose: async () => { disposing.resolve(undefined); await release.promise },
+    })
+    const runner = test.runner()
+    let reset: Promise<void> | undefined
+    try {
+      await runner.run({ task: 'hello' })
+      reset = runner.reset()
+      await disposing.promise
+      expect(test.output().order).toEqual(['flush', 'flush'])
+      await expect(runner.run({ task: 'too early' })).rejects.toThrow('cannot run during an active reset')
+      await expect(runner.reset()).rejects.toThrow('cannot reset during an active reset')
+      expect(runner.cancel()).toBe(false)
+      release.resolve(undefined)
+      await reset
+    } finally {
+      release.resolve(undefined)
+      await reset
+      await test.ctx.fiber.dispose()
+    }
+  })
+
+  it('interrupts an owned turn, flushes it, and permits another task', async () => {
+    const started = Promise.withResolvers<undefined>()
+    const release = Promise.withResolvers<undefined>()
+    let turns = 0
+    const test = await bench({
+      async afterPrompt(session, message) {
+        turns += 1
+        if (turns === 1) {
+          session.append('turn/start', { turn: turns })
+          session.append('user/message', message, { surfaceOp: 'append' })
+          started.resolve(undefined)
+          await release.promise
+          session.append('turn/end', { turn: turns, reason: { kind: 'aborted', reason: { kind: 'user' } } })
+        } else appendTurn(session, turns, message, 'continued', true)
+      },
+    }, { onCancel: () => { release.resolve(undefined) } })
+    const runner = test.runner()
+    const task = runner.run({ task: 'interrupt me' })
+    try {
+      await started.promise
+      expect(runner.cancel()).toBe(true)
+      const interrupted = await task
+      expect(interrupted.code).toBe(130)
+      const continued = await runner.run({ task: 'continue' })
+      expect(continued).toEqual({ code: 0, sessionId: interrupted.sessionId })
+      expect(test.output().order).toEqual(['flush', 'flush'])
+      expect(test.output().out).toBe('\ncontinued\n')
+    } finally {
+      release.resolve(undefined)
+      await task
+      await test.ctx.fiber.dispose()
+    }
+  })
+
+  it('observes committed output without leaking plain answer or live reasoning', async () => {
+    const events: RunEvent[] = []
+    const test = await bench({
+      afterPrompt(session, message, agent) {
+        startFrames(agent)
+        emitChunk(agent, { type: 'reasoning-delta', index: 0, text: 'uncommitted reasoning' })
+        appendTurn(session, 1, message, 'committed answer', true)
+      },
+    })
+    try {
+      const runner = test.runner({ onEvent: (event) => { events.push(event) } })
+      expect(await runner.run({ task: 'hello' })).toMatchObject({ code: 0 })
+      expect(events.map(event => event.type)).toEqual(['session', 'status', 'status', 'text', 'status', 'status', 'final'])
+      expect(events.at(-1)).toEqual({ type: 'final', text: 'committed answer' })
+      expect(test.output()).toEqual({ out: '', err: '', order: ['flush'] })
+    } finally { await test.ctx.fiber.dispose() }
+  })
+
+  it('honors cancellation from the opening observation before submitting a task', async () => {
+    const prompt = vi.fn()
+    const test = await bench({ afterPrompt: prompt })
+    try {
+      const runner = test.runner({ onEvent: (event) => { if (event.type === 'session') runner.cancel() } })
+      expect(await runner.run({ task: 'do not submit' })).toMatchObject({ code: 130 })
+      expect(prompt).not.toHaveBeenCalled()
+      expect(test.output()).toEqual({ out: '', err: '', order: ['flush'] })
+    } finally { await test.ctx.fiber.dispose() }
+  })
+
+  it('disposes a resumed handle when the acquired log no longer permits adoption', async () => {
+    const disposed: SessionId[] = []
+    const prompt = vi.fn()
+    const test = await bench({ afterPrompt: prompt }, {
+      sessionId: 'session-exact',
+      observe: async () => ({ header: { cwd: process.cwd() }, events: [], [Symbol.dispose]() {} }),
+      onResume: (agent) => { selectPreset(agent.session, 'later-preset') },
+      onDispose: (agent) => { disposed.push(agent.id) },
+    })
+    const identity = brandString<SessionId>('session-exact')
+    test.ctx.sessions.create(identity, { meta: { cwd: process.cwd() } })
+    try {
+      const result = await test.run()
+      expect(result.code).toBe(1)
+      expect(result.out).toBe('')
+      expect(result.err).toContain('later-preset')
+      expect(disposed).toEqual([identity])
+      expect(test.ctx.agents.get(identity)).toBeUndefined()
+      expect(prompt).not.toHaveBeenCalled()
+    } finally { await test.ctx.fiber.dispose() }
+  })
+
+  it('uses an invocation model without changing the saved default', async () => {
+    const test = await bench({
+      afterPrompt(session, message, agent) {
+        expect(agent.options).toEqual({ provider: 'other-provider', model: 'other-model' })
+        expect(test.ctx.agentDefaultModel.currentSelection()).toEqual({ provider: 'test-provider', model: 'test-model' })
+        appendTurn(session, 1, message, 'selected answer', true)
+      },
+    }, { modelSelection: { provider: 'other-provider', model: 'other-model', reasoningEffort: 'high' } })
+    try { expect(await test.run()).toMatchObject({ code: 0, out: 'selected answer\n' }) }
+    finally { await test.ctx.fiber.dispose() }
+  })
+
+  it.each([
+    { provider: 'other-provider' }, { model: '' }, { reasoningEffort: ' ' },
+  ])('rejects an unusable configured model selection %j', async (modelSelection) => {
+    const test = await bench({ afterPrompt() { throw new Error('must not run') } }, { modelSelection })
+    try {
+      const result = await test.run()
+      expect(result.code).toBe(1)
+      expect(result.err).toContain('modelSelection')
+    }
+    finally { await test.ctx.fiber.dispose() }
+  })
+
   it('records a fresh Session in the filesystem provider working directory', async () => {
     const cwd = '/remote/workspace'
     const test = await bench({
@@ -1115,10 +1347,10 @@ describe('headless runner', () => {
   })
 
   it('validates config: the task and run options are optional, and images defaults to empty', () => {
-    expect(new Config({})).toEqual({ images: [] })
+    expect(new Config({})).toEqual({ images: [], modelSelection: {} })
     expect(new Config({ task: 'x', sessionId: 'session-x', json: true }))
-      .toEqual({ task: 'x', sessionId: 'session-x', json: true, images: [] })
-    expect(new Config({ images: ['a.png', 'b.png'] })).toEqual({ images: ['a.png', 'b.png'] })
+      .toEqual({ task: 'x', sessionId: 'session-x', json: true, images: [], modelSelection: {} })
+    expect(new Config({ images: ['a.png', 'b.png'] })).toEqual({ images: ['a.png', 'b.png'], modelSelection: {} })
   })
 
   describe('--image', () => {

@@ -584,7 +584,7 @@ async function collectScenarios(): Promise<HeadlessScenario[]> {
     const manifestPath = join(dir, 'snapshot.yml')
     if (!existsSync(manifestPath)) continue
     const manifest = parseSnapshotManifest(await readFile(manifestPath, 'utf8'), manifestPath)
-    if (manifest.profile !== 'headless' || manifest.composition === undefined) continue
+    if (!['headless', 'portal'].includes(manifest.profile) || manifest.composition === undefined) continue
     if (manifest.recording === undefined || manifest.header === undefined) {
       throw new Error(`${entry.name}: a headless corpus manifest needs recording and header metadata`)
     }
@@ -1188,7 +1188,7 @@ describe('headless recorded-session snapshots', () => {
       || mode === 'record' && scenario.manifest.sessionFormat !== undefined
     const scenarioTest = skipped ? it.skip : mode === 'replay' ? it.concurrent : it
     const inputLabel = retainedToolInput === undefined ? '' : ' from retained V3 input'
-    scenarioTest(`${mode}s ${scenario.name}${inputLabel} through dsh --profile headless`, async () => {
+    scenarioTest(`${mode}s ${scenario.name}${inputLabel} through dsh --profile ${scenario.manifest.profile}`, async () => {
       let fixtureFiles = retainedToolInput === undefined
         ? sessionFixtureNames(await readdir(scenario.dir)) : [retainedToolInput]
       let fixtures = await fixtureSessions(scenario, fixtureFiles)
@@ -1240,7 +1240,7 @@ describe('headless recorded-session snapshots', () => {
           sourceImport: 'tsx/esm',
           configPath: join(baseComposition.dir, 'cordis.yml'),
           binArgs: [
-            '--profile', 'headless',
+            '--profile', scenario.manifest.profile,
             ...patches.flatMap(file => ['--patch', file]),
             ...taskImages.paths.flatMap(path => ['--image', path]),
             task,
@@ -1279,7 +1279,7 @@ describe('headless recorded-session snapshots', () => {
             await mkdir(join(cwd, patchRoot), { recursive: true })
             patchSources.forEach((source, index) => {
               if (source.endsWith('.snapshot.yml')) {
-                materializeProfilePatch(source, cwd, 'headless', join(cwd, patchRoot), index)
+                materializeProfilePatch(source, cwd, scenario.manifest.profile, join(cwd, patchRoot), index)
               }
             })
             if (mcpDemo !== undefined) {
