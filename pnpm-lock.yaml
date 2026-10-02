@@ -9886,20 +9886,20 @@ importers:
   packages/llm/usage-cost:
     dependencies:
       '@deepseek-ai/dsh-token-meter':
-        specifier: workspace:^
+        specifier: workspace:*
         version: link:../token-meter
       zod:
         specifier: ^4.4.3
         version: 4.4.3
     devDependencies:
       '@deepseek-ai/cordis':
-        specifier: workspace:^
+        specifier: workspace:~
         version: link:../../../vendor/cordis
       '@deepseek-ai/dsh-session':
-        specifier: workspace:^
+        specifier: workspace:*
         version: link:../../core/session
       '@deepseek-ai/dsh-session-projection':
-        specifier: workspace:^
+        specifier: workspace:*
         version: link:../../session/session-projection
 
   packages/lsp/lsp:
