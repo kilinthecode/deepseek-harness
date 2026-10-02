@@ -1,7 +1,6 @@
 /** The `--json` run projection: commit-point emission, ordering, bounding, and disposal. */
 
 import { describe, expect, it } from 'vitest'
-import type { Context } from '@deepseek-ai/cordis'
 import type { Agent } from '@deepseek-ai/dsh-agent'
 import type { Session, SessionEvent } from '@deepseek-ai/dsh-session'
 import { boundJsonLine, MAX_STRING_BYTES, projectJsonRun, type JsonProjectionOptions, type RunEvent } from '../src/json-stream.ts'
@@ -80,7 +79,7 @@ function harness(
       if (name === 'session/event') sessionListeners.add(handler as never)
       return () => { sessionListeners.delete(handler as never) }
     },
-  } as unknown as Context
+  } as never
   const session = {} as Session
   const agent = { id: agentId, session } as unknown as Agent
   const projection = projectJsonRun(ctx, agent, {

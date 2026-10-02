@@ -100,6 +100,9 @@ const GENERIC_SKIPS: readonly GenericSkip[] = [
   { file: 'packages/preset/agent-preset-registry/tests/session.spec.ts', upstream: ['cordis'] },
   // The preset-roster loop names the `cordis` preset id, not a package.
   { file: 'apps/cli/tests/windows-shell.spec.ts', upstream: ['cordis'] },
+  // The shipped Web preset roster names the `cordis` preset file stem, not the
+  // package that preset happens to mount.
+  { file: 'packages/compaction/compaction-basic/tests/loader-composition.spec.ts', upstream: ['cordis'] },
   // The durable-memory guide tells a reader which agent presets mount the
   // tools, so its `cordis` is the preset id a user selects, not a package.
   { file: 'docs/user/guide/memory.md', upstream: ['cordis'] },

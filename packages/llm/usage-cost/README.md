@@ -67,6 +67,8 @@ The rollup is a pure function over `UsageIndexRecord` values: projection-cache r
 | `src/rollup.ts` | Rate-table validation, bucket pricing, and the window rollup. |
 | `src/types.ts` | Durable record shape and priced result types. |
 
+No runtime invariant companion is published because the package is a pure pricing function over records a caller already loaded: it registers no service, owns no cache, and never opens a session log, so there is no runtime state a companion could assert.
+
 </details>
 
 -----
