@@ -30,12 +30,12 @@
 }
 
 :global(body[data-ds-dark-theme]) .boot {
-  --dsh-boot-label-primary: #f9fafb;
-  --dsh-boot-label-secondary: #cfd3d6;
-  --dsh-boot-label-tertiary: #adb2b8;
+  --dsh-boot-label-primary: #ffffff;
+  --dsh-boot-label-secondary: #e1e5ee;
+  --dsh-boot-label-tertiary: #cfd3d6;
   --dsh-boot-label-inverted: #0f1115;
   --dsh-boot-border: rgb(255 255 255 / 12%);
-  --dsh-boot-brand: #f9fafb;
+  --dsh-boot-brand: #ffffff;
 }
 
 /* Positioning context for the status block, which hangs below the brand so
