@@ -1,0 +1,22 @@
+# Bilingual-pair consistency record for 2026-10-01-fresh-instruction-prefix.md (docs/i18n/README.md): per heading
+# section, a hash of its English and Chinese blocks outside code blocks and generated regions.
+# After editing either side, bring the other along and re-record with:
+#   pnpm run verify-translation-pairing --write .agents/notes/implemented/feature/2026-10-01-fresh-instruction-prefix.md
+/agent-note-stable-instruction-prefix-for-fresh-conversations:
+  en: 0cf819f17b69a540
+  zh: 11ee1f5d24d1de30
+/agent-note-stable-instruction-prefix-for-fresh-conversations/problem:
+  en: eeff6178d88131c0
+  zh: d970ca0011097676
+/agent-note-stable-instruction-prefix-for-fresh-conversations/decision:
+  en: a7a71638fa919a37
+  zh: 3a0aa3c0976e22cd
+/agent-note-stable-instruction-prefix-for-fresh-conversations/alternatives-considered:
+  en: 0eaee672d3a4a005
+  zh: 0d64f21f1260ea2a
+/agent-note-stable-instruction-prefix-for-fresh-conversations/consequences:
+  en: c5d909574f36adea
+  zh: 85fb417da9989e91
+/agent-note-stable-instruction-prefix-for-fresh-conversations/verification:
+  en: 1aa7558e31c230c8
+  zh: 98e8221329d2f8e9

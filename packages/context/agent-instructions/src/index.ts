@@ -66,6 +66,18 @@ function isAgentInstructionsMessage(message: UserMessage): boolean {
   return message.source.kind === 'agent-instructions'
 }
 
+function isBaselineInstructionMessage(message: UserMessage): boolean {
+  return message.source.kind === 'agent-instructions' && message.source.baseline === true
+}
+
+function isFreshConversation(session: Session): boolean {
+  // Inherited messages remain nodes, and compaction records a content generation.
+  // Inbox and turn lifecycle events do not establish model-visible admission.
+  return session.requestHeader() === undefined
+    && session.surface.nodes.length === 0
+    && session.surface.contentGeneration === 0
+}
+
 function sameContextPayload(left: UserMessage, right: UserMessage): boolean {
   return isDeepStrictEqual(left.content, right.content)
     && isDeepStrictEqual(left.source, right.source)
@@ -330,13 +342,18 @@ export function apply(ctx: Context, config: Config): void {
     // A proceeding step settles the pending context: it either enters below as
     // `desired`, or its payload is already covered by the batch, so nothing stays pending.
     for (const message of pending) agent.inbox.remove(message.id)
-    if (desired === undefined || decision.messages.some(message => sameContextPayload(message, desired))) {
-      return decision
+    let entered = decision.messages
+    if (desired !== undefined && !entered.some(message => sameContextPayload(message, desired))) {
+      const lastClaimedIndex = entered.findLastIndex(message => messages.includes(message))
+      entered = entered.toSpliced(lastClaimedIndex + 1, 0, desired)
     }
-    // Fold the context right after the claimed batch, so the direct prompt
-    // precedes it and the driver-appended runtime context follows it.
-    const lastClaimedIndex = decision.messages.findLastIndex(message => messages.includes(message))
-    const entered = decision.messages.toSpliced(lastClaimedIndex + 1, 0, desired)
+    if (isFreshConversation(agent.session)) {
+      const baselines = entered.filter(isBaselineInstructionMessage)
+      if (baselines.length > 0) {
+        entered = [...baselines, ...entered.filter(message => !isBaselineInstructionMessage(message))]
+      }
+    }
+    if (entered === decision.messages) return decision
     return { ...decision, messages: entered }
   })
 

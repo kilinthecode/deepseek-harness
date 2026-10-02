@@ -1,0 +1,6 @@
+# Trial a smaller omitted-limit read window; retain only after measuring complete tasks.
+- id: tool-fs
+  name: '@deepseek-ai/dsh-tool-fs'
+  config:
+    readDefaultLimit: 500
+    readLimit: 2000

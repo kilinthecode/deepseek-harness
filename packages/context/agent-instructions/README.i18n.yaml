@@ -36,14 +36,14 @@
   en: 737fdf08415bc08d
   zh: 625d53b1418ab6bb
 /deepseek-ai-dsh-agent-instructions/understand-the-implementation/main-flow:
-  en: d881b9055f823929
-  zh: 87b25f0bf8e204e9
+  en: 6280e376d62dba15
+  zh: ee9248eb7d378da4
 /deepseek-ai-dsh-agent-instructions/understand-the-implementation/invariants:
   en: 7f6e9b5356da91fd
   zh: 7b99f255d23d982e
 /deepseek-ai-dsh-agent-instructions/further-exploration:
-  en: b3e57c263575fa5f
-  zh: b67efbda908ac82c
+  en: db4f58a516e015d7
+  zh: 9703e09f963aa3ee
 /deepseek-ai-dsh-agent-instructions/model-experience:
   en: 215e7ba838619b7b
   zh: a311da3843709f90
@@ -51,8 +51,8 @@
   en: 41690f63ce8a7e6a
   zh: 6cff922d5afef38f
 /deepseek-ai-dsh-agent-instructions/model-experience/baseline-context/what-the-model-sees:
-  en: 41ad1efcf640edf2
-  zh: 3d06e265788fc2b7
+  en: 81d9878f44bfab3c
+  zh: 05bca6205fad2116
 /deepseek-ai-dsh-agent-instructions/model-experience/baseline-context/what-the-model-sees/baseline-instruction-template:
   en: 0ced1c177da6d120
   zh: 6c61efb987e227fe
@@ -60,8 +60,8 @@
   en: e7c0cc34065a1113
   zh: a973ba9fac7a918d
 /deepseek-ai-dsh-agent-instructions/model-experience/baseline-context/kv-cache-effect:
-  en: c611902b9f369d86
-  zh: d7da1dbe6c1ac7f1
+  en: 8ca13c399f8777b9
+  zh: 3307863e3be6c970
 /deepseek-ai-dsh-agent-instructions/model-experience/newly-discovered-scope-context:
   en: bbf8f11dbb279b78
   zh: eb537ade3fa1e573
