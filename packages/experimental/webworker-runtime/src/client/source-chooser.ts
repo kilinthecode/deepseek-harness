@@ -138,12 +138,12 @@ const CHOOSER_STYLE = `
   [data-preview-source-submit]:disabled { cursor: not-allowed; opacity: 0.5; }
   @media (prefers-color-scheme: dark) {
     [data-preview-source-chooser] {
-      color: #f9fafb;
-      background: #151517;
+      color: #ffffff;
+      background: #000000;
     }
     [data-preview-source-card] { border-color: rgb(255 255 255 / 6%); background: #2c2c2e; }
-    [data-preview-source-card] > p, [data-preview-source-card] legend { color: #cfd3d6; }
-    [data-preview-source-option] strong + span { color: #adb2b8; }
+    [data-preview-source-card] > p, [data-preview-source-card] legend { color: #e1e5ee; }
+    [data-preview-source-option] strong + span { color: #cfd3d6; }
     [data-preview-source-option]:hover:not(:has(input:disabled)),
     [data-preview-source-option]:has(input:checked) { background: rgb(255 255 255 / 8%); }
     [data-preview-source-option]:has(input:checked) { border-color: rgb(255 255 255 / 12%); }
