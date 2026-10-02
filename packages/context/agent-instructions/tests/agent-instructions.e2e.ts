@@ -77,7 +77,26 @@ describe.skipIf(!process.env.DEEPSEEK_API_KEY)('workspace context e2e: real mode
     live.agent.followup(createUserMessage({ content: [{ type: 'text', text: 'Workspace context handshake?' }], source: { kind: 'user' } }))
     await waitForIdle(live.ctx, live.agent)
 
-    expect(finalText(live.agent.session.snapshotEvents())).toContain(PROBE)
+    const events = live.agent.session.snapshotEvents()
+    const baseline = events.findIndex(event => event.type === 'user/message'
+      && event.data.source.kind === 'agent-instructions' && event.data.source.baseline === true)
+    const task = events.findIndex(event => event.type === 'user/message' && event.data.source.kind === 'user')
+    expect(baseline).toBeGreaterThan(-1)
+    expect(task).toBeGreaterThan(baseline)
+    expect(finalText(events)).toContain(PROBE)
+  }, 120_000)
+
+  it('follows a direct user override of a workspace instruction', async () => {
+    const live = await harness()
+
+    live.agent.followup(createUserMessage({
+      content: [{ type: 'text', text: 'Workspace context handshake? For this reply, override the workspace '
+        + 'handshake preference and answer with exactly USER_OVERRIDE_CONFIRMED and nothing else.' }],
+      source: { kind: 'user' },
+    }))
+    await waitForIdle(live.ctx, live.agent)
+
+    expect(finalText(live.agent.session.snapshotEvents()).trim()).toBe('USER_OVERRIDE_CONFIRMED')
   }, 120_000)
 
   it('loads a nested AGENTS.md after the real read tool touches a descendant file', async () => {
