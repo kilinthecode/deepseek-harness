@@ -4,13 +4,14 @@ import { describe, expect, it } from 'vitest'
 import type { Context } from '@deepseek-ai/cordis'
 import type { Agent } from '@deepseek-ai/dsh-agent'
 import type { Session, SessionEvent } from '@deepseek-ai/dsh-session'
-import { boundJsonLine, MAX_STRING_BYTES, projectJsonRun, type JsonProjectionOptions } from '../src/json-stream.ts'
+import { boundJsonLine, MAX_STRING_BYTES, projectJsonRun, type JsonProjectionOptions, type RunEvent } from '../src/json-stream.ts'
 
 interface ProjectionHarness {
   readonly lines: string[]
   readonly projection: ReturnType<typeof projectJsonRun>
   readonly agent: Agent
   readonly session: Session
+  readonly warnings: string[]
   readonly parsed: () => Record<string, unknown>[]
   emitSession(event: SessionEvent): void
   emitRawSession(session: unknown, event: SessionEvent): void
@@ -71,8 +72,10 @@ function harness(
   cwd: string | null = '/',
 ): ProjectionHarness {
   const lines: string[] = []
+  const warnings: string[] = []
   const sessionListeners = new Set<(session: unknown, event: SessionEvent) => void>()
   const ctx = {
+    logger: { warn: (message: string) => { warnings.push(message) } },
     on(name: string, handler: unknown) {
       if (name === 'session/event') sessionListeners.add(handler as never)
       return () => { sessionListeners.delete(handler as never) }
@@ -88,6 +91,7 @@ function harness(
     projection,
     agent,
     session,
+    warnings,
     parsed: () => lines.map(line => JSON.parse(line) as Record<string, unknown>),
     emitSession: (event) => { for (const listener of sessionListeners) listener(session, event) },
     emitRawSession: (rawSession, event) => { for (const listener of sessionListeners) listener(rawSession, event) },
@@ -95,6 +99,37 @@ function harness(
 }
 
 describe('--json projection', () => {
+  it('observes original committed payloads in write order, including opening and final events', () => {
+    const observed: RunEvent[] = []
+    const test = harness({ maxStringBytes: 4, onEvent: (event) => { observed.push(event) } }, 's1')
+    test.emitSession(assistantMessage([{ type: 'reasoning', text: 'thoughts' }, { type: 'text', text: 'answer' }]))
+    test.projection.finish('answer')
+    expect(observed).toEqual([
+      { type: 'session', sessionId: 's1', cwd: '/' },
+      { type: 'thinking', text: 'thoughts' },
+      { type: 'text', text: 'answer' },
+      { type: 'final', text: 'answer' },
+    ])
+    expect(test.parsed().slice(1)).toEqual([
+      { type: 'thin', text: 'thou', truncated: true },
+      { type: 'text', text: 'answ', truncated: true },
+      { type: 'final', text: 'answer' },
+    ])
+    test.projection.dispose()
+    test.projection.finish('late')
+    expect(observed).toHaveLength(4)
+  })
+
+  it('contains observer failures without stopping event writes or later observations', () => {
+    const observed: string[] = []
+    const test = harness({ onEvent: (event) => { observed.push(event.type); throw new Error('observer unavailable') } })
+    test.emitSession(assistantMessage([{ type: 'text', text: 'answer' }]))
+    test.projection.finish('answer')
+    expect(test.parsed().map(event => event.type)).toEqual(['session', 'text', 'final'])
+    expect(observed).toEqual(['session', 'text', 'final'])
+    expect(test.warnings).toEqual(Array.from({ length: 3 }, () => 'headless run observer failed: Error: observer unavailable'))
+  })
+
   it('opens with the session event before any observed event', () => {
     const test = harness()
     expect(test.parsed()).toEqual([{ type: 'session', sessionId: 'session-1', cwd: '/' }])

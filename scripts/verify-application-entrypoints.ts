@@ -21,17 +21,19 @@ interface RootManifest {
 interface LauncherPolicy {
   readonly kind: 'dsh-direct' | 'dsh-wrapper'
   readonly wrapper?: string
+  readonly entry?: string
 }
 
-/** Public product launcher plus the build-only WebWorker packer. */
+/** Public product launcher (with its `portal` profile alias) plus the build-only WebWorker packer. */
 const MANIFEST_BIN_ALLOWLIST = new Map<string, ManifestBin>([
-  ['apps/cli/package.json', { dsh: 'lib/bin.js' }],
+  ['apps/cli/package.json', { dsh: 'lib/bin.js', portal: 'lib/bin-portal.js' }],
   ['packages/experimental/webworker-packer/package.json', { 'dsh-pack-vfs-image': './bin.js' }],
 ])
 
 /** Every JavaScript executable in an application or packaging workspace has one explicit role. */
 const EXECUTABLE_SOURCE_ALLOWLIST = new Map<string, string>([
   ['apps/cli/src/bin.ts', 'supported dsh application launcher'],
+  ['apps/cli/src/bin-portal.ts', 'supported dsh application launcher'],
   ['apps/desktop/scripts/logged-notarytool.mjs', 'build-only notarization logging wrapper'],
   ['packages/context/time-context/tests/fixtures/driver.ts', 'test-only subprocess driver'],
   ['packages/experimental/webworker-packer/bin.js', 'build-only wrapper'],
@@ -54,6 +56,7 @@ const EXECUTABLE_SOURCE_ALLOWLIST = new Map<string, string>([
  * by name.
  */
 const ROOT_LAUNCHER_POLICIES = new Map<string, LauncherPolicy>([
+  ['portal', { kind: 'dsh-direct', entry: 'apps/cli/src/bin-portal.ts' }],
   ['demo:ptc', { kind: 'dsh-wrapper', wrapper: 'scripts/demo-ptc.mjs' }],
   ['demo:inspector', { kind: 'dsh-direct' }],
   ['start:web', { kind: 'dsh-direct' }],
@@ -152,7 +155,8 @@ function rootLauncherViolations(root: string): string[] {
     }
     const command = typeof commandValue === 'string' ? commandValue : ''
     if (policy.kind === 'dsh-direct') {
-      if (!referencesDshCli(command)) failures.push(`package.json scripts.${name}: application launcher script must launch apps/cli/src/bin.ts`)
+      const entry = policy.entry ?? 'apps/cli/src/bin.ts'
+      if (!command.includes(entry)) failures.push(`package.json scripts.${name}: application launcher script must launch ${entry}`)
       if (referencesPackageEntry(command)) failures.push(`package.json scripts.${name}: application launcher script must not launch a package entry directly`)
       continue
     }

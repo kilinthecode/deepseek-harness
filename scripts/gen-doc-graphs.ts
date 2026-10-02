@@ -108,6 +108,14 @@ const GROUP_ORDER = [
 
 const SERVICE_ROLES: ServiceRole[] = [
   {
+    key: 'portalStartup',
+    pkg: 'portal-app',
+    title: 'Portal terminal invocation',
+    mode: 'core',
+    consumers: ['portal-app'],
+    note: 'Publishes parsed task, discovery, and terminal options to the Portal profile runner.',
+  },
+  {
     key: 'hmr',
     pkg: 'hmr',
     title: 'Serialized module and configuration reloads',
@@ -990,7 +998,7 @@ const APP_EXAMPLES = [
     title: 'DSH Base Composition',
     label: 'packages/bundle/base/cordis.patch.yml',
     config: 'packages/bundle/base/cordis.patch.yml',
-    summary: 'The dsh-base bundle patch shared by the web, headless, sdk, and acp profiles; their mode bundles and user layers patch over it, while sdk-minimal owns a separate standalone tree.',
+    summary: 'The dsh-base bundle patch shared by the web, headless, portal, sdk, and acp profiles; their mode bundles and user layers patch over it, while sdk-minimal owns a separate standalone tree.',
   },
 ]
 

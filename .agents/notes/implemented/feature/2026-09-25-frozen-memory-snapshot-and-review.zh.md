@@ -34,7 +34,7 @@ Status: implemented
 
 ### Why not prepend the snapshot before the claimed user message?
 
-`agent-instructions` 写明认领的用户消息在前。time-context 已经追加每会话第一步消息，因此前置并不能换来稳定的跨会话前缀。前置还会让攻击者植入的用户角色记忆排在人类轮次之前。
+[新对话指令前缀](2026-10-01-fresh-instruction-prefix.zh.md)仅将完整工作区基线移到尚未接纳的初始任务之前，不改变记忆的位置。time-context 已经追加每会话第一步消息，因此前置记忆并不能换来稳定的跨会话前缀。前置还会让攻击者植入的用户角色记忆排在人类轮次之前。
 
 ### Why not group snapshots under Global and Project headers?
 

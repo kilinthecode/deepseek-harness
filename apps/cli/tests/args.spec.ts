@@ -1,22 +1,32 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { parseDshArgs } from '../src/args.ts'
+import { parseDshArgs, type LauncherName } from '../src/args.ts'
 
-const parse = (argv: string[]) => parseDshArgs(argv, '1.2.3')
+const parse = (argv: string[], launcherName?: LauncherName) => parseDshArgs(argv, '1.2.3', launcherName)
 
-/** Capture the process exit code while muting Commander's output. */
-function exitCode(argv: string[]): number {
+/** What one exiting invocation produced. */
+interface Exited {
+  code: number
+  out: string
+}
+
+/** Capture the process exit code and the muted Commander output. */
+function runExit(argv: string[], launcherName?: LauncherName): Exited {
   const exit = vi.spyOn(process, 'exit').mockImplementation(() => { throw new Error('exit') })
-  vi.spyOn(process.stdout, 'write').mockReturnValue(true)
-  vi.spyOn(process.stderr, 'write').mockReturnValue(true)
+  let out = ''
+  const collect = (chunk: unknown): boolean => { out += String(chunk); return true }
+  vi.spyOn(process.stdout, 'write').mockImplementation(collect)
+  vi.spyOn(process.stderr, 'write').mockImplementation(collect)
   try {
-    parse(argv)
+    parse(argv, launcherName)
     throw new Error(`expected ${JSON.stringify(argv)} to exit`)
   } catch {
-    return exit.mock.calls.at(-1)?.[0] as number
+    return { code: exit.mock.calls.at(-1)?.[0] as number, out }
   } finally {
     vi.restoreAllMocks()
   }
 }
+
+const exitCode = (argv: string[], launcherName?: LauncherName): number => runExit(argv, launcherName).code
 
 afterEach(() => { vi.restoreAllMocks() })
 
@@ -220,5 +230,47 @@ describe('parseDshArgs', () => {
     expect(stdout.mock.calls.map(([chunk]) => String(chunk)).join('')).not.toContain('help [command]')
     expect(exitCode(['-h'])).toBe(0)
     expect(exitCode(['--version'])).toBe(0)
+  })
+})
+
+describe('parseDshArgs under the portal entry', () => {
+  it('boots the portal profile and hands every argument to the app', () => {
+    expect(parse([], 'portal')).toEqual({ mode: 'profile', profile: 'portal', patches: [], args: [] })
+    expect(parse(['run', 'the', 'tests'], 'portal'))
+      .toEqual({ mode: 'profile', profile: 'portal', patches: [], args: ['run', 'the', 'tests'] })
+    expect(parse(['--session-id', 'session-x', 'go'], 'portal'))
+      .toEqual({ mode: 'profile', profile: 'portal', patches: [], args: ['--session-id', 'session-x', 'go'] })
+    // The app owns -h on this entry, exactly as it does after `dsh --profile portal`.
+    expect(parse(['--help'], 'portal')).toEqual({ mode: 'profile', profile: 'portal', patches: [], args: ['--help'] })
+  })
+
+  it('keeps launcher-owned flags and config dumps on the portal profile', () => {
+    expect(parse(['--patch', 'a.yml', 'go'], 'portal'))
+      .toEqual({ mode: 'profile', profile: 'portal', patches: ['a.yml'], args: ['go'] })
+    expect(parse(['--dump-config'], 'portal'))
+      .toEqual({ mode: 'dump-config', profile: 'portal', defaultOnly: false, patches: [] })
+  })
+
+  it('accepts an existing model profile only for Portal runs', () => {
+    expect(parse(['--models-from', 'desktop', 'models', '--json'], 'portal'))
+      .toEqual({ mode: 'profile', profile: 'portal', patches: [], modelsFrom: 'desktop', args: ['models', '--json'] })
+    expect(parse(['portal', '--models-from', 'web', 'task']))
+      .toMatchObject({ mode: 'profile', profile: 'portal', modelsFrom: 'web', args: ['task'] })
+    expect(exitCode(['--models-from=', 'task'], 'portal')).toBe(1)
+    expect(exitCode(['--models-from', 'desktop', '--dump-config'], 'portal')).toBe(1)
+    expect(exitCode(['web', '--models-from', 'desktop'])).toBe(1)
+  })
+
+  it('refuses to select another profile from the portal entry', () => {
+    const { code, out } = runExit(['--profile', 'web'], 'portal')
+    expect(code).toBe(1)
+    expect(out).toContain('use dsh --profile <name> to boot another profile')
+  })
+
+  it('keeps plugin management on its explicit profile', () => {
+    expect(parse(['plugin', '--profile', 'portal', 'add', 'x'], 'portal'))
+      .toEqual({ mode: 'plugin', profile: 'portal', args: ['add', 'x'] })
+    expect(exitCode(['plugin', 'add', 'x'], 'portal')).toBe(1)
+    expect(exitCode(['plugin', '--profile', 'desktop', 'add', 'x'], 'portal')).toBe(1)
   })
 })

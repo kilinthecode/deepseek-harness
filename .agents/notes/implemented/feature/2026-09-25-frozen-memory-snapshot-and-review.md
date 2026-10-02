@@ -34,7 +34,7 @@ A turn-start compare against the last injected text would pick up this process's
 
 ### Why not prepend the snapshot before the claimed user message?
 
-`agent-instructions` documents claimed-first. Time-context already appends a per-session first-step message, so prepend would not buy a stable cross-session prefix. Prepend would also put attacker-planted user-role memory before the human turn.
+The [fresh instruction prefix](2026-10-01-fresh-instruction-prefix.md) moves only complete workspace baselines before an unadmitted initial task; it does not change memory placement. Time-context already appends a per-session first-step message, so prepending memory would not buy a stable cross-session prefix. Prepend would also put attacker-planted user-role memory before the human turn.
 
 ### Why not group snapshots under Global and Project headers?
 

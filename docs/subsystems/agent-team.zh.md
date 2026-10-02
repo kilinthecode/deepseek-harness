@@ -369,8 +369,8 @@ roomView(caller: Agent): RoomView
  * Follow one room through the generated Remote API.
  * @param agent - exact live Team member used as the authority credential.
  * @param signal - cancellation owned by the Remote stream carrier.
- * @returns a complete view first, then a view after every committed transcript,
- *   roster, or decision change and a frame for every text chunk a participant streams.
+ * @returns a complete view first, then a view after every committed room
+ *   change and a frame for every text chunk a participant streams.
  */
 @Remote({ mode: 'stream' }) async *roomStream(agent: Agent, signal: AbortSignal): AsyncIterable<RoomFollowFrame>
 
@@ -434,13 +434,13 @@ Source: [`packages/experimental/agent-team/src/room.ts`](../../packages/experime
 
 #### `room/updated` — emit
 
-A room's transcript, roster, or decision board changed in its Lead log. A live reader re-reads the room after the commit, and the durable record is the appended event.
+One room committed a change to its own log: a transcript entry, a decision, a revision, a review, or a deadline record. A live reader re-reads the room after it, and the durable record is the appended event.
 
 ```ts cordis-catalog
 /**
- * A room's transcript, roster, or decision board changed in its Lead log.
- * A live reader re-reads the room after the commit, and the durable record
- * is the appended event.
+ * One room committed a change to its own log: a transcript entry, a
+ * decision, a revision, a review, or a deadline record. A live reader
+ * re-reads the room after it, and the durable record is the appended event.
  * @param payload.teamId - Team identity of the room that changed.
  * @mode emit
  */

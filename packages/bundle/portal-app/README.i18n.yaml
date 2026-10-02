@@ -1,0 +1,49 @@
+# Bilingual-pair consistency record for README.md (docs/i18n/README.md): per heading
+# section, a hash of its English and Chinese blocks outside code blocks and generated regions.
+# After editing either side, bring the other along and re-record with:
+#   pnpm run verify-translation-pairing --write packages/bundle/portal-app/README.md
+/:
+  en: 431c8de6e71c7404
+  zh: e99aa68b600efe1f
+/deepseek-ai-dsh-portal-app:
+  en: fb0ea9a855cd2cf8
+  zh: f4e63c518b7d915a
+/deepseek-ai-dsh-portal-app/summary:
+  en: d59a2e2bed6569f2
+  zh: f4fe546daa64afb6
+/deepseek-ai-dsh-portal-app/table-of-contents:
+  en: d152484eb41ac6b4
+  zh: 09388d293f9be9cb
+/deepseek-ai-dsh-portal-app/use-this-package:
+  en: bbff250eba0f1b89
+  zh: 0a618f05cc88ee2b
+/deepseek-ai-dsh-portal-app/use-this-package/open-portal:
+  en: 21a138396f55c14c
+  zh: 8fb41f1a6e5657a3
+/deepseek-ai-dsh-portal-app/use-this-package/terminal-controls:
+  en: 7cd87d9c93c65d20
+  zh: 2b4d28516441d4ca
+/deepseek-ai-dsh-portal-app/use-this-package/reuse-the-desktop-or-web-models:
+  en: 097a15fe202c30bf
+  zh: afe4a634ce686797
+/deepseek-ai-dsh-portal-app/use-this-package/run-a-task-in-the-background:
+  en: f9c248085ec5dac0
+  zh: 56620101e66a5cfc
+/deepseek-ai-dsh-portal-app/understand-the-implementation:
+  en: 7d8b2a39e6bcf51e
+  zh: ccd67ab493ad35d9
+/deepseek-ai-dsh-portal-app/further-exploration:
+  en: 96be9500fe748f9a
+  zh: 66a0aaddceb4a8c2
+/deepseek-ai-dsh-portal-app/model-experience:
+  en: e063f381df1ab6c7
+  zh: 06b756a6df113c38
+/deepseek-ai-dsh-portal-app/model-experience/kv-cache-effect:
+  en: 1c74bf3bdb190a51
+  zh: 9661dde7adaae661
+/deepseek-ai-dsh-portal-app/known-limitations-and-deferred-work:
+  en: fd77d4fccccb6661
+  zh: 8224c4c6390dc398
+/deepseek-ai-dsh-portal-app/known-limitations-and-deferred-work/dev-note:
+  en: e67f633dc6fe7773
+  zh: 8ec3e73528ddb1a6

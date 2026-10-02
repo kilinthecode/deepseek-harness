@@ -1,0 +1,26 @@
+# Portal's terminal application over dsh-base. The startup provider parses
+# interactive, one-shot, and model discovery commands. The runner consumes
+# its parsed task, Session, and per-invocation model selection.
+
+- insert:
+    - id: portal-startup
+      name: '@deepseek-ai/dsh-portal-app'
+
+    # Reads its task and run options from the ordinary portalStartup provider.
+    - id: portal-runner
+      name: '@deepseek-ai/dsh-portal-app/runner'
+      inject: [portalStartup]
+      config:
+        interactive: !!js ctx.portalStartup.interactive
+        discovery: !!js ctx.portalStartup.discovery
+        task: !!js ctx.portalStartup.task
+        sessionId: !!js ctx.portalStartup.sessionId
+        json: !!js ctx.portalStartup.json
+        images: !!js ctx.portalStartup.images
+        modelSelection: !!js ctx.portalStartup.modelSelection
+
+- id: hmr
+  disabled: true
+
+- id: memory-review
+  disabled: true

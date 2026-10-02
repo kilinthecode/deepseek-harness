@@ -12,6 +12,10 @@
  *
  * `dsh <name>` abbreviates `dsh --profile <name>`; `plugin` manages a profile's
  * plugin dependencies by forwarding to pnpm.
+ *
+ * `portal` is this same parser under a second entry name: it boots the `portal`
+ * profile and hands every argument to that app, so a `--profile` selection on
+ * that entry is an error and other profiles are booted through `dsh`.
  * @module @deepseek-ai/dsh/args
  */
 
@@ -27,6 +31,8 @@ interface ProfileInvocation {
   patches: string[]
   /** Everything after the launcher's own flags, verbatim, for injected app plugins. */
   args: string[]
+  /** Existing profile supplying only model configuration for Portal. */
+  modelsFrom?: string
 }
 
 /** Print a composed profile tree and exit without booting. */
@@ -60,8 +66,15 @@ interface PluginInvocation {
 /** The resolved `dsh` invocation. Help, version, and errors exit inside {@link parseDshArgs}. */
 export type DshInvocation = ProfileInvocation | DumpConfigInvocation | DumpConfigSchemaInvocation | PluginInvocation
 
+/** The launcher entry names that boot a profile. `dsh` selects one by name; `portal` boots its own. */
+export type LauncherName = 'dsh' | 'portal'
+
+/** The profile the `portal` entry boots. */
+const PORTAL_PROFILE = 'portal'
+
 /** Launcher flags for profile boot and configuration dumps. */
 interface BootOptions {
+  modelsFrom?: string
   patch?: string[]
   dumpConfig?: boolean
   dumpDefaultConfig?: boolean
@@ -113,8 +126,17 @@ function resolveBoot(program: Command, profile: string, options: BootOptions, ar
   if (patches.includes('')) program.error('error: --patch needs a path')
   if (options.fromDefaultProfile === '') program.error('error: --from-default-profile needs a name')
   const dumps = [options.dumpConfig, options.dumpDefaultConfig, options.dumpConfigSchema].filter(Boolean)
+  if (options.modelsFrom !== undefined) {
+    if (options.modelsFrom.trim() === '') program.error('error: --models-from needs a profile name')
+    if (profile !== PORTAL_PROFILE || dumps.length > 0) {
+      program.error('error: --models-from is supported only when running the portal profile')
+    }
+  }
   if (dumps.length === 0) {
-    return { mode: 'profile', profile, fromDefaultProfile: options.fromDefaultProfile, patches, args }
+    return {
+      mode: 'profile', profile, fromDefaultProfile: options.fromDefaultProfile, patches, args,
+      ...options.modelsFrom === undefined ? {} : { modelsFrom: options.modelsFrom },
+    }
   }
   if (dumps.length > 1) {
     program.error('error: --dump-config, --dump-default-config, and --dump-config-schema are mutually exclusive')
@@ -140,19 +162,24 @@ function resolveBoot(program: Command, profile: string, options: BootOptions, ar
  * error.
  * @param argv - arguments after the Node binary and script.
  * @param version - version string printed by `--version`.
+ * @param launcherName - the entry name this process was started as.
  * @returns the resolved invocation.
  */
-export function parseDshArgs(argv: readonly string[], version: string): DshInvocation {
+export function parseDshArgs(argv: readonly string[], version: string, launcherName: LauncherName = 'dsh'): DshInvocation {
   const first = argv[0]
   let resolved: DshInvocation | undefined
   // Annotated, not inferred: the actions below call back into `program`, and an
   // inferred type would be circular through its own chain.
   const program: Command = new Command()
   program
-    .name('dsh')
+    .name(launcherName)
     .version(version, '-V, --version', 'output the version number')
-    .usage('[--profile] <name> [options] [app-args...]\n       dsh plugin --profile <name> <pnpm-args...>')
-    .description('dsh: boot a Portal Harness profile — an ordered stack of plugin-bundle patch layers under your own overrides.')
+    .usage(launcherName === 'portal'
+      ? '[options] [app-args...]\n       portal plugin --profile <name> <pnpm-args...>'
+      : '[--profile] <name> [options] [app-args...]\n       dsh plugin --profile <name> <pnpm-args...>')
+    .description(launcherName === 'portal'
+      ? 'portal: boot the Portal terminal agent profile — the same plugin-bundle stack dsh composes, under your own overrides.'
+      : 'dsh: boot a Portal Harness profile — an ordered stack of plugin-bundle patch layers under your own overrides.')
     .addHelpText('after', HELP_EXAMPLES)
     .exitOverride()
     // The launcher's flags come first and end at the first token it does not
@@ -167,10 +194,20 @@ export function parseDshArgs(argv: readonly string[], version: string): DshInvoc
     .option('--profile <name>', 'the profile under $DSH_HOME/profiles to boot', selectProfile)
     .option('--from-default-profile <name>', 'initialize a new custom profile from a shipped profile template')
     .option('--patch <path>', 'extra patch-list overlay applied after the profile layer (repeatable)', collect)
+    .option('--models-from <profile>', 'read model configuration from an existing profile for a portal run')
     .option('--dump-config', 'print the composed profile tree and exit')
     .option('--dump-config-schema', 'print JSON Schema for profile entries and patches without mounting')
     .option('--dump-default-config', 'print the profile tree without its user layer or --patch overlays and exit')
     .action((args: string[], options: BootOptions & { profile?: string }) => {
+      if (launcherName === 'portal') {
+        // The entry name owns the profile choice: booting another one from
+        // `portal` would hide which stack the arguments are meant for.
+        if (options.profile !== undefined) {
+          program.error(`error: portal boots the ${PORTAL_PROFILE} profile; use dsh --profile <name> to boot another profile`)
+        }
+        resolved = resolveBoot(program, PORTAL_PROFILE, options, args)
+        return
+      }
       // With the app owning -h, the launcher's own help is what a bare
       // `dsh -h` (no profile to hand it to) must print.
       if (options.profile === undefined) {
@@ -198,7 +235,9 @@ export function parseDshArgs(argv: readonly string[], version: string): DshInvoc
   }
 
   try {
-    const expanded = first !== undefined && !first.startsWith('-') && first !== 'plugin'
+    // Only `dsh` reads a leading bare word as the profile name; on the `portal`
+    // entry every argument belongs to the app.
+    const expanded = launcherName === 'dsh' && first !== undefined && !first.startsWith('-') && first !== 'plugin'
       ? ['--profile', ...argv]
       : argv
     program.parse(expanded, { from: 'user' })

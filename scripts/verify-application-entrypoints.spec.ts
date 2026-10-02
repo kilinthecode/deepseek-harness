@@ -114,6 +114,23 @@ describe('application entrypoints', () => {
     ])
   })
 
+  it('accepts the portal script through its fixed-profile launcher', () => {
+    const root = fixture()
+    write(root, 'package.json', JSON.stringify({ scripts: { portal: 'node --import tsx/esm apps/cli/src/bin-portal.ts' } }))
+
+    expect(applicationEntrypointViolations(root)).toEqual([])
+  })
+
+  it('rejects a portal script that launches the bundle directly', () => {
+    const root = fixture()
+    write(root, 'package.json', JSON.stringify({ scripts: { portal: 'node packages/bundle/portal-app/src/index.ts' } }))
+
+    expect(applicationEntrypointViolations(root)).toEqual([
+      'package.json scripts.portal: application launcher script must launch apps/cli/src/bin-portal.ts',
+      'package.json scripts.portal: application launcher script must not launch a package entry directly',
+    ])
+  })
+
   it('rejects a dev:web wrapper that serves without the dsh launcher', () => {
     const root = fixture()
     write(root, 'package.json', JSON.stringify({ scripts: { 'dev:web': 'tsx scripts/dev-web.ts --poll' } }))

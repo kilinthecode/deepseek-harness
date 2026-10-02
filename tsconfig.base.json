@@ -183,6 +183,7 @@
       // wildcard per group instead.
       "@deepseek-ai/dsh-host-*/invariant": ["./packages/host/*/src/invariant.ts"],
       "@deepseek-ai/dsh-client-*/invariant": ["./packages/client/*/src/invariant.ts"],
+      "@deepseek-ai/dsh-portal-app/runner": ["./packages/bundle/portal-app/src/runner.ts"],
       "@deepseek-ai/dsh-headless/startup": ["./packages/bundle/headless/src/startup.ts"],
       "@deepseek-ai/dsh-web-app/startup": ["./packages/bundle/web-app/src/startup.ts"],
       "@deepseek-ai/dsh-client-*/client": ["./packages/client/*/src/client"],
@@ -429,6 +430,7 @@
       "@deepseek-ai/dsh-plan-mode": ["./packages/plan/plan-mode/src"],
       "@deepseek-ai/dsh-plan-mode/invariant": ["./packages/plan/plan-mode/src/invariant.ts"],
       "@deepseek-ai/dsh-plugin-package-inventory-deepseek": ["./packages/llm/plugin-package-inventory-deepseek/src"],
+      "@deepseek-ai/dsh-portal-app": ["./packages/bundle/portal-app/src"],
       "@deepseek-ai/dsh-ptc-runtime": ["./packages/ptc-runtime/ptc-runtime/src"],
       "@deepseek-ai/dsh-ptc-runtime-node": ["./packages/ptc-runtime/ptc-runtime-node/src"],
       "@deepseek-ai/dsh-pwsh-sandbox": ["./packages/shell/pwsh-sandbox/src"],
@@ -538,7 +540,6 @@
       "@deepseek-ai/dsh-tools": ["./packages/core/tools/src"],
       "@deepseek-ai/dsh-tools/invariant": ["./packages/core/tools/src/invariant.ts"],
       "@deepseek-ai/dsh-usage-cost": ["./packages/llm/usage-cost/src"],
-      "@deepseek-ai/dsh-usage-cost/types": ["./packages/llm/usage-cost/src/types.ts"],
       "@deepseek-ai/dsh-user-approval": ["./packages/interaction/user-approval/src"],
       "@deepseek-ai/dsh-user-approval/invariant": ["./packages/interaction/user-approval/src/invariant.ts"],
       "@deepseek-ai/dsh-user-questions": ["./packages/interaction/user-questions/src"],
