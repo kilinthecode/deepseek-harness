@@ -6,7 +6,7 @@
   }
   @media (prefers-color-scheme: dark) {
     :root {
-      --dsw-alias-label-primary: #f9fafb;
+      --dsw-alias-label-primary: #ffffff;
       --dsw-alias-label-primary-inverted: #353638;
     }
   }

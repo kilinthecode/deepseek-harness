@@ -24,16 +24,16 @@ body {
 
 @media (prefers-color-scheme: dark) {
   body {
-    --dsw-alias-label-primary: #f9fafb;
-    --dsw-alias-label-secondary: #cfd3d6;
-    --dsw-alias-label-tertiary: #adb2b8;
+    --dsw-alias-label-primary: #ffffff;
+    --dsw-alias-label-secondary: #e1e5ee;
+    --dsw-alias-label-tertiary: #cfd3d6;
     --dsw-alias-label-primary-inverted: #353638;
     --dsw-alias-button-primary-hover: #ebeef2;
     --dsw-alias-button-elevated-fill: #43454a;
     --dsw-alias-button-floating-hover: #353638;
     --dsw-alias-border-l2: #ffffff1f;
     --dsw-alias-border-l4: #ffffff33;
-    --dsw-alias-label-caption: #81858c;
+    --dsw-alias-label-caption: #979da6;
   }
 }
 

@@ -5,7 +5,7 @@
 }
 
 @media (prefers-color-scheme: dark) {
-  :root:not([data-ds-theme-source]) { --dsw-desktop-window-tint: color-mix(in srgb, rgb(24 25 28) 50%, transparent); }
+  :root:not([data-ds-theme-source]) { --dsw-desktop-window-tint: color-mix(in srgb, rgb(0 0 0) 50%, transparent); }
 }
 
-body[data-ds-dark-theme] { --dsw-desktop-window-tint: color-mix(in srgb, rgb(24 25 28) 50%, transparent); }
+body[data-ds-dark-theme] { --dsw-desktop-window-tint: color-mix(in srgb, rgb(0 0 0) 50%, transparent); }
