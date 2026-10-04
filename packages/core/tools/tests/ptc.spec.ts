@@ -1800,17 +1800,47 @@ describe('the run_code dispatch bridge', () => {
     expect(result.content[0]).toEqual({ type: 'text', text: 'proto-tool-ok' })
   })
 
-  it('renders every non-string JSON root as pretty JSON while preserving strings raw', async () => {
+  it('preserves structured file summaries and nested analysis through the production renderer', async () => {
+    const { ctx, runtime } = await setup({ mode: 'ptc' })
+    const workloads: Record<string, JsonValue> = {
+      fileSummaries: Array.from({ length: 24 }, (_, index) => ({
+        path: `packages/sample/module-${index}.ts`, lines: 80 + index,
+        matches: [{ line: 12, text: 'export function summarize() {' }, { line: 46, text: 'return summary' }],
+        status: 'reviewed',
+      })),
+      nestedAnalysis: { files: 12, findings: Array.from({ length: 8 }, (_, index) => ({
+        id: index, severity: 'warning', location: { path: `src/component-${index}.ts`, line: index + 10 },
+        evidence: { expected: { enabled: true, count: 3 }, actual: { enabled: false, count: 0 } },
+        suggestions: ['Validate the configuration', 'Add a focused regression test'],
+      })), summary: { passed: 4, warnings: 8, errors: 0 } },
+      primitive: 42,
+      rootString: 'Raw report\n  indentation stays\t雪🙂',
+      emptyObject: {},
+    }
+    try {
+      for (const [name, value] of Object.entries(workloads)) {
+        runtime.behavior = () => Promise.resolve({ logs: [], value })
+        const result = await runCode(ctx, name)
+        expect(result.isError).toBe(false)
+        const block = result.content[0]
+        if (block?.type !== 'text') throw new Error('expected rendered text')
+        expect(typeof value === 'string' ? block.text : JSON.parse(block.text)).toEqual(value)
+        expect(block.text).toBe(typeof value === 'string' ? value : JSON.stringify(value))
+      }
+    } finally { await ctx.fiber.dispose() }
+  })
+
+  it('renders every non-string JSON root as compact JSON while preserving strings raw', async () => {
     const { ctx, runtime } = await setup({ mode: 'ptc' })
     runtime.behavior = () => Promise.resolve({ logs: [], value: { n: 42, ok: true } })
-    expect((await runCode(ctx, 'object')).content[0]).toEqual({ type: 'text', text: '{\n  "n": 42,\n  "ok": true\n}' })
+    expect((await runCode(ctx, 'object')).content[0]).toEqual({ type: 'text', text: '{"n":42,"ok":true}' })
     runtime.behavior = () => Promise.resolve({ logs: [], value: {} })
     expect((await runCode(ctx, 'empty object')).content[0]).toEqual({ type: 'text', text: '{}' })
     const nested = { outer: [{ inner: true }] }
     runtime.behavior = () => Promise.resolve({ logs: [], value: nested })
-    expect((await runCode(ctx, 'nested')).content[0]).toEqual({ type: 'text', text: JSON.stringify(nested, null, 2) })
+    expect((await runCode(ctx, 'nested')).content[0]).toEqual({ type: 'text', text: JSON.stringify(nested) })
     runtime.behavior = () => Promise.resolve({ logs: [], value: ['x', 2] })
-    expect((await runCode(ctx, 'array')).content[0]).toEqual({ type: 'text', text: '[\n  "x",\n  2\n]' })
+    expect((await runCode(ctx, 'array')).content[0]).toEqual({ type: 'text', text: '["x",2]' })
     runtime.behavior = () => Promise.resolve({ logs: [], value: [] })
     expect((await runCode(ctx, 'empty array')).content[0]).toEqual({ type: 'text', text: '[]' })
     runtime.behavior = () => Promise.resolve({ logs: [], value: null })
@@ -1823,7 +1853,23 @@ describe('the run_code dispatch bridge', () => {
     expect(absent.isError ? undefined : absent.value).toEqual({ logs: [] })
   })
 
-  it('renders deeply nested JSON without recursive traversal or quadratic indentation', async () => {
+  it('preserves key order, escapes, Unicode and logs before compact results', async () => {
+    const { ctx, runtime } = await setup({ mode: 'ptc' })
+    const value = { '10': 'ten', '2': 'two', 'quoted"\nkey': 'line\n\t"\\\u0000雪🙂', nested: [false, null, -2.5] }
+    try {
+      runtime.behavior = () => Promise.resolve({ logs: ['first\n  indented', 'second\t雪🙂'], value })
+      const result = await runCode(ctx, 'escaped result')
+      expect(result.isError).toBe(false)
+      expect(result.content).toEqual([{ type: 'text', text: `first\n  indented\nsecond\t雪🙂\n${JSON.stringify(value)}` }])
+      for (const root of [true, false, 42, -2.5, 'raw\n\t雪🙂', ''] as const) {
+        runtime.behavior = () => Promise.resolve({ logs: [], value: root })
+        expect((await runCode(ctx, 'root')).content).toEqual([{ type: 'text',
+          text: root === '' ? '(run_code completed with no output)' : typeof root === 'string' ? root : JSON.stringify(root) }])
+      }
+    } finally { await ctx.fiber.dispose() }
+  })
+
+  it.each(['array', 'object'] as const)('renders deeply nested $kind JSON without recursive traversal', async (kind) => {
     const { ctx, runtime } = await setup({ mode: 'ptc' })
     let value: JsonValue = {
       emptyArray: [],
@@ -1831,17 +1877,24 @@ describe('the run_code dispatch bridge', () => {
       pair: ['leaf', 2],
       record: { first: true, second: null },
     }
-    for (let depth = 0; depth < 5_000; depth++) value = [value]
+    const leaf = JSON.stringify(value)
+    for (let depth = 0; depth < 5_000; depth++) value = kind === 'array' ? [value] : { child: value }
     runtime.behavior = () => Promise.resolve({ logs: [], value })
-
-    const result = await runCode(ctx, 'deep result')
-
-    expect(result.isError).toBe(false)
-    const text = (result.content[0] as { type: 'text'; text: string }).text
-    expect(text.startsWith('[\n  [\n    [')).toBe(true)
-    expect(text).toContain('"leaf"')
-    expect(text.endsWith(']')).toBe(true)
-    expect(text.length).toBeLessThan(11_000)
+    try {
+      const result = await runCode(ctx, 'deep result')
+      expect(result.isError).toBe(false)
+      const text = (result.content[0] as { type: 'text'; text: string }).text
+      expect(text).toBe(kind === 'array'
+        ? '['.repeat(5_000) + leaf + ']'.repeat(5_000)
+        : '{"child":'.repeat(5_000) + leaf + '}'.repeat(5_000))
+      let parsed: unknown = JSON.parse(text)
+      for (let depth = 0; depth < 5_000; depth++) {
+        if (kind === 'array' && Array.isArray(parsed)) parsed = parsed[0]
+        else if (parsed !== null && typeof parsed === 'object' && 'child' in parsed) parsed = parsed.child
+        else throw new Error('expected nested container')
+      }
+      expect(parsed).toEqual(JSON.parse(leaf))
+    } finally { await ctx.fiber.dispose() }
   })
 
   it('short-circuits a pre-aborted outer signal before the PTC runtime', async () => {
@@ -2169,6 +2222,9 @@ describe('PTC standing file policy and sandbox outcomes', () => {
       const result = await runCode(ctx, 'return 1')
       expect(result.value).toEqual({ logs: [], sandbox: { mode: 'read-only', enforcement: 'partial', denied: true } })
       expect(result.content).toEqual([{ type: 'text', text: 'File sandbox enforcement is partial on this host.\nThe read-only file sandbox denied an operation.' }])
+      runtime.behavior = async () => ({ logs: ['checked'], value: { ok: true }, sandbox: { mode: 'read-only', enforcement: 'partial', denied: true } })
+      expect((await runCode(ctx, 'structured result')).content).toEqual([{ type: 'text',
+        text: 'checked\n{"ok":true}\nFile sandbox enforcement is partial on this host.\nThe read-only file sandbox denied an operation.' }])
     } finally { await ctx.fiber.dispose() }
   })
 

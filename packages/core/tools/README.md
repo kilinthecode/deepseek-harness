@@ -212,11 +212,11 @@ Prefix-stable while the PTC mode selection, generated SDK, transport schema, and
 
 #### What the model sees
 
-The loop retains model-emitted arguments and the registry's final content. Any thrown or denied call becomes exactly `Error: <message>`; structured user-facing failure detail is not added to that message. PTC mode renders the outer program's printed lines and return value, `(run_code completed with no output)` when both are empty, or `Error: code run failed (<kind>): <message>` followed conditionally by `Captured output:` and the captured lines. Inner dispatch events stay log-only, while a successful image-bearing sub-result is appended after the outer result as source-attributed context.
+The loop retains model-emitted arguments and the registry's final content. Any thrown or denied call becomes exactly `Error: <message>`; structured user-facing failure detail is not added to that message. PTC mode renders the outer program's printed lines followed by its return value (root strings verbatim; other values as compact JSON), `(run_code completed with no output)` when both are empty, or `Error: code run failed (<kind>): <message>` followed conditionally by `Captured output:` and the captured lines. Inner dispatch events stay log-only, while a successful image-bearing sub-result is appended after the outer result as source-attributed context.
 
 #### Token effect
 
-Arguments, results, and additional context are data-dependent and resent until compaction. Restrictions that hide tools also remove their schemas before the model can call them.
+Arguments, results, and additional context are data-dependent and resent until compaction. Structured `run_code` return values omit JSON formatting whitespace without omitting data; printed lines and root strings are unchanged. Restrictions that hide tools also remove their schemas before the model can call them.
 
 #### KV Cache effect
 

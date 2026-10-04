@@ -212,11 +212,11 @@ Program-only SDK bindings:
 
 #### 模型看到什么
 
-循环会保留模型发出的参数与注册表的最终内容。任何抛出异常或遭到拒绝的调用，都会转换为确切的 `Error: <message>`；结构化的用户可见失败详情不会加入该消息。PTC mode 只返回外层程序打印的行与呈现后的返回值；两者都为空时返回 `(run_code completed with no output)`；失败时返回 `Error: code run failed (<kind>): <message>`，并根据是否存在已捕获内容，在其后附加 `Captured output:` 与捕获的行。内部分发事件只保留在日志中；成功且含图片的子结果会在外层结果之后作为带来源归属的上下文追加。
+循环会保留模型发出的参数与注册表的最终内容。任何抛出异常或遭到拒绝的调用，都会转换为确切的 `Error: <message>`；结构化的用户可见失败详情不会加入该消息。PTC mode 返回外层程序打印的行，随后追加返回值（根字符串原样保留，其他值呈现为紧凑 JSON）；两者都为空时返回 `(run_code completed with no output)`；失败时返回 `Error: code run failed (<kind>): <message>`，并根据是否存在已捕获内容，在其后附加 `Captured output:` 与捕获的行。内部分发事件只保留在日志中；成功且含图片的子结果会在外层结果之后作为带来源归属的上下文追加。
 
 #### Token 影响
 
-参数、结果与附加上下文取决于数据，并会重复发送直至压缩（compaction）。隐藏工具的限制还会在模型可以调用这些工具之前移除其 schema。
+参数、结果与附加上下文取决于数据，并会重复发送直至压缩（compaction）。结构化 `run_code` 返回值省略 JSON 格式空白，但不省略数据；打印行与根字符串保持不变。隐藏工具的限制还会在模型可以调用这些工具之前移除其 schema。
 
 #### KV Cache 影响
 
