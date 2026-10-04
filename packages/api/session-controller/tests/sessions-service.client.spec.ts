@@ -249,6 +249,55 @@ describe('scope tree', () => {
     dispose()
   })
 
+  it('streams transient Assistant chunks through the event feed without Session snapshot notifications', async ({ bench }) => {
+    const b = bench()
+    await feedList(b, [{ id: 's1' }])
+    using _reference = b.svc.retain(sid('s1'), { source: 'controllerOperation' })
+    await _reference.ready
+    const binding = b.svc.binding(sid('s1'))
+    if (binding === undefined) throw new Error('expected Session binding')
+    await vi.waitFor(() => {
+      expect(binding.session.getSnapshot().openState).toBe('open')
+    })
+    const attemptId = LlmAttemptId('web-quiet-attempt')
+    b.mock.streams.push(FOLLOW, {
+      type: 'assistant-stream',
+      frame: { type: 'start', attemptId, revision: 1, startedAfterSeq: -1, turn: 1, step: 1 },
+    })
+    await b.mock.streams.drained(FOLLOW)
+    await new Promise(resolve => setTimeout(resolve, 0))
+    const before = binding.session.getSnapshot()
+    let notifications = 0
+    const dispose = binding.session.subscribe(() => { notifications++ })
+
+    const chunks = 3
+    for (let index = 0; index < chunks; index++) {
+      b.mock.streams.push(FOLLOW, {
+        type: 'assistant-stream',
+        frame: {
+          type: 'chunk', attemptId, revision: 2 + index, index, time: 1,
+          chunk: { type: 'text-delta', index: 0, text: 'x' },
+        },
+      })
+      await b.mock.streams.drained(FOLLOW)
+      await new Promise(resolve => setTimeout(resolve, 0))
+    }
+    expect(binding.eventSource.getSnapshot().entries).toHaveLength(chunks)
+    expect(notifications).toBe(0)
+    expect(binding.session.getSnapshot()).toBe(before)
+
+    b.mock.streams.push(FOLLOW, {
+      type: 'assistant-stream',
+      frame: { type: 'end', attemptId, revision: 2 + chunks, index: chunks, outcome: { kind: 'abandoned' } },
+    })
+    await b.mock.streams.drained(FOLLOW)
+    await vi.waitFor(() => {
+      expect(notifications).toBeGreaterThan(0)
+    })
+    expect(binding.eventSource.getSnapshot().entries).toHaveLength(0)
+    dispose()
+  })
+
   it('replaces an active assistant baseline on reconnect without duplicate chunks', async ({ bench }) => {
     const b = bench()
     const attemptId = LlmAttemptId('reconnect-attempt')
