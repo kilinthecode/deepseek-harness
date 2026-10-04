@@ -48,6 +48,8 @@ Rules:
 
 ## Dev channel — promoting a change through Portal Dev
 
+For the ad-hoc app installed on a development Mac, use [local Portal deployment](docs/cookbook/deploying-portal-locally.md) to stage compatible interface assets, retain a rollback copy, and select the installed application explicitly.
+
 `portal-dev` is the fork's dev channel: a change ships to the **Portal Dev** app first and reaches the production
 **Portal** app only when the validated commit is re-cut with the `portal` identity. The two apps install side by
 side and keep separate data.

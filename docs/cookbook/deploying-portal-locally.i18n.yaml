@@ -1,0 +1,28 @@
+# Bilingual-pair consistency record for deploying-portal-locally.md (docs/i18n/README.md): per heading
+# section, a hash of its English and Chinese blocks outside code blocks and generated regions.
+# After editing either side, bring the other along and re-record with:
+#   pnpm run verify-translation-pairing --write docs/cookbook/deploying-portal-locally.md
+/cookbook-deploy-the-local-portal-interface:
+  en: e3c35bcec1ac51fe
+  zh: 105b906184916775
+/cookbook-deploy-the-local-portal-interface/summary:
+  en: 71747ed243a7ce97
+  zh: fce79fec05282d20
+/cookbook-deploy-the-local-portal-interface/table-of-contents:
+  en: 7e7cd31edeeccd30
+  zh: a4d99b48293564e0
+/cookbook-deploy-the-local-portal-interface/1-select-the-destination:
+  en: b8e6f50dc6cdad74
+  zh: c88a1eee3654d5ec
+/cookbook-deploy-the-local-portal-interface/2-build-and-stage-the-interface:
+  en: 118480ccfc4e2231
+  zh: e36c9026ac240b81
+/cookbook-deploy-the-local-portal-interface/3-install-and-reopen-portal:
+  en: 45ec50267e122e86
+  zh: 44232da2ab25d503
+/cookbook-deploy-the-local-portal-interface/4-restore-the-previous-application:
+  en: 1f479a7d7fbfbeaf
+  zh: 9b2c1dc7961cf52e
+/cookbook-deploy-the-local-portal-interface/release-environments:
+  en: 569844361bba9822
+  zh: 4dfdb39ec1a5acce
