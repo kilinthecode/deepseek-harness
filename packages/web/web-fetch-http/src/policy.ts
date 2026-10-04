@@ -116,3 +116,22 @@ export function decoderForCharset(charset: string | undefined): TextDecoder {
     throw new WebError(`unsupported charset "${charset}"`, 'WEB_UNSUPPORTED_CONTENT_TYPE', { cause: error })
   }
 }
+
+/**
+ * Comments and elements whose content never reaches rendered page text,
+ * matched left to right so a comment marker inside a script (or a tag inside
+ * a comment) cannot open a second match. An element left unclosed by a
+ * truncated body extends to the end of the input.
+ */
+const NON_CONTENT_HTML = /<!--[\s\S]*?(?:-->|$)|<(script|style|noscript|template|svg)\b[^>]*>[\s\S]*?(?:<\/\1\s*>|$)/giu
+
+/**
+ * Remove comments and `script`, `style`, `noscript`, `template`, and `svg`
+ * elements from decoded HTML, so the character cap counts page content rather
+ * than inline assets.
+ * @param html - decoded HTML text.
+ * @returns the HTML without those comments and elements.
+ */
+export function stripNonContentHtml(html: string): string {
+  return html.replace(NON_CONTENT_HTML, '')
+}

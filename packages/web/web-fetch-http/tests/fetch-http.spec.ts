@@ -13,6 +13,7 @@ import {
   isSameOrigin,
   parseCharset,
   parseFetchUrl,
+  stripNonContentHtml,
   validateFetchUrl,
   WEB_FETCH_MAX_URL_LENGTH,
 } from '../src/policy.ts'
@@ -256,6 +257,22 @@ describe('public-network policy', () => {
   })
 })
 
+describe('stripNonContentHtml', () => {
+  it('removes comments and non-content elements in document order', () => {
+    expect(stripNonContentHtml([
+      '<head><STYLE media="x">p{}</style ><script>if (a<b) document.write("<!--")</script></head>',
+      '<body><!-- <script> --><p>kept</p><noscript>enable js</noscript>',
+      '<template><b>t</b></template><svg viewBox="0 0 1 1"><title>icon</title></svg>',
+      '<scripted>kept</scripted></body>',
+    ].join(''))).toBe('<head></head><body><p>kept</p><scripted>kept</scripted></body>')
+  })
+
+  it('removes an element or comment left open by a truncated body', () => {
+    expect(stripNonContentHtml('<p>a</p><script>var x = 1')).toBe('<p>a</p>')
+    expect(stripNonContentHtml('<p>a</p><!-- open')).toBe('<p>a</p>')
+  })
+})
+
 describe('HttpFetchProvider success', () => {
   it('fetches a text body', async () => {
     handler = (_req, res) => { res.writeHead(200, { 'content-type': 'text/plain' }); res.end('hello world') }
@@ -270,6 +287,19 @@ describe('HttpFetchProvider success', () => {
     handler = (_req, res) => { res.writeHead(200, { 'content-type': 'text/html' }); res.end('<h1>hi</h1>') }
     const result = await provider().fetch({ url: base })
     expect(result.body).toEqual({ kind: 'html', content: '<h1>hi</h1>' })
+  })
+
+  it('applies the character cap to html after removing inline scripts and styles', async () => {
+    const page = `<html><head><style>${'.c{color:red}\n'.repeat(500)}</style><script>${'var x=1;\n'.repeat(500)}</script></head>`
+      + '<body><main><h1>Install guide</h1></main></body></html>'
+    handler = (_req, res) => { res.writeHead(200, { 'content-type': 'text/html' }); res.end(page) }
+    const html = await provider({ maxBodyChars: 100 }).fetch({ url: base })
+    expect(html.body).toEqual({ kind: 'html', content: '<html><head></head><body><main><h1>Install guide</h1></main></body></html>' })
+    expect(html.truncated).toBe(false)
+
+    handler = (_req, res) => { res.writeHead(200, { 'content-type': 'text/plain' }); res.end('<script>x</script>') }
+    const text = await provider({ maxBodyChars: 10 }).fetch({ url: base })
+    expect(text.body).toEqual({ kind: 'text', content: '<script>x<' })
   })
 
   it('uses an explicitly injected validated-address resolver', async () => {

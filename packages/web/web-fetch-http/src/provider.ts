@@ -13,13 +13,13 @@ import type { Response } from 'undici'
 import { proxyRouteFor } from '@deepseek-ai/dsh-http-proxy'
 import { isNonPublicIpLiteral, publicHttpNetwork } from './network.ts'
 import type { PublicAddress } from './network.ts'
-import { classifyContentType, decoderForCharset, isSameOrigin, parseCharset, validateFetchUrl } from './policy.ts'
+import { classifyContentType, decoderForCharset, isSameOrigin, parseCharset, stripNonContentHtml, validateFetchUrl } from './policy.ts'
 
 /** Resolved provider limits (the plugin's schemastery Config supplies defaults). */
 export interface HttpFetchLimits {
   /** Maximum response body size in bytes (read is aborted past this). */
   maxResponseBytes: number
-  /** Maximum decoded body length in characters (truncated past this). */
+  /** Maximum decoded body length in characters (truncated past this); HTML counts after {@link stripNonContentHtml}. */
   maxBodyChars: number
   /** Default fetch timeout in milliseconds. */
   timeoutMs: number
@@ -163,7 +163,7 @@ export class HttpFetchProvider implements WebFetchProvider {
       throw error
     }
     const { bytes, truncatedByBytes } = await this.readCapped(response, signal)
-    const decoded = decoder.decode(bytes)
+    const decoded = kind === 'html' ? stripNonContentHtml(decoder.decode(bytes)) : decoder.decode(bytes)
     const truncatedByChars = decoded.length > this.limits.maxBodyChars
     const content = truncatedByChars ? decoded.slice(0, this.limits.maxBodyChars) : decoded
     const body: WebFetchBody = kind === 'html' ? { kind: 'html', content } : { kind: 'text', content }

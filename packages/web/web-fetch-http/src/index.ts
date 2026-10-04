@@ -32,7 +32,10 @@ export const inject = ['web']
 export interface Config {
   /** Maximum response body size in bytes. */
   maxResponseBytes?: number
-  /** Maximum decoded body length in characters. */
+  /**
+   * Maximum decoded body length in characters; HTML is counted after removing
+   * comments and script, style, noscript, template, and svg elements.
+   */
   maxBodyChars?: number
   /** Default fetch timeout in milliseconds, within Node's timer range. */
   timeoutMs?: number
