@@ -206,6 +206,18 @@ describe('SSH ordinary process behavior', () => {
     expect(handle.collected.stdout!.readFrom(8)).toEqual({ text: 'ij', nextOffset: 10, lossy: false, spillPath: '/remote/spill' })
   })
 
+  it('releases a trailing incomplete code point once the final snapshot ends the stream', async () => {
+    const test = await setup()
+    const handle = test.runtime.spawn({ ...spec, stdio: { stdin: 'ignore', stdout: { maxBytes: 8 }, stderr: { maxBytes: 8 } } })
+    await test.started
+    const split = Buffer.from('a世', 'utf8').subarray(0, 3)
+    test.finished.resolve({ ...emptyResult, collected: {
+      stdout: { tail: split.toString('base64'), totalBytes: 3 }, stderr: { tail: '', totalBytes: 0 },
+    } })
+    await handle.done
+    expect(handle.collected.stdout!.readFrom(0)).toEqual({ text: 'a\uFFFD', nextOffset: 3, lossy: false })
+  })
+
   it.each([
     { tail: '12345', total: 5, error: 'invalid collected output coordinates' },
     { tail: 'abcd', total: 3, error: 'invalid collected output coordinates' },

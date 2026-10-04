@@ -582,6 +582,48 @@ describe('OutputCollector', () => {
     expect(third.spillPath).toBeDefined()
   })
 
+  it('readFrom keeps a UTF-8 code point split across chunks intact between reads', () => {
+    const collector = new OutputCollector(64, 'test', undefined)
+    const bytes = Buffer.from('héllo 世界 😀\n', 'utf8')
+    const pieces: string[] = []
+    let offset = 0
+    for (let at = 0; at < bytes.length; at += 1) {
+      collector.push(bytes.subarray(at, at + 1))
+      const read = collector.readFrom(offset)
+      pieces.push(read.text)
+      offset = read.nextOffset
+    }
+    expect(pieces.join('')).toBe('héllo 世界 😀\n')
+    expect(offset).toBe(bytes.length)
+  })
+
+  it('readFrom withholds an incomplete trailing sequence until the stream is sealed', () => {
+    const collector = new OutputCollector(64, 'test', undefined)
+    collector.push(Buffer.from([0x61, 0xE4, 0xB8]))
+    expect(collector.readFrom(0)).toEqual({ text: 'a', nextOffset: 1, lossy: false })
+    expect(collector.readFrom(1)).toEqual({ text: '', nextOffset: 1, lossy: false })
+    collector.seal()
+    expect(collector.readFrom(1)).toEqual({ text: '\uFFFD', nextOffset: 3, lossy: false })
+  })
+
+  it('readFrom skips continuation bytes at the start of a read', () => {
+    const inside = new OutputCollector(64, 'test', undefined)
+    inside.push(Buffer.from('世界', 'utf8'))
+    expect(inside.readFrom(1)).toEqual({ text: '界', nextOffset: 6, lossy: false })
+
+    const window = new OutputCollector(4, 'test', undefined)
+    window.push(Buffer.from('a世界', 'utf8'))
+    expect(window.readFrom(0)).toEqual({ text: '界', nextOffset: 7, lossy: true })
+
+    const stray = new OutputCollector(64, 'test', undefined)
+    stray.push(Buffer.from([0x80, 0x80, 0x80, 0x80]))
+    expect(stray.readFrom(0)).toEqual({ text: '', nextOffset: 4, lossy: false })
+
+    const invalidLead = new OutputCollector(64, 'test', undefined)
+    invalidLead.push(Buffer.from([0x61, 0xF8]))
+    expect(invalidLead.readFrom(0)).toEqual({ text: 'a\uFFFD', nextOffset: 2, lossy: false })
+  })
+
   it('contains close failures and drops the spill path', () => {
     const collector = new OutputCollector(4, 'closefail', spillOptions(100).options)
     collector.push(Buffer.from('aaaa'))

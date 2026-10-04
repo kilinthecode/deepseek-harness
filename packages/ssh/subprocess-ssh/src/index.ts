@@ -64,6 +64,8 @@ class RemoteProcess implements SubprocessHandle {
         finalized = final
         collector = new OutputCollector(mode.maxBytes, name, undefined)
         collector.push(bytes)
+        // The final snapshot ends the stream, so a trailing incomplete code point is released.
+        if (final) collector.seal()
         base = snapshot.totalBytes - bytes.length
         total = snapshot.totalBytes
       }
