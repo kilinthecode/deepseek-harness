@@ -71,13 +71,11 @@ class HarnessClient:
     def start(self) -> None:
         if self._proc is not None:
             return
-        with self._lock:
-            self._session_parents.clear()
         env = os.environ.copy()
         if self.config.env:
             env.update(self.config.env)
         args = list(self._launch_args or self._default_launch_args(env))
-        self._proc = subprocess.Popen(
+        proc = subprocess.Popen(
             args,
             stdin=subprocess.PIPE,
             stdout=subprocess.PIPE,
@@ -88,12 +86,25 @@ class HarnessClient:
             env=env,
             bufsize=1,
         )
-        self._start_reader_thread()
-        self._start_stderr_thread()
+        notifications: queue.Queue[Notification | BaseException] = queue.Queue()
+        requests: queue.Queue[IncomingRequest | BaseException] = queue.Queue()
+        stderr_lines: deque[str] = deque(maxlen=400)
+        with self._lock:
+            self._session_parents.clear()
+            self._notifications = notifications
+            self._requests = requests
+            self._stderr_lines = stderr_lines
+            self._proc = proc
+            self._start_reader_thread(proc, notifications, requests, stderr_lines)
+            self._start_stderr_thread(proc, stderr_lines)
 
     def close(self) -> None:
         """Close the runtime after a bounded opportunity to flush durable state."""
-        proc = self._proc
+        with self._lock:
+            proc = self._proc
+            stderr_lines = self._stderr_lines
+            reader_thread = self._reader_thread
+            stderr_thread = self._stderr_thread
         if proc is None:
             return
         shutdown_completed = False
@@ -101,12 +112,12 @@ class HarnessClient:
             self.request("shutdown", None, response_model=_ShutdownResponse, timeout_seconds=self.config.shutdown_timeout_seconds)
             shutdown_completed = True
         except Exception as exc:
-            self._stderr_lines.append(f"shutdown request failed: {exc}")
+            stderr_lines.append(f"shutdown request failed: {exc}")
         if proc.stdin:
             try:
                 proc.stdin.close()
             except Exception as exc:
-                self._stderr_lines.append(f"stdin close failed: {exc}")
+                stderr_lines.append(f"stdin close failed: {exc}")
         if shutdown_completed:
             try:
                 proc.wait(timeout=self.config.shutdown_timeout_seconds)
@@ -123,12 +134,19 @@ class HarnessClient:
             except subprocess.TimeoutExpired:
                 proc.kill()
                 proc.wait()
-        self._proc = None
-        self._fail_waiters(self._runtime_closed_error("DeepSeek Harness runtime closed"))
-        if self._reader_thread and self._reader_thread.is_alive():
-            self._reader_thread.join(timeout=0.5)
-        if self._stderr_thread and self._stderr_thread.is_alive():
-            self._stderr_thread.join(timeout=0.5)
+        with self._lock:
+            if self._proc is not proc:
+                return
+            self._proc = None
+            waiters, subscribers = self._take_waiters_locked()
+            notifications = self._notifications
+            requests = self._requests
+        error = self._runtime_closed_error("DeepSeek Harness runtime closed", proc, stderr_lines)
+        self._publish_waiter_failure(waiters, subscribers, notifications, requests, error)
+        if reader_thread and reader_thread.is_alive():
+            reader_thread.join(timeout=0.5)
+        if stderr_thread and stderr_thread.is_alive():
+            stderr_thread.join(timeout=0.5)
 
     def initialize(
         self,
@@ -341,16 +359,37 @@ class HarnessClient:
         except Exception as exc:
             raise self._runtime_closed_error("Failed to write to DeepSeek Harness runtime") from exc
 
-    def _start_reader_thread(self) -> None:
-        self._reader_thread = threading.Thread(target=self._reader_loop, name="dsh-runtime-reader", daemon=True)
+    def _start_reader_thread(
+        self,
+        proc: subprocess.Popen[str],
+        notifications: queue.Queue[Notification | BaseException],
+        requests: queue.Queue[IncomingRequest | BaseException],
+        stderr_lines: deque[str],
+    ) -> None:
+        self._reader_thread = threading.Thread(
+            target=self._reader_loop,
+            args=(proc, notifications, requests, stderr_lines),
+            name="dsh-runtime-reader",
+            daemon=True,
+        )
         self._reader_thread.start()
 
-    def _start_stderr_thread(self) -> None:
-        self._stderr_thread = threading.Thread(target=self._stderr_loop, name="dsh-runtime-stderr", daemon=True)
+    def _start_stderr_thread(self, proc: subprocess.Popen[str], stderr_lines: deque[str]) -> None:
+        self._stderr_thread = threading.Thread(
+            target=self._stderr_loop,
+            args=(proc, stderr_lines),
+            name="dsh-runtime-stderr",
+            daemon=True,
+        )
         self._stderr_thread.start()
 
-    def _reader_loop(self) -> None:
-        proc = self._proc
+    def _reader_loop(
+        self,
+        proc: subprocess.Popen[str],
+        notifications: queue.Queue[Notification | BaseException],
+        requests: queue.Queue[IncomingRequest | BaseException],
+        stderr_lines: deque[str],
+    ) -> None:
         if proc is None or proc.stdout is None:
             return
         try:
@@ -361,43 +400,68 @@ class HarnessClient:
                     message = json.loads(line)
                 except json.JSONDecodeError:
                     continue
-                self._handle_message(message)
+                self._handle_message(message, proc, notifications, requests)
         except BaseException as exc:
-            self._fail_waiters(exc)
+            self._fail_waiters_from_reader(proc, exc, notifications, requests)
         finally:
-            self._fail_waiters(self._runtime_closed_error("DeepSeek Harness runtime stdout closed"))
+            error = self._runtime_closed_error("DeepSeek Harness runtime stdout closed", proc, stderr_lines)
+            self._fail_waiters_from_reader(proc, error, notifications, requests)
 
-    def _stderr_loop(self) -> None:
-        proc = self._proc
+    def _stderr_loop(self, proc: subprocess.Popen[str], stderr_lines: deque[str]) -> None:
         if proc is None or proc.stderr is None:
             return
         for line in proc.stderr:
-            self._stderr_lines.append(line.rstrip())
+            if not self._record_stderr(proc, stderr_lines, line):
+                return
 
-    def _handle_message(self, message: object) -> None:
+    def _record_stderr(self, proc: subprocess.Popen[str], stderr_lines: deque[str], line: str) -> bool:
+        with self._lock:
+            if self._stderr_lines is not stderr_lines or (
+                self._proc is not None and self._proc is not proc
+            ):
+                return False
+            stderr_lines.append(line.rstrip())
+            return True
+
+    def _handle_message(
+        self,
+        message: object,
+        proc: subprocess.Popen[str] | None = None,
+        notifications: queue.Queue[Notification | BaseException] | None = None,
+        requests: queue.Queue[IncomingRequest | BaseException] | None = None,
+    ) -> None:
         if not isinstance(message, dict):
             return
+        notifications = self._notifications if notifications is None else notifications
+        requests = self._requests if requests is None else requests
         msg_id = message.get("id")
         method = message.get("method")
         if isinstance(msg_id, (str, int)) and isinstance(method, str):
             params = message.get("params")
-            self._requests.put(IncomingRequest(id=msg_id, method=method, payload=params if isinstance(params, dict) else {}))
+            with self._lock:
+                if proc is not None and self._proc is not proc:
+                    return
+                requests.put(IncomingRequest(id=msg_id, method=method, payload=params if isinstance(params, dict) else {}))
             return
         if isinstance(msg_id, (str, int)):
             with self._lock:
+                if proc is not None and self._proc is not proc:
+                    return
                 waiter = self._responses.pop(str(msg_id), None)
-            if waiter is None:
-                return
-            if isinstance(message.get("error"), dict):
-                err = message["error"]
-                waiter.put(JsonRpcError(_int_or_none(err.get("code")), str(err.get("message", "JSON-RPC error")), err.get("data")))
-            else:
-                waiter.put(message.get("result"))
+                if waiter is None:
+                    return
+                if isinstance(message.get("error"), dict):
+                    err = message["error"]
+                    waiter.put(JsonRpcError(_int_or_none(err.get("code")), str(err.get("message", "JSON-RPC error")), err.get("data")))
+                else:
+                    waiter.put(message.get("result"))
             return
         if isinstance(method, str):
             params = message.get("params")
             notification = Notification(method=method, payload=params if isinstance(params, dict) else {})
             with self._lock:
+                if proc is not None and self._proc is not proc:
+                    return
                 self._record_session_relationship_locked(notification)
                 subscribers = list(self._notification_subscribers.items())
             delivered = False
@@ -406,6 +470,8 @@ class HarnessClient:
                     matches = predicate is None or predicate(notification)
                 except BaseException as exc:
                     with self._lock:
+                        if proc is not None and self._proc is not proc:
+                            return
                         current = self._notification_subscribers.get(subscription_id)
                         if current is not None and current[0] is subscriber:
                             self._notification_subscribers.pop(subscription_id, None)
@@ -415,30 +481,65 @@ class HarnessClient:
                     subscriber.put(notification)
                     delivered = True
             if not delivered:
-                self._notifications.put(notification)
+                notifications.put(notification)
 
-    def _fail_waiters(self, exc: BaseException) -> None:
-        with self._lock:
-            waiters = list(self._responses.values())
-            self._responses.clear()
-            subscribers = list(self._notification_subscribers.values())
-            self._notification_subscribers.clear()
+    def _take_waiters_locked(
+        self,
+    ) -> tuple[list[queue.Queue[JsonValue | BaseException]], list[tuple[queue.Queue[Notification | BaseException], NotificationFilter | None]]]:
+        waiters = list(self._responses.values())
+        self._responses.clear()
+        subscribers = list(self._notification_subscribers.values())
+        self._notification_subscribers.clear()
+        return waiters, subscribers
+
+    def _publish_waiter_failure(
+        self,
+        waiters: list[queue.Queue[JsonValue | BaseException]],
+        subscribers: list[tuple[queue.Queue[Notification | BaseException], NotificationFilter | None]],
+        notifications: queue.Queue[Notification | BaseException],
+        requests: queue.Queue[IncomingRequest | BaseException],
+        exc: BaseException,
+    ) -> None:
         for waiter in waiters:
             waiter.put(exc)
         for subscriber, _predicate in subscribers:
             subscriber.put(exc)
-        self._notifications.put(exc)
-        self._requests.put(exc)
+        notifications.put(exc)
+        requests.put(exc)
 
-    def _runtime_closed_error(self, reason: str) -> TransportClosedError:
-        diagnostics = self._runtime_diagnostics()
+    def _fail_waiters_from_reader(
+        self,
+        proc: subprocess.Popen[str],
+        exc: BaseException,
+        notifications: queue.Queue[Notification | BaseException],
+        requests: queue.Queue[IncomingRequest | BaseException],
+    ) -> None:
+        with self._lock:
+            if self._proc is not proc:
+                return
+            waiters, subscribers = self._take_waiters_locked()
+        self._publish_waiter_failure(waiters, subscribers, notifications, requests, exc)
+
+    def _runtime_closed_error(
+        self,
+        reason: str,
+        proc: subprocess.Popen[str] | None = None,
+        stderr_lines: deque[str] | None = None,
+    ) -> TransportClosedError:
+        diagnostics = self._runtime_diagnostics(proc, stderr_lines)
         return TransportClosedError(f"{reason}\n{diagnostics}" if diagnostics else reason)
 
-    def _runtime_diagnostics(self) -> str:
+    def _runtime_diagnostics(
+        self,
+        proc: subprocess.Popen[str] | None = None,
+        stderr_lines: deque[str] | None = None,
+    ) -> str:
         """Return available subprocess state for transport failures and timeouts."""
-        proc = self._proc
+        proc = self._proc if proc is None else proc
+        stderr_lines = self._stderr_lines if stderr_lines is None else stderr_lines
         if (
             proc is not None
+            and proc is self._proc
             and proc.poll() is not None
             and self._stderr_thread is not None
             and self._stderr_thread.is_alive()
@@ -451,8 +552,8 @@ class HarnessClient:
             exit_code = proc.poll()
             if exit_code is not None:
                 parts.append(f"exit code: {exit_code}")
-        if self._stderr_lines:
-            parts.append("stderr tail:\n" + "\n".join(self._stderr_lines))
+        if stderr_lines:
+            parts.append("stderr tail:\n" + "\n".join(stderr_lines))
         return "\n".join(parts)
 
     def _default_launch_args(self, env: dict[str, str]) -> tuple[str, ...]:

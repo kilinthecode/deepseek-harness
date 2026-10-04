@@ -215,6 +215,13 @@ describe('headless command-line provider', () => {
     expect(observed.runnerConfig).toMatchObject({ images: ['a.png', 'b.jpg'] })
   })
 
+  it('retains every repeated --image value in order', async () => {
+    const images = Array.from({ length: 128 }, (_, index) => `image-${index}.png`)
+    const args = images.flatMap(image => ['--image', image])
+    const { task } = await bootStartup([...args, 'describe', 'these'])
+    expect(task?.images).toEqual(images)
+  })
+
   it('rejects an empty --image path', async () => {
     const { task, observed } = await bootStartup(['--image', '', 'do', 'it'])
     expect(observed.out).toContain('--image requires a non-empty path')

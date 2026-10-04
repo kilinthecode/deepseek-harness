@@ -335,6 +335,25 @@ describe('Schedule dispatch failures and concurrent changes', () => {
     expect(records.map(item => item.record.scheduledAt)).toContain('2026-09-16T00:00:10.000Z')
   })
 
+  it('keeps distinct recurring Session batches separate across a large due set', async () => {
+    let sessionReads = 0
+    const records = Array.from({ length: 128 }, (_, index) => ({
+      ...task(createEveryScheduleRecord(
+        ScheduleId(`batch-${index}`), `Reminder ${index}`, 300, Date.now() - 300_000, `Reminder ${index}`,
+      )),
+      // Count grouping work independently of clock speed and asynchronous delivery.
+      get sessionId() { sessionReads += 1; return SessionId(`session-${index}`) },
+    }))
+    const test = await setup(records)
+    test.runtime.requestDrive()
+    await vi.advanceTimersByTimeAsync(0)
+    expect(test.resolve).toHaveBeenCalledTimes(records.length)
+    expect(test.followup).toHaveBeenCalledTimes(records.length)
+    expect(test.commit).toHaveBeenCalledTimes(records.length)
+    expect(records.every(record => record.record.scheduledAt === '2026-09-16T00:05:00.000Z')).toBe(true)
+    expect(sessionReads).toBeLessThanOrEqual(16 * records.length)
+  })
+
   it('batches daily and fixed-rate occurrences in one Session after downtime', async () => {
     const daily = createDailyScheduleRecord(ScheduleId('daily-batch'), 'Daily check', {
       time: '07:59:00', time_zone: 'Asia/Shanghai',

@@ -44,6 +44,23 @@ export function matcherDiagnostic(matcher: string | undefined, mode: MatcherMode
 }
 
 /**
+ * Compile a matcher once for repeated queries against a stable configuration.
+ * @param matcher - the configured pattern; absent/empty/`'*'` match every query.
+ * @param mode - the dialect deciding literal-vs-regex interpretation.
+ * @returns a predicate with the same semantics as {@link matchesMatcher}.
+ */
+export function compileMatcher(matcher: string | undefined, mode: MatcherMode): (query: string) => boolean {
+  if (matcher === undefined || matcher === '' || matcher === '*') return () => true
+  const pattern = matcher
+  if (mode === 'claude-code' && CLAUDE_LITERAL.test(pattern)) {
+    const alternatives = new Set(pattern.split('|'))
+    return query => alternatives.has(query)
+  }
+  const regex = compileRegex(pattern)
+  return query => regex?.test(query) ?? false
+}
+
+/**
  * Whether `matcher` selects `query` under the given dialect. Claude literal
  * patterns exact-match pipe-separated alternatives; all other patterns are
  * unanchored regexes. Invalid regexes return `false` rather than throwing;
@@ -55,11 +72,9 @@ export function matcherDiagnostic(matcher: string | undefined, mode: MatcherMode
  *   regex.
  */
 export function matchesMatcher(matcher: string | undefined, query: string, mode: MatcherMode): boolean {
-  if (isMatchAll(matcher)) return true
-  // matcher is a non-empty string past the match-all guard.
-  const pattern = matcher as string
-  if (mode === 'claude-code' && CLAUDE_LITERAL.test(pattern)) {
-    return pattern.split('|').includes(query)
+  if (matcher === undefined || matcher === '' || matcher === '*') return true
+  if (mode === 'claude-code' && CLAUDE_LITERAL.test(matcher)) {
+    return matcher.split('|').includes(query)
   }
-  return compileRegex(pattern)?.test(query) ?? false
+  return compileRegex(matcher)?.test(query) ?? false
 }

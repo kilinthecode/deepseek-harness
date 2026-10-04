@@ -67,10 +67,6 @@ export const SNAPSHOT_MIN_BYTES = Buffer.byteLength(
 
 const TYPE_RANK = Object.fromEntries(MEMORY_TYPES.map((type, index) => [type, index])) as Record<MemoryType, number>
 
-type SnapshotItem =
-  | { readonly kind: 'block'; readonly text: string }
-  | { readonly kind: 'index'; readonly text: string }
-
 function utf8Bytes(text: string): number {
   return Buffer.byteLength(text, 'utf8')
 }
@@ -112,28 +108,21 @@ function blockedIndexLine(record: MemoryRecord): string {
 }
 
 /**
- * Render items as blocks first, then the index-line group, each group in
- * the given (sorted) order — never interleaved, so a later, lower-priority
- * record whose block fits never renders before an earlier, higher-priority
- * record that only fit as an index line. Reordering blocks before index
- * lines only removes blank separators, never adds bytes, so every budget
- * check during the greedy fill (which measures this same function's
- * output) stays sound.
- * @param items - candidate blocks and index lines, in sorted record order.
- * @param omitted - count for the trailing omission line; `0` omits it.
- * @returns the header, the block group, the index-line group, and the omission line.
+ * Render blocks before index lines, preserving order within each group.
+ * @param blocks - accepted recall blocks in sorted record order.
+ * @param indexLines - accepted index lines in sorted record order.
+ * @param omitted - trailing omission count; zero omits the line.
+ * @returns the complete snapshot text.
  */
-function compose(items: readonly SnapshotItem[], omitted: number): string {
-  const blocks = items.filter((item): item is Extract<SnapshotItem, { kind: 'block' }> => item.kind === 'block')
-  const indexLines = items.filter((item): item is Extract<SnapshotItem, { kind: 'index' }> => item.kind === 'index')
+function compose(blocks: readonly string[], indexLines: readonly string[], omitted: number): string {
   const parts: string[] = [SNAPSHOT_HEADER]
-  blocks.forEach((item, index) => {
+  blocks.forEach((text, index) => {
     if (index > 0) parts.push('')
-    parts.push(item.text)
+    parts.push(text)
   })
   if (indexLines.length > 0) {
     if (blocks.length > 0) parts.push('')
-    for (const item of indexLines) parts.push(item.text)
+    for (const text of indexLines) parts.push(text)
   }
   if (omitted > 0) parts.push(`… ${omitted} more; use memory_recall`)
   return parts.join('\n')
@@ -166,39 +155,47 @@ export function renderSnapshot(
 ): string | undefined {
   const ordered = [...records].sort(bySnapshotOrder)
   if (ordered.length === 0) return undefined
-  const items: SnapshotItem[] = []
+  const blocks: string[] = []
+  const indexLines: string[] = []
+  let renderedBytes = utf8Bytes(SNAPSHOT_HEADER)
   let omitted = 0
   for (const record of ordered) {
     const blocked = scan(record.description) !== undefined || scan(record.content) !== undefined
     if (!blocked) {
-      const blockItem: SnapshotItem = { kind: 'block', text: recallBlock(record) }
-      if (utf8Bytes(compose([...items, blockItem], 0)) <= maxBytes) {
-        items.push(blockItem)
+      const blockItem = recallBlock(record)
+      const blockSeparatorBytes = blocks.length === 0
+        ? 1 + (indexLines.length > 0 ? 1 : 0)
+        : 2
+      const candidateBytes = renderedBytes + utf8Bytes(blockItem) + blockSeparatorBytes
+      if (candidateBytes <= maxBytes) {
+        renderedBytes = candidateBytes
+        blocks.push(blockItem)
         continue
       }
     }
-    const indexItem: SnapshotItem = {
-      kind: 'index',
-      text: blocked ? blockedIndexLine(record) : indexLine(record),
-    }
-    if (utf8Bytes(compose([...items, indexItem], 0)) <= maxBytes) {
-      items.push(indexItem)
+    const indexItem = blocked ? blockedIndexLine(record) : indexLine(record)
+    const candidateBytes = renderedBytes + utf8Bytes(indexItem)
+      + (indexLines.length > 0 ? 1 : blocks.length > 0 ? 2 : 1)
+    if (candidateBytes <= maxBytes) {
+      renderedBytes = candidateBytes
+      indexLines.push(indexItem)
       continue
     }
     omitted += 1
   }
-  if (omitted === 0) return compose(items, 0)
+  if (omitted === 0) return compose(blocks, indexLines, 0)
   for (;;) {
-    const text = compose(items, omitted)
-    if (utf8Bytes(text) <= maxBytes) return text
-    const dropAt = items.findLastIndex(item => item.kind === 'index')
-    if (dropAt === -1) {
-      // An empty item list rendered `text` as header plus omission line, which did not fit.
-      if (items.pop() === undefined) return undefined
+    const omissionBytes = utf8Bytes(`… ${omitted} more; use memory_recall`)
+    if (renderedBytes + 1 + omissionBytes <= maxBytes) return compose(blocks, indexLines, omitted)
+    const indexItem = indexLines.pop()
+    if (indexItem !== undefined) {
+      renderedBytes -= utf8Bytes(indexItem) + (indexLines.length > 0 ? 1 : blocks.length > 0 ? 2 : 1)
       omitted += 1
       continue
     }
-    items.splice(dropAt, 1)
+    const blockItem = blocks.pop()
+    if (blockItem === undefined) return undefined
+    renderedBytes -= utf8Bytes(blockItem) + (blocks.length > 0 ? 2 : 1)
     omitted += 1
   }
 }
