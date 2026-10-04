@@ -29,6 +29,7 @@ const UI_EXPECTED = join(SNAPSHOT_DIR, 'ui.expected.md')
 const SENDING_EXPECTED = join(SNAPSHOT_DIR, 'sending.expected.md')
 const WRITER_HELD_EXPECTED = join(SNAPSHOT_DIR, 'writer-held.expected.md')
 const FAILED_EXPECTED = join(SNAPSHOT_DIR, 'failed.expected.md')
+const RECOVERED_EXPECTED = join(SNAPSHOT_DIR, 'recovered.expected.md')
 const GOAL_STOP_EXPECTED = join(SNAPSHOT_DIR, 'goal-stop.expected.md')
 const MODE = webSnapshotMode()
 
@@ -216,7 +217,29 @@ describe('web e2e: queue row actions', () => {
     expect(Math.abs(tooltipGeometry!.tooltipTop - tooltipGeometry!.declaredTop)).toBeLessThan(2)
     const editingSnapshot = await captureStableAria(page, '[class*="centerCol"]', scaffold.workspaceCwd)
     await compareOrRefreshGolden(EDITING_EXPECTED, editingSnapshot, MODE)
-    await settleQueueAction(() => save.click(), EDITED)
+    const editReceived = Promise.withResolvers<undefined>()
+    const releaseEdit = Promise.withResolvers<undefined>()
+    let editRequests = 0
+    await page.route('**/api/session/updateQueue', async (route) => {
+      editRequests += 1
+      editReceived.resolve(undefined)
+      await releaseEdit.promise
+      await route.continue()
+    })
+    const saving = settleQueueAction(() => save.click(), EDITED)
+    try {
+      await editReceived.promise
+      await expect.poll(() => editor.evaluate(element => (element as HTMLTextAreaElement).readOnly)).toBe(true)
+      await editor.press('Enter')
+      await editor.press('Enter')
+      await editor.press('Escape')
+      expect(editRequests).toBe(1)
+      expect(await editor.inputValue()).toBe(EDITED_CONTENT)
+    } finally {
+      releaseEdit.resolve(undefined)
+      await saving
+      await page.unroute('**/api/session/updateQueue')
+    }
     await page.getByText(EDITED, { exact: true }).waitFor()
 
     const removeRow = page.locator('[data-queue-dock] li', { hasText: REMOVE })
@@ -279,6 +302,36 @@ describe('web e2e: queue row actions', () => {
     await expect.poll(() => input.textContent()).toBe(FAILED)
     await compareOrRefreshGolden(WRITER_HELD_EXPECTED, [
       await writerHeld.ariaSnapshot(),
+      await captureStableAria(page, '[data-composer-card]', scaffold.workspaceCwd),
+    ].join('\n'), MODE)
+
+    const failedReceived = Promise.withResolvers<undefined>()
+    const releaseFailure = Promise.withResolvers<undefined>()
+    let refusedSends = 0
+    await page.route('**/api/session/prompt', async (route) => {
+      refusedSends += 1
+      if (refusedSends === 1) {
+        failedReceived.resolve(undefined)
+        await releaseFailure.promise
+      }
+      const envelope = route.request().postDataJSON() as { rpcId: string }
+      await route.fulfill({ json: {
+        type: 'server-response', rpcId: envelope.rpcId,
+        result: { ok: false, error: { code: 'session/agent-busy', message: 'Queue submission failed', details: {} } },
+      } })
+    }, { times: 2 })
+    try {
+      await input.press('Enter')
+      await failedReceived.promise
+      await input.fill('Newer draft to preserve')
+    } finally { releaseFailure.resolve(undefined) }
+    await failure.waitFor()
+    expect(await input.textContent()).toBe('Newer draft to preserve')
+    await input.press('Enter')
+    await expect.poll(() => input.locator('p').allTextContents()).toEqual([FAILED, '', 'Newer draft to preserve'])
+    expect(refusedSends).toBe(2)
+    await compareOrRefreshGolden(RECOVERED_EXPECTED, [
+      await failure.ariaSnapshot(),
       await captureStableAria(page, '[data-composer-card]', scaffold.workspaceCwd),
     ].join('\n'), MODE)
 
@@ -495,7 +548,7 @@ describe('web e2e: queue row actions', () => {
       [
         'collapsed.expected.md', 'editing.expected.md', 'layout.expected.md',
         'preserved.expected.md', 'preserved-expanded.expected.md', 'ui.expected.md',
-        'sending.expected.md', 'failed.expected.md', 'writer-held.expected.md',
+        'sending.expected.md', 'failed.expected.md', 'writer-held.expected.md', 'recovered.expected.md',
         'goal-stop.expected.md',
       ],
     )

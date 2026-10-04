@@ -1,4 +1,3 @@
-
 .root {
   display: flex;
   flex-direction: column;
@@ -47,12 +46,10 @@
   position: relative; /* overlay anchor positioning context */
   display: flex;
   flex-direction: column;
-  /* figma Input 75:8208: 12px between the text area and the button row; the
-     card's top pad before .InputText tightened from the drawn 10 to 8. */
   gap: 12px;
   width: 100%;
   max-width: var(--dsh-composer-card-max-width);
-  padding-top: 8px;
+  padding-top: 12px;
   /* Input stroke: the light neutral (l2, one step above the menus' l1),
      drawn as the elevation hairline so it costs no layout; the shadow is the
      soft elevation tier. Fill: the input surface token (elevated in dark). */
@@ -74,6 +71,10 @@
      (see ui-theme styles/scrollbar.css for the rebinding contract). */
   --dsh-scrollbar-thumb: var(--dsw-alias-scrollbar-bg-l2);
   --dsh-scrollbar-thumb-hover: var(--dsw-alias-scrollbar-hover-l2);
+}
+
+.card:focus-within {
+  --dsw-elevation-stroke-color: var(--dsw-alias-border-l4);
 }
 
 /* No-workspace trigger state: an inset 1px dashed outline marks the card as a
@@ -111,7 +112,7 @@
   display: flex;
   align-items: center;
   gap: 8px;
-  padding: 10px 12px 0;
+  padding: 8px 20px 0;
 }
 
 /* Floating overlay anchor (menu / popupSelect shell): entries position
@@ -133,10 +134,8 @@
   margin-right: 4px;
 }
 
-/* The card's corner arc still overlaps the scrollport's top (8px top
-   pad reaches only y=8): start the thumb's travel below the arc so it never
-   pokes outside the capsule. WebKit-path only; Firefox's thin bar has no
-   track margin, an accepted remainder. */
+/* The thumb starts below the card's corner arc. Firefox's thin scrollbar
+   has no track margin. */
 .scroll::-webkit-scrollbar-track {
   margin-top: 8px;
 }
@@ -162,16 +161,11 @@
   to { opacity: 1; }
 }
 
-/* The contenteditable draft surface (grows with its content; .scroll caps
-   and scrolls it). figma .InputText 34:10434 drew pl 16 / pr 12 / pt 4; the
-   left pad tightened to 14, and the right pad is 8 here plus .scroll's 4px
-   bar inset. */
+/* The contenteditable grows in normal flow; .scroll owns the height cap. */
 .input {
   box-sizing: border-box;
-  /* Docked floor: one 24px line + 4px top pad = 28 content height; 36 leaves
-     an 8px breath below the line (the hero keeps its own 52px floor below). */
-  min-height: 36px;
-  padding: 4px 8px 0 14px;
+  min-height: 44px;
+  padding: 4px 16px 0 20px;
   font-family: var(--dsw-font-family);
   font-size: inherit;
   line-height: inherit;
@@ -180,7 +174,6 @@
   overflow-wrap: anywhere;
   outline: none;
   color: var(--dsw-alias-label-primary);
-  /* Business blue, not brand-primary: that token resolves to ink in this sheet. */
   caret-color: var(--dsw-alias-state-business-primary);
 }
 
@@ -206,13 +199,10 @@
   visibility: hidden;
 }
 
-/* figma 34:10434: #ADB2B8 light / #81858C dark — the caption pair exactly.
-   Insets mirror .input's pads (the other right 4px sits on .scroll). One
-   ellipsized line: a wrapped second line would clip against the docked
-   36px floor. */
+/* Insets match .input, with the remaining right inset on .scroll. */
 .placeholder {
   position: absolute;
-  inset: 4px 8px auto 14px;
+  inset: 4px 16px auto 20px;
   color: var(--dsw-alias-label-caption);
   white-space: nowrap;
   overflow: hidden;
@@ -230,14 +220,12 @@
   cursor: pointer;
 }
 
-/* Hero (centered empty-state) keeps the 2-line floor (figma min-h 52 = ~2 × 24
-   line + 4pt); the docked composer collapses to the content height. */
+/* The empty-state composer reserves room for a two-line prompt. */
 .hero .input {
-  min-height: 52px;
+  min-height: 72px;
 }
 
-/* The hero's 52px floor fits two lines, so its placeholder clamps at two
-   instead of the docked single line. */
+/* The hero placeholder can use two lines; the docked placeholder uses one. */
 .hero .placeholder {
   white-space: normal;
   display: -webkit-box;
@@ -246,18 +234,14 @@
   line-clamp: 2;
 }
 
-/* Toolbar: attach + Plan + Read-only on the left; model + send on the right
-   (figma Input_Bottom chrome). */
+/* Context controls stay left; model and submission controls stay right. */
 .row {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
   justify-content: space-between;
   gap: 12px;
-  /* 2px moved from the bottom pad to the top: the whole control row sits 2px
-     lower in the card (it read too high against the textarea) while the
-     controls' own centering stays untouched. */
-  padding: 2px 8px 6px;
+  padding: 0 12px 12px;
   min-width: 0;
   /* Size container so the chips inside can collapse to icon-only when the
      card runs out of row width (PermissionSelect @container rule). Anonymous
@@ -279,15 +263,12 @@
   min-width: 0;
 }
 
-/* figma 75:8208 drew 16 between + and the mode chips and 4 between Plan /
-   Read-only; both gaps settled on 12 so the pill chips read as separate
-   controls without drifting from the + control. */
 .tools {
-  gap: 12px;
+  gap: 8px;
 }
 
 .modes {
-  gap: 12px;
+  gap: 8px;
 }
 
 .trailing {
@@ -298,19 +279,10 @@
      model trigger (external:107). The auto margin re-anchors it right on the
      wrapped line; on a single line space-between already pins it right. */
   margin-left: auto;
-  gap: 12px;
+  gap: 8px;
 }
 
-/* Compact spacing preserves room for the fixed-width controls in narrow cards. */
-@container (max-width: 560px) {
-  .tools,
-  .modes,
-  .trailing {
-    gap: 8px;
-  }
-}
-
-/* Attach circle (figma + control): 28px, selector fill, primary glyph. */
+/* The command launcher shares the toolbar's quiet resting treatment. */
 .add {
   display: grid;
   place-items: center;
@@ -320,7 +292,7 @@
   border: none;
   border-radius: 999px;
   corner-shape: round;
-  background: var(--dsw-specific-selector);
+  background: transparent;
   color: var(--dsw-alias-label-primary);
   cursor: pointer;
 }
@@ -366,9 +338,7 @@
   cursor: default;
 }
 
-/* Primary send (figma IconButton 34:10465): 34px circle, #3964FE light /
-   #679EFE dark — the info-fill pair (500→400), NOT button-primary (ink);
-   white glyph; empty text = 0.4 opacity. */
+/* Submission uses the theme's primary fill and contrasting foreground. */
 .primary {
   display: grid;
   place-items: center;
@@ -378,20 +348,14 @@
   border: none;
   border-radius: 999px;
   corner-shape: round;
-  background: var(--dsw-alias-button-info-fill);
-  /* Static white, not the foreground token: the arrow stays white on the blue
-     fill in both themes (design 34:10465). */
-  color: #fff;
+  background: var(--dsw-alias-button-primary-fill);
+  color: var(--dsw-alias-label-primary-foreground);
   cursor: pointer;
   transition: background-color 100ms ease;
-  /* Opts out of the row's 2px downward shift (.row top pad): the send circle
-     keeps its original seat while the smaller chips sit lower. Transform, not
-     margin, so flex centering math is untouched. */
-  transform: translateY(-2px);
 }
 
 .primary:hover:not(:disabled) {
-  background: var(--dsw-alias-button-info-hover);
+  background: var(--dsw-alias-button-primary-hover);
 }
 
 .primary:disabled {
@@ -410,7 +374,7 @@
   cursor: pointer;
 }
 
-.standardControls { display: flex; align-items: center; gap: 12px; min-width: 0; }
+.standardControls { display: flex; align-items: center; gap: 8px; min-width: 0; }
 .tools[hidden], .standardControls[hidden] { display: none; }
 .trailingActive { flex: 1; margin-left: 0; }
 .activity { display: flex; align-items: center; flex: none; }

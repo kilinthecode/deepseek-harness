@@ -81,7 +81,7 @@ interface Channel {
  * updates one row) compare seqs among themselves: a lower-or-equal seq within
  * the Host generation loses, so a replayed frame cannot regress a value and a
  * stale baseline cannot overwrite a newer frame. Cached writes (the session
- * list's zero-I/O block) only fill keys no sequenced row holds, and a baseline
+ * list's zero-I/O block) only fill keys before a complete baseline, and a baseline
  * discards every cached row before it seeds, regardless of seq: the connected
  * Session is the truth and a cached value never outranks it. A key the store
  * has never seen reads `undefined` (capability absent). Faces are identity-stable
@@ -91,6 +91,7 @@ interface Channel {
  */
 export class ProjectionValueStore {
   private readonly rows = new Map<string, Row>()
+  private baselineSeq: SessionSeqCursor | undefined
   private readonly channels = new Map<string, Channel>()
   private valuesCache: Readonly<Partial<SessionProjectionMap>> | undefined
   /** Coarse any-key channel (no snapshot cache to rebuild: reads hit rows directly). */
@@ -157,23 +158,19 @@ export class ProjectionValueStore {
    * @param seq - the unit's watermark at emission.
    */
   apply(key: string, value: unknown, seq: SessionSeqCursor): void {
-    const row = this.rows.get(key)
-    // higher seq wins among sequenced rows; replays and stale frames drop. A
-    // cached row has no comparable seq and always yields.
-    if (row?.kind === 'sequenced' && seq <= row.seq) return
-    this.rows.set(key, { kind: 'sequenced', value, seq })
-    this.changed(key)
+    if (this.baselineSeq !== undefined && seq <= this.baselineSeq) return
+    this.acceptSequenced(key, value, seq)
   }
 
   /**
    * Fill keys from a session-list block the Host labeled `cached`: a zero-I/O
-   * view of the persisted checkpoint. A cached value lands only where no
-   * sequenced row exists: a connected Session has already answered for such
-   * a key, and the list's view of the persisted checkpoint cannot be newer
-   * than it.
+   * view of the persisted checkpoint. After a complete baseline, cached
+   * values cannot restore keys the connected Session declared absent.
+   * Before that baseline, cached values yield to each sequenced row.
    * @param values - whole values by key viewed from the persisted checkpoint.
    */
   applyCached(values: Readonly<Record<string, unknown>>): void {
+    if (this.baselineSeq !== undefined) return
     for (const key of Object.keys(values)) {
       if (this.rows.get(key)?.kind === 'sequenced') continue
       this.rows.set(key, { kind: 'cached', value: values[key] })
@@ -188,10 +185,12 @@ export class ProjectionValueStore {
    * it. Then every carried key lands under the same seq rule as frames, and a
    * key the block omits is capability-absent as of the cut — its row clears
    * unless a newer frame already superseded the cut (a stale baseline can
-   * neither overwrite nor clear newer sequenced values).
+   * neither overwrite nor clear newer sequenced values). The cut also fences
+   * omitted and previously unseen keys against stale writes until clear().
    * @param baseline - the response's projections block.
    */
   seed(baseline: ProjectionsBaseline): void {
+    if (this.baselineSeq !== undefined && baseline.asOfSeq < this.baselineSeq) return
     for (const [key, row] of this.rows) {
       if (row.kind !== 'cached') continue
       this.rows.delete(key)
@@ -200,7 +199,7 @@ export class ProjectionValueStore {
     // Erased walk: the framework crosses the open key space; per-key typing
     // is re-established at the consumer (useProjection's map lookup).
     const values = baseline.values as Record<string, unknown>
-    for (const key of Object.keys(values)) this.apply(key, values[key], baseline.asOfSeq)
+    for (const key of Object.keys(values)) this.acceptSequenced(key, values[key], baseline.asOfSeq)
     for (const [key, row] of this.rows) {
       if (Object.hasOwn(values, key)) continue
       // Every cached row was deleted above; the kind test only narrows the
@@ -209,14 +208,23 @@ export class ProjectionValueStore {
       this.rows.delete(key)
       this.changed(key)
     }
+    this.baselineSeq = baseline.asOfSeq
   }
 
   /** Discard one Host generation's values and watermarks while preserving subscribed faces. */
   clear(): void {
+    this.baselineSeq = undefined
     for (const key of this.rows.keys()) {
       this.rows.delete(key)
       this.changed(key)
     }
+  }
+
+  private acceptSequenced(key: string, value: unknown, seq: SessionSeqCursor): void {
+    const row = this.rows.get(key)
+    if (row?.kind === 'sequenced' && seq <= row.seq) return
+    this.rows.set(key, { kind: 'sequenced', value, seq })
+    this.changed(key)
   }
 
   private changed(key: string): void {

@@ -587,6 +587,31 @@ describe('QueueDock', () => {
     })
   })
 
+  it('locks an edit until its single save settles and keeps the draft on failure', async () => {
+    const pending = Promise.withResolvers<undefined>()
+    const snap = snapshotWith([row('i-edit', 'before')])
+    const source = liveSession(snap)
+    const updateQueue = vi.fn(() => pending.promise)
+    const { getByLabelText } = render(
+      <QueueDock {...kitFor(snap, { updateQueue })} useSession={source.useSession} useProjection={source.useProjection} />,
+    )
+    fireEvent.click(getByLabelText('编辑排队消息'))
+    const editor = getByLabelText('编辑排队消息') as HTMLTextAreaElement
+    fireEvent.change(editor, { target: { value: 'after' } })
+    fireEvent.keyDown(editor, { key: 'Enter' })
+    fireEvent.keyDown(editor, { key: 'Enter' })
+    expect(updateQueue).toHaveBeenCalledTimes(1)
+    expect(editor).toHaveProperty('readOnly', true)
+    fireEvent.keyDown(editor, { key: 'Escape' })
+    expect(getByLabelText('编辑排队消息')).toBe(editor)
+    await act(async () => {
+      pending.reject(new Error('Connection lost'))
+      await expect(pending.promise).rejects.toThrow('Connection lost')
+    })
+    expect(editor).toHaveProperty('readOnly', false)
+    expect(editor.value).toBe('after')
+  })
+
   it('cancels an edit by button or Escape without mutating the queue', () => {
     const snap = snapshotWith([row('i-edit', 'before')])
     const source = liveSession(snap)

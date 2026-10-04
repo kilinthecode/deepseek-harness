@@ -152,11 +152,11 @@ export function apply(ctx: Context): void {
   const renameRequest = derive(shortcutControls.state, state => state.renameTarget)
   const archiveRequest = createSnapshotStore<SessionArchiveConfirmRequest | null>(null)
   const requestSessionRename = shortcutControls.rename
-  const unarchiveSession = (sessionId: SessionId): void => {
+  const unarchiveSession = (sessionId: SessionId): Promise<void> =>
     uiWorkspace.unarchiveSession(sessionId).catch((reason: unknown) => {
+      notify({ kind: 'unarchiveFailed' })
       console.warn('session unarchive rejected:', reason)
     })
-  }
   const renameSession: SessionRenameDialogInjected['renameSession'] = async (sessionId, title) => {
     const result = await sessions.using(
       sessionId,
@@ -188,6 +188,7 @@ export function apply(ctx: Context): void {
       }).catch((reason: unknown) => {
         const activity = activeSessionRefusal(reason)
         if (activity === undefined) {
+          notify({ kind: 'archiveFailed' })
           console.warn('session archive rejected:', reason)
           return
         }
@@ -195,7 +196,7 @@ export function apply(ctx: Context): void {
         archiveRequest.set({ sessionId, displayTitle, activity })
       })
     },
-    unarchiveSession,
+    unarchiveSession: (sessionId) => { void unarchiveSession(sessionId) },
   })
   installWorkspaceShortcuts(ctx, uiWorkspace, shortcutControls, archiveInjected().archiveSession)
   const archiveConfirmInjected = (): SessionArchiveConfirmInjected => ({
@@ -208,9 +209,7 @@ export function apply(ctx: Context): void {
   })
   const forkInjected = (): ForkSessionInjected => ({
     forkSession: (sessionId) => {
-      uiWorkspace.forkSession(sessionId).catch(() => {
-        // Fork or child-title failure leaves the list as it was.
-      })
+      uiWorkspace.forkSession(sessionId).catch(shortcutControls.forkRejected)
     },
   })
   const renameInjected = (): RenameSessionInjected => ({ requestSessionRename })
@@ -222,7 +221,7 @@ export function apply(ctx: Context): void {
   const rowToastInjected = (): RowToastInjected => ({
     hooks: { toast: rowToast },
     dismissToast: () => { rowToast.set(null) },
-    undoArchive: unarchiveSession,
+    undoArchive: (sessionId) => { void unarchiveSession(sessionId) },
     showArchived: () => { viewInstance.actions.setArchivedFilter('show') },
   })
   const browserInjected = (): WorkspaceBrowserInjected => ({
@@ -239,7 +238,7 @@ export function apply(ctx: Context): void {
     insertWorkspaceBefore: async (workspaceId, beforeWorkspaceId) => {
       await workspaces.insertBefore(workspaceId, beforeWorkspaceId)
     },
-    unarchiveSession: async (sessionId) => { await uiWorkspace.unarchiveSession(sessionId) },
+    unarchiveSession,
     createWorkspace: input => workspaces.create(input),
     requestSearch: shortcutControls.search,
     requestAddWorkspace: shortcutControls.add,

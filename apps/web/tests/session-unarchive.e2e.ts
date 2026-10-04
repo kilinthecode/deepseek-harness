@@ -8,6 +8,7 @@ import { afterAll, beforeAll, describe, expect, it, onTestFailed } from 'vitest'
 import { SessionId } from '@deepseek-ai/dsh-session'
 import {
   acknowledgeReloadConnectionLoss, launchWebScaffold, seedSession, watchConsole, type WebScaffold,
+  compareOrRefreshGolden, webSnapshotMode,
 } from './scaffold.ts'
 import { newEnglishPage, saveFailureShot } from './support.ts'
 
@@ -15,6 +16,7 @@ import { newEnglishPage, saveFailureShot } from './support.ts'
 // spec needs any one cold Session row, not new recorded content.
 const SEED = fileURLToPath(new URL('../../../snapshots/web/seeded-history/session.v3.jsonl', import.meta.url))
 const SEED_ID = 'session-unarchive-web-e2e'
+const REFUSED_EXPECTED = fileURLToPath(new URL('./expected/session-unarchive/refused-actions.expected.md', import.meta.url))
 
 describe('web e2e: archived sessions are restored from the sidebar filter', () => {
   let scaffold: WebScaffold
@@ -89,6 +91,31 @@ describe('web e2e: archived sessions are restored from the sidebar filter', () =
     await expect.poll(() => sessionRow.count(), { timeout: 10_000 }).toBe(1)
     await expect.poll(() => sessionRow.getAttribute('aria-selected'), { timeout: 10_000 }).toBe('true')
 
+    const refused: string[] = []
+    const refuse = async (method: string, code: string) => {
+      await page.route(`**/api/${method}`, async (route) => {
+        const envelope = route.request().postDataJSON() as { rpcId: string }
+        await route.fulfill({ json: {
+          type: 'server-response', rpcId: envelope.rpcId,
+          result: { ok: false, error: { code, message: 'Injected failure', details: {} } },
+        } })
+      }, { times: 1 })
+    }
+    await refuse('session/fork', 'session/fork-unavailable')
+    await clickHoverAction(sessionRow, `Session actions for ${title}`)
+    await page.getByRole('menuitem', { name: 'Fork session' }).click()
+    const forkRefusal = page.getByRole('alert').filter({ hasText: 'This session has no completed turn' })
+    await forkRefusal.waitFor()
+    refused.push(await forkRefusal.ariaSnapshot())
+
+    await refuse('workspace/archiveSession', 'gateway/internal')
+    await clickHoverAction(sessionRow, `Session actions for ${title}`)
+    await page.getByRole('menuitem', { name: 'Archive session' }).click()
+    const archiveRefusal = page.getByRole('alert').filter({ hasText: 'Archive failed. Try again later.' })
+    await archiveRefusal.waitFor()
+    refused.push(await archiveRefusal.ariaSnapshot())
+    expect([...scaffold.ctx.workspaceRegistry.archivedSessionIds]).toEqual([])
+
     // Archive from the row menu: no confirmation dialog, and losing the last
     // visible Session withdraws the whole Ungrouped bucket.
     await clickHoverAction(sessionRow, `Session actions for ${title}`)
@@ -105,6 +132,14 @@ describe('web e2e: archived sessions are restored from the sidebar filter', () =
     await page.getByRole('menuitem', { name: 'All conversations (show archived)', exact: true }).click()
     await ungroupedSection()
     await expect.poll(() => sessionRow.count(), { timeout: 10_000 }).toBe(1)
+    await refuse('workspace/unarchiveSession', 'gateway/internal')
+    await clickHoverAction(sessionRow, `Session actions for ${title}`)
+    await page.getByRole('menuitem', { name: 'Unarchive session' }).click()
+    const restoreRefusal = page.getByRole('alert').filter({ hasText: 'Unarchive failed. Try again later.' })
+    await restoreRefusal.waitFor()
+    refused.push(await restoreRefusal.ariaSnapshot())
+    expect([...scaffold.ctx.workspaceRegistry.archivedSessionIds]).toEqual([SessionId(SEED_ID)])
+    await compareOrRefreshGolden(REFUSED_EXPECTED, refused.join('\n'), webSnapshotMode())
     await clickHoverAction(sessionRow, `Session actions for ${title}`)
     await page.getByRole('menuitem', { name: 'Unarchive session' }).click()
     await expect.poll(
@@ -129,4 +164,48 @@ describe('web e2e: archived sessions are restored from the sidebar filter', () =
     expect(tripwire.pageErrors).toEqual([])
     expect(tripwire.warnings).toEqual([])
   }, 120_000)
+
+  it('saves a failed send while Plugins is open and restores both drafts after reload', async () => {
+    onTestFailed(() => saveFailureShot(page, 'web-e2e-failed-draft-panel'))
+    const selectedRow = (await ungroupedSection()).locator('[role="treeitem"]')
+      .filter({ has: page.locator('button[aria-label^="Session actions for "]') })
+    await selectedRow.click()
+    const input = page.locator('[data-composer-input]').first()
+    await expect.poll(() => input.getAttribute('contenteditable')).toBe('true')
+    const received = Promise.withResolvers<undefined>()
+    const release = Promise.withResolvers<undefined>()
+    await page.route('**/api/session/prompt', async (route) => {
+      received.resolve(undefined)
+      await release.promise
+      const envelope = route.request().postDataJSON() as { rpcId: string }
+      await route.fulfill({ json: {
+        type: 'server-response', rpcId: envelope.rpcId,
+        result: { ok: false, error: { code: 'session/agent-busy', message: 'Injected failure', details: {} } },
+      } })
+    }, { times: 1 })
+    try {
+      await input.fill('Failed send')
+      await input.press('Enter')
+      await received.promise
+      await input.fill('Newer draft')
+      await page.getByRole('button', { name: 'Plugins', exact: true }).click()
+      await input.waitFor({ state: 'hidden' })
+    } finally { release.resolve(undefined) }
+    await expect.poll(() => page.evaluate((id) => {
+      const stored = JSON.parse(localStorage.getItem(`dsh.conversation.${id}`) ?? '{}') as { draft?: { text?: string } }
+      return stored.draft?.text
+    }, SEED_ID)).toBe('Failed send\n\nNewer draft')
+
+    const warningStart = tripwire.warnings.length
+    await page.reload({ waitUntil: 'load' })
+    await page.getByRole('button', { name: 'Settings', exact: true }).waitFor()
+    acknowledgeReloadConnectionLoss(tripwire, warningStart)
+    const row = (await ungroupedSection()).locator('[role="treeitem"]')
+      .filter({ has: page.locator('button[aria-label^="Session actions for "]') })
+    await row.click()
+    await input.waitFor()
+    await expect.poll(() => input.locator('p').allTextContents()).toEqual(['Failed send', '', 'Newer draft'])
+    expect(tripwire.pageErrors).toEqual([])
+    expect(tripwire.warnings).toEqual([])
+  }, 60_000)
 })

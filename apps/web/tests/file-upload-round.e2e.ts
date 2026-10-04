@@ -6,9 +6,11 @@
 // content-addressed store makes the saved path identical across record and
 // replay once the workspace cwd is tokenized, so the recorded read arguments
 // replay verbatim against a freshly re-uploaded object.
-// Record: DSH_SNAPSHOT=record rewrites session.v3.jsonl, then a keyless
+// Record: DSH_SNAPSHOT=record writes the selected Session generation, then a keyless
 // DSH_SNAPSHOT=refresh regenerates ui.expected.md.
-import { readFile } from 'node:fs/promises'
+import { mkdtemp, readFile, rm } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import type { Browser, Page } from 'playwright'
 import { chromium } from 'playwright'
@@ -18,7 +20,7 @@ import {
   acknowledgeReloadConnectionLoss, assertFixtureInventory, captureStableAria, compareOrRefreshGolden, fixtureUserPrompts,
   launchWebScaffold, recordFixture, watchConsole, webSnapshotMode, type WebScaffold,
 } from './scaffold.ts'
-import { connectFreshWorkspace, newEnglishPage, saveFailureShot } from './support.ts'
+import { connectFreshWorkspace, newEnglishPage, saveFailureShot, writeReplayWithoutTimeContext } from './support.ts'
 
 const SNAPSHOT_DIR = fileURLToPath(new URL('../../../snapshots/web/file-upload-round', import.meta.url))
 const FIXTURE = fileURLToPath(new URL('../../../snapshots/web/file-upload-round/session.v3.jsonl', import.meta.url))
@@ -110,6 +112,7 @@ describe('web e2e: generic file upload through the real assembly', () => {
   let tripwire: ReturnType<typeof watchConsole>
   const sessionEvents: SessionEvent[] = []
   let liveTrajectory: string | undefined
+  let replayOverlayRoot: string | undefined
 
   /** Inspect one durable mixed message through the real image slot and all message tabs. */
   async function inspectTrajectoryAttachments(): Promise<string> {
@@ -198,7 +201,10 @@ describe('web e2e: generic file upload through the real assembly', () => {
   }
 
   beforeAll(async () => {
+    replayOverlayRoot = await mkdtemp(join(tmpdir(), 'dsh-web-file-upload-overlay-'))
+    const extraOverlayPath = await writeReplayWithoutTimeContext(replayOverlayRoot)
     scaffold = await launchWebScaffold({
+      extraOverlayPath,
       compareReplaySession: true,
       // The override rescripts the recorded read arguments with a
       // `{{fromRequest:…}}` placeholder: the saved-copy path differs per run,
@@ -216,8 +222,12 @@ describe('web e2e: generic file upload through the real assembly', () => {
   }, 120_000)
 
   afterAll(async () => {
-    await browser?.close()
-    await scaffold?.close()
+    try {
+      await browser?.close()
+      await scaffold?.close()
+    } finally {
+      if (replayOverlayRoot !== undefined) await rm(replayOverlayRoot, { recursive: true, force: true })
+    }
   })
 
   it('uploads on pick, gates send on the staged receipt, and settles the turn (all modes)', async () => {

@@ -25,6 +25,7 @@ interface WorkspaceShortcutControls {
   rename: (sessionId: SessionId, currentTitle: string) => void
   closeRename: () => void
   forkFailed: (reason: 'unavailable' | 'failed') => void
+  forkRejected: (error: unknown) => void
   dismissForkError: () => void
 }
 
@@ -37,6 +38,10 @@ export function createWorkspaceShortcutControls(): WorkspaceShortcutControls {
     searchRequest: 0, addRequested: false, directoryBusy: false, renameTarget: null, forkError: null,
   })
   let forkErrorSeq = 0
+  const forkFailed: WorkspaceShortcutControls['forkFailed'] = (reason) => {
+    forkErrorSeq += 1
+    state.set({ ...state.getSnapshot(), forkError: { reason, seq: forkErrorSeq } })
+  }
   return {
     state,
     search: () => { state.set({ ...state.getSnapshot(), searchRequest: state.getSnapshot().searchRequest + 1 }) },
@@ -47,9 +52,13 @@ export function createWorkspaceShortcutControls(): WorkspaceShortcutControls {
       state.set({ ...state.getSnapshot(), renameTarget: { sessionId, currentTitle } })
     },
     closeRename: () => { state.set({ ...state.getSnapshot(), renameTarget: null }) },
-    forkFailed: (reason) => {
-      forkErrorSeq += 1
-      state.set({ ...state.getSnapshot(), forkError: { reason, seq: forkErrorSeq } })
+    forkFailed,
+    forkRejected: (error) => {
+      // Client plugin bundles do not share error-class identity.
+      const unavailable = error instanceof Error && error.name === 'SessionForkError'
+        && (error as SessionForkError).rpcError.code === 'session/fork-unavailable'
+      forkFailed(unavailable ? 'unavailable' : 'failed')
+      if (!unavailable) console.warn('session fork rejected:', error)
     },
     dismissForkError: () => { state.set({ ...state.getSnapshot(), forkError: null }) },
   }
@@ -103,13 +112,7 @@ export function installWorkspaceShortcuts(
     if (target === undefined) return { status: 'blocked', reason: t('shortcut.noSession') }
     if (target.blank) return { status: 'blocked', reason: t('shortcut.noCompletedTurn') }
     return { status: 'handled', run: () => {
-      void navigation.forkSession(target.id).catch((error: unknown) => {
-        // Client plugin bundles do not share error-class identity.
-        const unavailable = error instanceof Error && error.name === 'SessionForkError'
-          && (error as SessionForkError).rpcError.code === 'session/fork-unavailable'
-        controls.forkFailed(unavailable ? 'unavailable' : 'failed')
-        if (!unavailable) console.warn('session fork rejected:', error)
-      })
+      void navigation.forkSession(target.id).catch(controls.forkRejected)
     } }
   })
   register('session.archive', () => t('menu.archiveSession'), ['archive session'], 'KeyA', ['primary', 'shift'], ['primary', 'alt'], () => {

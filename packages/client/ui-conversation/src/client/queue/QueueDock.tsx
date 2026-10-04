@@ -103,11 +103,12 @@ function QueueThumb({ attachment, loadImage, label }: {
  * strips newlines from single-line input values, so editing a multi-line
  * queued message through one rewrites it as a single line. It grows with its
  * content up to the CSS cap, then scrolls. Enter saves, Shift+Enter breaks the
- * line, Escape cancels.
+ * line, Escape cancels. Pending saves keep focus and make the editor read-only.
  */
-function QueueEditor({ text, label, onChange, onSave, onCancel }: {
+function QueueEditor({ text, label, busy, onChange, onSave, onCancel }: {
   text: string
   label: string
+  busy: boolean
   onChange: (text: string) => void
   onSave: () => void
   onCancel: () => void
@@ -131,8 +132,10 @@ function QueueEditor({ text, label, onChange, onSave, onCancel }: {
       className={css.editor}
       aria-label={label}
       value={text}
-      onChange={(event) => { onChange(event.currentTarget.value) }}
+      readOnly={busy}
+      onChange={(event) => { if (!busy) onChange(event.currentTarget.value) }}
       onKeyDown={(event) => {
+        if (busy) return
         if (event.key === 'Escape') {
           onCancel()
           return
@@ -195,6 +198,7 @@ export function QueueDock({ useSession, useProjection, updateQueue, notify, load
     action: QueueAction,
     failure: string,
   ): Promise<boolean> => {
+    if (busy !== null) return false
     setBusy(itemId)
     try {
       await updateQueue(itemId, action)
@@ -208,7 +212,7 @@ export function QueueDock({ useSession, useProjection, updateQueue, notify, load
   }
 
   const saveEdit = async (): Promise<void> => {
-    if (editing === null || editing.text.trim() === '') return
+    if (busy !== null || editing === null || editing.text.trim() === '') return
     if (await applyAction(
       editing.id,
       { kind: 'edit', content: [{ type: 'text', text: editing.text }] },
@@ -251,6 +255,7 @@ export function QueueDock({ useSession, useProjection, updateQueue, notify, load
                     <QueueEditor
                       text={editing.text}
                       label={t('queue.edit')}
+                      busy={busy !== null}
                       onChange={(text) => { setEditing({ id: row.id, text }) }}
                       onSave={() => { void saveEdit() }}
                       onCancel={() => { setEditing(null) }}

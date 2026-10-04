@@ -1,6 +1,8 @@
-- alert: This session is already in use, possibly by another running Portal Harness instance (such as dsh web or the desktop app). Quit other running Portal Harness instances and try again.
+- alert: Queue submission failed (session/agent-busy)
 - textbox "Message or run a task, / commands, @ files or sessions":
   - paragraph: Queue submission to retry
+  - paragraph
+  - paragraph: Newer draft to preserve
 - button "Add files or run commands"
 - 'button "Access mode, current: Workspace Write"': Workspace Write
 - button "Select model, current DeepSeek-V4-Flash": DeepSeek-V4-Flash

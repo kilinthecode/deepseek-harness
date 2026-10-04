@@ -12,7 +12,7 @@ import { LlmAdapter, type GenerateOptions, type StreamChunk } from '@deepseek-ai
 import type {} from '@deepseek-ai/dsh-agent-default-model'
 import { launchWebScaffold, watchConsole, type WebScaffold } from '../tests/scaffold.ts'
 import {
-  connectFreshWorkspace, newEnglishPage, saveFailureShot, writeComposerDraft,
+  connectFreshWorkspace, expandOwningTurnProcess, newEnglishPage, saveFailureShot, writeComposerDraft,
 } from '../tests/support.ts'
 
 const CHUNK_COUNT = 100_000
@@ -93,7 +93,7 @@ class ReasoningStressAdapter extends LlmAdapter {
       const end = Math.min(this.emitted + CHUNKS_PER_INTERVAL, CHUNK_COUNT)
       while (this.emitted < end) {
         const text = this.emitted === CHUNK_COUNT - 1
-          ? `\n${MARKER}`
+          ? `\n\n${MARKER}\n`
           : this.emitted % 64 === 63 ? '推理\n' : '推理'
         parts.push(text)
         yield { type: 'reasoning-delta', index: 0, text }
@@ -115,6 +115,7 @@ class ReasoningStressAdapter extends LlmAdapter {
 interface StressProbe {
   intervalId: number
   intervalMs: number
+  startedAt: number
   lastTickAt: number
   maxDelayMs: number
   samples: number
@@ -147,12 +148,26 @@ it('keeps the browser responsive while rendering 100,000 reasoning chunks', asyn
     await activePage.waitForSelector('[class*="frame"]', { timeout: 30_000 })
     await connectFreshWorkspace(activePage, scaffold.workspaceCwd)
 
+    const settled = scaffold.whenTurnSettled(540_000)
+    const input = activePage.locator('[data-composer-input]').first()
+    await writeComposerDraft(activePage, input, `Render ${String(CHUNK_COUNT)} reasoning chunks.`)
+    await input.press('Enter')
+    await adapter.started
+
+    await adapter.emitNextBatch()
+    const liveThink = activePage.locator('[data-variant="think"][data-state="running"]').last()
+    await liveThink.waitFor({ state: 'attached', timeout: 60_000 })
+    await expandOwningTurnProcess(activePage, liveThink)
+    await liveThink.waitFor({ timeout: 60_000 })
+    expect(await liveThink.getAttribute('data-expanded')).toBeNull()
+
     await activePage.evaluate(() => {
       const intervalMs = 50
       const now = performance.now()
       const probe: StressProbe = {
         intervalId: 0,
         intervalMs,
+        startedAt: now,
         lastTickAt: now,
         maxDelayMs: 0,
         samples: 0,
@@ -174,15 +189,6 @@ it('keeps the browser responsive while rendering 100,000 reasoning chunks', asyn
       ;(window as StressWindow).__reasoningStressProbe = probe
     })
 
-    const settled = scaffold.whenTurnSettled(540_000)
-    const input = activePage.locator('[data-composer-input]').first()
-    await writeComposerDraft(activePage, input, `Render ${String(CHUNK_COUNT)} reasoning chunks.`)
-    await input.press('Enter')
-    await adapter.started
-
-    await adapter.emitNextBatch()
-    const liveThink = activePage.locator('[data-variant="think"][data-state="running"]').last()
-    await liveThink.waitFor({ timeout: 60_000 })
     await activePage.evaluate(intervalMs => new Promise<void>((resolve) => {
       window.setTimeout(resolve, intervalMs)
     }), CHUNK_INTERVAL_MS)
@@ -199,14 +205,16 @@ it('keeps the browser responsive while rendering 100,000 reasoning chunks', asyn
       const win = window as StressWindow
       const probe = win.__reasoningStressProbe
       if (probe === undefined) throw new Error('reasoning stress metrics unavailable')
+      const finishedAt = performance.now()
       window.clearInterval(probe.intervalId)
       const interactionDelayMs = probe.interactionHandledAt === null
         ? null
         : probe.interactionHandledAt - probe.interactionDueAt
       return {
-        maxMainThreadDelayMs: Math.max(0, probe.maxDelayMs),
+        maxMainThreadDelayMs: Math.max(0, probe.maxDelayMs, finishedAt - probe.lastTickAt - probe.intervalMs),
         interactionDelayMs,
         heartbeatSamples: probe.samples,
+        measuredStreamMs: finishedAt - probe.startedAt,
       }
     })
     const report = { ...adapter.state(), ...browserReport }

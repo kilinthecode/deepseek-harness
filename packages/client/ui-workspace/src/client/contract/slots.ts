@@ -292,6 +292,8 @@ export type RowToast =
   | { kind: 'stoppedAndArchived'; sessionId: SessionId }
   | { kind: 'pinFailed' }
   | { kind: 'unpinFailed' }
+  | { kind: 'archiveFailed' }
+  | { kind: 'unarchiveFailed' }
   | { kind: 'archivedNotOpenable' }
   | { kind: 'defaultWorkspaceFailed' }
   /**

@@ -17,7 +17,12 @@
 }
 
 .sessionRow.selected {
-  background: var(--dsw-alias-interactive-bg-hover);
+  background: var(--dsw-alias-interactive-bg-active);
+}
+
+.sessionRow.selected .title,
+.searchResultRow.selected .searchResultTitle {
+  font-weight: 500;
 }
 
 .searchResultRow {
@@ -41,7 +46,7 @@
 }
 
 .searchResultRow.selected {
-  background: var(--dsw-alias-interactive-bg-hover);
+  background: var(--dsw-alias-interactive-bg-active);
 }
 
 .searchResultHeading {
@@ -57,7 +62,7 @@
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  font-size: 14px;
+  font-size: 13px;
   line-height: 20px;
 }
 
@@ -104,6 +109,10 @@
 
 .projectRow .rowActions {
   height: 20px;
+}
+
+.projectRow .title {
+  font-weight: 500;
 }
 
 /* Session cell (figma): pad 8, a 16px status slot, then a 4px title gap. */
@@ -167,13 +176,13 @@
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  font-size: 14px;
+  font-size: 13px;
   line-height: 20px;
 }
 
 .renameInput {
   min-width: 0;
-  font-size: 14px;
+  font-size: 13px;
   line-height: 20px;
   padding: 0 2px;
   border: 0.5px solid var(--dsw-alias-border-l4);

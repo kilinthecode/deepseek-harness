@@ -6,8 +6,9 @@
 import { describe, expect, it, vi } from 'vitest'
 import type { Context } from '@deepseek-ai/cordis'
 import type { InputTriggerController, SubmitOutcome } from '../src/client/contract/input.ts'
-import { SessionInputShell } from '../src/client/input/facade.ts'
+import { SessionInputShell, type SessionInputDeps } from '../src/client/input/facade.ts'
 import type { DraftAttachmentId } from '../src/client/contract/input.ts'
+import type { DraftSnapshot } from '../src/client/contract/draft-editor.ts'
 
 const mention = '@[Research](dsh-session:InNvdXJjZSI)'
 const spacedMention = '@[Research notes](dsh-session:InNvdXJjZSI)'
@@ -189,6 +190,144 @@ describe('reference submission', () => {
     expect(shell.notices.getSnapshot()).toBeNull()
   })
 
+  it('recovers an earlier failed send after a newer draft is submitted', async () => {
+    const first = Promise.withResolvers<SubmitOutcome>()
+    const sink = vi.fn<SessionInputDeps['defaultSink']>()
+      .mockReturnValueOnce(first.promise)
+      .mockResolvedValue({ kind: 'success' })
+    const shell = new SessionInputShell({ actx: {} as Context, defaultSink: sink, commandAttachments })
+    try {
+      shell.setDraft('first')
+      shell.submit()
+      shell.setDraft('newer draft')
+      first.resolve({ kind: 'error' })
+      await Promise.resolve()
+      expect(shell.snapshot.draft).toBe('newer draft')
+      shell.submit()
+      await vi.waitFor(() => { expect(shell.snapshot.draft).toBe('first') })
+      expect(sink.mock.calls.map(call => call[0])).toEqual(['first', 'newer draft'])
+    } finally {
+      shell.dispose()
+    }
+  })
+
+  it('persists failed reference text alongside a newer draft without changing its editor', async () => {
+    let persisted: DraftSnapshot = { text: '', references: [] }
+    const shell = new SessionInputShell({ actx: {} as Context, defaultSink: vi.fn(), commandAttachments })
+    const unbind = shell.bindDraftPersistence((draft) => { persisted = draft })
+    try {
+      chip(shell)
+      shell.submit()
+      shell.setDraft('newer draft')
+      await vi.waitFor(() => { expect(persisted.text).toBe(`${mention} \n\nnewer draft`) })
+      expect(shell.draftSnapshot).toEqual({ text: 'newer draft', references: [] })
+      expect(persisted.references).toMatchObject([{ ref: mention, offset: 0, length: mention.length }])
+      chip(shell)
+      expect(persisted.references.map(reference => reference.offset)).toEqual([0, mention.length + 3])
+      unbind()
+      const restored = new SessionInputShell({ actx: {} as Context, defaultSink: vi.fn(), commandAttachments })
+      try {
+        restored.setDraft(persisted)
+        expect(restored.snapshot.draft).toBe(`${mention} \n\n${mention} `)
+        expect(restored.snapshot.occurrences).toHaveLength(2)
+      } finally { restored.dispose() }
+    } finally { shell.dispose() }
+  })
+
+  it.each(['unmounted', 'replaced', 'disposed'] as const)('settles a pending failure with its writer %s', async (state) => {
+    const first = Promise.withResolvers<SubmitOutcome>()
+    const initialWriter = vi.fn()
+    const replacementWriter = vi.fn()
+    const shell = new SessionInputShell({ actx: {} as Context, defaultSink: () => first.promise, commandAttachments })
+    const unbind = shell.bindDraftPersistence(initialWriter)
+    shell.setDraft('first')
+    shell.submit()
+    shell.setDraft('newer draft')
+    unbind()
+    if (state === 'replaced') shell.bindDraftPersistence(replacementWriter)
+    if (state === 'disposed') shell.dispose()
+    initialWriter.mockClear()
+    replacementWriter.mockClear()
+    first.resolve({ kind: 'error' })
+    await Promise.resolve()
+    if (state === 'disposed') {
+      expect(initialWriter).not.toHaveBeenCalled()
+      expect(replacementWriter).not.toHaveBeenCalled()
+    } else {
+      const writer = state === 'replaced' ? replacementWriter : initialWriter
+      const unusedWriter = state === 'replaced' ? initialWriter : replacementWriter
+      expect(writer).toHaveBeenLastCalledWith({ text: 'first\n\nnewer draft', references: [] })
+      expect(unusedWriter).not.toHaveBeenCalled()
+      expect(shell.snapshot.draft).toBe('newer draft')
+    }
+    shell.dispose()
+  })
+
+  it('keeps failed attachments out of a newer submission and restores them with the failed text', async () => {
+    const first = Promise.withResolvers<SubmitOutcome>()
+    const second = Promise.withResolvers<SubmitOutcome>()
+    const firstImage = 'failed-image' as DraftAttachmentId
+    const secondImage = 'newer-image' as DraftAttachmentId
+    const sink = vi.fn().mockReturnValueOnce(first.promise).mockReturnValueOnce(second.promise)
+    const shell = new SessionInputShell({ actx: {} as Context, defaultSink: sink, commandAttachments })
+    try {
+      shell.setDraft('first')
+      shell.addAttachments([firstImage])
+      shell.submit()
+      shell.setDraft('newer draft')
+      shell.addAttachments([secondImage])
+      first.resolve({ kind: 'error' })
+      await Promise.resolve()
+      expect(shell.snapshot).toMatchObject({ draft: 'newer draft', attachmentIds: [secondImage] })
+      shell.submit()
+      expect(sink).toHaveBeenNthCalledWith(2, 'newer draft', [secondImage], 'queue', expect.any(AbortSignal))
+      expect(shell.snapshot).toMatchObject({ draft: 'first', attachmentIds: [firstImage] })
+      shell.setDraft('third draft')
+      second.resolve({ kind: 'success' })
+      await Promise.resolve()
+      expect(shell.snapshot.draft).toBe('third draft')
+    } finally { shell.dispose() }
+  })
+
+  it('returns hidden failed attachments at disposal', async () => {
+    const first = Promise.withResolvers<SubmitOutcome>()
+    const image = 'failed-image' as DraftAttachmentId
+    const shell = new SessionInputShell({ actx: {} as Context, defaultSink: () => first.promise, commandAttachments })
+    shell.setDraft('first')
+    shell.addAttachments([image])
+    shell.submit()
+    shell.setDraft('newer draft')
+    first.resolve({ kind: 'error' })
+    await Promise.resolve()
+    expect(shell.snapshot.attachmentIds).toEqual([])
+    expect(shell.dispose()).toEqual([image])
+    expect(shell.dispose()).toEqual([])
+  })
+
+  it.each(['remove', 'prune'] as const)('keeps a recovered image %s from returning when an earlier send fails', async (method) => {
+    const first = Promise.withResolvers<SubmitOutcome>()
+    const second = Promise.withResolvers<SubmitOutcome>()
+    const firstImage = 'first-image' as DraftAttachmentId
+    const secondImage = 'second-image' as DraftAttachmentId
+    const sink = vi.fn().mockReturnValueOnce(first.promise).mockReturnValueOnce(second.promise)
+    const shell = new SessionInputShell({ actx: {} as Context, defaultSink: sink, commandAttachments })
+    shell.setDraft('first')
+    shell.addAttachments([firstImage])
+    shell.submit()
+    shell.setDraft('second')
+    shell.addAttachments([secondImage])
+    shell.submit()
+    second.resolve({ kind: 'error' })
+    await Promise.resolve()
+    expect(shell.snapshot.attachmentIds).toEqual([secondImage])
+    if (method === 'remove') shell.removeAttachment(secondImage)
+    else shell.pruneAttachments([firstImage])
+    first.resolve({ kind: 'error' })
+    await Promise.resolve()
+    expect(shell.snapshot).toMatchObject({ draft: 'first\n\nsecond', attachmentIds: [firstImage] })
+    expect(shell.dispose()).toEqual([firstImage])
+  })
+
   it('restores concurrent failed messages in submission order', async () => {
     const settlements: Array<(outcome: SubmitOutcome) => void> = []
     const shell = new SessionInputShell({
@@ -197,8 +336,10 @@ describe('reference submission', () => {
       commandAttachments,
     })
     shell.setDraft('first')
+    shell.addAttachments(['first-image' as DraftAttachmentId])
     shell.submit()
     shell.setDraft('second')
+    shell.addAttachments(['second-image' as DraftAttachmentId])
     shell.submit()
     expect(shell.snapshot.draft).toBe('')
 
@@ -206,6 +347,7 @@ describe('reference submission', () => {
     await vi.waitFor(() => { expect(shell.snapshot.draft).toBe('first') })
     settlements[1]?.({ kind: 'error' })
     await vi.waitFor(() => { expect(shell.snapshot.draft).toBe('first\n\nsecond') })
+    expect(shell.snapshot.attachmentIds).toEqual(['first-image', 'second-image'])
   })
 })
 

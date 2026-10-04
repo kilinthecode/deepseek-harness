@@ -359,7 +359,7 @@ describe('ui-workspace apply', () => {
     expect(view.getSnapshot().sessionOrderByAccount).toEqual({})
   })
 
-  it('archives through the navigation service and raises the archived notice; Host rejections are console diagnostics', async () => {
+  it('reports archive and restore failures through the shared notice', async () => {
     const b = await bench()
     declare(b.slots, 'sidebar.workspaces', 'shell.overlay')
     await b.ctx.plugin({ inject: [...inject], apply }).await()
@@ -388,13 +388,13 @@ describe('ui-workspace apply', () => {
     try {
       archive.archiveSession(sid('two'))
       await vi.waitFor(() => { expect(warn).toHaveBeenCalledWith('session archive rejected:', archiveRejection) })
+      expect(toast.hooks.toast.getSnapshot()).toEqual({ kind: 'archiveFailed', seq: 2 })
       archive.unarchiveSession(sid('two'))
       await vi.waitFor(() => { expect(warn).toHaveBeenCalledWith('session unarchive rejected:', unarchiveRejection) })
     } finally {
       warn.mockRestore()
     }
-    // A rejected archive raises no notice.
-    expect(toast.hooks.toast.getSnapshot()).toEqual({ kind: 'archived', sessionId: 'one', seq: 1 })
+    expect(toast.hooks.toast.getSnapshot()).toEqual({ kind: 'unarchiveFailed', seq: 3 })
   })
 
   it('turns the Host\'s running-work refusal into the stop-and-archive confirmation, which archives with stopActivity', async () => {
@@ -461,13 +461,45 @@ describe('ui-workspace apply', () => {
 
     toast.undoArchive(sid('one'))
     expect(unarchiveSession).toHaveBeenCalledWith('one')
-    // A rejected undo is a console diagnostic.
+    // Undo and browser restore use the same failure notice as the row menu.
     const rejection = new Error('unarchive exploded')
     unarchiveSession.mockRejectedValueOnce(rejection)
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
     try {
       toast.undoArchive(sid('two'))
       await vi.waitFor(() => { expect(warn).toHaveBeenCalledWith('session unarchive rejected:', rejection) })
+      expect(toast.hooks.toast.getSnapshot()).toEqual({ kind: 'unarchiveFailed', seq: 2 })
+      unarchiveSession.mockRejectedValueOnce(rejection)
+      await browser.unarchiveSession(sid('two'))
+      expect(toast.hooks.toast.getSnapshot()).toEqual({ kind: 'unarchiveFailed', seq: 3 })
+    } finally {
+      warn.mockRestore()
+    }
+  })
+
+  it('reports refused sidebar forks through the same browser state as keyboard forks', async () => {
+    const b = await bench()
+    declare(b.slots, 'sidebar.workspaces', 'shell.overlay')
+    await b.ctx.plugin({ inject: [...inject], apply }).await()
+    const fork = faceOf(entry(b.slots, MENU_ITEM, 'fork')) as ForkSessionInjected
+    const browser = faceOf(b.slots.entries('sidebar.workspaces')[0]!) as WorkspaceBrowserInjected
+    const failure = Object.assign(new Error('No completed turn'), {
+      name: 'SessionForkError',
+      rpcError: new RemoteError('session/fork-unavailable', 'No completed turn', { sessionId: sid('session') }),
+    })
+    b.fork.mockRejectedValueOnce(failure)
+    fork.forkSession(sid('session'))
+    await vi.waitFor(() => {
+      expect(browser.hooks.workspaceShortcuts.getSnapshot().forkError).toEqual({ reason: 'unavailable', seq: 1 })
+    })
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    try {
+      b.fork.mockRejectedValueOnce(new Error('Connection lost'))
+      fork.forkSession(sid('session'))
+      await vi.waitFor(() => {
+        expect(browser.hooks.workspaceShortcuts.getSnapshot().forkError).toEqual({ reason: 'failed', seq: 2 })
+      })
+      expect(b.retain).not.toHaveBeenCalled()
     } finally {
       warn.mockRestore()
     }

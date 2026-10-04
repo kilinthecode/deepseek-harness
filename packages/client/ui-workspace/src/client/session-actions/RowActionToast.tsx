@@ -17,7 +17,7 @@ const LONG_TOAST_HOLD_MS = 6000
  * Render the current notice: the archived and stopped-and-archived notices
  * with their undo action — plus the show-archived action while archived rows
  * are hidden — on a 6 s hold, a refused Session creation with the Host's
- * reason on the same hold, or a plain warning for a failed pin, an archived
+ * reason on the same hold, or a plain warning for a failed row action, an archived
  * row that was clicked, or default Workspace creation.
  * @param props - the notice hook, the shared viewing store, the notice dismissal, the two archived-notice actions, and the locale seat.
  * @returns the notice on display, or null.
@@ -73,6 +73,8 @@ function plainNoticeText(
   switch (toast.kind) {
     case 'pinFailed': return t('toast.pinFailed')
     case 'unpinFailed': return t('toast.unpinFailed')
+    case 'archiveFailed': return t('toast.archiveFailed')
+    case 'unarchiveFailed': return t('toast.unarchiveFailed')
     case 'defaultWorkspaceFailed': return t('defaultWorkspace.failed')
     case 'archivedNotOpenable': return t('toast.archivedNotOpenable')
     /* v8 ignore next 2 -- closed-union backstop; only reached if a notice kind is forged */

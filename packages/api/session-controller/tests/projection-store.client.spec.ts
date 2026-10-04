@@ -102,6 +102,43 @@ describe('Session projection value semantics', () => {
     expect(store.get('test/marks')).toEqual({ marks: ['cached late'] })
   })
 
+  it('keeps omitted keys absent when stale frames, baselines, and cached hints arrive', () => {
+    const store = new ProjectionValueStore()
+    store.apply('title', 'Before removal', SessionSeq(5))
+    store.seed({ asOfSeq: SessionSeq(10), values: {} })
+    store.apply('title', 'Stale frame', SessionSeq(6))
+    store.apply('test/marks', { marks: ['unseen stale key'] }, SessionSeq(10))
+    store.seed({ asOfSeq: SessionSeq(9), values: { title: 'Stale baseline' } })
+    store.applyCached({ title: 'Cached title', 'test/marks': { marks: ['cached'] } })
+    expect(store.values()).toEqual({})
+    expect(store.seqOf('title')).toBeUndefined()
+
+    store.apply('title', 'Restored by newer frame', SessionSeq(11))
+    expect(store.get('title')).toBe('Restored by newer frame')
+  })
+
+  it('treats an empty Session baseline as authoritative until the generation clears', () => {
+    const store = new ProjectionValueStore()
+    store.seed({ asOfSeq: -1, values: {} })
+    store.applyCached({ title: 'Stale cached title' })
+    store.apply('title', 'Equal-cut frame', -1)
+    expect(store.values()).toEqual({})
+    store.clear()
+    store.applyCached({ title: 'New generation cache' })
+    expect(store.get('title')).toBe('New generation cache')
+    store.seed({ asOfSeq: -1, values: { title: 'New empty Session title' } })
+    expect(store.get('title')).toBe('New empty Session title')
+  })
+
+  it('accepts capability membership changes in complete baselines at the same cut', () => {
+    const store = new ProjectionValueStore()
+    store.seed({ asOfSeq: SessionSeq(10), values: { title: 'Before unload' } })
+    store.seed({ asOfSeq: SessionSeq(10), values: {} })
+    expect(store.values()).toEqual({})
+    store.seed({ asOfSeq: SessionSeq(10), values: { title: 'After remount' } })
+    expect(store.get('title')).toBe('After remount')
+  })
+
   it('every sequenced write outranks a cached row regardless of seq', () => {
     const store = new ProjectionValueStore()
     store.applyCached({ 'test/marks': { marks: ['cached'] }, title: 'Cached title', schedule: [] })
@@ -289,7 +326,7 @@ describe('manager frame routing', () => {
     // sequenced value, whatever watermark the block claims.
     await manager.refreshList()
     expect(manager.getListSnapshot().items[0]?.title).toBe('Connected title')
-    expect(manager.get(sid('s1')).projections.get('test/marks')).toEqual({ marks: ['cached'] })
+    expect(manager.get(sid('s1')).projections.get('test/marks')).toBeUndefined()
   })
 
   it('merges a sequenced list block under higher-seq-wins: a lower-cut baseline neither overwrites nor clears it', async ({ mock, remote }) => {

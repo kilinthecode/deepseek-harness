@@ -1,11 +1,45 @@
 // Shared plumbing for the web smoke tests (dist location, free port, failure shots).
-import { existsSync, mkdirSync } from 'node:fs'
+import { existsSync, mkdirSync, readFileSync } from 'node:fs'
+import { writeFile } from 'node:fs/promises'
 import { createServer } from 'node:net'
 import { createRequire } from 'node:module'
 import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import type { Browser, Locator, Page } from 'playwright'
 import { expect } from 'vitest'
+import { dump } from 'js-yaml'
+import { entryListSchema } from '@deepseek-ai/cordis-plugin-include'
+import { bundlePatchPaths, composeEntries, loadOverlayPatches } from '@deepseek-ai/dsh-app-boot'
+
+/**
+ * Preserve the recorded scenario's composition without a clock reading.
+ * The Schedule browser suite separately exercises the shipped preset clock.
+ * @param dir - Directory owning the temporary fixture overlay.
+ * @returns Overlay that changes only the standard preset's time-context row.
+ */
+export async function writeReplayWithoutTimeContext(dir: string): Promise<string> {
+  const basePatch = fileURLToPath(new URL('../../../packages/bundle/base/cordis.patch.yml', import.meta.url))
+  const webBundle = fileURLToPath(new URL('../../../packages/bundle/web-app/', import.meta.url))
+  const bundle = (JSON.parse(readFileSync(join(webBundle, 'package.json'), 'utf8')) as {
+    dsh: { bundle: { patch: string[] } }
+  }).dsh.bundle
+  const layers = [
+    loadOverlayPatches('Recorded Web overlay', basePatch),
+    ...bundlePatchPaths(webBundle, bundle).map(file => loadOverlayPatches('Recorded Web overlay', file)),
+  ]
+  const row = composeEntries(layers).find(entry => entry.id === 'preset-standard')
+  if (row === undefined) throw new Error('The shipped Web surface declares no standard preset')
+  const config = row.config as { plugins: Array<{ id?: string; disabled?: boolean }> }
+  if (!config.plugins.some(plugin => plugin.id === 'time-context')) {
+    throw new Error('The shipped standard preset declares no time-context row')
+  }
+  const plugins = config.plugins.map(plugin => plugin.id === 'time-context' ? { ...plugin, disabled: true } : plugin)
+  const path = join(dir, 'replay-without-time.patch.yml')
+  await writeFile(path, dump([{ id: 'preset-standard', config: { ...config, plugins } }], {
+    schema: entryListSchema, noRefs: true, lineWidth: -1,
+  }))
+  return path
+}
 
 /** The built page under test; `pnpm run test:web` rebuilds it before running. */
 export const DIST_INDEX = fileURLToPath(new URL('../dist/index.html', import.meta.url))

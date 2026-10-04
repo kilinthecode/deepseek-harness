@@ -324,7 +324,7 @@ describe('web e2e: shortcut reference', () => {
   it.each([
     { platform: 'Win32', primary: 'Control', keys: 'Ctrl + Alt + N' },
     { platform: 'MacIntel', primary: 'Meta', keys: '⌥ ⇧ ⌘ F12' },
-  ])('shows the shortcut inside New Session on hover and keyboard focus at wide and narrow widths on $platform', async ({ platform, primary, keys }) => {
+  ])('keeps the shortcut inside New Session visible at wide and narrow widths on $platform', async ({ platform, primary, keys }) => {
     const context = await browser.newContext({ locale: 'en-US', viewport: { width: 1440, height: 1000 } })
     try {
       await context.addInitScript((value) => { Object.defineProperty(navigator, 'platform', { value }) }, platform)
@@ -356,7 +356,8 @@ describe('web e2e: shortcut reference', () => {
           const hintStyle = () => newSession.locator('[class*="newSessionShortcut"]').evaluate(element => ({
             opacity: getComputedStyle(element).opacity, mask: getComputedStyle(element.previousElementSibling!).maskImage,
           }))
-          expect(await hintStyle()).toEqual({ opacity: '0', mask: 'none' })
+          expect((await hintStyle()).opacity).toBe('1')
+          expect((await hintStyle()).mask).toContain('linear-gradient')
           await newSession.hover()
           expect(await centerOffset()).toBeLessThan(1)
           const mask = await newSession.locator('[class*="newSessionLabelMask"]').boundingBox()
@@ -367,7 +368,8 @@ describe('web e2e: shortcut reference', () => {
           await newSession.screenshot({ path: fileURLToPath(new URL(`../../../.artifacts/new-session-${process.pid}-${platform}-${colorScheme}-${width}.png`, import.meta.url)) })
           expect(await page.getByRole('tooltip').count()).toBe(0)
           await page.mouse.move(700, 100)
-          expect(await hintStyle()).toEqual({ opacity: '0', mask: 'none' })
+          expect((await hintStyle()).opacity).toBe('1')
+          expect((await hintStyle()).mask).toContain('linear-gradient')
           await newSession.focus()
           await page.keyboard.press('Shift+Tab')
           await page.keyboard.press('Tab')

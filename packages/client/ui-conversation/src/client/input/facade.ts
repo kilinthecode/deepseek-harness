@@ -104,6 +104,7 @@ interface DetachedDraft {
   readonly draft: string
   readonly occurrences: readonly Occurrence[]
   readonly attachmentIds: readonly DraftAttachmentId[]
+  readonly persistDraft: ((draft: DraftSnapshot) => void) | undefined
 }
 
 /**
@@ -148,7 +149,7 @@ export class SessionInputShell implements SessionInput {
   private draftSnapshotCache: { revision: number; value: DraftSnapshot } | undefined
   private attachmentIds: readonly DraftAttachmentId[] = []
   private disposed = false
-  /** Conversation store writer for the current semantic document. */
+  /** Conversation store writer for recoverable semantic drafts. */
   private persistDraft: ((draft: DraftSnapshot) => void) | undefined
   /** The mounted composer's file-picker opener (scoped pick-files event target). */
   private filePicker: Parameters<ComposerKeyboard['bindFilePicker']>[0] | undefined
@@ -234,9 +235,9 @@ export class SessionInputShell implements SessionInput {
     return value
   }
 
-  /** Persist the latest document without changing the editor or binding a writer. */
+  /** Persist the editor and any failed sends awaiting recovery without changing the editor. */
   persistCurrentDraft(): void {
-    this.persistDraft?.(this.draftSnapshot)
+    this.persistDraft?.(this.recoverableDraft())
   }
 
   /**
@@ -293,6 +294,7 @@ export class SessionInputShell implements SessionInput {
     if (this.snapshot.phase === 'adjudicating' || this.snapshot.phase === 'submitting') return false
     const next = this.attachmentIds.filter(candidate => candidate !== id)
     if (next.length === this.attachmentIds.length) return false
+    this.removeFailedAttachments(new Set([id]))
     this.attachmentIds = next
     this.publish()
     return true
@@ -306,6 +308,7 @@ export class SessionInputShell implements SessionInput {
     const keep = new Set(available)
     const next = this.attachmentIds.filter(id => keep.has(id))
     if (next.length === this.attachmentIds.length) return
+    this.removeFailedAttachments(new Set(this.attachmentIds.filter(id => !keep.has(id))))
     this.attachmentIds = next
     this.publish()
   }
@@ -535,13 +538,16 @@ export class SessionInputShell implements SessionInput {
 
   /**
    * Teardown the shell and return every browser-owned attachment still retained by
-   * the draft or an unsettled default send.
+   * the draft, a failed send, or an unsettled default send.
    * @returns attachment ids the scope disposer must release.
    */
   dispose(): readonly DraftAttachmentId[] {
     if (this.disposed) return []
     const retained = new Set(this.attachmentIds)
     for (const record of this.detachedDrafts.values()) {
+      for (const attachmentId of record.attachmentIds) retained.add(attachmentId)
+    }
+    for (const record of this.failedDetached.values()) {
       for (const attachmentId of record.attachmentIds) retained.add(attachmentId)
     }
     for (const flight of this.attachmentFlights.values()) {
@@ -666,6 +672,7 @@ export class SessionInputShell implements SessionInput {
       return null
     })
     this.draftEditor.clearHistory()
+    if (this.projection.clipboardText === '' && this.failedDetached.size > 0) this.restoreFailedDrafts()
   }
 
   /**
@@ -682,7 +689,7 @@ export class SessionInputShell implements SessionInput {
     const attachmentIds = [...this.attachmentIds]
     this.attachmentIds = []
     const occurrences = this.projection.occurrences
-    const record = { draft, occurrences, attachmentIds }
+    const record = { draft, occurrences, attachmentIds, persistDraft: this.persistDraft }
     this.detachedDrafts.set(attempt.seq, record)
     if (this.failedRestoreRev === this.rev) {
       this.failedDetached.clear()
@@ -750,32 +757,24 @@ export class SessionInputShell implements SessionInput {
     const record = this.detachedDrafts.get(attempt.seq)
     if (record === undefined) return
     this.detachedDrafts.delete(attempt.seq)
-    this.restoreAttachments(record.attachmentIds)
     this.failedDetached.set(attempt.seq, record)
     if (this.projection.clipboardText === '' || this.failedRestoreRev === this.rev) {
       this.restoreFailedDrafts()
     }
     this.dispatchRun(({ type: 'sink-settled', attempt, ok: false, ...(message === undefined ? {} : { message }) }))
+    // A global panel can unmount the writer while the Session scope and send remain alive.
+    if (this.persistDraft === undefined) record.persistDraft?.(this.recoverableDraft())
   }
 
   /** Rebuild all currently failed snapshots in submission order. */
   private restoreFailedDrafts(): void {
     const records = [...this.failedDetached.entries()].sort(([a], [b]) => a - b).map(([, record]) => record)
     if (records.length === 0) return
-    const separator = '\n\n'
-    let draft = ''
-    const occurrences: Occurrence[] = []
-    for (const record of records) {
-      const base = draft.length + (draft === '' ? 0 : separator.length)
-      if (draft !== '') draft += separator
-      draft += record.draft
-      for (const occurrence of record.occurrences) {
-        occurrences.push({ ...occurrence, offset: base + occurrence.offset })
-      }
-    }
+    const draft = this.joinDrafts(records.map(record => snapshotDraft(record.draft, record.occurrences)))
     this.restoringFailures = true
     try {
-      this.draftEditor.restoreDraft(draft, occurrences)
+      this.restoreAttachments(records.flatMap(record => record.attachmentIds))
+      this.draftEditor.restoreDraft(draft.text, draft.references)
       this.draftEditor.clearHistory()
       this.failedRestoreRev = this.rev
     } finally {
@@ -783,14 +782,50 @@ export class SessionInputShell implements SessionInput {
     }
   }
 
+  /** Include hidden failed sends in storage so leaving the session cannot discard them. */
+  private recoverableDraft(): DraftSnapshot {
+    const current = this.draftSnapshot
+    if (this.failedDetached.size === 0 || this.failedRestoreRev === this.rev || this.restoringFailures) return current
+    const failed = [...this.failedDetached.entries()].sort(([a], [b]) => a - b)
+      .map(([, record]) => snapshotDraft(record.draft, record.occurrences))
+    return this.joinDrafts([...failed, current])
+  }
+
+  /** Join recoverable documents with their reference spans rebased to the combined text. */
+  private joinDrafts(drafts: readonly DraftSnapshot[]): DraftSnapshot {
+    const separator = '\n\n'
+    let text = ''
+    const references: DraftSnapshot['references'][number][] = []
+    for (const draft of drafts) {
+      if (draft.text === '') continue
+      const base = text.length + (text === '' ? 0 : separator.length)
+      if (text !== '') text += separator
+      text += draft.text
+      for (const reference of draft.references) {
+        references.push({ ...reference, offset: base + reference.offset })
+      }
+    }
+    return { text, references }
+  }
+
   /** Return failed-send attachments to the head of the rail; release happens only after success. */
   private restoreAttachments(attachmentIds: readonly DraftAttachmentId[]): void {
     if (attachmentIds.length === 0) return
-    const current = new Set(this.attachmentIds)
-    const restored = attachmentIds.filter(id => !current.has(id))
-    if (restored.length === 0) return
-    this.attachmentIds = [...restored, ...this.attachmentIds]
+    const restored = new Set(attachmentIds)
+    const next = [...restored, ...this.attachmentIds.filter(id => !restored.has(id))]
+    if (next.length === this.attachmentIds.length && next.every((id, index) => id === this.attachmentIds[index])) return
+    this.attachmentIds = next
     this.publish()
+  }
+
+  /** Keep later recovery from reintroducing attachments explicitly removed from the visible draft. */
+  private removeFailedAttachments(removed: ReadonlySet<DraftAttachmentId>): void {
+    for (const [seq, record] of this.failedDetached) {
+      const attachmentIds = record.attachmentIds.filter(id => !removed.has(id))
+      if (attachmentIds.length !== record.attachmentIds.length) {
+        this.failedDetached.set(seq, { ...record, attachmentIds })
+      }
+    }
   }
 
   /** Enter adjudication: poll the session controller; failure = notice + draft retained (never a silent downgrade). */
@@ -880,7 +915,7 @@ export class SessionInputShell implements SessionInput {
   private publish(): void {
     const next = this.compose()
     this.state.set(next)
-    const draft = this.draftSnapshot
+    const draft = this.recoverableDraft()
     if (draft !== this.lastPublishedDraft) {
       this.lastPublishedDraft = draft
       this.persistDraft?.(draft)

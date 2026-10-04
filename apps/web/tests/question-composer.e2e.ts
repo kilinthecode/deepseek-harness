@@ -7,16 +7,12 @@
 // chunks, the composer wait is real, and the answer click is the test's own
 // gesture (the ONE place a drive step legitimately reacts to model content:
 // the turn cannot complete without it, in record and replay alike).
-import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
-import { readFileSync } from 'node:fs'
+import { mkdtemp, readFile, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { fileURLToPath } from 'node:url'
 import { join } from 'node:path'
 import type { Browser, Locator, Page } from 'playwright'
 import { chromium } from 'playwright'
-import { dump } from 'js-yaml'
-import { entryListSchema } from '@deepseek-ai/cordis-plugin-include'
-import { bundlePatchPaths, composeEntries, loadOverlayPatches } from '@deepseek-ai/dsh-app-boot'
 import { afterAll, beforeAll, describe, expect, it, onTestFailed } from 'vitest'
 import type { SessionEvent } from '@deepseek-ai/dsh-session'
 import type { SessionId } from '@deepseek-ai/dsh-session/types'
@@ -26,7 +22,7 @@ import {
   launchWebScaffold, recordFixture, seedSession, watchConsole, webSnapshotMode, type WebScaffold,
 } from './scaffold.ts'
 import {
-  connectFreshWorkspace, expandTurnProcesses, newEnglishPage, saveFailureShot,
+  connectFreshWorkspace, expandTurnProcesses, newEnglishPage, saveFailureShot, writeReplayWithoutTimeContext,
 } from './support.ts'
 
 const SNAPSHOT_DIR = fileURLToPath(new URL('../../../snapshots/web/question-composer', import.meta.url))
@@ -290,36 +286,6 @@ async function openSeededTranscript(fixtureText: string, seedId: string): Promis
   }
 }
 
-/**
- * Preserve the blocking-question recording's composition without a clock reading.
- * The Schedule browser suite separately exercises the shipped preset clock.
- * @param dir - Directory owning the temporary fixture overlay.
- * @returns Overlay that changes only the standard preset's time-context row.
- */
-async function writeQuestionReplayOverlay(dir: string): Promise<string> {
-  const basePatch = fileURLToPath(new URL('../../../packages/bundle/base/cordis.patch.yml', import.meta.url))
-  const webBundle = fileURLToPath(new URL('../../../packages/bundle/web-app/', import.meta.url))
-  const bundle = (JSON.parse(readFileSync(join(webBundle, 'package.json'), 'utf8')) as {
-    dsh: { bundle: { patch: string[] } }
-  }).dsh.bundle
-  const layers = [
-    loadOverlayPatches('Question replay overlay', basePatch),
-    ...bundlePatchPaths(webBundle, bundle).map(file => loadOverlayPatches('Question replay overlay', file)),
-  ]
-  const row = composeEntries(layers).find(entry => entry.id === 'preset-standard')
-  if (row === undefined) throw new Error('The shipped Web surface declares no standard preset')
-  const config = row.config as { plugins: Array<{ id?: string; disabled?: boolean }> }
-  if (!config.plugins.some(plugin => plugin.id === 'time-context')) {
-    throw new Error('The shipped standard preset declares no time-context row')
-  }
-  const plugins = config.plugins.map(plugin => plugin.id === 'time-context' ? { ...plugin, disabled: true } : plugin)
-  const path = join(dir, 'question-replay.patch.yml')
-  await writeFile(path, dump([{ id: 'preset-standard', config: { ...config, plugins } }], {
-    schema: entryListSchema, noRefs: true, lineWidth: -1,
-  }))
-  return path
-}
-
 describe('web e2e: resident question composer round trip', () => {
   let scaffold: WebScaffold
   let browser: Browser
@@ -331,7 +297,7 @@ describe('web e2e: resident question composer round trip', () => {
 
   beforeAll(async () => {
     replayOverlayRoot = await mkdtemp(join(tmpdir(), 'dsh-question-replay-overlay-'))
-    const extraOverlayPath = await writeQuestionReplayOverlay(replayOverlayRoot)
+    const extraOverlayPath = await writeReplayWithoutTimeContext(replayOverlayRoot)
     scaffold = await launchWebScaffold(MODE === 'record'
       ? { extraOverlayPath }
       : { replayFixture: FIXTURE, paceMs: 15, compareReplaySession: true, extraOverlayPath })
