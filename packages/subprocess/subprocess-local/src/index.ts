@@ -67,8 +67,11 @@ export class LocalSubprocessRuntime extends SubprocessRuntime {
   internals: SpawnInternals = {}
   /** Provider-lifetime latch suppressing repeated weaker-containment warnings. */
   private fallbackWarningIssued = false
-  /** Positive-only cache for the expensive Linux bootstrap and scope probe. */
-  private linuxDeepProbePassed = false
+  /**
+   * Provider-lifetime result of the expensive Linux bootstrap and scope probe;
+   * `undefined` until the first eligible spawn runs it.
+   */
+  private linuxDeepProbe: boolean | undefined
   /** Test hook for platform process inspection; production resolves lazily on terminal spawn. */
   terminalInspector: ProcessInspector | undefined
 
@@ -216,11 +219,11 @@ export class LocalSubprocessRuntime extends SubprocessRuntime {
     const platform = this.internals.platform ?? process.platform
     let fallbackReason: string | undefined
     if (platform === 'linux') {
-      const available = this.linuxDeepProbePassed
-        ? probeLinuxManager()
-        : probeLinuxNative()
-      if (available) this.linuxDeepProbePassed = true
-      if (available) return 'linux-scope'
+      // The deep probe already reaches the manager; a cached pass still rechecks
+      // manager reachability, which can change between spawns.
+      const firstProbe = this.linuxDeepProbe === undefined
+      this.linuxDeepProbe ??= probeLinuxNative()
+      if (this.linuxDeepProbe && (firstProbe || probeLinuxManager())) return 'linux-scope'
       fallbackReason = 'the current user-systemd scope or private bootstrap is unavailable'
     }
     if (kind === 'ordinary' && platform === 'win32') {
