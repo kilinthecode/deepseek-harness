@@ -1,15 +1,8 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024" width="1024" height="1024">
-  <defs>
-    <radialGradient id="lift" cx="0.5" cy="0.47" r="0.62">
-      <stop offset="0" stop-color="#262a34"/>
-      <stop offset="1" stop-color="#191c23"/>
-    </radialGradient>
-  </defs>
-
-  <rect x="0" y="0" width="1024" height="1024" rx="230" fill="url(#lift)"/>
+  <rect x="0" y="0" width="1024" height="1024" rx="230" fill="#fff"/>
 
   <!-- tesseract, top-corner isometric projection -->
-  <g stroke="#e9ebf1" fill="none" stroke-linecap="round" stroke-linejoin="round">
+  <g stroke="#000" fill="none" stroke-linecap="round" stroke-linejoin="round">
     <!-- 4D edges: outer cell to inner cell -->
     <g stroke-width="12" opacity="0.68">
       <line x1="512" y1="172" x2="512" y2="369.2"/>
