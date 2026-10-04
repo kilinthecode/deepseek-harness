@@ -63,7 +63,7 @@ DeepSeek Harness 子进程使用产品启动器和一个显式的绝对路径 `D
 
 ### 你会得到什么
 
-成功的运行会把子 agent 最终的流式 assistant 文本作为结果输出返回。子 agent 的会话、模型与工具来自子进程自身——父级只提供任务与工作目录。停止原因把 `end_turn` 映射为 `completed`、`max_tokens` 映射为 `max-tokens`、`refusal` 映射为 `refusal`、`cancelled` 映射为 `aborted`，其余值映射为 `error`。已发布运行失败时，部分 assistant 文本保留在 `output`，安全的结构化详情则单独放在 `diagnostic`。
+成功的运行会把子 agent 最后一条 assistant 消息的流式文本作为结果输出返回。`agent_message_chunk` 的 `messageId` 变化表示新消息开始；子 agent 不发送消息 id 时，工具调用之后的文本开始新消息。子 agent 的会话、模型与工具来自子进程自身——父级只提供任务与工作目录。停止原因把 `end_turn` 映射为 `completed`、`max_tokens` 映射为 `max-tokens`、`refusal` 映射为 `refusal`、`cancelled` 映射为 `aborted`，其余值映射为 `error`。已发布运行失败时，部分 assistant 文本保留在 `output`，安全的结构化详情则单独放在 `diagnostic`。
 
 ### 失败与恢复
 

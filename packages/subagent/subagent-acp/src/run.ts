@@ -411,9 +411,12 @@ export async function startAcpRun(request: SubagentStartRequest, spec: AcpRunSpe
   let processDisposal: Promise<void> | undefined
   const disposeProcess = (): Promise<void> => (processDisposal ??= disposeAcpChild(child, spec.disposeEofGraceMs))
 
-  // ACP exposes no complete assistant messages, so the shared fold selects its
-  // accumulated assistant text.
-  const fold = new AssistantOutputFold()
+  // ACP exposes no complete assistant messages, so the shared fold selects the
+  // accumulated text of the latest assistant message. A changed chunk
+  // `messageId` starts a new message; without ids, text after a tool call does.
+  let fold = new AssistantOutputFold()
+  let messageId: string | undefined
+  let toolCallSinceText = false
   // Shared mutable state keeps cancellation visible across async closures.
   const flags = { cancelled: false }
   let latestPermission: AcpPermissionDecision | undefined
@@ -422,9 +425,18 @@ export async function startAcpRun(request: SubagentStartRequest, spec: AcpRunSpe
     .onNotification(methods.client.session.update, ({ params }) => {
       const update = params.update
       if (update.sessionUpdate === 'agent_message_chunk') {
+        const chunkMessageId = update.messageId ?? undefined
+        const newMessage = chunkMessageId !== undefined && messageId !== undefined
+          ? chunkMessageId !== messageId
+          : toolCallSinceText
+        if (newMessage) fold = new AssistantOutputFold()
+        messageId = chunkMessageId
+        toolCallSinceText = false
         fold.pushText(acpContentText(update.content))
+      } else if (update.sessionUpdate === 'tool_call' || update.sessionUpdate === 'tool_call_update') {
+        toolCallSinceText = true
       }
-      // Other updates (thoughts, tool calls, plans) are consumed but not
+      // Other updates (thoughts, plans) and tool calls are consumed but not
       // surfaced — the subagent returns only its final answer.
       return Promise.resolve()
     })
