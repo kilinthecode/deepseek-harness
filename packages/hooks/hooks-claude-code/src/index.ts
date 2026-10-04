@@ -30,11 +30,10 @@ import {
   createDetachedRuns,
   DEFAULT_HOOK_TIMEOUT_MS,
   DEFAULT_STDERR_SUMMARY_MAX_CHARS,
-  matchesMatcher,
+  compileMatcher,
   mergeHookOutputs,
   runHook,
   type HookOutput,
-  type MatcherGroup,
   type MergedHookOutcome,
 } from '@deepseek-ai/dsh-hook-protocol'
 // Pulls in the declaration-merged subagent events and the identity pairing their
@@ -121,6 +120,10 @@ export function apply(ctx: Context, config: Config): void {
     return
   }
 
+  const compiledGroups = new Map(Object.entries(parsed).map(([point, groups]) => [point,
+    groups.map(group => ({ group, matches: compileMatcher(group.matcher, 'claude-code') })),
+  ]))
+
   // Emit-shaped points run detached, so track their chains; disposal aborts
   // active hooks and drains continuations before resolving.
   const detached = createDetachedRuns()
@@ -146,7 +149,7 @@ export function apply(ctx: Context, config: Config): void {
     payload: unknown,
     opts: { agent?: Agent; turn?: number; readonly signal: AbortSignal },
   ): Promise<MergedHookOutcome> {
-    const groups: MatcherGroup[] = parsed[point] ?? []
+    const groups = compiledGroups.get(point) ?? []
     const outputs: HookOutput[] = []
     // Run the hook in the agent's session workspace (the `session/new` cwd on the session
     // header), not the executor or entry-point process's launch dir.
@@ -155,8 +158,8 @@ export function apply(ctx: Context, config: Config): void {
     // workspace (the same dir the hook runs in).
     const projectDir = config.projectDir ?? workdir
     const hookEnv = projectDir !== undefined ? { CLAUDE_PROJECT_DIR: projectDir } : undefined
-    for (const group of groups) {
-      if (!matchesMatcher(group.matcher, matchQuery, 'claude-code')) continue
+    for (const { group, matches } of groups) {
+      if (!matches(matchQuery)) continue
       for (const hook of group.hooks) {
         const handlerId = nextHandlerId(point)
         const session = opts.agent?.session

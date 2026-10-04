@@ -60,7 +60,7 @@ kind: "package-library"
 
 ### 处理流水线
 
-本库是一串单一用途的步骤，每个步骤一个函数：校验 matcher pattern、通过 `dsh-shell` 执行器运行命令、解码结果、把每个匹配 hook 的结果合并为最严格的一个结果，并记录持久的 `hook/*` 事件对。matcher 的 `mode` 参数是两个方言唯一的差异轴——`claude-code` 把 pattern 解释为字面量备选或正则，`codex` 始终解释为未锚定正则。每个步骤都会降级为受控结果而不是抛异常，因此钩子永远不会使调用轮次崩溃：无效正则是运行时的不匹配，执行器拒绝会变成没有退出码的 `HookOutput`，退出码 2 以 stderr 作为原因阻塞，其他失败均不阻塞。合并应用 `deny > ask > allow` 优先级，保持首个 `continue: false` 停止的粘性，并按 hook 顺序累积上下文。脱离运行会被跟踪，因此 `fiber.dispose()` 能达到完全停稳；不变式伴生插件会拒绝位于尚未结束的轮次之外的 `hook/*` 记录。这些步骤位于 [`src/matcher.ts`](src/matcher.ts)、[`src/runner.ts`](src/runner.ts)、[`src/codec.ts`](src/codec.ts)、[`src/merge.ts`](src/merge.ts)、[`src/events.ts`](src/events.ts)、[`src/detached.ts`](src/detached.ts) 与 [`src/invariant.ts`](src/invariant.ts)。
+本库包含一组单一用途的步骤：桥接在加载配置时校验并编译 matcher 一次，通过 `dsh-shell` 执行器运行匹配的钩子，解码结果，将结果合并为最严格的结果，并记录持久的 `hook/*` 事件对。matcher 的 `mode` 参数是两个方言唯一的差异轴——`claude-code` 把 pattern 解释为字面量备选或正则，`codex` 始终解释为未锚定正则。无效正则会被视为不匹配，执行器拒绝会变成没有退出码的 `HookOutput`，退出码 2 以 stderr 作为原因阻塞，其他失败均不阻塞。合并应用 `deny > ask > allow` 优先级，保持首个 `continue: false` 停止的粘性，并按 hook 顺序累积上下文。脱离运行会被跟踪，因此 `fiber.dispose()` 能达到完全停稳；不变式伴生插件会拒绝位于尚未结束的轮次之外的 `hook/*` 记录。这些步骤位于 [`src/matcher.ts`](src/matcher.ts)、[`src/runner.ts`](src/runner.ts)、[`src/codec.ts`](src/codec.ts)、[`src/merge.ts`](src/merge.ts)、[`src/events.ts`](src/events.ts)、[`src/detached.ts`](src/detached.ts) 与 [`src/invariant.ts`](src/invariant.ts)。
 
 ### `hook/*` 会话事件
 
@@ -82,7 +82,7 @@ kind: "package-library"
 | 文件 | 职责 |
 |---|---|
 | [`src/index.ts`](src/index.ts) | 每个原语与事件辅助函数的公开导出 |
-| [`src/matcher.ts`](src/matcher.ts) | 匹配全部哨兵、字面量或正则模式、校验与运行时匹配 |
+| [`src/matcher.ts`](src/matcher.ts) | 匹配全部哨兵、字面量或正则模式、校验、编译与匹配 |
 | [`src/runner.ts`](src/runner.ts) | 通过 `ctx.shell` 的 `runHook` 执行与 `DEFAULT_HOOK_TIMEOUT_MS` |
 | [`src/codec.ts`](src/codec.ts) | 退出码与结构化 stdout 解码为 `HookOutput` |
 | [`src/merge.ts`](src/merge.ts) | 最严格合并与 `MergedHookOutcome` 类型 |

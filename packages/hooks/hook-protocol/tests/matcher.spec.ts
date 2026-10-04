@@ -1,5 +1,45 @@
-import { describe, expect, it } from 'vitest'
-import { matcherDiagnostic, matchesMatcher } from '@deepseek-ai/dsh-hook-protocol'
+import { describe, expect, it, vi } from 'vitest'
+import { compileMatcher, matcherDiagnostic, matchesMatcher } from '@deepseek-ai/dsh-hook-protocol'
+
+describe('compileMatcher', () => {
+  it('reuses one compiled matcher across queries without changing dialect semantics', () => {
+    const claude = compileMatcher('Edit|Write', 'claude-code')
+    expect(claude('Edit')).toBe(true)
+    expect(claude('EditFile')).toBe(false)
+
+    const codex = compileMatcher('Edit|Write', 'codex')
+    expect(codex('Edit')).toBe(true)
+    expect(codex('Read')).toBe(false)
+  })
+
+  it.each(['claude-code', 'codex'] as const)('keeps match-all sentinels reusable in %s mode', (mode) => {
+    for (const matcher of [undefined, '', '*']) {
+      const matches = compileMatcher(matcher, mode)
+      expect(matches('Read')).toBe(true)
+      expect(matches('')).toBe(true)
+    }
+  })
+
+  it('constructs the regular expression once across repeated queries', () => {
+    const NativeRegExp = RegExp
+    const constructors = vi.spyOn(globalThis, 'RegExp').mockImplementation(function (pattern, flags) {
+      return new NativeRegExp(pattern, flags)
+    })
+    try {
+      const matches = compileMatcher('^Edit', 'codex')
+      for (let index = 0; index < 64; index++) {
+        expect(matches(index % 2 === 0 ? 'EditFile' : 'Read')).toBe(index % 2 === 0)
+      }
+      expect(constructors.mock.calls.filter(([pattern]) => pattern === '^Edit')).toHaveLength(1)
+    } finally {
+      constructors.mockRestore()
+    }
+  })
+
+  it('contains an invalid regex as a non-match', () => {
+    expect(compileMatcher('[', 'codex')('value')).toBe(false)
+  })
+})
 
 describe('matchesMatcher — match-all sentinels (both dialects)', () => {
   for (const mode of ['claude-code', 'codex'] as const) {

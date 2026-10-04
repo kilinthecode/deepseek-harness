@@ -33,11 +33,10 @@ import {
   createDetachedRuns,
   DEFAULT_HOOK_TIMEOUT_MS,
   DEFAULT_STDERR_SUMMARY_MAX_CHARS,
-  matchesMatcher,
+  compileMatcher,
   mergeHookOutputs,
   runHook,
   type HookOutput,
-  type MatcherGroup,
   type MergedHookOutcome,
 } from '@deepseek-ai/dsh-hook-protocol'
 import { parseCodexConfig, type CodexHookConfig } from './config.ts'
@@ -102,6 +101,10 @@ export function apply(ctx: Context, config: Config): void {
     return
   }
 
+  const compiledGroups = new Map(Object.entries(parsed).map(([point, groups]) => [point,
+    groups.map(group => ({ group, matches: compileMatcher(group.matcher, 'codex') })),
+  ]))
+
   const model = config.model ?? ''
 
   // SessionStart is the one emit-shaped (detached) point Codex has: track its
@@ -127,14 +130,14 @@ export function apply(ctx: Context, config: Config): void {
       plainStdoutAsContext?: boolean
     },
   ): Promise<MergedHookOutcome> {
-    const groups: MatcherGroup[] = parsed[point] ?? []
+    const groups = compiledGroups.get(point) ?? []
     const outputs: HookOutput[] = []
     // Run hooks in the agent's session workspace so relative paths address the
     // user's project rather than the server launch directory.
     const workdir = opts.agent?.session.header.cwd
-    for (const group of groups) {
+    for (const { group, matches } of groups) {
       // Codex always interprets matchers as regexes; it has no literal fast path.
-      if (!matchesMatcher(group.matcher, matchQuery, 'codex')) continue
+      if (!matches(matchQuery)) continue
       for (const hook of group.hooks) {
         const handlerId = nextHandlerId(point)
         const session = opts.agent?.session
