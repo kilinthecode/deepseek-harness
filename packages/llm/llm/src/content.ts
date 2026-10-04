@@ -548,7 +548,7 @@ function toolDeclarations(
  * @param tools - currently active tool schemas.
  * @param toolUpdate - the resolved route's update mode.
  * @param history - immutable state folded from committed headers and developer messages.
- * @returns provider declarations and the corresponding filtered history.
+ * @returns provider declarations (the original `tools` array when they serialize identically) and the corresponding filtered history.
  */
 export function projectToolUpdates(
   messages: readonly RequestMessage[],
@@ -614,8 +614,18 @@ export function projectToolUpdates(
 
   const unchanged = projectedMessages.length === messages.length
     && projectedMessages.every((message, index) => message === messages[index])
+  const declared = [...declarations.values()]
   return {
     messages: unchanged ? messages : projectedMessages,
-    tools: [...declarations.values()],
+    tools: sameDeclarations(declared, tools) ? tools : declared,
   }
+}
+
+/** Whether projected declarations serialize identically to the active tools, so callers can keep the original array. */
+function sameDeclarations(
+  declared: readonly ToolSchema[],
+  tools: readonly ToolSchema[] | undefined,
+): tools is readonly ToolSchema[] {
+  return tools !== undefined && declared.length === tools.length
+    && declared.every((tool, index) => tool === tools[index] || JSON.stringify(tool) === JSON.stringify(tools[index]))
 }
