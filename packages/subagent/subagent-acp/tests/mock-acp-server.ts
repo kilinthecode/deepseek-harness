@@ -30,6 +30,11 @@
  *                        client announced in `session/new` — so a test can assert
  *                        where the child actually ran and what workspace it was
  *                        told it has.
+ * - `MOCK_MESSAGES`    — if `ids`, stream three assistant messages distinguished
+ *                        by chunk `messageId`, the last one split into
+ *                        `Final answer: ` and MOCK_TEXT; if `tools`, stream two
+ *                        id-less messages separated by a tool call and its
+ *                        update, the last one split the same way.
  * - `MOCK_READY_FILE`  — if set, the path the agent touches once its `prompt`
  *                        handler is in flight (it has streamed its chunk). A test
  *                        polls for this file to cancel on a CONDITION rather than
@@ -90,6 +95,7 @@ const TEXT = echoEnvName !== undefined
   ? process.env[echoEnvName] ?? `<${echoEnvName} unset>`
   : process.env.MOCK_TEXT ?? 'mock child answer'
 const ECHO_CWD = process.env.MOCK_ECHO_CWD === '1'
+const MESSAGES = process.env.MOCK_MESSAGES
 const STOP = (process.env.MOCK_STOP ?? 'end_turn') as StopReason
 const HANG = process.env.MOCK_HANG === '1'
 const WANT_PERMISSION = process.env.MOCK_PERMISSION === '1'
@@ -187,6 +193,32 @@ function makeAgent() {
           sessionId: params.sessionId,
           update: { sessionUpdate: 'agent_thought_chunk', content: { type: 'text', text: 'thinking…' } },
         })
+      }
+      const chunk = (text: string, messageId?: string): Promise<void> => conn.notify(methods.client.session.update, {
+        sessionId: params.sessionId,
+        update: { sessionUpdate: 'agent_message_chunk', content: { type: 'text', text }, ...messageId === undefined ? {} : { messageId } },
+      })
+      if (MESSAGES === 'ids') {
+        await chunk('I will inspect the repository first.', 'm1')
+        await chunk('Now ', 'm2')
+        await chunk('checking tests.', 'm2')
+        await chunk('Final answer: ', 'm3')
+        await chunk(TEXT, 'm3')
+        return { stopReason: STOP }
+      }
+      if (MESSAGES === 'tools') {
+        await chunk('I will inspect the repository first.')
+        await conn.notify(methods.client.session.update, {
+          sessionId: params.sessionId,
+          update: { sessionUpdate: 'tool_call', toolCallId: 'mock-read', title: 'read file' },
+        })
+        await conn.notify(methods.client.session.update, {
+          sessionId: params.sessionId,
+          update: { sessionUpdate: 'tool_call_update', toolCallId: 'mock-read', status: 'completed' },
+        })
+        await chunk('Final answer: ')
+        await chunk(TEXT)
+        return { stopReason: STOP }
       }
       // Stream the canned assistant text as one chunk (or, under MOCK_ECHO_CWD,
       // the observable process cwd + announced session cwd).

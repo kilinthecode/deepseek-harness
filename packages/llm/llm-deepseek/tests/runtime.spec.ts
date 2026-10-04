@@ -1555,12 +1555,14 @@ describe('DeepSeekAdapter against a mock server', () => {
 
     setTimeout(() => { controller.abort() }, 30)
     const chunks = await pending
-    expect(chunks).toHaveLength(1)
-    expect(chunks[0]?.type).toBe('finish')
-    if (chunks[0]?.type !== 'finish') throw new Error('expected a finish chunk')
-    expect(chunks[0].reason.kind).toBe('aborted')
-    if (chunks[0].reason.kind !== 'aborted') throw new Error('expected an aborted finish')
-    expect(chunks[0].reason.failure.code).toBe('ABORTED')
+    // message_start already arrived, so the billed usage precedes the aborted finish.
+    expect(chunks).toHaveLength(2)
+    expect(chunks[0]).toEqual({ type: 'usage', usage: { inputTokens: 3, outputTokens: 0, totalTokens: 3 } })
+    const finish = chunks[1]
+    if (finish?.type !== 'finish') throw new Error('expected a finish chunk')
+    expect(finish.reason.kind).toBe('aborted')
+    if (finish.reason.kind !== 'aborted') throw new Error('expected an aborted finish')
+    expect(finish.reason.failure.code).toBe('ABORTED')
   })
 
   it('maps connection failures to TRANSPORT without losing the cause', async () => {

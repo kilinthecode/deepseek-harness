@@ -19,6 +19,7 @@ import {
   readScopeInstruction,
   relativeDisplay,
   type LoadedInstructionFile,
+  type ScopeInstructionProbe,
 } from './files.ts'
 import {
   candidateScopeKey,
@@ -230,6 +231,14 @@ export function applyInstructionVersionUpdates(
   if (states.size === 0) cache.delete(session)
 }
 
+/** Capture a promise's outcome so a started but unconsumed probe never rejects unhandled. */
+function settled<T>(promise: Promise<T>): Promise<PromiseSettledResult<T>> {
+  return promise.then(
+    (value): PromiseSettledResult<T> => ({ status: 'fulfilled', value }),
+    (reason: unknown): PromiseSettledResult<T> => ({ status: 'rejected', reason }),
+  )
+}
+
 function relativeScope(projectRoot: string, dir: string): string {
   const scope = relativeDisplay(projectRoot, dir)
   return scope.length === 0 ? '.' : scope
@@ -329,26 +338,39 @@ export async function reconcileInstructionContext(
     if (directoryScopes === undefined) scopesByDirectory.set(directory, [scope])
     else directoryScopes.push(scope)
   }
+  const isExcludedBaselineScope = (scope: string): boolean => options.excludedBaselineScopes !== undefined
+    && baselineScopes.has(scope)
+    && options.excludedBaselineScopes.has(scope)
+  // Probes only read provider metadata, so every probe starts before any is
+  // consumed: a remote provider pays one resolve/stat round trip for the pass
+  // instead of one per scope. Results are consumed in the sequential order
+  // below, so precedence and the first observed failure are unchanged.
+  const probes = new Map<string, Promise<PromiseSettledResult<ScopeInstructionProbe>>>()
+  for (const scope of scopes) {
+    if (isExcludedBaselineScope(scope)) continue
+    probes.set(scope, settled(probeScopeInstruction(scope, projectRoot, resolved, fileSystem, options.signal)))
+  }
   for (const [directory, directoryScopes] of scopesByDirectory) {
-    const probedScopes: string[] = []
+    const probedScopes: [string, Promise<PromiseSettledResult<ScopeInstructionProbe>>][] = []
     for (const scope of directoryScopes) {
-      if (options.excludedBaselineScopes !== undefined
-        && baselineScopes.has(scope)
-        && options.excludedBaselineScopes.has(scope)) {
+      const pending = probes.get(scope)
+      if (pending === undefined) {
         const previous = effective.get(scope)
         if (previous === undefined || previous.action === 'remove') versions.delete(scope)
         else pushRemoval(scope, previous.path)
       } else {
-        probedScopes.push(scope)
+        probedScopes.push([scope, pending])
       }
     }
     const itemStart = items.length
     const versionUpdateStart = versionUpdates.length
     const addedAbsolutePaths: string[] = []
-    const priorVersions = new Map(probedScopes.map(scope => [scope, versions.get(scope)]))
-    for (const scope of probedScopes) {
+    const priorVersions = new Map(probedScopes.map(([scope]) => [scope, versions.get(scope)]))
+    for (const [scope, pending] of probedScopes) {
       const previous = effective.get(scope)
-      const probe = await probeScopeInstruction(scope, projectRoot, resolved, fileSystem, options.signal)
+      const outcome = await pending
+      if (outcome.status === 'rejected') throw outcome.reason
+      const probe = outcome.value
       if (probe.kind === 'unavailable') {
         if (previous === undefined || previous.action === 'remove') continue
         // Same-directory candidates form one deduplicated authority group. If an

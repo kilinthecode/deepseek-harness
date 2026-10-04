@@ -98,7 +98,7 @@ type ManualCompactionErrorCode =
 
 `changed` 和 `summary` 闭合失败尝试并将其持久化到日志，不写入摘要替换；恢复过程中记录的图片省略仍然有效。`commit` 可能发生在部分变更之后；`persistence` 表示内存中的标记对已闭合，但 flush 失败。取消独立于这些失败，并在完成必要清理后抛出原始 abort 原因。
 
-压力压缩在 `agent/pre-step` waterfall（瀑布式事件）中运行，先于请求推导。一旦压力满足条件，compaction-basic 会先预览可选的 [`ctx.toolResultPruner`](../../packages/compaction/compaction-tool-result-pruner/README.zh.md)：当仅靠剪枝就能让压力降到阈值以下、且余量达到阈值的 `pruneHeadroomRatio` 倍时，该次剪枝将作为唯一的缩减手段落地；否则范围选择与摘要生成先在未剪枝的 surface 上运行，随后每次压缩后都会对剩余 surface 执行一次剪枝。若预览达标但落地的剪枝仍未把 surface 降到阈值以下，就会转入压缩、对已剪枝的 surface 生成摘要；没有可压缩范围的会话，在压缩拒绝之前仍会先被剪枝。规范化溢出总是先剪枝（因为重试请求本身必须能放入窗口），再在缩减后的 surface 上选择范围。失败请求的恢复在失败的步骤关闭后通过 `agent/request-error` 运行；仅当 surface replacement generation 前进时才返回重试动作，即便后续摘要工作在剪枝后抛异常亦如此；取消仍然优先。区域边界保持工具调用/结果配对，但不保持整个轮次，因此一个过大轮次中较早关闭的步骤可以被压缩。`dsh-compaction-basic` 拥有阈值、保留尾部策略、溢出上限与失败处理。
+压力压缩在 `agent/pre-step` waterfall（瀑布式事件）中运行，先于请求推导。一旦压力满足条件，compaction-basic 会先预览可选的 [`ctx.toolResultPruner`](../../packages/compaction/compaction-tool-result-pruner/README.zh.md)：当仅靠剪枝就能让压力降到阈值以下、且余量达到阈值的 `pruneHeadroomRatio` 倍时，该次剪枝将作为唯一的缩减手段落地；否则范围选择与摘要生成先在未剪枝的 surface 上运行，随后每次压缩后都会对剩余 surface 执行一次剪枝。若预览达标但落地的剪枝仍未把 surface 降到阈值以下，就会转入压缩、对已剪枝的 surface 生成摘要；没有可压缩范围的会话，在压缩拒绝之前仍会先被剪枝。压力触发传入 `PruneScope` `consumed`，因此刚结束的步骤所记录的结果会先完整送达模型，之后才可能被剪枝。规范化溢出总是以范围 `all` 先剪枝（因为重试请求本身必须能放入窗口），再在缩减后的 surface 上选择范围。失败请求的恢复在失败的步骤关闭后通过 `agent/request-error` 运行；仅当 surface replacement generation 前进时才返回重试动作，即便后续摘要工作在剪枝后抛异常亦如此；取消仍然优先。区域边界保持工具调用/结果配对，但不保持整个轮次，因此一个过大轮次中较早关闭的步骤可以被压缩。`dsh-compaction-basic` 拥有阈值、保留尾部策略、溢出上限与失败处理。
 
 该 Service Definition 导出 `toolPairingBalancedBefore(session, seq)` 与 `toolPairingBalancedAfter(session, seq)`，用于检查 seq 之前与之后的工具调用/结果配对。两者都会验证当前 surface 成员关系，并拒绝缺失的 seq 与遗留结果；[包约定](../../packages/compaction/compaction/README.zh.md#tool-pairing-boundaries)定义其缓存行为。
 
@@ -130,6 +130,20 @@ interface PruneResult {
   /** Total Unicode code points removed across replacements. */
   readonly charsRemoved: number
 }
+```
+
+```ts type-equiv
+/**
+ * Which surface tool results a pruning pass may rewrite.
+ *
+ * - `consumed`: only results positioned before the last surface
+ *   `assistant/message`, which a model request has already carried in full.
+ *   Results after it have not reached the model yet, so rewriting them would
+ *   make the model's first sight of that output a pruned one.
+ * - `all`: every surface tool result, for a caller that must shrink a request
+ *   which includes results the model has not received yet.
+ */
+type PruneScope = 'consumed' | 'all'
 ```
 
 `projectTokenSavings` 会报告 `pruneSession` 当前会产生的估算 token 节省量，且不会追加任何内容，因此调用方可以在真正落地之前先为一次仅剪枝的缩减定价。
@@ -235,31 +249,34 @@ measureContent(blocks: readonly ContentBlock[]): number
 pruneContent(blocks: readonly ContentBlock[]): ContentBlock[] | null
 
 /**
- * Prune every over-budget tool result from one stable current-surface snapshot.
+ * Prune every over-budget in-scope tool result from one stable
+ * current-surface snapshot.
  * Each replacement preserves the complete event data except for `content`,
  * cites the shadowed node so replay can recover the replacement input, and is
  * immediately preceded by a `compaction/prune` shadow-price event pricing the
  * shadowed node through the injected token meter, so pure consumers can
  * subtract it without per-node state.
  * @param session - session whose current surface is rewritten.
+ * @param scope - which surface tool results may be rewritten.
  * @returns landed replacements and aggregate Unicode-code-point savings.
  * @throws when the session rejects a replacement; replacements committed
  * earlier in the pass remain durable.
  */
-pruneSession(session: Session): PruneResult
+pruneSession(session: Session, scope: PruneScope): PruneResult
 
 /**
  * Project the token savings `pruneSession` would land for the current
- * surface, without appending anything. A caller compares the projection
+ * surface and scope, without appending anything. A caller compares the projection
  * against a pressure margin to decide whether a prune-only reduction is
  * worth landing on its own, before paying for a second cache break by also
  * summarizing.
  * @param session - session whose current surface is inspected.
+ * @param scope - which surface tool results may be rewritten.
  * @returns aggregate estimated tokens `pruneSession` would currently
  *   remove, summed per candidate as
  *   `tokenMeter.estimateMessage(original) - tokenMeter.estimateMessage(replacement)`.
  */
-projectTokenSavings(session: Session): number
+projectTokenSavings(session: Session, scope: PruneScope): number
 ```
 
 Types: [ContentBlock](llm-streaming.zh.md) · [Session](session.zh.md)

@@ -18,6 +18,18 @@ export interface ResolvedConfig {
   readonly tailChars: number
 }
 
+/**
+ * Which surface tool results a pruning pass may rewrite.
+ *
+ * - `consumed`: only results positioned before the last surface
+ *   `assistant/message`, which a model request has already carried in full.
+ *   Results after it have not reached the model yet, so rewriting them would
+ *   make the model's first sight of that output a pruned one.
+ * - `all`: every surface tool result, for a caller that must shrink a request
+ *   which includes results the model has not received yet.
+ */
+export type PruneScope = 'consumed' | 'all'
+
 /** Cited source event and size accounting for one landed surface replacement. */
 export interface PrunedEntry {
   /** Full-fidelity tool-result event shadowed by the replacement. */

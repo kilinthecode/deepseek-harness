@@ -18,7 +18,7 @@ detached POSIX 进程组、Windows direct-parent 遍历与 PTY 后代扫描只�
 
 ### Linux scope 与 one-shot bootstrap
 
-同一 runtime 第一次符合条件的 Linux 普通或 PTY 调用会深入检查准确 runner 入口、libc `execve` 与 `fcntl` bindings、可读的 user manager 与保留 literal argv 的 transient-scope 支持。失败的深度 probe 会重试，第一次成功则会缓存。之后每次符合条件的调用仍会在 target 执行前轻量检查 user manager 是否可达。native 路径一旦选定，scope、协议、状态查询或 pre-exec failure 都由本次启动报告，绝不切换到 fallback。
+同一 runtime 第一次符合条件的 Linux 普通或 PTY 调用会深入检查准确 runner 入口、libc `execve` 与 `fcntl` bindings、可读的 user manager 与保留 literal argv 的 transient-scope 支持。runtime 只执行一次该深度 probe，并在其生命周期内缓存成功或失败结果，因此没有可用 user manager 的宿主在后续 spawn 中不再承担阻塞的 probe。之后每次符合条件的调用仍会在 target 执行前轻量检查 user manager 是否可达。native 路径一旦选定，scope、协议、状态查询或 pre-exec failure 都由本次启动报告，绝不切换到 fallback。
 
 parent 创建一个 0700 目录，其中的完整 0600 `launch-request.json` 保存最终 target cwd 与环境。私有 `DSH_SUBPROCESS_RUNNER` 值负责定位该 request，runner 则从 provider cwd 与 bootstrap-safe 环境启动。`systemd-run --user --scope --quiet --collect --expand-environment=no` 先把自身进程注册到 scope，再由 one-shot bootstrap 删除并校验 request、切换到 target cwd、恢复完整 target 环境、按 target PATH 规则解析裸可执行文件、清除 fd 0 至 fd 2 的 `FD_CLOEXEC`，并使用原始 argv 调用 libc `execve()`。bootstrap 会原地成为 target 并保留继承的 stdio，不作为常驻 supervisor。
 
@@ -58,7 +58,7 @@ selector 是 per-spawn locator 或 sentinel，不是凭据或持久格式。Linu
 
 宿主退出清理 fixture 对比 provider 在 disposal 前后的监听器身份，并验证独立注册的退出监听器仍然存在。进程监听器总数无法证明 provider 清理完成，因为其他进程生命周期处理器可能在 provider 构造之后注册。
 
-- provider 与 Linux 协议测试套件固定同步 NUL 拒绝发生在启动副作用之前、严格 request／error 解码、target cwd 与完整环境恢复、私有变量碰撞、保留 argv 且对 symlink 敏感的 PATH 遍历、为继承 stdio 清除 close-on-exec、pre-exec error ownership、失败深度 probe 重试与成功深度 probe 缓存及逐调用 manager 检查、三种 scope 建立状态（包括 request 未消费时的请求终止与意外退出）、`LoadState`／`ActiveState`／`TasksCurrent` 解析、释放被留在 active 且没有任何进程的遗留 scope（连同 client 仍存活、未请求终止与进程数未上报三种情形）、`reloading`、带未胜出 delay 取消的 terminate wake-up、建立后有上限的退避，以及 PTY managed-owner 恰好一次 cleanup。
+- provider 与 Linux 协议测试套件固定同步 NUL 拒绝发生在启动副作用之前、严格 request／error 解码、target cwd 与完整环境恢复、私有变量碰撞、保留 argv 且对 symlink 敏感的 PATH 遍历、为继承 stdio 清除 close-on-exec、pre-exec error ownership、深度 probe 成功与失败结果均在 provider 生命周期内缓存、成功后逐调用 manager 检查、三种 scope 建立状态（包括 request 未消费时的请求终止与意外退出）、`LoadState`／`ActiveState`／`TasksCurrent` 解析、释放被留在 active 且没有任何进程的遗留 scope（连同 client 仍存活、未请求终止与进程数未上报三种情形）、`reloading`、带未胜出 delay 取消的 terminate wake-up、建立后有上限的退避，以及 PTY managed-owner 恰好一次 cleanup。
 - Windows 协议与 Win32 测试套件固定恰好两个 result 分支、只含数字的 target exit、使用普通 error 的 start cancellation 与 parent 原样保留的本地 reason、缩减到 `name`／`message`／`code`／`syscall`／`path` 的 error record、固定的 `2`／`3`／`267` 到 `ENOENT`、`740` 到 `EACCES`、`5` 到 `EPERM`、`193` 到 `EFTYPE` 及其余 code 到 `UNKNOWN` 的映射、runner spawn 后才发送 start、spawn 前 failure 的 empty-range settlement、按序数显式排序的 target 环境块及 `=C:` 保留和双 NUL 结尾、`uv_get_osfhandle()` carrier 映射与 unsigned invalid sentinel 拒绝、null-device ignored-stdin carrier 与非 ignore stdin pipe、result-send 与 IPC-disconnect failure、stdio settlement 前的 direct-result 锁存、active-process 完全停稳，以及唯一 handle cleanup。
 - 无需密钥的 [`bash-startup-timeout`](../../../../snapshots/session/bash-startup-timeout/snapshot.yml) Session 快照固定模型可见的超时结果。Linux user-systemd fixture 通过输入屏障保持启动请求未消费，并验证取消与 range settlement。
 - 真实 Linux user-systemd 测试会分别通过生产入口运行一条普通命令与一条 `node-pty` `setsid`／reparent 场景。它们证明 scope signalling 与 collection、裸可执行文件查找、逃逸后代终止、range settlement，以及不变的 PTY PID、session、控制终端、前台输入、`/dev/tty`、readiness 与 startup-failure 语义。

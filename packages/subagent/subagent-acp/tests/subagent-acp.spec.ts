@@ -1229,6 +1229,15 @@ describe('dsh-subagent-acp', () => {
     await run.dispose()
   })
 
+  it.each(['ids', 'tools'])('returns only the last assistant message when the child streams several (%s)', async (messages) => {
+    const ctx = await setup({ MOCK_MESSAGES: messages, MOCK_TEXT: '3 bugs found.', MOCK_STOP: 'end_turn' })
+    const run = await ctx.subagents.start('acp', request())
+    const result = await run.result
+    expect(result.stopReason).toBe('completed')
+    expect(text(result.output)).toBe('Final answer: 3 bugs found.')
+    await run.dispose()
+  })
+
   it('classifies a prompt transport failure without copying SDK text', async () => {
     const run = await startAcpRun(request('private prompt text'), {
       command: process.execPath,

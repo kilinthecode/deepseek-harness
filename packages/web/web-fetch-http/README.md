@@ -43,7 +43,7 @@ Load the web service and the provider; configurable limits have safe defaults an
 | Field | Default | Meaning |
 |---|---|---|
 | `maxResponseBytes` | `5,000,000` | Maximum response body size in bytes |
-| `maxBodyChars` | `100,000` | Maximum decoded body length in characters |
+| `maxBodyChars` | `100,000` | Maximum decoded body length in characters; HTML counts after comments and `script`, `style`, `noscript`, `template`, and `svg` elements are removed |
 | `timeoutMs` | `30,000` | Fetch timeout — a resource backstop, not the model-facing tool budget |
 | `maxRedirects` | `5` | Maximum same-origin redirect hops (`0` follows none) |
 | `userAgent` | `deepseek-harness/…` | `User-Agent` header sent on every request |
@@ -52,7 +52,7 @@ The generated [configuration catalog](../../../docs/config-catalog.md#deepseek-a
 
 ### What a fetch returns
 
-A successful call yields a `WebFetchResult`: the final URL after allowed redirects, the HTTP status code, a decoded body classified as `html` or `text`, and a `truncated` flag. A non-2xx response is a result, not an error — the status code is part of the fetched resource state; `WebError` is reserved for failures to safely retrieve or represent the resource.
+A successful call yields a `WebFetchResult`: the final URL after allowed redirects, the HTTP status code, a decoded body classified as `html` or `text`, and a `truncated` flag. An `html` body omits comments and `script`, `style`, `noscript`, `template`, and `svg` elements, so inline assets cannot fill the character cap before page content. A non-2xx response is a result, not an error — the status code is part of the fetched resource state; `WebError` is reserved for failures to safely retrieve or represent the resource.
 
 ```text
 const page = await ctx.web.fetch({ url: 'https://example.com' })

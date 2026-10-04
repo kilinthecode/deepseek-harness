@@ -1,4 +1,4 @@
-import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
+import { mkdir, mkdtemp, readFile, rm, utimes, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
@@ -181,6 +181,37 @@ describe('DeepSeekUploadIndex', () => {
     await index.clear(second)
   })
 
+  it('reuses the parsed index until the file identity changes', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'dsh-upload-index-'))
+    roots.push(dir)
+    const path = join(dir, 'index.json')
+    const index = new DeepSeekUploadIndex(path)
+    const scope = deepSeekFileScope('https://api.deepseek.com', 'key')
+    const record = {
+      scope, attachmentId: ATTACHMENT, variantId: VARIANT,
+      fileId: DeepSeekFileId('file-api-aaaa'), bytes: 3, createdAt: 1, expiresAt: 10_000,
+    }
+    await index.commit(record, 1, 1)
+    // Whole-second times survive the utimes round trip exactly.
+    const seconds = 1_700_000_000
+    await utimes(path, seconds, seconds)
+    await expect(index.get(scope, VARIANT, 1, 1)).resolves.toEqual(record)
+
+    // Same inode, size, and mtime: the lookup does not reread the edited bytes.
+    const edited = (await readFile(path, 'utf8')).replace('file-api-aaaa', 'file-api-bbbb')
+    await writeFile(path, edited, 'utf8')
+    await utimes(path, seconds, seconds)
+    await expect(index.get(scope, VARIANT, 1, 1)).resolves.toEqual(record)
+
+    // A changed mtime invalidates the parsed index.
+    await utimes(path, seconds, seconds + 5)
+    await expect(index.get(scope, VARIANT, 1, 1)).resolves.toMatchObject({ fileId: 'file-api-bbbb' })
+
+    // This process's own commit invalidates the parsed index.
+    await index.remove(scope, VARIANT, DeepSeekFileId('file-api-bbbb'))
+    await expect(index.get(scope, VARIANT, 1, 1)).resolves.toBeUndefined()
+  })
+
   it('propagates non-cache filesystem read failures', async () => {
     const dir = await mkdtemp(join(tmpdir(), 'dsh-upload-index-'))
     roots.push(dir)
@@ -190,5 +221,10 @@ describe('DeepSeekUploadIndex', () => {
     await expect(index.get(
       deepSeekFileScope('https://api.deepseek.com', 'key'), VARIANT, 1, 1,
     )).rejects.toBeInstanceOf(Error)
+    const file = join(dir, 'file')
+    await writeFile(file, '', 'utf8')
+    await expect(new DeepSeekUploadIndex(join(file, 'index.json')).get(
+      deepSeekFileScope('https://api.deepseek.com', 'key'), VARIANT, 1, 1,
+    )).rejects.toMatchObject({ code: 'ENOTDIR' })
   })
 })

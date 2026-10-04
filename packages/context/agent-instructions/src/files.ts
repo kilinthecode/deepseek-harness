@@ -186,8 +186,12 @@ export async function findProjectRoot(
 ): Promise<string> {
   let current = resolve(cwd)
   for (;;) {
-    for (const marker of markers) {
-      if (await existsAsMarker(join(current, marker), fileSystem, signal)) return current
+    // One directory's marker probes run together; reading the outcomes in
+    // marker order keeps the earliest marker's result or failure decisive.
+    const probes = await Promise.allSettled(markers.map(marker => existsAsMarker(join(current, marker), fileSystem, signal)))
+    for (const probe of probes) {
+      if (probe.status === 'rejected') throw probe.reason
+      if (probe.value) return current
     }
     const parent = dirname(current)
     if (parent === current) return resolve(cwd)
@@ -249,9 +253,11 @@ async function allExistingInstructionFiles(
   signal?: AbortSignal,
 ): Promise<DiscoveredInstructionFile[]> {
   const found: DiscoveredInstructionFile[] = []
-  for (const candidate of instructionFileCandidates) {
+  const probes = await Promise.all(instructionFileCandidates.map(async (candidate) => {
     const path = join(dir, candidate)
-    const probe = await statFile(path, fileSystem, signal)
+    return { path, probe: await statFile(path, fileSystem, signal) }
+  }))
+  for (const { path, probe } of probes) {
     switch (probe.kind) {
       case 'present':
         found.push({ absolutePath: path, displayPath: relativeDisplay(root, path), ...probe.info })
@@ -282,8 +288,21 @@ async function discoverInstructionFiles(
     files.push(file)
   }
 
+  // Every candidate probe is independent of the others; only the project-root
+  // walk orders them. Probes run concurrently and their results are added in
+  // precedence order, so a remote provider pays round trips per dependency level.
   const userGlobal = join(config.dshHome, USER_GLOBAL_FILE)
-  const userGlobalProbe = await statFile(userGlobal, fileSystem, options.signal)
+  const cwd = resolve(options.cwd)
+  const [userGlobalProbe, chainFiles] = await Promise.all([
+    statFile(userGlobal, fileSystem, options.signal),
+    (async () => {
+      const projectRoot = options.projectRoot
+        ?? await findProjectRoot(cwd, config.projectRootMarkers, fileSystem, options.signal)
+      return Promise.all(ancestorChain(projectRoot, cwd).flatMap(dir =>
+        [config.instructionFileCandidates, config.localInstructionFileCandidates].map(candidates =>
+          allExistingInstructionFiles(dir, projectRoot, candidates, fileSystem, options.signal))))
+    })(),
+  ])
   switch (userGlobalProbe.kind) {
     case 'present':
       addFile({
@@ -300,15 +319,8 @@ async function discoverInstructionFiles(
       assertNever(userGlobalProbe, 'StatFileProbe')
   }
 
-  const cwd = resolve(options.cwd)
-  const projectRoot = options.projectRoot
-    ?? await findProjectRoot(cwd, config.projectRootMarkers, fileSystem, options.signal)
-  for (const dir of ancestorChain(projectRoot, cwd)) {
-    for (const candidates of [config.instructionFileCandidates, config.localInstructionFileCandidates]) {
-      for (const file of await allExistingInstructionFiles(dir, projectRoot, candidates, fileSystem, options.signal)) {
-        addFile(file)
-      }
-    }
+  for (const group of chainFiles) {
+    for (const file of group) addFile(file)
   }
   return files
 }

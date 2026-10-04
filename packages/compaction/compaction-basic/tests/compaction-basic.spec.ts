@@ -175,7 +175,30 @@ function conversation(turns = 4, text = 'fixture '.repeat(40).trim(), system?: s
   return session
 }
 
-function toolConversation(turns = 3): Session {
+/**
+ * Close a tool step with a model reply, so a request has carried the step's
+ * tool results to the model and pressure pruning may rewrite them.
+ */
+function appendModelReply(session: Session, turn: number): void {
+  session.append('step/start', { turn, step: 2 })
+  session.append('assistant/message', {
+    stream: [],
+    turn,
+    step: 2,
+    message: createMessage({
+      role: 'assistant',
+      content: [{ type: 'text', text: 'ok' }],
+      source: { kind: 'model', provider: MODEL, model: MODEL },
+    }),
+  }, { surfaceOp: 'append' })
+  session.append('step/end', { turn, step: 2 })
+}
+
+/**
+ * Closed user/tool-call/result turns followed by an open turn. With
+ * `modelReplied`, each turn ends with a model reply after its tool result.
+ */
+function toolConversation(turns = 3, modelReplied = true): Session {
   const session = Session.create(SessionId(`tools-${turns}`))
   for (let turn = 1; turn <= turns; turn += 1) {
     const callId = ToolCallId(`call-${turn}`)
@@ -218,14 +241,19 @@ function toolConversation(turns = 3): Session {
       }),
     }, { surfaceOp: 'append' })
     session.append('step/end', { turn, step: 1 })
+    if (modelReplied) appendModelReply(session, turn)
     session.append('turn/end', { turn, reason: { kind: 'completed' } })
   }
   session.append('turn/start', { turn: turns + 1 })
   return session
 }
 
-/** One closed routed tool step followed by an open turn for rewrite events. */
-function oversizedToolResult(chars = 3_000, withCompactablePrompt = false): Session {
+/**
+ * One closed routed tool step followed by an open turn for rewrite events.
+ * With `modelReplied`, a closing model reply follows the result; without it,
+ * the turn is one indivisible tool-call/result pair the model has not read.
+ */
+function oversizedToolResult(chars = 3_000, withCompactablePrompt = false, modelReplied = true): Session {
   const session = Session.create(SessionId(`oversized-tool-${chars}`))
   const callId = ToolCallId('oversized')
   session.append('turn/start', { turn: 1 })
@@ -265,6 +293,7 @@ function oversizedToolResult(chars = 3_000, withCompactablePrompt = false): Sess
     meta: { presentation: 'preserved' },
   }, { surfaceOp: 'append' })
   session.append('step/end', { turn: 1, step: 1 })
+  if (modelReplied) appendModelReply(session, 1)
   session.append('turn/end', { turn: 1, reason: { kind: 'completed' } })
   session.append('turn/start', { turn: 2 })
   return session
@@ -1032,9 +1061,9 @@ describe('optional model-free tool-result pruning', () => {
     // lands after each compaction/end, not just the first.
     const realPruneSession = prune.pruneSession.bind(prune)
     const eventCountAtCall: number[] = []
-    const pruneSpy = vi.spyOn(prune, 'pruneSession').mockImplementation((target) => {
+    const pruneSpy = vi.spyOn(prune, 'pruneSession').mockImplementation((target, scope) => {
       eventCountAtCall.push(session.snapshotEvents().length)
-      return realPruneSession(target)
+      return realPruneSession(target, scope)
     })
 
     const result = await compactIfNeeded(compact, session)
@@ -2333,7 +2362,7 @@ describe('automatic listener and loader composition', () => {
       thresholdRatio: 1,
       retainTokens: 900,
     })
-    const session = oversizedToolResult()
+    const session = oversizedToolResult(3_000, false, false)
 
     expect(await recover(ctx, agent(session, MODEL), overflow())).toBe(true)
     expect(session.surface.replaceGeneration).toBe(1)
@@ -2418,7 +2447,7 @@ describe('automatic listener and loader composition', () => {
       thresholdRatio: 1,
       retainTokens: 90,
     })
-    const session = toolConversation()
+    const session = toolConversation(3, false)
     const newestAssistant = session.surface.nodes.at(-2)!
     const newestResult = session.surface.nodes.at(-1)!
 

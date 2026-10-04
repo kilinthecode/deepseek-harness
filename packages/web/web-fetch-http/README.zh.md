@@ -43,7 +43,7 @@ kind: "package-reference"
 | 字段 | 默认值 | 含义 |
 |---|---|---|
 | `maxResponseBytes` | `5,000,000` | 响应主体最大字节数 |
-| `maxBodyChars` | `100,000` | 解码主体最大字符数 |
+| `maxBodyChars` | `100,000` | 解码主体最大字符数；HTML 在移除注释以及 `script`、`style`、`noscript`、`template` 与 `svg` 元素后计数 |
 | `timeoutMs` | `30,000` | 抓取超时——资源兜底，不是面向模型的工具预算 |
 | `maxRedirects` | `5` | 同源重定向最大跳数（`0` 表示不跟随） |
 | `userAgent` | `deepseek-harness/…` | 每次请求发送的 `User-Agent` 标头 |
@@ -52,7 +52,7 @@ kind: "package-reference"
 
 ### 抓取返回什么
 
-成功调用产生 `WebFetchResult`：允许的重定向之后的最终 URL、HTTP 状态码、分类为 `html` 或 `text` 的解码正文，以及 `truncated` 标志。非 2xx 响应是结果而非错误——状态码是被抓取资源状态的一部分；`WebError` 只用于无法安全获取或表示资源的失败。
+成功调用产生 `WebFetchResult`：允许的重定向之后的最终 URL、HTTP 状态码、分类为 `html` 或 `text` 的解码正文，以及 `truncated` 标志。`html` 正文不含注释以及 `script`、`style`、`noscript`、`template` 与 `svg` 元素，因此内联资源不会在页面内容之前占满字符上限。非 2xx 响应是结果而非错误——状态码是被抓取资源状态的一部分；`WebError` 只用于无法安全获取或表示资源的失败。
 
 ```text
 const page = await ctx.web.fetch({ url: 'https://example.com' })

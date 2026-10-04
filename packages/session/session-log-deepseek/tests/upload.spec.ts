@@ -384,6 +384,25 @@ describe('incremental DeepSeek session-log upload', () => {
     expect(() => SessionLogDeepSeek.acceptedThrough(session)).toThrow(/malformed acceptance format version/)
   })
 
+  it('leaves the pending suffix to the conversation request when an auxiliary call runs beside it', async () => {
+    const { ctx, session } = await harness('auxiliary')
+    session.append('turn/start', { turn: 1 })
+
+    for (const purpose of ['session-title', 'compaction'] as const) {
+      const auxiliary = await ctx.deepseekLlmApiExtensions.prepare({
+        body: body(), signal: SIGNAL, sessionId: session.id, purpose,
+      })
+      expect(auxiliary.fields).not.toHaveProperty('dsh_session_log')
+      await auxiliary.accept()
+    }
+    expect(session.seq).toBe(1)
+
+    const conversation = await ctx.deepseekLlmApiExtensions.prepare({ body: body(), signal: SIGNAL, sessionId: session.id })
+    expect(conversation.fields.dsh_session_log).toMatchObject({ afterSeq: -1, throughSeq: 0 })
+    await conversation.accept()
+    expect(SessionLogDeepSeek.acceptedThrough(session)).toBe(0)
+  })
+
   it('omits the field for direct or stale requests and uploads the prior acceptance marker next', async () => {
     const { ctx, session } = await harness('edges')
     await expect(ctx.deepseekLlmApiExtensions.prepare({ body: body(), signal: SIGNAL }))

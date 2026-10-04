@@ -44,7 +44,7 @@ Windows 普通子进程通过 `windowsHide` 启动私有 Job runner，并为原�
 
 ### 收集输出
 
-收集模式在内存中保留一条流的最后 `maxBytes`——错误与最终结果通常聚集在末尾——并在配置了 `spill` 上限时把完整流追加到 OS 临时目录下每进程目录中的私有文件（`0700` 目录、`0600` 随机命名文件）。某条流大于 spill 上限时，会丢弃不完整的 spill，只返回带截断标记的尾部。spill 是尽力而为：当 spill 文件无法打开或追加（每进程目录被临时文件清理工具删除、`EACCES`、`EMFILE`、`ENOSPC`）时，收集器丢弃该 spill，通过插件 logger 记录一条 `error`，并继续收集内存尾部，因此结果带截断标记且没有 spill 路径。读取基于偏移量且从不消费，因此后台读取与批量读取在退出前后都可以共存。
+收集模式在内存中保留一条流的最后 `maxBytes`——错误与最终结果通常聚集在末尾——并在配置了 `spill` 上限时把完整流追加到 OS 临时目录下每进程目录中的私有文件（`0700` 目录、`0600` 随机命名文件）。某条流大于 spill 上限时，会丢弃不完整的 spill，只返回带截断标记的尾部。spill 是尽力而为：当 spill 文件无法打开或追加（每进程目录被临时文件清理工具删除、`EACCES`、`EMFILE`、`ENOSPC`）时，收集器丢弃该 spill，通过插件 logger 记录一条 `error`，并继续收集内存尾部，因此结果带截断标记且没有 spill 路径。读取基于偏移量且从不消费，因此后台读取与批量读取在退出前后都可以共存。流仍打开时，读取会停在剩余字节尚未到达的 UTF-8 序列之前，因此增量读取不会拆开字符；流结束后才释放这些字节。
 
 `./output` 导出向进程适配器共享该收集器与保留 spill 的存储。`snapshot()` 返回保留的原始字节及总字节数，使远程适配器能够保留偏移量，而无需转发完整的流。
 
@@ -148,7 +148,7 @@ spill 文件以 `0600` 权限、`O_EXCL` 与随机名称在 `0700` 每进程目�
 
 - **Linux 直接进程退出没有独立截止时间**——直接 `SIGKILL` 获得确认后，不可中断的内核 I/O 可能让 dispose 无限期等待；`graceMs` 和 scope 查询的轮询预算不限制此等待。
 - **native ownership 有明确宿主要求**——Linux 需要可读的 user manager 与 `systemd-run --expand-environment=no`；旧版 systemd 使用带告警的 PGID fallback。macOS 因没有受支持的公开 persistent owner，始终使用该 fallback。
-- **native 选择具有有界的每次 spawn 成本**——Linux 会重复检查 bootstrap 入口、libc `execve`/`fcntl` bindings、存活的 user manager 与 literal-argv scope 支持，直到这套完整探测首次成功；后续符合条件的普通命令或终端 spawn 只重新检查存活的 user manager。Windows 会在每次普通 spawn 前重新检查 runner 入口、bindings 与当前 Job 支持。Linux 深度探测的成功状态与 fallback 告警去重会在提供方生命周期内持续保留。所有探测都会在用户命令可能运行前完成，子进程探测的超时为 5 秒。每次 Linux 启动都会创建私有请求目录，以 50 毫秒间隔检查尚未确定的 scope 建立状态；scope 已建立且仍 active 后，查询间隔按指数增长，最多为 5 秒。Windows 普通命令会保留一个 runner 与一条 IPC 通道，直到 Job 报告活动进程数为零。目标会直接继承标准句柄，不使用 named-pipe stdio 或结果文件。
+- **native 选择具有有界的每次 spawn 成本**——Linux 在提供方生命周期内只在首次符合条件的 spawn 时检查一次 bootstrap 入口、libc `execve`/`fcntl` bindings、存活的 user manager 与 literal-argv scope 支持；探测通过后，后续符合条件的普通命令或终端 spawn 只通过一次阻塞的 `systemctl` 查询重新检查存活的 user manager；探测失败后，后续 spawn 直接使用 fallback 而不再探测，因此之后才可用的 user manager 要到提供方重启后才会被使用。Windows 会在每次普通 spawn 前重新检查 runner 入口、bindings 与当前 Job 支持。Linux 深度探测结果与 fallback 告警去重会在提供方生命周期内持续保留。所有探测都会在用户命令可能运行前完成，子进程探测的超时为 5 秒。每次 Linux 启动都会创建私有请求目录，以 50 毫秒间隔检查尚未确定的 scope 建立状态；scope 已建立且仍 active 后，查询间隔按指数增长，最多为 5 秒。Windows 普通命令会保留一个 runner 与一条 IPC 通道，直到 Job 报告活动进程数为零。目标会直接继承标准句柄，不使用 named-pipe stdio 或结果文件。
 - **Windows Job inheritance 有明确排除项**——普通后代默认继承 Job，但 breakaway 进程不在保证范围。目标只在 Job 分配后启动；runner 若在 create-to-assignment 极窄区间遭外力终止，可能留下 suspended target。
 - **Windows 终端信号是控制台级的**——SIGINT 以 `\x03` Ctrl-C 输入写入投递，由 conhost 转为控制台级 CTRL_C 事件；SIGTSTP 与 SIGHUP 被拒绝（不可用）；不带 `/F` 的 `taskkill` 无法终止控制台进程，因此拆卸的 TERM 档是 `/F` 升级前的宽限等待。Windows 就绪没有精确的 stdin-wait 档：prompt-marker 快路径把 shell pid 作为伪前台进程组比较，其余由静默与计时档覆盖。
 - **fallback 终端 ownership 仍依赖观察**——在 macOS 或缺少可用 user-systemd 的 Linux 上，子进程如果在任何前台检查快照之前重新设定父进程，或离开自有终端会话，就可能逃出进程表扫描。本地提供方不会新增持续进程表监视器；受支持的 Linux native 模式改由 scope membership 持有这些后代。

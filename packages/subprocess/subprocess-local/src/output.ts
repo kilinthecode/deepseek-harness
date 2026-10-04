@@ -111,6 +111,29 @@ export function prepareManagedProcessBinding(
 }
 
 
+function isUtf8Continuation(buffer: Buffer, index: number): boolean {
+  return ((buffer[index] as number) & 0xC0) === 0x80
+}
+
+/** Byte length a UTF-8 lead byte announces; 1 for ASCII and for bytes that cannot start a sequence. */
+function utf8SequenceLength(lead: number): number {
+  if (lead >= 0xF0 && lead <= 0xF7) return 4
+  if (lead >= 0xE0) return lead <= 0xEF ? 3 : 1
+  return lead >= 0xC0 ? 2 : 1
+}
+
+/**
+ * End of the last complete UTF-8 sequence: excludes a trailing lead byte whose
+ * continuation bytes have not arrived yet. Invalid bytes count as complete.
+ */
+function completeUtf8End(buffer: Buffer): number {
+  let lead = buffer.length - 1
+  // A sequence is at most 4 bytes, so at most 3 continuation bytes precede its end.
+  while (lead >= 0 && lead > buffer.length - 4 && isUtf8Continuation(buffer, lead)) lead -= 1
+  if (lead < 0 || isUtf8Continuation(buffer, lead)) return buffer.length
+  return lead + utf8SequenceLength(buffer[lead] as number) > buffer.length ? lead : buffer.length
+}
+
 /**
  * Collects one stream with a bounded in-memory tail. With spill options, on
  * first overflow a spill file is created and every chunk (including those
@@ -135,6 +158,8 @@ export class OutputCollector {
   private spillDisabled: boolean
   /** Total bytes ever pushed (not just retained). */
   private total = 0
+  /** Set by {@link seal}: the stream ended, so no later chunk can complete a trailing code point. */
+  private sealed = false
 
   /**
    * @param maxBytes - in-memory tail cap in bytes.
@@ -255,6 +280,11 @@ export class OutputCollector {
    * pushed since `fromByte`. When `fromByte` has already slid out of the
    * in-memory tail window, the read is `lossy` — it returns the whole
    * retained tail and the gap is only recoverable from the spill file.
+   * Until {@link seal}, a UTF-8 sequence still incomplete at the end of the
+   * stream is withheld and `nextOffset` stops before it, so consecutive reads
+   * decode a code point split across chunks intact. Continuation bytes at the
+   * start of the read (a lossy window or a `fromByte` inside a code point) are
+   * skipped.
    * @param fromByte - whole-stream offset to resume from (a prior read's `nextOffset`; 0 for the first read).
    * @returns the delta text, the offset for the next read, the `lossy` flag, and the spill path when one was created.
    */
@@ -262,10 +292,12 @@ export class OutputCollector {
     const windowStart = this.total - this.bytes
     const buffer = Buffer.concat(this.chunks)
     const lossy = fromByte < windowStart
-    const slice = lossy ? buffer : buffer.subarray(fromByte - windowStart)
+    let start = lossy ? 0 : Math.min(fromByte - windowStart, buffer.length)
+    const end = this.sealed ? buffer.length : completeUtf8End(buffer)
+    while (start < end && isUtf8Continuation(buffer, start)) start += 1
     return {
-      text: slice.toString('utf8'),
-      nextOffset: this.total,
+      text: buffer.toString('utf8', start, Math.max(start, end)),
+      nextOffset: windowStart + end,
       lossy,
       ...this.spillFile !== undefined ? { spillPath: this.spillFile } : {},
     }
@@ -287,6 +319,7 @@ export class OutputCollector {
    * never point at a still-open file.
    */
   seal(): void {
+    this.sealed = true
     if (this.spillFd === undefined) return
     try {
       closeSync(this.spillFd)

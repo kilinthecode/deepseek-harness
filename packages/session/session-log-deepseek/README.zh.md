@@ -35,7 +35,7 @@ kind: "package-reference"
 <a id="request-field"></a>
 ## 请求字段
 
-对于携带存活 `sessionId` 的请求，插件会折叠该确切会话格式代的最大已接受水位，对 `Session.events` 取快照，并发送水位之后能放进 `maxBytes` 的最长连续事件段。进程内 fold 会让每条事件只被扫描一次并增量消费后续追加；重启与 HMR（热模块替换）会从持久日志重建它。版本 1 字段包含 `sessionFormatVersion`、原始会话 header（仅 seeded Session 携带 `seedLength`）、数值型 `afterSeq` 与 `throughSeq`，以及每个已转换为原始数值 envelope 字段的完整规范事件。只有记录的会话 id 与格式代均匹配请求来源时水位才生效，因此 fork 会话会忽略从父会话继承的水位。表层事件必须携带 `surfaceOp`，替换范围使用数值型 `startSeq` 与 `endSeq`；仅 system、user 与 tool 事件可以携带 `sourceEventSeqs`。assistant 的提供方元数据保留在内嵌流中，只出现在日志中的事件不携带这两个元数据字段。
+对于携带存活 `sessionId` 的对话请求（不带辅助 `purpose` 的请求），插件会折叠该确切会话格式代的最大已接受水位，对 `Session.events` 取快照，并发送水位之后能放进 `maxBytes` 的最长连续事件段。进程内 fold 会让每条事件只被扫描一次并增量消费后续追加；重启与 HMR（热模块替换）会从持久日志重建它。版本 1 字段包含 `sessionFormatVersion`、原始会话 header（仅 seeded Session 携带 `seedLength`）、数值型 `afterSeq` 与 `throughSeq`，以及每个已转换为原始数值 envelope 字段的完整规范事件。只有记录的会话 id 与格式代均匹配请求来源时水位才生效，因此 fork 会话会忽略从父会话继承的水位。表层事件必须携带 `surfaceOp`，替换范围使用数值型 `startSeq` 与 `endSeq`；仅 system、user 与 tool 事件可以携带 `sourceEventSeqs`。assistant 的提供方元数据保留在内嵌流中，只出现在日志中的事件不携带这两个元数据字段。
 
 `maxBytes` 按 UTF-8 字节限制完整的序列化字段，包括 header 与数值型 envelope 字段。超过上限的积压会分多次已接受的请求补传，每次都从上一次的 `throughSeq` 之后继续。第一条待发事件本身就超过上限时，请求会省略 `dsh_session_log`，插件记录一条告警，水位停在该事件之前，直到 `maxBytes` 能容纳它。运行时根本无法序列化的超大事件也按同样方式处理，且任何 `maxBytes` 都无法容纳它。
 
@@ -46,7 +46,7 @@ DeepSeek 适配器会在 HTTP 2xx 后、消费 SSE（Server-Sent Events）正文
 
 服务端接受后、持久化水位前发生崩溃，可能让恢复后的进程重放已经接受的范围。这是至少一次交付的失败方向：不确定性会制造重复，绝不会跳过序列。普通会话检查点策略会在下一个语义检查点持久化水位；本插件不执行独立 I/O。
 
-缺少存活会话的直接请求会省略 `dsh_session_log`。普通 agent（智能体）、压缩（compaction）与会话标题调用都会携带存活会话 id。
+缺少存活会话的直接请求会省略 `dsh_session_log`。压缩（compaction）与会话标题调用会携带存活会话 id，但也携带 `purpose`，因此同样省略该字段；下一个对话请求会上传待发送的后缀，与其并行的标题调用既不重复发送该后缀，也不追加重复的接受记录。
 
 <a id="model-experience"></a>
 ## 模型体验

@@ -63,7 +63,7 @@ A DeepSeek Harness child uses the product launcher and an explicit absolute `DSH
 
 ### What you get
 
-A successful run returns the child's final streamed assistant text as the result output. The child's session, model, and tools come from the child process itself — the parent supplies only the task and the working directory. The stop reason maps `end_turn` to `completed`, `max_tokens` to `max-tokens`, `refusal` to `refusal`, `cancelled` to `aborted`, and every other value to `error`. A failed published run preserves partial assistant text in `output` and returns safe structured detail separately in `diagnostic`.
+A successful run returns the streamed text of the child's last assistant message as the result output. A changed `agent_message_chunk` `messageId` starts a new message; when the child sends no message ids, text after a tool call does. The child's session, model, and tools come from the child process itself — the parent supplies only the task and the working directory. The stop reason maps `end_turn` to `completed`, `max_tokens` to `max-tokens`, `refusal` to `refusal`, `cancelled` to `aborted`, and every other value to `error`. A failed published run preserves partial assistant text in `output` and returns safe structured detail separately in `diagnostic`.
 
 ### Failure and recovery
 

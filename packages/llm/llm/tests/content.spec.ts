@@ -543,8 +543,21 @@ describe('projectToolUpdates', () => {
     const tools = [search]
     const projected = projectToolUpdates(messages, tools, 'in-history', { tools, updates: [] })
     expect(projected.messages).toBe(messages)
-    expect(projected.tools).toEqual(tools)
+    expect(projected.tools).toBe(tools)
     expect(projectToolUpdates(messages, tools, undefined).messages).toBe(messages)
+  })
+
+  it('keeps the active tools array when folded declarations serialize identically', () => {
+    const tools = [search, fetch]
+    const history: ToolHistory = { tools: [{ ...search }, { ...fetch }], updates: [] }
+    expect(projectToolUpdates([prompt], tools, 'in-history', history).tools).toBe(tools)
+    const changed = projectToolUpdates([prompt], tools, 'in-history', { tools: [search, { ...fetch, description: 'Other' }], updates: [] })
+    expect(changed.tools).not.toBe(tools)
+    expect(changed.tools).toEqual([search, { ...fetch, description: 'Other' }])
+    const reordered = projectToolUpdates([prompt], tools, 'in-history', { tools: [fetch, search], updates: [] })
+    expect(reordered.tools).toEqual([fetch, search])
+    expect(projectToolUpdates([prompt], undefined, 'in-history', { tools: [search], updates: [] }).tools).toEqual([search])
+    expect(projectToolUpdates([prompt], [search], 'in-history', history).tools).toEqual([search, fetch])
   })
 
   it('strips deferred loading and developer updates when the route declares no mode', () => {

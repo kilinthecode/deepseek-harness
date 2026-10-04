@@ -4,7 +4,7 @@
  * @module @deepseek-ai/dsh-session-query-sqlite
  */
 
-import { createHash, randomUUID } from 'node:crypto'
+import { randomUUID } from 'node:crypto'
 import { SESSION_FORMAT_VERSION, SessionSeq } from '@deepseek-ai/dsh-session'
 import type { DatabaseSync } from 'node:sqlite'
 import { Context, Service, type Fiber } from '@deepseek-ai/cordis'
@@ -134,7 +134,17 @@ interface ObservedSession {
   header: SessionHeader
   inheritedEventCount: SessionLogOffset
   documents: SessionEventSearchDocument[]
+}
+
+interface ObservedLiveSession extends ObservedSession {
   fingerprint: string
+}
+
+interface CachedLiveObservation {
+  /** Engine-local number distinguishing Session objects that share an id. */
+  incarnation: number
+  seq: SessionLogOffset
+  observed: ObservedLiveSession
 }
 
 interface ObservedPersistedSession {
@@ -151,7 +161,7 @@ interface PersistenceBinding {
 interface Observation {
   persistenceBinding: PersistenceBinding
   persisted: Map<SessionId, ObservedPersistedSession>
-  live: Map<SessionId, ObservedSession>
+  live: Map<SessionId, ObservedLiveSession>
 }
 
 interface IndexedPersistedRow {
@@ -234,6 +244,8 @@ export class SqliteSessionQueryEngine extends SessionQueryEngine {
   private _persistenceEpoch = 0
   private _globalGeneration = 0
   private _localGeneration = 0
+  private _liveIncarnations = 0
+  private readonly _liveObservations = new WeakMap<Session, CachedLiveObservation>()
   private _tail: Promise<void> = Promise.resolve()
   private _closed = false
   private _closePromise: Promise<void> | undefined
@@ -510,6 +522,7 @@ export class SqliteSessionQueryEngine extends SessionQueryEngine {
           const before = await persistence.list(listOptions)
           assertNotAborted(signal)
           persisted = materializePersistenceSnapshots(before)
+          let readCold = false
           for (const entry of persisted.values()) {
             if (canReuseIndexed && indexed.get(entry.header.id)?.revision === entry.revision) continue
             // Skip work already shadowed by a live owner. The cold read is
@@ -519,16 +532,20 @@ export class SqliteSessionQueryEngine extends SessionQueryEngine {
             // live-preferred.
             if (initiallyLive.has(entry.header.id) || this.ctx.sessions.get(entry.header.id) !== undefined) continue
             assertNotAborted(signal)
+            readCold = true
             const loaded = await readColdSessionLog(persistence, entry.header.id, signal)
             assertNotAborted(signal)
             assertSessionHeadersCompatible(entry.header, loaded.header)
             entry.loaded = observeSession(loaded.header, loaded.inheritedEventCount, loaded.events)
           }
-          assertNotAborted(signal)
-          const afterSnapshots = await persistence.list(listOptions)
-          assertNotAborted(signal)
-          const after = materializePersistenceSnapshots(afterSnapshots)
-          if (!samePersistenceSnapshots(persisted, after)) continue
+          // Without a cold read nothing awaited since the first listing returned, so it is still current.
+          if (readCold) {
+            assertNotAborted(signal)
+            const afterSnapshots = await persistence.list(listOptions)
+            assertNotAborted(signal)
+            const after = materializePersistenceSnapshots(afterSnapshots)
+            if (!samePersistenceSnapshots(persisted, after)) continue
+          }
           if (this._persistenceBinding !== persistenceBinding) continue
         } catch (error: unknown) {
           if (isAbort(error) || signal?.aborted) {
@@ -545,9 +562,9 @@ export class SqliteSessionQueryEngine extends SessionQueryEngine {
           )
         }
       }
-      const live = new Map<SessionId, ObservedSession>()
+      const live = new Map<SessionId, ObservedLiveSession>()
       for (const session of this.ctx.sessions.list()) {
-        const observed = observeLive(session)
+        const observed = this._observeLive(session)
         const durable = persisted.get(session.id)
         if (durable !== undefined) assertSessionHeadersCompatible(observed.header, durable.header)
         live.set(session.id, observed)
@@ -559,6 +576,26 @@ export class SqliteSessionQueryEngine extends SessionQueryEngine {
       'session-search persistence observation did not stabilize after one retry',
       'SESSION_QUERY_PERSISTENCE_FAILED',
     )
+  }
+
+  /**
+   * Observe one live Session, reusing the previous observation while its seq is unchanged.
+   * Session logs are append-only and accepted events are frozen, so `seq` identifies the
+   * complete log of one Session object; the incarnation separates objects that reuse an id.
+   */
+  private _observeLive(session: Session): ObservedLiveSession {
+    const seq = session.seq
+    const cached = this._liveObservations.get(session)
+    if (cached?.seq === seq) return cached.observed
+    const incarnation = cached?.incarnation ?? (this._liveIncarnations += 1)
+    // oxlint-disable-next-line typescript/no-deprecated -- Existing Session history read; migration deferred.
+    const events = session.snapshotEvents()
+    const observed = {
+      ...observeSession(session.header, session.inheritedEventCount, events),
+      fingerprint: `${incarnation}:${seq}`,
+    }
+    this._liveObservations.set(session, { incarnation, seq, observed })
+    return observed
   }
 
   private _mainGeneration(): number {
@@ -613,7 +650,7 @@ export class SqliteSessionQueryEngine extends SessionQueryEngine {
     }
   }
 
-  private _replaceLiveSession(entry: ObservedSession, generation: number, persisted: boolean): void {
+  private _replaceLiveSession(entry: ObservedLiveSession, generation: number, persisted: boolean): void {
     this._deleteSession('live', entry.header.id)
     const db = this._requireDb()
     db.prepare(`
@@ -868,25 +905,17 @@ function selectedDocumentsParams(query: string, persistenceVisible: boolean): Ar
   ]
 }
 
-function observeLive(session: Session): ObservedSession {
-  // oxlint-disable-next-line typescript/no-deprecated -- Existing Session history read; migration deferred.
-  return observeSession(session.header, session.inheritedEventCount, session.snapshotEvents())
-}
-
 function observeSession(
   header: SessionHeader,
   inheritedEventCount: SessionLogOffset,
   events: readonly SessionEvent[],
 ): ObservedSession {
   const detachedHeader = structuredClone(header)
-  const detachedEvents = events.map(event => structuredClone(event))
   return {
     header: detachedHeader,
     inheritedEventCount,
-    documents: buildSessionEventSearchDocuments(detachedHeader.id, detachedEvents),
-    fingerprint: createHash('sha256')
-      .update(JSON.stringify({ header: detachedHeader, inheritedEventCount, events: detachedEvents }))
-      .digest('base64url'),
+    // Documents copy only primitive event fields, so the events need no detached copy.
+    documents: buildSessionEventSearchDocuments(detachedHeader.id, events),
   }
 }
 
@@ -926,7 +955,7 @@ function samePersistenceSnapshots(
 
 function sameSessionIds(
   before: ReadonlySet<SessionId>,
-  after: ReadonlyMap<SessionId, ObservedSession>,
+  after: ReadonlyMap<SessionId, ObservedLiveSession>,
 ): boolean {
   if (before.size !== after.size) return false
   for (const id of before) {

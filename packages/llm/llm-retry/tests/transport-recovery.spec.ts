@@ -125,9 +125,10 @@ describe('bounded retry through the real DeepSeek HTTP/SSE adapter', () => {
   })
 
   it.each([
-    ['stream_disconnect', 1] as const,
-    ['partial_disconnect', 3] as const,
-  ])('retries %s without committing failed chunks', async (behavior, failedChunkCount) => {
+    ['stream_disconnect', ['finish']] as const,
+    // message_start arrived, so the failed attempt keeps its billed usage.
+    ['partial_disconnect', ['block-start', 'text-delta', 'usage', 'finish']] as const,
+  ])('retries %s without committing failed chunks', async (behavior, failedChunkTypes) => {
     const server = await start([behavior, 'success'], {
       apiKey: 'mock-key',
       partialText: 'discard me',
@@ -152,7 +153,7 @@ describe('bounded retry through the real DeepSeek HTTP/SSE adapter', () => {
       && event.seq < retryEvent.seq,
     )
     expect(failedAttempts).toHaveLength(1)
-    expect(expandAssistantStream(failedAttempts[0]!.data.stream)).toHaveLength(failedChunkCount)
+    expect(expandAssistantStream(failedAttempts[0]!.data.stream).map(({ chunk }) => chunk.type)).toEqual(failedChunkTypes)
     expect(agent.session.snapshotEvents().filter(event => event.type === 'assistant/message')
       .map(event => [event.data.turn, event.data.step]))
       .toEqual([[1, 1]])
@@ -204,7 +205,8 @@ describe('bounded retry through the real DeepSeek HTTP/SSE adapter', () => {
 
     expect(server.requests).toHaveLength(1)
     const attempt = agent.session.snapshotEvents().find(event => event.type === 'assistant/attempt' && event.data.turn === 1)
-    expect(attempt?.type === 'assistant/attempt' ? expandAssistantStream(attempt.data.stream) : []).toHaveLength(3)
+    expect(attempt?.type === 'assistant/attempt' ? expandAssistantStream(attempt.data.stream).map(({ chunk }) => chunk.type) : [])
+      .toEqual(['block-start', 'text-delta', 'usage', 'finish'])
     expect(agent.session.snapshotEvents().some(event => event.type === 'assistant/message')).toBe(false)
     expect(agent.session.snapshotEvents().some(event => event.type === 'llm/retry')).toBe(false)
     expect(agent.session.snapshotEvents().at(-1)).toMatchObject({

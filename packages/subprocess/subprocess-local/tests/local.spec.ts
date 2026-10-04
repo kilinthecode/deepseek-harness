@@ -916,12 +916,10 @@ describe('LocalSubprocessRuntime', () => {
     }
   })
 
-  it('retries failed Linux deep probes, caches the first success, and rechecks the manager', async () => {
+  it('caches the Linux deep probe for the provider lifetime and rechecks the manager after a pass', async () => {
     const probeLinuxNative = vi.fn()
-      .mockReturnValueOnce(false)
-      .mockReturnValueOnce(false)
-      .mockReturnValueOnce(false)
       .mockReturnValueOnce(true)
+      .mockReturnValueOnce(false)
     const probeLinuxManager = vi.fn()
       .mockReturnValueOnce(false)
       .mockReturnValueOnce(true)
@@ -943,23 +941,33 @@ describe('LocalSubprocessRuntime', () => {
     const fibers: Array<{ dispose(): Promise<void> }> = []
     try {
       const { default: IsolatedLocalSubprocessRuntime } = await import('../src/index.ts')
+      type Runtime = InstanceType<typeof IsolatedLocalSubprocessRuntime>
+      const linuxSelector = (linuxRuntime: Runtime) => (linuxRuntime as unknown as {
+        selectContainmentMode(kind: 'ordinary' | 'terminal'): 'linux-scope' | 'windows-job' | 'fallback'
+      }).selectContainmentMode.bind(linuxRuntime)
       const linuxContext = new Context()
       vi.spyOn(linuxContext.logger, 'warn').mockImplementation(() => {})
       const linuxFiber = await linuxContext.plugin(IsolatedLocalSubprocessRuntime)
       fibers.push(linuxFiber)
       const linuxRuntime = linuxContext.subprocess as InstanceType<typeof IsolatedLocalSubprocessRuntime>
       linuxRuntime.internals = { platform: 'linux' }
-      const linuxSelect = (linuxRuntime as unknown as {
-        selectContainmentMode(kind: 'ordinary' | 'terminal'): 'linux-scope' | 'windows-job' | 'fallback'
-      }).selectContainmentMode.bind(linuxRuntime)
+      const linuxSelect = linuxSelector(linuxRuntime)
 
-      expect(linuxSelect('ordinary')).toBe('fallback')
-      expect(linuxSelect('ordinary')).toBe('fallback')
-      expect(linuxSelect('ordinary')).toBe('fallback')
       expect(linuxSelect('ordinary')).toBe('linux-scope')
       expect(linuxSelect('ordinary')).toBe('fallback')
-      expect(linuxSelect('ordinary')).toBe('linux-scope')
-      expect(probeLinuxNative).toHaveBeenCalledTimes(4)
+      expect(linuxSelect('terminal')).toBe('linux-scope')
+      expect(probeLinuxNative).toHaveBeenCalledOnce()
+      expect(probeLinuxManager).toHaveBeenCalledTimes(2)
+
+      const unavailableContext = new Context()
+      vi.spyOn(unavailableContext.logger, 'warn').mockImplementation(() => {})
+      const unavailableFiber = await unavailableContext.plugin(IsolatedLocalSubprocessRuntime)
+      fibers.push(unavailableFiber)
+      const unavailableRuntime = unavailableContext.subprocess as InstanceType<typeof IsolatedLocalSubprocessRuntime>
+      unavailableRuntime.internals = { platform: 'linux' }
+      const unavailableSelect = linuxSelector(unavailableRuntime)
+      for (let spawn = 0; spawn < 5; spawn += 1) expect(unavailableSelect('ordinary')).toBe('fallback')
+      expect(probeLinuxNative).toHaveBeenCalledTimes(2)
       expect(probeLinuxManager).toHaveBeenCalledTimes(2)
 
       const windowsContext = new Context()

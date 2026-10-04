@@ -232,6 +232,30 @@ describe('direct Messages HTTP', () => {
     await stopped
   })
 
+  it('reads each completed response to EOF so sequential requests reuse one connection', async () => {
+    const ports: (number | undefined)[] = []
+    const http = await endpoint((response) => {
+      ports.push(response.req.socket.remotePort)
+      response.write(sse(textEvents))
+      setTimeout(() => { response.end() }, 20)
+    })
+    const llm = adapter({ baseURL: http.url })
+    expect((await chunks(llm.stream(options()))).at(-1)).toMatchObject({ type: 'finish', reason: { kind: 'stop' } })
+    // The client returns a drained socket to its pool on a later event-loop turn.
+    await new Promise(resolve => setImmediate(resolve))
+    expect((await chunks(llm.stream(options()))).at(-1)).toMatchObject({ type: 'finish', reason: { kind: 'stop' } })
+    expect(ports).toHaveLength(2)
+    expect(new Set(ports).size).toBe(1)
+  })
+
+  it('completes a settled message when the response stays open after message_stop', async () => {
+    const http = await endpoint((response) => {
+      response.write(sse(textEvents))
+    })
+    const output = await chunks(adapter({ baseURL: http.url, streamIdleTimeoutMs: 30 }).stream(options()))
+    expect(output.at(-1)).toMatchObject({ type: 'finish', reason: { kind: 'stop' } })
+  })
+
   it('times out an idle HTTP response and closes the connection', async () => {
     const stopped = Promise.withResolvers<undefined>()
     const http = await endpoint((response) => {
@@ -243,9 +267,10 @@ describe('direct Messages HTTP', () => {
     const stream = adapter({ baseURL: http.url, streamIdleTimeoutMs: 30 }).stream(options())[Symbol.asyncIterator]()
     try {
       expect((await stream.next()).value).toMatchObject({ type: 'block-start' })
-      const rejected = expect(stream.next()).rejects.toMatchObject({ code: 'TIMEOUT' })
+      const usage = stream.next()
       await vi.advanceTimersByTimeAsync(30)
-      await rejected
+      expect((await usage).value).toEqual({ type: 'usage', usage: { inputTokens: 12, outputTokens: 1, totalTokens: 13 } })
+      await expect(stream.next()).rejects.toMatchObject({ code: 'TIMEOUT' })
       await stopped.promise
     } finally {
       vi.useRealTimers()

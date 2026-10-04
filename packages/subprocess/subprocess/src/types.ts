@@ -144,6 +144,9 @@ export interface SubprocessOutputReader {
    * Read everything captured since `fromByte`. When that offset has slid out
    * of the in-memory tail window the read is `lossy` — it returns the whole
    * retained tail and the gap is only recoverable from the spill file.
+   * While the stream is open, `nextOffset` stops before a UTF-8 sequence
+   * whose remaining bytes have not arrived, so consecutive reads never split
+   * a character.
    * @param fromByte - whole-stream offset to resume from (a prior read's `nextOffset`; 0 for the first read).
    * @returns the delta text, the next offset, the `lossy` flag, and the spill path when one exists.
    */

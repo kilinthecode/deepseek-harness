@@ -728,8 +728,8 @@ export class Session implements SessionFace {
       if (result.retireAttemptId !== undefined) this.eventSource.settleAssistant(result.retireAttemptId)
       if (changed || result.retireAttemptId !== undefined) this.notifier.markDirty()
     } else if (result?.type === 'transient') {
+      // Chunks change only the event feed; the feed notifies its own subscribers.
       this.eventSource.append(result.entry)
-      this.notifier.markDirty()
     }
   }
 

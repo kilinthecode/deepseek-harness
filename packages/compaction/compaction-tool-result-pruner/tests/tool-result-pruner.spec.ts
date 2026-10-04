@@ -89,7 +89,7 @@ describe('tool-result pruning configuration', () => {
       } },
     ])
     session.append('image/offload', { targets: [{ seq: SessionSeq(seq), imageIndexes: [0] }] })
-    const pruned = service().pruneSession(session)
+    const pruned = service().pruneSession(session, 'all')
     expect(pruned.pruned).toHaveLength(1)
     const replacement = session.snapshotEvents().at(-1)!
     expect(replacement.type).toBe('tool/result')
@@ -199,7 +199,7 @@ describe('ToolResultPruner session transaction', () => {
       turn: 2,
     })
 
-    const result = service().pruneSession(session)
+    const result = service().pruneSession(session, 'all')
     expect(result.pruned).toHaveLength(1)
     expect(result.charsRemoved).toBeGreaterThan(0)
     const entry = result.pruned[0]!
@@ -259,8 +259,8 @@ describe('ToolResultPruner session transaction', () => {
       turn: 4,
     })
     const prune = service()
-    const first = prune.pruneSession(session)
-    const second = prune.pruneSession(session)
+    const first = prune.pruneSession(session, 'all')
+    const second = prune.pruneSession(session, 'all')
     expect(first.pruned.map(entry => entry.callId)).toEqual([ToolCallId('a'), ToolCallId('c')])
     expect(first.charsRemoved).toBe(
       first.pruned.reduce((sum, entry) => sum + entry.charsBefore - entry.charsAfter, 0),
@@ -286,15 +286,56 @@ describe('ToolResultPruner session transaction', () => {
 
     const seqBeforeProjection = session.seq
     const before = ctx.tokenMeter.measure(session)
-    const projected = prune.projectTokenSavings(session)
+    const projected = prune.projectTokenSavings(session, 'all')
     expect(session.seq).toBe(seqBeforeProjection)
 
     // The two oversized results ('big' and 'mixed') are the only prune
     // candidates; 'short' stays within budget.
-    const { pruned } = prune.pruneSession(session)
+    const { pruned } = prune.pruneSession(session, 'all')
     expect(pruned).toHaveLength(2)
     const after = ctx.tokenMeter.measure(session)
     expect(projected).toBe(before.totalTokens - after.totalTokens)
+  })
+
+  it('leaves results after the last assistant message unpruned in consumed scope', () => {
+    const session = Session.create(SessionId('consumed-scope'))
+    appendToolStep(session, 1, 'seen', [{ type: 'text', text: 'A'.repeat(100) }])
+    appendToolStep(session, 2, 'fresh', [{ type: 'text', text: 'B'.repeat(100) }])
+    session.append('turn/start', { turn: 3 })
+    const prune = service()
+    const projected = prune.projectTokenSavings(session, 'consumed')
+    expect(projected).toBeGreaterThan(0)
+    expect(projected).toBeLessThan(prune.projectTokenSavings(session, 'all'))
+
+    const first = prune.pruneSession(session, 'consumed')
+    expect(first.pruned.map(entry => entry.callId)).toEqual([ToolCallId('seen')])
+
+    // A later assistant message means a request has carried 'fresh' in full.
+    session.append('step/start', { turn: 3, step: 1 })
+    session.append('assistant/message', {
+      stream: [],
+      turn: 3,
+      step: 1,
+      message: createMessage({
+        role: 'assistant',
+        content: [{ type: 'text', text: 'done' }],
+        source: { kind: 'model', provider: MODEL, model: MODEL },
+      }),
+    }, { surfaceOp: 'append' })
+    const second = prune.pruneSession(session, 'consumed')
+    expect(second.pruned.map(entry => entry.callId)).toEqual([ToolCallId('fresh')])
+  })
+
+  it('treats every result as unreceived in consumed scope when no assistant message is on the surface', () => {
+    const session = Session.create(SessionId('no-assistant'))
+    session.append('turn/start', { turn: 1 })
+    session.append('step/start', { turn: 1, step: 1 })
+    session.append('tool/result', {
+      turn: 1,
+      step: 1,
+      message: createToolResultMessage({ callId: ToolCallId('orphan'), content: [{ type: 'text', text: 'A'.repeat(100) }], isError: false }),
+    }, { surfaceOp: 'append' })
+    expect(service().pruneSession(session, 'consumed')).toEqual({ pruned: [], charsRemoved: 0 })
   })
 
   it('replays to the identical pruned model messages', () => {
@@ -303,7 +344,7 @@ describe('ToolResultPruner session transaction', () => {
     session.append('turn/start', {
       turn: 2,
     })
-    service().pruneSession(session)
+    service().pruneSession(session, 'all')
     const replay = Session.create(session.id, session.snapshotEvents())
     expect(replay.deriveMessages()).toEqual(session.deriveMessages())
     expect(replay.surface.replaceGeneration).toBe(session.surface.replaceGeneration)
@@ -319,10 +360,10 @@ describe('ToolResultPruner session transaction', () => {
     const prune = new ToolResultPruner(ctx, SMALL)
     const session = ctx.sessions.create(SessionId('invariants'))
     appendToolStep(session, 1, 'a', [{ type: 'text', text: 'A'.repeat(100) }])
-    expect(() => prune.pruneSession(session)).toThrow(/outside any open turn/)
+    expect(() => prune.pruneSession(session, 'all')).toThrow(/outside any open turn/)
     session.append('turn/start', {
       turn: 2,
     })
-    expect(() => prune.pruneSession(session)).not.toThrow()
+    expect(() => prune.pruneSession(session, 'all')).not.toThrow()
   })
 })

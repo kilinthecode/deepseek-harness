@@ -12,8 +12,8 @@
   en: 0469a956a95bccdf
   zh: 2c5ea38a2841e1ae
 /agent-note-native-owners-contain-escaped-subprocess-descendants/decision/linux-scope-and-one-shot-bootstrap:
-  en: 582e6f5f5f7cc940
-  zh: b47cee599d22aaa2
+  en: dbc636c05df52059
+  zh: 3ac8e51f7d736b62
 /agent-note-native-owners-contain-escaped-subprocess-descendants/decision/windows-runner-and-job:
   en: a6401ee73bb173b7
   zh: 45b9cc7fea6f7921
@@ -27,8 +27,8 @@
   en: 8f24a2276aff4bd2
   zh: a3a36dd28f3ab0e0
 /agent-note-native-owners-contain-escaped-subprocess-descendants/verification:
-  en: 900e10a3f9cd3b67
-  zh: efc5d9f09a0e8e5a
+  en: 3c220b975f2fd414
+  zh: cc0af4f7998e469f
 /agent-note-native-owners-contain-escaped-subprocess-descendants/alternatives-considered:
   en: 12bbc028fbb14667
   zh: 9fea4359308337bd

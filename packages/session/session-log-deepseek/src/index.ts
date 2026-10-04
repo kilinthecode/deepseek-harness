@@ -187,6 +187,8 @@ export function apply(ctx: Context, config: Config): void {
     prepare: (request) => {
       // TODO: Define an explicit wire result for direct or stale-session calls if they become a supported product path.
       if (request.sessionId === undefined) return undefined
+      // Auxiliary calls leave the suffix to the next conversation request instead of uploading it twice.
+      if (request.purpose !== undefined) return undefined
       const session = ctx.sessions.get(brandString<SessionId>(request.sessionId))
       if (session === undefined) return undefined
 

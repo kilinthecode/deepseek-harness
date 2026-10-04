@@ -1,7 +1,8 @@
 /** Durable DeepSeek attachment-to-file-id index. @module dsh-llm-deepseek/upload-index */
 
 import { createHash } from 'node:crypto'
-import { readFile, mkdir } from 'node:fs/promises'
+import { readFile, mkdir, stat } from 'node:fs/promises'
+import type { Stats } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { withFileLock, writeFileAtomic } from '@deepseek-ai/dsh-atomic-write'
 import { resolveDshHome } from '@deepseek-ai/dsh-home-paths'
@@ -120,6 +121,9 @@ export class DeepSeekUploadIndex {
     this.path = path
   }
 
+  /** Last parsed index with the file identity it was read under. */
+  private cached: { readonly identity: string; readonly index: StoredIndex } | undefined
+
   private async load(): Promise<StoredIndex> {
     try {
       return parseIndex(await readFile(this.path, 'utf8'))
@@ -131,7 +135,25 @@ export class DeepSeekUploadIndex {
     }
   }
 
+  /** Reuse the last parsed index while the file's inode, size, and mtime are unchanged. */
+  private async loadCached(): Promise<StoredIndex> {
+    let stats: Stats
+    try {
+      stats = await stat(this.path)
+    } catch (error: unknown) {
+      if (absent(error)) return { formatVersion: 3, records: [] }
+      throw error
+    }
+    const identity = `${stats.ino}:${stats.size}:${stats.mtimeMs}`
+    if (this.cached?.identity === identity) return this.cached.index
+    // A replacement between stat and read changes the identity, so the next lookup rereads.
+    const index = await this.load()
+    this.cached = { identity, index }
+    return index
+  }
+
   private async save(index: StoredIndex): Promise<void> {
+    this.cached = undefined
     await writeFileAtomic(this.path, `${JSON.stringify(index, undefined, 2)}\n`, {
       mode: 0o600,
       dirMode: 0o700,
@@ -139,7 +161,7 @@ export class DeepSeekUploadIndex {
   }
 
   /**
-   * Read one reusable mapping.
+   * Read one reusable mapping. Lookups reuse the parsed index until the file's inode, size, or mtime changes.
    * @param scope - endpoint/API-key namespace.
    * @param variantId - complete request-image transformation identity.
    * @param now - current Unix time in milliseconds.
@@ -152,7 +174,7 @@ export class DeepSeekUploadIndex {
     now: number,
     refreshMarginMs: number,
   ): Promise<DeepSeekUploadRecord | undefined> {
-    const record = (await this.load()).records.find(candidate => (
+    const record = (await this.loadCached()).records.find(candidate => (
       candidate.scope === scope && candidate.variantId === variantId
     ))
     return record !== undefined && reusable(record, now, refreshMarginMs) ? record : undefined
