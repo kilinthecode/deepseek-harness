@@ -20,6 +20,7 @@ import type {} from '@deepseek-ai/dsh-client-ui-sidebar-right/client'
 import type {} from '@deepseek-ai/dsh-client-ui-settings/client'
 import { changesReviewAddress } from '../changes.ts'
 import { ChangesDiffStore } from './changes-diff.ts'
+import { DeliverablesOverview, type DeliverablesOverviewInjected } from './DeliverablesOverview.tsx'
 import { ChangesSummaryStore } from './changes-summary.ts'
 import { PresentedOpenController } from './present-open.ts'
 import { PresentRow } from './PresentRow.tsx'
@@ -58,6 +59,13 @@ export function apply(ctx: ClientContext): void {
   })
   ctx.uiConversation.events.register(deliverablesDefinition)
   ctx.effect(() => ctx.locale.register(NS, { zh, en }), 'ui-deliverables: dictionaries')
+  ctx.slots.inject('sidebar.right.tab.guide.section', () => ctx.slots.register({
+    name: 'sidebar.right.tab.guide.section', id: 'deliverables', order: 0, locale: NS,
+    inject: (): DeliverablesOverviewInjected => ({
+      hooks: { changesSummary: summaries.state, showCodeDiff: ctx.configForms.developerTools.enabled },
+      loadChangesSummary: (sessionId, seq) => summaries.load(sessionId, seq),
+    }),
+  }, DeliverablesOverview))
   ctx.slots.inject(
     'conversation.chat.turnTail',
     () => ctx.slots.register({

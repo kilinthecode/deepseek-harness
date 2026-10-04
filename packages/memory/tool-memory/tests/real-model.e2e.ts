@@ -36,7 +36,7 @@ async function harness(root: string): Promise<Context> {
   await ctx.plugin(AgentLoop, { agents: [] })
   await ctx.plugin(LlmDeepSeek)
   await mountStore(ctx, root, { maxRecords: 200 })
-  await ctx.plugin(ToolMemory, { injectMaxBytes: 4096, maxRecallResults: 8 })
+  await ctx.plugin(ToolMemory, { injectMaxBytes: 4096, maxRecallResults: 8, maxRecallBytes: 8192 })
   return ctx
 }
 

@@ -3,7 +3,7 @@
     "surface": "rgb(255, 255, 255)",
     "viewport": "rgb(255, 255, 255)",
     "underlay": "rgb(255, 255, 255)",
-    "foreground": "rgb(15, 17, 21)"
+    "foreground": "rgb(0, 0, 0)"
   },
   "dark": {
     "surface": "rgb(0, 0, 0)",

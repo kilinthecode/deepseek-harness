@@ -3,29 +3,29 @@
 # After editing either side, bring the other along and re-record with:
 #   pnpm run verify-translation-pairing --write docs/architecture.md
 /deepseek-harness-architecture:
-  en: 2125f3ec236bc7b2
-  zh: 23d8815579592ec4
+  en: 5b1087361b402a8a
+  zh: c599678865a9750c
 /deepseek-harness-architecture/cordis:
   en: da5060e577578ea7
   zh: 2e77d570e32d8938
 /deepseek-harness-architecture/profiles-and-bundles:
-  en: 7d655d87abd41ce2
-  zh: bb0dc8d035bf0906
+  en: 6bfe60d6dc86b586
+  zh: 75ba6f45d94f45c1
 /deepseek-harness-architecture/application-launch:
   en: d8a87bd3715c144f
   zh: 27c85044a2e25058
 /deepseek-harness-architecture/desktop-application:
-  en: 8df40913a953f497
-  zh: c46278a7813661ce
+  en: fbc58aadbfb832c3
+  zh: b4abe4ea057f6615
 /deepseek-harness-architecture/core-packages:
-  en: b4a221ac2910600a
-  zh: 341046d3c9a9c9cd
+  en: fd3dedfbe03f45bc
+  zh: 410e4c3661cfec44
 /deepseek-harness-architecture/events:
-  en: 214c3c81c21df6f9
-  zh: 75d2cdc3c9fc9930
+  en: 8362090fed102944
+  zh: 6c91997ec81071a0
 /deepseek-harness-architecture/turn-flow:
-  en: e13500f6d5b614d6
-  zh: 7e6acb96a520ded2
+  en: badc0ffea030cdce
+  zh: 3241f0b37c3ec067
 /deepseek-harness-architecture/session-log:
   en: e1e3a44140036f25
   zh: 84c70c969e5ad216

@@ -53,6 +53,7 @@ None; this package neither assembles nor sends a provider request.
 
 - **The worker composition writes plaintext session logs** (`compression: 'none'` boot patch): it carries no Zstandard codec, so exported logs are `.jsonl`, never `.jsonl.zstd`.
 - **`node:dns/promises`, `node:vm`, `node:net`, `node:sqlite`, `node:worker_threads` are structural stubs**: every call reports its refusal on the console and throws. Rows needing native DNS, a real process, or realm isolation cannot run here.
+- **`node:assert/strict` supports truthiness assertions only**: for falsy values, the callable default and `ok` throw `ERR_ASSERTION` with the supplied message or generic text, or rethrow a supplied Error unchanged. Other assertion APIs are absent.
 - **Host package commands are unavailable**: `execa` reports an explicit worker-host refusal; the preview cannot run pnpm or install native dependencies.
 - **PTC Node programs are unavailable**: the process shim exposes `/dsh/bin/node` as its executable identity so the provider can activate, but the Worker has neither a Node executable nor `stripTypeScriptTypes`. Program execution fails before launching a child.
 - **Office conversion requires a Node Host**: the LibreOffice kit replacement rejects converter creation with `unavailable`. The browser image excludes the kit and its engine dependencies; the Office preview reports that conversion is unavailable.

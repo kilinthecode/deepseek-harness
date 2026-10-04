@@ -35,7 +35,7 @@ Load a spill backend and set `maxInlineTokens` in estimated tokens:
 - name: '@deepseek-ai/dsh-spill-local'
 - name: '@deepseek-ai/dsh-spill-policy'
   config:
-    maxInlineTokens: 12500
+    maxInlineTokens: 6000
 ```
 
 | Field | Default | Meaning |

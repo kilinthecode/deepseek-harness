@@ -7,6 +7,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import { cleanup, render } from '@testing-library/react'
 import type { ToolResultNode } from '@deepseek-ai/dsh-client-ui-chat/client'
 import { makeTranslate } from '@deepseek-ai/dsh-client-test-runtime'
+import { PartialArguments } from '@deepseek-ai/dsh-util-values'
 import { zh as commonZh } from '@deepseek-ai/dsh-client-locale/src/locales/zh.ts'
 import { zh } from '@deepseek-ai/dsh-client-ui-conversation/src/client/locales.ts'
 import type { ToolRowProps } from '../src/client/tool/components/ToolRow.tsx'
@@ -33,7 +34,8 @@ const image = {
 
 function rowFor(name: string, argsRaw: string, meta?: Record<string, unknown>): ToolRowProps {
   const block: ToolResultNode = {
-    kind: 'tool-result', seq: 10, time: 2_000, callId: 'c1', call: { name, argsRaw }, callTime: 1_000,
+    kind: 'tool-result', seq: 10, time: 2_000, callId: 'c1', name, args: PartialArguments.fromText(argsRaw),
+    call: { name, argsRaw }, callTime: 1_000,
     content: [{ type: 'text', text: 'done' }, image as never], isError: false, subCalls: [],
     ...meta === undefined ? {} : { meta },
   }

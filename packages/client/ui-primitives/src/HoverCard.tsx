@@ -58,6 +58,7 @@ export function HoverCard({
   const copyEpochRef = useRef(0)
   const copyingRef = useRef(false)
   const mountedRef = useRef(true)
+  const activationPointRef = useRef<{ x: number; y: number } | null>(null)
   const [phase, setPhase] = useState<'closed' | 'open' | 'closing'>('closed')
   const open = phase !== 'closed'
   const closing = phase === 'closing'
@@ -219,6 +220,10 @@ export function HoverCard({
   const dismissFromAnchor = (event: SyntheticEvent<HTMLSpanElement>): void => {
     // Portal content is a React child, but its clicks and text selection do not activate the anchor.
     if (cardRef.current?.contains(event.target as Node)) return
+    if (variant === 'preview' && event.nativeEvent instanceof MouseEvent
+      && (event.type === 'pointerdown' || (event.nativeEvent.detail > 0 && activationPointRef.current === null))) {
+      activationPointRef.current = { x: event.nativeEvent.clientX, y: event.nativeEvent.clientY }
+    }
     clearTimer()
     cancelClose()
     close()
@@ -270,6 +275,9 @@ export function HoverCard({
       } : undefined}
       onPointerEnter={(event) => {
         if (disabled || (inline && event.pointerType === 'touch')) return
+        const activation = activationPointRef.current
+        if (activation !== null && event.clientX === activation.x && event.clientY === activation.y) return
+        activationPointRef.current = null
         // Coming back inside during the grace (the gap, or the card itself)
         // keeps the current card rather than restarting the dwell.
         cancelClose()
@@ -277,7 +285,18 @@ export function HoverCard({
         clearTimer()
         timerRef.current = setTimeout(() => { setPhase('open') }, openDelayMs)
       }}
-      onPointerLeave={() => {
+      onPointerMove={(event) => {
+        const activation = activationPointRef.current
+        if (activation === null || (event.clientX === activation.x && event.clientY === activation.y)) return
+        activationPointRef.current = null
+        if (disabled || (inline && event.pointerType === 'touch')) return
+        cancelClose()
+        clearTimer()
+        timerRef.current = setTimeout(() => { setPhase('open') }, openDelayMs)
+      }}
+      onPointerLeave={(event) => {
+        const activation = activationPointRef.current
+        if (activation !== null && (event.clientX !== activation.x || event.clientY !== activation.y)) activationPointRef.current = null
         clearTimer()
         // Leaving a closed card schedules a no-op close; only arm while
         // open, matching Menu's shape.

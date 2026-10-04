@@ -1,0 +1,11 @@
+# Select an image model your OpenAI API account can access.
+- id: image-generation-http
+  name: '@deepseek-ai/dsh-image-generation-http'
+  config:
+    providers:
+      openai-images:
+        api: openai-images
+        baseURL: https://api.openai.com/v1
+        apiKeyEnv: OPENAI_API_KEY
+        models:
+          - id: gpt-image-2.5-sunburst

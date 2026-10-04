@@ -108,6 +108,15 @@ const GROUP_ORDER = [
 
 const SERVICE_ROLES: ServiceRole[] = [
   {
+    key: 'imageGeneration',
+    pkg: 'image-generation',
+    title: 'Explicit image-model generation',
+    mode: 'seam',
+    implementations: ['image-generation-http'],
+    consumers: ['tool-image-generation'],
+    note: 'Providers return complete image bytes; consumers validate and persist previews and original files before publishing results.',
+  },
+  {
     key: 'portalStartup',
     pkg: 'portal-app',
     title: 'Portal terminal invocation',
@@ -575,7 +584,7 @@ const SERVICE_ROLES: ServiceRole[] = [
     pkg: 'skill',
     title: 'Skill provider registry',
     mode: 'seam',
-    implementations: ['skill-badge', 'skill-filesystem', 'skill-office'],
+    implementations: ['sandbox-windows-acl', 'skill-badge', 'skill-filesystem', 'skill-office'],
     consumers: ['tool-skill'],
     note: 'Merges provider skill catalogs; tool-skill renders the session-prefix catalog and loads complete skill bodies.',
   },

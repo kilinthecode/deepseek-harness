@@ -145,7 +145,7 @@ describe('desktop upload plan', () => {
       'latest.yml',
     ])
     expect(load(plan.artifacts[2]!.contents!)).toMatchObject({
-      files: [{ url: 'https://desktop-updates.example.com/dsh-desk/bin/win-x64/portal-dev-1.2.3-win-x64.exe' }],
+      files: [{ url: `${TEST_ORIGIN}/dsh-desk/${RELEASE_ID}/bin/win-x64/portal-dev-1.2.3-win-x64.exe` }],
     })
   })
 

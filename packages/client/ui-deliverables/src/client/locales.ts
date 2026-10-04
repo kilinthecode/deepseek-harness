@@ -5,6 +5,17 @@ export const NS = 'deliverables'
 
 /** Simplified Chinese dictionary (the key-set source of truth). */
 export const zh = {
+  'overview.changes': '改动',
+  'overview.outputs': '输出',
+  'overview.outputsAll': '查看全部 {count} 个输出',
+  'overview.outputsCollapse': '收起输出列表',
+  'overview.codingOff': '在设置中开启编程工具以查看改动',
+  'overview.noChanges': '还没有已记录的改动',
+  'overview.noOutputs': '还没有交付文件',
+  'overview.turn': '第 {turn} 轮',
+  'overview.history': '已加载的改动历史 · {count} 轮',
+  'overview.expired': '比较已不可用',
+
   'presented.nativeUnavailable': '此文件没有可用的主机路径，请在侧边栏预览',
   'presented.revealError': '无法在文件管理器中显示，请重试',
   'presented.directoryError': '无法打开所在文件夹，请重试',
@@ -69,6 +80,17 @@ export const zh = {
 
 /** English dictionary (same key set). */
 export const en: Record<DeliverablesKey, string> = {
+  'overview.changes': 'Changes',
+  'overview.outputs': 'Outputs',
+  'overview.outputsAll': 'View all {count} outputs',
+  'overview.outputsCollapse': 'Show fewer outputs',
+  'overview.codingOff': 'Enable Coding Tools in Settings to review changes',
+  'overview.noChanges': 'No recorded changes yet',
+  'overview.noOutputs': 'No declared outputs yet',
+  'overview.turn': 'Turn {turn}',
+  'overview.history': 'Loaded change history · {count} turns',
+  'overview.expired': 'Comparison unavailable',
+
   'presented.nativeUnavailable': 'This file has no available Host path. Preview it in the sidebar.',
   'presented.revealError': 'Could not show in file manager. Try again.',
   'presented.directoryError': 'Could not open containing folder. Try again.',

@@ -69,7 +69,7 @@ interface ToolArgsMap {
   } & Record<string, JsonValue>;
   /** List every Cordis Inspect Provider currently known to the Host, including local Host Providers and the latest manifests synchronized from the Client. Each entry includes its platform, purpose, read-only methods, and input/output schemas. Call this Tool before writing or configuring a plugin, then select the provider and method for cordis_inspect_query from its result. Do not guess names or treat an Inspect method as a business Service that Plugin code can call. */
   cordis_inspect_list: Record<string, JsonValue>;
-  /** Run a read-only query declared by an Inspect Provider. platform, provider, and method must come from cordis_inspect_list, and input must satisfy that method's schema. Use this Tool before writing plugin code to read exact Service methods, Event modes, plugin Config schemas, Tool schemas, theme tokens, or live Slot trees and props. Host queries run locally. A Client query waits for the first valid page response and remains pending until a page answers or the Tool is cancelled. This Tool cannot invoke business Service methods or modify the runtime. */
+  /** Run a read-only query declared by an Inspect Provider. platform, provider, and method must come from cordis_inspect_list, and input must satisfy that method's schema. Use this Tool before writing plugin code to read exact Service methods, Event modes, plugin Config schemas, Tool schemas, theme tokens, or live Slot trees and props. Host queries run locally. A Client query waits for the first valid page response within the configured timeout; otherwise it reports a Client failure or asks you to reconnect and retry. This Tool cannot invoke business Service methods or modify the runtime. */
   cordis_inspect_query: {
     /** Runtime platform that owns the Provider. */
     platform: "host" | "client";
@@ -160,10 +160,12 @@ interface ToolArgsMap {
     /** Scope the memory lives in. */
     scope: "global" | "project";
   } & Record<string, JsonValue>;
-  /** Read saved global memories and the current project's memories from the live store, including memories saved after the snapshot. Use it for snapshot entries shown only as an index line; inlined snapshot entries need no recall. */
+  /** Read shared memories from the live store. Narrow query or scope for more matches. */
   memory_recall: {
-    /** Case-insensitive substring matched against name, description, and content. Omit to list the newest memories. */
+    /** Case-insensitive phrase or whitespace-separated keywords in name, description, and content. Omit for newest memories. */
     query?: string;
+    /** Restrict results to global or project memories. */
+    scope?: "global" | "project";
   } & Record<string, JsonValue>;
   /** Save one durable memory for future sessions. */
   memory_write: {
@@ -184,7 +186,7 @@ interface ToolArgsMap {
     file_path: string;
     /** 1-based first line to return. Defaults to 1. */
     offset?: number;
-    /** Maximum number of lines to return. Defaults to 2000. */
+    /** Maximum number of lines to return. Defaults to 500. Maximum: 2000. */
     limit?: number;
   } & Record<string, JsonValue>;
   /** Read a PNG/JPEG/WebP/GIF file and return the image itself. Large images are downscaled automatically; do not install image libraries or create thumbnails to inspect an image. */
@@ -454,6 +456,7 @@ interface ToolOutputMap {
       description: string;
       content: string;
     })[];
+    hasMore?: boolean;
   };
   memory_write: {
     name: string;

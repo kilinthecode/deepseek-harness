@@ -220,3 +220,18 @@ Regenerate after every sync. Listed so a conflict here is not mistaken for a rea
 
 Upstream's `LICENSE` and copyright headers are retained unmodified. This fork is a derivative work of upstream under
 its MIT license, and this ledger is its statement of derivation; the root `README.md` is upstream's unmodified.
+
+## Selective upstream integration — 2026-10-04
+
+The fork integrates selected completed upstream features into the maintained [architecture map](docs/architecture.md), preserving the captured pre-integration fork state: Portal identity, existing theme/style files, rooms, memory, image generation, credential routing, and released Session generations. The upstream commit graph remains divergent because these changes are adapted individually; the GitHub behind count does not measure feature coverage.
+
+| Area | Integrated behavior |
+|---|---|
+| Runtime and persistence | Failed-step tool settlement and scheduler recovery; cancellation handling; time-sliced Session listing; isolated upload execution; reused configuration composition. |
+| Providers | pi-ai 0.87.1 and current compatibility fields; generation-safe DeepSeek Files invalidation; provider-aware authenticated search. |
+| Interaction | Timed questions, ordinary recorded user replies, queued/late-answer projection, structured drafts and reference persistence, text prompt initialization, lazy streamed tool arguments. |
+| Scheduling | Separate `tool-schedule` capability, always-enabled Web Schedule service, scoped tool/clock composition, delegated-child rejection, and bounded delivery framing. |
+| Plugin tooling | Package identity and manifest refresh, preset-scoped mounts, source disclosure, resource validation, install result versions, and bounded Cordis inspection. |
+| Platform reliability | Persistent PowerShell prompt handling and diagnostics, WebKit JSON compatibility, Windows ACL diagnostic skill, Koffi 3.1.1, microphone entitlements, Intel Mac signing, login-shell environment, and OS-assigned Desktop Host ports. |
+
+The integration excludes the upstream theme overhaul, automatic product telemetry/upload changes, runtime-invariant removal, release-version churn, and experimental inspector/Claude Code features. Existing component styles remain the fork's; new question and plugin-source components own separate styles. Timed-question reply attribution uses a new same-version persistence acknowledgement rather than rewriting accepted history.

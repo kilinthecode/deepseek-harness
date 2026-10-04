@@ -281,7 +281,7 @@ describe('renderSnapshot', () => {
   })
 })
 
-async function mount(config: tool.Config = { injectMaxBytes: 2048, maxRecallResults: 4 }) {
+async function mount(config: tool.Config = { injectMaxBytes: 2048, maxRecallResults: 4, maxRecallBytes: 8192 }) {
   const root = await freshRoot()
   const ctx = new Context()
   contexts.push(ctx)
@@ -384,7 +384,7 @@ describe('registerCatalogInjection', () => {
   })
 
   it('registers the projection but never injects when injectMaxBytes is 0', async () => {
-    const { ctx } = await mount({ injectMaxBytes: 0, maxRecallResults: 4 })
+    const { ctx } = await mount({ injectMaxBytes: 0, maxRecallResults: 4, maxRecallBytes: 8192 })
     await ctx.memory.write({ ...WRITE, name: 'prefers-pnpm' })
     const session = sessionAt(undefined)
     const agent = sessionAgent(session)

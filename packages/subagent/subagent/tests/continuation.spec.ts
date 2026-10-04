@@ -11,6 +11,7 @@ import { SessionId } from '@deepseek-ai/dsh-session'
 import type { SessionEvent, SessionEventMap } from '@deepseek-ai/dsh-session'
 import JsonlSessionPersistence from '@deepseek-ai/dsh-session-persistence-jsonl'
 import ScheduleService from '@deepseek-ai/dsh-schedule'
+import * as ToolSchedule from '@deepseek-ai/dsh-tool-schedule'
 import Storage from '@deepseek-ai/dsh-storage'
 import * as StorageDomain from '@deepseek-ai/dsh-storage-domain'
 import * as StorageJson from '@deepseek-ai/dsh-storage-json'
@@ -85,7 +86,7 @@ afterEach(async () => {
   if (errors.length > 1) throw new AggregateError(errors, 'temp-root cleanup failed')
 })
 
-/** Mount the real Schedule service for root-only tool-registration assertions. */
+/** Mount the Schedule service and global tools for delegation-ownership checks. */
 async function mountScheduleForOwnership(ctx: Context): Promise<void> {
   const root = mkdtempSync(join(tmpdir(), 'dsh-subagent-schedule-'))
   const fibers: Array<{ dispose(): Promise<void> }> = []
@@ -102,6 +103,7 @@ async function mountScheduleForOwnership(ctx: Context): Promise<void> {
     resolveAgent: async () => { throw new Error('ownership test must not dispatch reminders') },
   } as never)
   fibers.push(await ctx.plugin(ScheduleService))
+  fibers.push(await ctx.plugin(ToolSchedule))
 }
 
 /** Boot the full continuable stack: loop, persistence, providers, and subagents. */
@@ -1591,7 +1593,8 @@ describe('continuable child ownership', () => {
     expect(ctx.agents.roots()).toEqual([parent])
     expect(ctx.agents.isOwnedBy(child.id, parent)).toBe(true)
     expect(ctx.tools.get('schedule_create', parent)).toBeDefined()
-    expect(ctx.tools.get('schedule_create', child)).toBeUndefined()
+    // Global fixture tools remain visible; ToolSchedule rejects delegated callers.
+    expect(ctx.tools.get('schedule_create', child)).toBeDefined()
     const grandchild = await ctx.subagents.startContinuable(startSpec(child))
 
     await vi.waitFor(() => {

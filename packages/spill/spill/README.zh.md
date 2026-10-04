@@ -39,7 +39,7 @@ kind: "package-reference"
 - name: '@deepseek-ai/dsh-spill-local'
 - name: '@deepseek-ai/dsh-spill-policy'
   config:
-    maxInlineTokens: 12500
+    maxInlineTokens: 6000
 ```
 
 ### 保存文本

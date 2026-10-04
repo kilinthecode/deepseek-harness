@@ -686,7 +686,7 @@ describe('dsh-memory-review through the agent loop', () => {
     // Siblings activate concurrently (see apply()'s JSDoc): tool-memory can
     // arrive after the first due idle already warned about it. The fork
     // provider is still missing, so the next due idle must report that too.
-    await ctx.plugin(ToolMemory, { injectMaxBytes: 2048, maxRecallResults: 4 })
+    await ctx.plugin(ToolMemory, { injectMaxBytes: 2048, maxRecallResults: 4, maxRecallBytes: 8192 })
     ask(parent, 'second')
     await waitForIdle(ctx, parent)
     expect(errors.filter(message => message.includes('fork'))).toHaveLength(1)
@@ -981,7 +981,7 @@ describe('dsh-memory-review through the agent loop', () => {
     await mountAgentLoopTestDependencies(ctx)
     await ctx.plugin(AgentLoop, { agents: [] })
     await mountStore(ctx, root)
-    await ctx.plugin(ToolMemory, { injectMaxBytes: 2048, maxRecallResults: 4 })
+    await ctx.plugin(ToolMemory, { injectMaxBytes: 2048, maxRecallResults: 4, maxRecallBytes: 8192 })
     await ctx.plugin(SubagentRuntime)
     const remote: SubagentProvider = {
       name: 'fork',
@@ -1033,7 +1033,7 @@ describe('dsh-memory-review through the agent loop', () => {
     await mountAgentLoopTestDependencies(ctx)
     await ctx.plugin(AgentLoop, { agents: [] })
     await mountStore(ctx, root)
-    await ctx.plugin(ToolMemory, { injectMaxBytes: 2048, maxRecallResults: 4 })
+    await ctx.plugin(ToolMemory, { injectMaxBytes: 2048, maxRecallResults: 4, maxRecallBytes: 8192 })
     await ctx.plugin(SubagentRuntime)
     ctx.llm.registerAdapter(['mock'], new MockAdapter([textResponse('ok')]))
     const parent = await ctx.agentLoop.create(SessionId('reject-parent'), { provider: 'mock', model: 'mock' })
@@ -1080,7 +1080,7 @@ describe('dsh-memory-review through the agent loop', () => {
     await mountAgentLoopTestDependencies(ctx)
     await ctx.plugin(AgentLoop, { agents: [] })
     await mountStore(ctx, root)
-    await ctx.plugin(ToolMemory, { injectMaxBytes: 2048, maxRecallResults: 4 })
+    await ctx.plugin(ToolMemory, { injectMaxBytes: 2048, maxRecallResults: 4, maxRecallBytes: 8192 })
     await ctx.plugin(SubagentRuntime)
     ctx.llm.registerAdapter(['mock'], new MockAdapter([textResponse('ok')]))
     const parent = await ctx.agentLoop.create(SessionId('reject-parent-nonerror'), { provider: 'mock', model: 'mock' })
@@ -1128,7 +1128,7 @@ describe('dsh-memory-review through the agent loop', () => {
     await mountAgentLoopTestDependencies(ctx)
     await ctx.plugin(AgentLoop, { agents: [] })
     await mountStore(ctx, root)
-    await ctx.plugin(ToolMemory, { injectMaxBytes: 2048, maxRecallResults: 4 })
+    await ctx.plugin(ToolMemory, { injectMaxBytes: 2048, maxRecallResults: 4, maxRecallBytes: 8192 })
     await ctx.plugin(SubagentRuntime)
     const throwing: SubagentProvider = {
       name: 'fork',
@@ -1191,7 +1191,7 @@ describe('dsh-memory-review through the agent loop', () => {
     await mountAgentLoopTestDependencies(ctx)
     await ctx.plugin(AgentLoop, { agents: [] })
     await mountStore(ctx, root)
-    await ctx.plugin(ToolMemory, { injectMaxBytes: 2048, maxRecallResults: 4 })
+    await ctx.plugin(ToolMemory, { injectMaxBytes: 2048, maxRecallResults: 4, maxRecallBytes: 8192 })
     await ctx.plugin(SubagentRuntime)
     ctx.logger.error = ((message: unknown) => {
       errors.push(String(message))

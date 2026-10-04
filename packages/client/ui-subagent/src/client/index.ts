@@ -15,6 +15,7 @@ import type {} from '@deepseek-ai/dsh-client-ui-session/client'
 import type {} from '@deepseek-ai/dsh-client-ui-sidebar-right/client'
 import type {} from '@deepseek-ai/dsh-client-ui-workspace/client'
 import { en, NS, zh, type SubagentKey } from './locales.ts'
+import { SubagentOverview } from './SubagentOverview.tsx'
 
 declare module '@deepseek-ai/dsh-client-ui-slots' {
   interface LocaleNamespaceMap {
@@ -71,6 +72,10 @@ export function apply(ctx: ClientContext): void {
       void ctx.sessions.refreshProjections(parentSessionId)
     },
   })
+  ctx.slots.inject('sidebar.right.tab.guide.section', () => ctx.slots.register({
+    name: 'sidebar.right.tab.guide.section', id: 'subagents', order: 10, locale: NS,
+    inject: catalogActions,
+  }, SubagentOverview))
   ctx.slots.inject(
     'conversation.session.header.lineage',
     () => ctx.slots.register({

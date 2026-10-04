@@ -12,7 +12,7 @@ import * as ToolMemory from '@deepseek-ai/dsh-tool-memory'
 import type { Config as ToolMemoryConfig } from '@deepseek-ai/dsh-tool-memory'
 import { SNAPSHOT_HEADER } from '@deepseek-ai/dsh-tool-memory'
 import { MockAdapter, textResponse, toolCallResponse } from '../../../core/agent-loop/tests/mock-adapter.ts'
-import { ask, catalogEvents, cleanupRoots, freshRoot, mountStore, waitForIdle } from './helpers.ts'
+import { ask, catalogEvents, cleanupRoots, freshRoot, mountStore, project, waitForIdle } from './helpers.ts'
 
 /**
  * Full-loop integration: a scripted mock model drives the REAL memory tools
@@ -35,7 +35,7 @@ const RUNTIME_CONTEXT_TEXT = 'cwd: /workspace'
 async function harness(
   adapter: MockAdapter,
   root: string,
-  config: ToolMemoryConfig = { injectMaxBytes: 2048, maxRecallResults: 4 },
+  config: ToolMemoryConfig = { injectMaxBytes: 2048, maxRecallResults: 4, maxRecallBytes: 8192 },
 ): Promise<Context> {
   const ctx = new Context()
   contexts.push(ctx)
@@ -56,7 +56,7 @@ async function mountPersistentHarness(
   sessionRoot: string,
   storeRoot: string,
   adapter: MockAdapter,
-  config: ToolMemoryConfig = { injectMaxBytes: 2048, maxRecallResults: 4 },
+  config: ToolMemoryConfig = { injectMaxBytes: 2048, maxRecallResults: 4, maxRecallBytes: 8192 },
 ): Promise<Context> {
   const ctx = new Context()
   contexts.push(ctx)
@@ -83,6 +83,39 @@ function appendCompactionSummary(session: Session): void {
 }
 
 describe('memory tools through the agent loop', () => {
+  it('shares a project memory written on one model route with recall on another route', async () => {
+    const root = await freshRoot()
+    const repo = await project(root, 'repo')
+    const writerAdapter = new MockAdapter([
+      toolCallResponse('call-write', 'memory_write', {
+        name: 'shared-note', type: 'project', scope: 'project', description: 'Shared note', content: 'Route A saved this fact.',
+      }),
+      textResponse('Saved.'),
+    ])
+    const readerAdapter = new MockAdapter([
+      toolCallResponse('call-recall', 'memory_recall', { query: 'shared note', scope: 'project' }),
+      textResponse('I found the shared note.'),
+    ])
+    const ctx = await harness(writerAdapter, root)
+    ctx.llm.registerAdapter(['reader'], readerAdapter)
+    const writer = await ctx.agentLoop.create(SessionId('it-memory-route-writer'), { provider: 'mock', model: 'writer' }, { cwd: repo.cwd })
+    ask(writer, 'Save this project fact.')
+    await waitForIdle(ctx, writer)
+
+    const reader = await ctx.agentLoop.create(SessionId('it-memory-route-reader'), { provider: 'reader', model: 'reader' }, { cwd: repo.cwd })
+    ask(reader, 'Recall the shared note.')
+    await waitForIdle(ctx, reader)
+
+    const writerResult = writer.session.snapshotEvents().find(event => event.type === 'tool/result')
+    expect(JSON.stringify(writerResult?.data.message.content)).toContain('Saved project memory')
+    const readerLog = reader.session.snapshotEvents()
+    const recallResult = readerLog.find(event => event.type === 'tool/result')
+    expect(JSON.stringify(recallResult?.data.message.content)).toContain('Route A saved this fact.')
+    expect(catalogEvents(readerLog)).toHaveLength(1)
+    expect(readerAdapter.requests).toHaveLength(2)
+    expect(readerAdapter.requests[0]!.messages.filter(message => message.content.some(block => block.type === 'text' && block.text.startsWith(SNAPSHOT_HEADER)))).toHaveLength(1)
+  })
+
   it('injects the snapshot once, at the session\'s first step, after the claimed message and the runtime-context message, and not again within the same turn', async () => {
     const root = await freshRoot()
     const seeded = new Context()
@@ -283,7 +316,7 @@ describe('memory tools through the agent loop', () => {
     contexts.splice(contexts.indexOf(seeded), 1)
 
     const adapter = new MockAdapter([textResponse('Hello.')])
-    const ctx = await harness(adapter, root, { injectMaxBytes: 0, maxRecallResults: 4 })
+    const ctx = await harness(adapter, root, { injectMaxBytes: 0, maxRecallResults: 4, maxRecallBytes: 8192 })
     const agent = await ctx.agentLoop.create(SessionId('it-no-inject'), AGENT_OPTIONS)
     ask(agent, 'hi')
     await waitForIdle(ctx, agent)

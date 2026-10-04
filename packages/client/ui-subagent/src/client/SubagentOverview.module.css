@@ -1,0 +1,21 @@
+.section { min-width: 0; padding: 20px 0; border-bottom: 0.5px solid var(--dsw-alias-border-l2); }
+.heading { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 8px; }
+.heading h3 { margin: 0; font-size: 13px; line-height: 20px; font-weight: 500; color: var(--dsw-alias-label-secondary); }
+.counts { display: flex; flex-wrap: wrap; gap: 10px; margin: 0 0 8px; color: var(--dsw-alias-label-secondary); font-size: 13px; line-height: 20px; font-variant-numeric: tabular-nums; }
+.notice { margin: 0; color: var(--dsw-alias-label-tertiary); font-size: 13px; line-height: 20px; }
+.list { margin: 0; padding: 0; list-style: none; }
+.row { display: flex; align-items: center; min-width: 0; gap: 4px; border-radius: var(--dsw-radius-sm); }
+.row:hover { background: var(--dsw-alias-interactive-bg-hover); }
+.child, .disclosure, .icon { display: flex; align-items: center; gap: 8px; min-height: 32px; padding: 6px 8px; box-sizing: border-box; border: 0; border-radius: var(--dsw-radius-sm); color: var(--dsw-alias-label-primary); background: transparent; font: inherit; font-size: 13px; line-height: 20px; text-align: left; cursor: pointer; }
+.child { flex: 1; min-width: 0; }
+.label { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.activity { flex: none; color: var(--dsw-alias-label-tertiary); font-size: 13px; line-height: 20px; }
+.icon { flex: none; justify-content: center; width: 32px; padding: 6px; color: var(--dsw-alias-label-secondary); }
+.icon:hover, .disclosure:hover { background: var(--dsw-alias-interactive-bg-hover); }
+.icon:disabled { opacity: 0.5; cursor: default; }
+.disclosure { width: 100%; justify-content: space-between; color: var(--dsw-alias-label-secondary); margin-top: 6px; }
+.expanded { transform: rotate(180deg); }
+.skeleton { display: grid; gap: 8px; padding: 4px 0; }
+.skeleton span { height: 20px; border-radius: var(--dsw-radius-xs); background: var(--dsw-alias-bg-skeleton); }
+.skeleton span:last-child { width: 70%; }
+@media (pointer: coarse) { .row, .disclosure, .child, .icon { min-height: 44px; } }

@@ -90,6 +90,7 @@ export const DisclosureRow = memo(function DisclosureRow({
           <button
             type="button"
             className={clsx(css.leading, leadingClassName)}
+            aria-label={title}
             aria-expanded={open}
             onClick={toggleFromLeading}
           >

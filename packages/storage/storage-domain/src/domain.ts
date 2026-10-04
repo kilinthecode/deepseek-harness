@@ -14,6 +14,7 @@ import type { KvUnit } from '@deepseek-ai/dsh-storage'
 import { DomainError } from './error.ts'
 import type { DomainSpec, DomainGlobalSpec, TableKeyOf, TableValueOf } from './spec.ts'
 import type { DomainChanged } from './events.ts'
+import type { DomainSnapshot } from './load.ts'
 
 /** Handle on a domain's global singleton. */
 export interface DomainGlobal<G> {
@@ -108,14 +109,23 @@ export interface Domain<S extends DomainSpec> {
   table<N extends keyof S['tables'] & string>(name: N): KvTable<TableKeyOf<S, N>, TableValueOf<S, N>>
 
   /**
-   * Close this domain: reject new writes immediately, drain already-queued
-   * writes (their events still emit), release the backend unit, then free
+   * Close this domain: reject new writes and refreshes immediately, drain
+   * already-queued work (write events still emit), release the backend unit, then free
    * the domain name for a later open. Idempotent — repeated calls share one
    * teardown. The consumer owns this call (typically as its own `ctx.effect`
    * disposer); the facility closes any domain left open when it unmounts.
    * @returns resolution after the unit is released.
    */
   close(): Promise<void>
+
+  /**
+   * Reload and validate the backend snapshot on the write chain, preserving
+   * table handles and emitting no change events. A rejected load leaves live
+   * table and global values unchanged. External freshness depends on the backend.
+   * @returns resolution after the in-memory snapshot has been replaced.
+   * @throws {@link DomainError} for invalid stored data or a closing domain.
+   */
+  refresh(): Promise<void>
 }
 
 /** Internal boundary handing table handles their domain-owned write machinery. */
@@ -162,6 +172,7 @@ export class DomainImpl {
    * the spec, so the entry set IS the table set.
    * @param globalValue - Validated stored global, or the spec's `initial`
    * when the medium held none; `undefined` when the spec declares no global.
+   * @param loadSnapshot - Load and validate state using the same policy as open.
    * @param onClosed - Facility hook run once after teardown completes; frees
    * the domain name for a later open.
    */
@@ -171,6 +182,7 @@ export class DomainImpl {
     private readonly unit: KvUnit,
     records: Map<string, Map<string, unknown>>,
     globalValue: unknown,
+    private readonly loadSnapshot: () => Promise<DomainSnapshot>,
     private readonly onClosed: () => void,
   ) {
     this.name = spec.name
@@ -223,14 +235,29 @@ export class DomainImpl {
   }
 
   /**
-   * Close this domain: reject new writes immediately, drain already-queued
-   * writes (their events still emit), close the unit, then free the name via
+   * Close this domain: reject new writes and refreshes immediately, drain
+   * already-queued work (write events still emit), close the unit, then free the name via
    * the facility hook. Idempotent — repeated calls share one teardown.
    * @returns resolution after the unit is released.
    */
   close(): Promise<void> {
     this.disposal ??= this.runClose()
     return this.disposal
+  }
+
+  /**
+   * Reload validated state on the write chain, preserving table handles and
+   * emitting no change events. A rejected load leaves live values unchanged.
+   * @returns resolution after the complete snapshot has been replaced.
+   * @throws {@link DomainError} for invalid stored data or a closing domain.
+   */
+  refresh(): Promise<void> {
+    return this.enqueue(async () => {
+      const snapshot = await this.loadSnapshot()
+      // Open and refresh load every table declared by this domain's spec.
+      for (const [name, table] of this.tables) table.replaceRecords(snapshot.tables.get(name) as Map<string, unknown>)
+      this.globalValue = snapshot.globalValue
+    })
   }
 
   private async runClose(): Promise<void> {
@@ -283,6 +310,12 @@ class KvTableImpl<K extends string, V> implements KvTable<K, V> {
     private readonly tableName: string,
     private readonly records: Map<string, unknown>,
   ) {}
+
+  /** Replace records while keeping this table handle and its backing map stable. */
+  replaceRecords(next: Map<string, unknown>): void {
+    this.records.clear()
+    for (const [key, value] of next) this.records.set(key, value)
+  }
 
   get(key: K): V | undefined {
     this.host.assertReadable()

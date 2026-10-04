@@ -1043,6 +1043,29 @@ describe('tokenizeSessionFixtureCwd', () => {
 
 describe('extractSnapshotSpillPaths', () => {
   it.each([
+    '/tmp/dsh-acp-snap-123456789/session-123456abcdef/abcdef123456-bash.txt',
+    String.raw`C:\t\dsh-acp-snap-123456789\session-123456abcdef\abcdef123456-bash.txt`,
+  ])('normalizes recovered read path tags and preserves their content: %s', (locator) => {
+    const text = `<path>${locator}</path>\n<content>250: TARGET=RECOVERY_CONFIRMED</content>`
+    const log = JSON.stringify({ type: 'tool/result', data: { content: [{ type: 'text', text }] } })
+    const encodedLocator = JSON.stringify(locator).slice(1, -1)
+    expect(extractSnapshotSpillPaths(log)).toEqual(new Map([['bash.txt', encodedLocator]]))
+    expect(normalizeSessionLog(log, ctx)).toBe(JSON.stringify({
+      type: 'tool/result',
+      data: { content: [{ type: 'text', text: '<path>{{spillLocator:bash.txt}}</path>\n<content>250: TARGET=RECOVERY_CONFIRMED</content>' }] },
+    }) + '\n')
+  })
+
+  it('normalizes cwd-local spill path tags while retaining ordinary read paths', () => {
+    const locator = `${ctx.cwd}/.spill/session-123456abcdef/abcdef123456-bash.txt`
+    const unrelated = '/tmp/ordinary/abcdef123456-bash.txt'
+    const log = JSON.stringify({ type: 'tool/result', data: { text: `<path>${locator}</path> <path>${unrelated}</path>` } })
+    expect(normalizeSessionLog(log, ctx)).toBe(JSON.stringify({
+      type: 'tool/result', data: { text: `<path>{{spillLocator:bash.txt}}</path> <path>${unrelated}</path>` },
+    }) + '\n')
+  })
+
+  it.each([
     ['/tmp', '/'],
     ['/tmp', String.fromCharCode(92)],
     ['C:/t', String.fromCharCode(92)],

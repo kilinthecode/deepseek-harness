@@ -1,0 +1,49 @@
+# Bilingual-pair consistency record for README.md (docs/i18n/README.md): per heading
+# section, a hash of its English and Chinese blocks outside code blocks and generated regions.
+# After editing either side, bring the other along and re-record with:
+#   pnpm run verify-translation-pairing --write packages/llm/tool-image-generation/README.md
+/:
+  en: 0a5ccae618eb94d5
+  zh: 911d7e7434f0f3c7
+/deepseek-ai-dsh-tool-image-generation:
+  en: 4621ee96d931554c
+  zh: 6f4f4df5e9b378ba
+/deepseek-ai-dsh-tool-image-generation/summary:
+  en: 775b921ad978c78f
+  zh: 929496eaf2504414
+/deepseek-ai-dsh-tool-image-generation/table-of-contents:
+  en: d152484eb41ac6b4
+  zh: 2a54f88b8b690c45
+/deepseek-ai-dsh-tool-image-generation/use-this-package:
+  en: 336d2612f53f5cbe
+  zh: 4c9e1f67e5c9bf45
+/deepseek-ai-dsh-tool-image-generation/understand-the-implementation:
+  en: df83430570955011
+  zh: e5bfc2d2ac35da18
+/deepseek-ai-dsh-tool-image-generation/further-exploration:
+  en: 214a4ae393360099
+  zh: 082c705ffe85f5da
+/deepseek-ai-dsh-tool-image-generation/model-experience:
+  en: 215e7ba838619b7b
+  zh: a311da3843709f90
+/deepseek-ai-dsh-tool-image-generation/model-experience/image-generation-tool-schemas-and-results:
+  en: c82c05a76072a428
+  zh: 31d7f3be0d31a41b
+/deepseek-ai-dsh-tool-image-generation/model-experience/image-generation-tool-schemas-and-results/what-the-model-sees:
+  en: 543ebe0ddd747147
+  zh: d0cb632bad01775f
+/deepseek-ai-dsh-tool-image-generation/model-experience/image-generation-tool-schemas-and-results/what-the-model-sees/stable-summary-example:
+  en: 76f54b97ef8bdff2
+  zh: 6c74f08e447e670e
+/deepseek-ai-dsh-tool-image-generation/model-experience/image-generation-tool-schemas-and-results/token-effect:
+  en: eb548f52f9035c9d
+  zh: 197c59bc821ddac6
+/deepseek-ai-dsh-tool-image-generation/model-experience/image-generation-tool-schemas-and-results/kv-cache-effect:
+  en: e2bc690db809da43
+  zh: 909e923e226ed96c
+/deepseek-ai-dsh-tool-image-generation/known-limitations-and-deferred-work:
+  en: 978568786b80be40
+  zh: 7f3daa74eff6b733
+/deepseek-ai-dsh-tool-image-generation/known-limitations-and-deferred-work/dev-note:
+  en: 0a1253c6f7b5e8b9
+  zh: 9f56528562c7c914

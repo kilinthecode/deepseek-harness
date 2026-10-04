@@ -14,6 +14,9 @@ import { resolveRegularReadTarget } from './read-target.ts'
 /** Default maximum number of lines returned by one `read` call (the `readLimit` config). */
 export const READ_LIMIT = 2000
 
+/** Default omitted-limit window (the `readDefaultLimit` config), capped by `readLimit`. */
+export const READ_DEFAULT_LIMIT = 500
+
 /**
  * Default streaming threshold (the `readStreamMinSize` config): files at or
  * above this size stream; smaller files read whole into memory.

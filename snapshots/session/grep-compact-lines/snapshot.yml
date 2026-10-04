@@ -1,0 +1,10 @@
+version: 1
+scenario: grep-compact-lines
+profile: headless
+composition: grep-compact-lines
+recording: authored
+header:
+  class: grep-compact-lines
+  pin: true
+  systemPromptSource: text-turn
+  toolSchemasSource: text-turn

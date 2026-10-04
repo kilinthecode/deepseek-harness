@@ -26,7 +26,7 @@ interface MemoryWriteRequest {
   /**
    * When true, create only: an existing record with this name and scope is
    * rejected with `already-exists` instead of replaced. Checked inside the
-   * store's serialized write section, immediately after the existence
+   * store's serialized operation, immediately after the existence
    * lookup, so a same-name write that commits between this call's argument
    * validation and its turn in that section still loses to whichever write
    * reaches the section first.
@@ -48,12 +48,17 @@ interface MemoryWriteResult {
 ```ts type-equiv
 /** One recall request over the records visible from `cwd`. */
 interface MemoryRecallRequest {
-  /** Case-insensitive substring matched against name, description, and content; blank matches everything. */
+  /**
+   * Lowercased and trimmed phrase or unique whitespace-separated terms matched
+   * against name, description, and content; blank matches everything.
+   */
   readonly query?: string | undefined
   /** Maximum records returned. */
   readonly limit: number
   /** Session working directory, when the session has one. */
   readonly cwd?: string | undefined
+  /** Restrict results to one memory scope. */
+  readonly scope?: MemoryScope | undefined
 }
 ```
 
@@ -88,8 +93,7 @@ Every rejection is a `MemoryError` whose `code` names the reason and whose messa
  * `blocked-content` is a write-time scan finding; `project-key-collision`
  * means this project's key already holds another project's record;
  * `already-exists` is an `ifAbsent` write naming a record already in that
- * scope; `disposing` is a write or forget begun after the store's domain
- * started closing.
+ * scope; `disposing` is an operation begun after disposal starts.
  */
 type MemoryErrorCode =
   | 'invalid-name'
@@ -134,7 +138,8 @@ async resolveProjectRoot(cwd: string | undefined): Promise<string | undefined>
  * Every record visible from one working directory: all global records plus
  * the current project's records when a root resolves.
  * @param cwd - session working directory, when the session has one.
- * @returns the visible records in stored order.
+ * @returns the visible records in a refreshed snapshot.
+ * @throws {@link MemoryError} with code `disposing` when disposal has begun.
  */
 async visible(cwd: string | undefined): Promise<MemoryVisible>
 
@@ -147,26 +152,28 @@ scan(text: string): MemoryScanFinding | undefined
 
 /**
  * Insert or replace one record durably. Writes and forgets of one store run
- * one at a time in call order, from the project-root lookup to the durable
+ * one at a time in call order, from refresh and project-root lookup to the durable
  * put, so overlapping calls never exceed the cap and a same-name overlap
  * reports `created` for the earlier call and keeps its `createdAt`. The cap
- * counts the records this process has loaded or written.
+ * counts the refreshed snapshot; simultaneous writes by another process
+ * are outside this process's serialized capacity check.
  * @param request - the memory to store.
  * @returns whether the record was created or updated, and the stored record.
  * @throws {@link MemoryError} for an invalid name, description, or content,
  * blocked description or content, a project scope without a project root, a
  * project key occupied by another project's record, a cap reached in the
  * target scope, (`request.ifAbsent`) an existing record with that name
- * and scope, or a write begun after the store's domain started closing.
+ * and scope, or a write begun after disposal starts.
  */
 async write(request: MemoryWriteRequest): Promise<MemoryWriteResult>
 
 /**
- * Find visible records by substring, newest first, then by name, then with
- * `global` before `project`. A request without a resolvable project root
- * searches the global records only.
- * @param request - query, result cap, and working directory.
+ * Find visible records by phrase or all query terms, ranked by name and text
+ * relevance before the existing newest/name/scope order. A request without a
+ * resolvable project root searches global records only.
+ * @param request - query, result cap, working directory, and optional scope filter.
  * @returns at most `limit` matching records.
+ * @throws {@link MemoryError} with code `disposing` when disposal has begun.
  */
 async recall(request: MemoryRecallRequest): Promise<MemoryRecord[]>
 
@@ -176,7 +183,7 @@ async recall(request: MemoryRecallRequest): Promise<MemoryRecord[]>
  * @throws {@link MemoryError} when the name is invalid, the project root is
  * unavailable, no such record exists in the scope, a project key is
  * occupied by another project's record, or the forget began after the
- * store's domain started closing.
+ * disposal started.
  */
 async forget(request: MemoryForgetRequest): Promise<void>
 ```

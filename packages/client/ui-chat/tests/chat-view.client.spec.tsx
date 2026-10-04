@@ -29,6 +29,7 @@ import { createSnapshotStore, type ObservableSnapshot } from '@deepseek-ai/dsh-c
 import { EMPTY_CONVERSATION_SNAPSHOT } from '@deepseek-ai/dsh-client-ui-conversation/client'
 import { en as commonEn } from '@deepseek-ai/dsh-client-locale/src/locales/en.ts'
 import { zh as commonZh } from '@deepseek-ai/dsh-client-locale/src/locales/zh.ts'
+import { PartialArguments } from '@deepseek-ai/dsh-util-values'
 import { createChatStore } from '../src/client/stores.ts'
 import { derivePresentationPolicy } from '../src/client/presentation-policy.ts'
 import { ChatView } from '../src/client/chat/ChatView.tsx'
@@ -202,12 +203,13 @@ const turnMaxTokens = (seq: number): TurnMaxTokensNode => ({
 })
 const toolResult = (seq: number, callId: string, name = 'bash'): ToolResultNode => ({
   kind: 'tool-result', seq, time: seq * 1_000, callId,
+  name, args: PartialArguments.fromText(`{"command":"cmd-${callId}","description":"run ${callId}"}`),
   call: { name, argsRaw: `{"command":"cmd-${callId}","description":"run ${callId}"}` },
   callTime: seq * 1_000 - 500,
   content: [], isError: false, subCalls: [],
 })
 const runningCall = (callId: string, name = 'bash'): StartedToolCall => ({
-  phase: 'start' as const, callId, name, argsRaw: `{"command":"cmd-${callId}"}`, turn: 2, step: 1, time: 1_000, subCalls: [],
+  phase: 'start' as const, args: PartialArguments.fromText(`{"command":"cmd-${callId}"}`), callId, name, argsRaw: `{"command":"cmd-${callId}"}`, turn: 2, step: 1, time: 1_000, subCalls: [],
 })
 const command = (over: Partial<CommandNode> = {}): CommandNode => ({
   kind: 'command', seq: 5, time: 5_000, commandId: 'cmd-1' as CommandNode['commandId'],
@@ -431,6 +433,7 @@ function makeHarness(
       captureInsertion: () => ({ start: 0, end: 0, draftRev: 0 }),
       insertText: () => false,
       setDraft: () => {},
+      persistDraft: () => {},
       addAttachments: () => true,
       removeAttachment: () => {},
       pruneAttachments: () => {},
@@ -2508,6 +2511,27 @@ describe('ChatView', () => {
       expect(toggle.getAttribute('aria-expanded')).toBe('true')
       expect(processRow.getAttribute('hidden')).toBeNull()
     }
+  })
+
+  it('folds a question reply with the surrounding process and reveals it on expansion', () => {
+    const base = chatSnapshotFixture({
+      nodes: [user(1, 'question'), assistant(2, 'inspect', 1, 1), assistant(4, 'final answer', 1, 2)],
+      turnEnds: new Map([[1, 5]]),
+      turnTimings: new Map([[1, { startTime: 0, endTime: 5_000 }]]),
+    })
+    const snapshot = new ChatSnapshotBuilder().replace({
+      nodes: [...base.nodes.values(), {
+        key: 'reply', id: 'reply', kind: 'question-reply', target: 'chat', anchorSeq: 3,
+        location: { kind: 'turn', turn: base.timeline.turns.get(1)! }, visibility: 'visible', data: {},
+      }],
+      timeline: base.timeline,
+    })
+    const h = makeHarness({}, {}, snapshot)
+    const view = render(<h.ChatView {...h.props} />)
+    const reply = view.container.querySelector('[data-chat-flow-kind="question-reply"]')!
+    expect(reply.getAttribute('hidden')).toBe('until-found')
+    fireEvent.click(turnProcessControl(view.container)!)
+    expect(reply.getAttribute('hidden')).toBeNull()
   })
 
   it('folds final-step reasoning under the fallback title when every summary count is zero', () => {

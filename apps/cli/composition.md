@@ -16,6 +16,10 @@ flowchart LR
   cfg --> plugin_dsh_base_timer
   plugin_dsh_base_hmr["hmr<br/>@deepseek-ai/dsh-hmr"]
   cfg --> plugin_dsh_base_hmr
+  plugin_dsh_base_image_generation_http["image-generation-http<br/>@deepseek-ai/dsh-image-generation-http"]
+  cfg --> plugin_dsh_base_image_generation_http
+  plugin_dsh_base_tool_image_generation["tool-image-generation<br/>@deepseek-ai/dsh-tool-image-generation"]
+  cfg --> plugin_dsh_base_tool_image_generation
   plugin_dsh_base_llm["llm<br/>@deepseek-ai/dsh-llm"]
   cfg --> plugin_dsh_base_llm
   plugin_dsh_base_deepseek_llm_api_extensions["deepseek-llm-api-extensions<br/>@deepseek-ai/dsh-deepseek-llm-api-extensions"]
@@ -208,6 +212,8 @@ flowchart LR
 | `plugin-manager` | `@deepseek-ai/dsh-plugin-manager` |
 | `timer` | `@deepseek-ai/cordis-plugin-timer` |
 | `hmr` | `@deepseek-ai/dsh-hmr` |
+| `image-generation-http` | `@deepseek-ai/dsh-image-generation-http` |
+| `tool-image-generation` | `@deepseek-ai/dsh-tool-image-generation` |
 | `llm` | `@deepseek-ai/dsh-llm` |
 | `deepseek-llm-api-extensions` | `@deepseek-ai/dsh-deepseek-llm-api-extensions` |
 | `session` | `@deepseek-ai/dsh-session` |

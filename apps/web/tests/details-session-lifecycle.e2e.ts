@@ -299,7 +299,7 @@ describe.skipIf(MODE === 'record')('web e2e: details panel follows the current S
     const column = page.locator('[data-rightbar-col]')
     const panel = column.locator('[data-sidebar-right-panel]')
     const panes = column.locator('[data-dockkit-pane]')
-    const normalWidth = Math.round(viewport.width * 0.45)
+    const normalWidth = Math.round(viewport.width * 0.30)
     const normalColumns = [280, viewport.width - 280 - normalWidth, normalWidth]
     const checkpoints: string[] = ['# Recorded-session Sidebar states']
     const checkpoint = async (label: string): Promise<void> => {
@@ -348,7 +348,7 @@ describe.skipIf(MODE === 'record')('web e2e: details panel follows the current S
     await paneAt(column, 0).locator('[data-dockkit-tab]').filter({ hasText: 'Files' }).click()
     await expect.poll(() => paneAt(column, 0).locator('[data-files-state="tree"]').count()).toBe(1)
     const retainedA = await paneSnapshot(page)
-    expect(retainedA.map(pane => pane.tabs.map(tab => tab.title))).toEqual([['Files', 'Start'], ['Files']])
+    expect(retainedA.map(pane => pane.tabs.map(tab => tab.title))).toEqual([['Files', 'Task overview'], ['Files']])
     await checkpoint('A normal: two panes')
 
     await column.locator('[data-sidebar-right-mode="fullscreen"]').click()

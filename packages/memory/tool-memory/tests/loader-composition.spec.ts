@@ -83,7 +83,7 @@ async function boot(configLines: readonly string[]): Promise<Context> {
 
 describe('dsh-tool-memory real Loader composition through cordis.yml', () => {
   it('registers the three tools and the prompt section over the composed store', async () => {
-    const ctx = await boot(['    injectMaxBytes: 2048', '    maxRecallResults: 3'])
+    const ctx = await boot(['    injectMaxBytes: 2048', '    maxRecallResults: 3', '    maxRecallBytes: 8192'])
     const names = ctx.tools.schemas().map(schema => schema.name)
     expect(names).toEqual(expect.arrayContaining(['memory_write', 'memory_recall', 'memory_forget']))
     const section = (await ctx.systemPrompt.assemble()).sections.find(item => item.name === 'tool:memory')
@@ -92,28 +92,43 @@ describe('dsh-tool-memory real Loader composition through cordis.yml', () => {
   }, 30_000)
 
   it('loads with injectMaxBytes: 0 (tools stay available, no snapshot is ever injected)', async () => {
-    const ctx = await boot(['    injectMaxBytes: 0', '    maxRecallResults: 3'])
+    const ctx = await boot(['    injectMaxBytes: 0', '    maxRecallResults: 3', '    maxRecallBytes: 8192'])
     const names = ctx.tools.schemas().map(schema => schema.name)
     expect(names).toEqual(expect.arrayContaining(['memory_write', 'memory_recall', 'memory_forget']))
   }, 30_000)
 
   it('loads with injectMaxBytes exactly at SNAPSHOT_MIN_BYTES', async () => {
-    const ctx = await boot([`    injectMaxBytes: ${String(SNAPSHOT_MIN_BYTES)}`, '    maxRecallResults: 3'])
+    const ctx = await boot([`    injectMaxBytes: ${String(SNAPSHOT_MIN_BYTES)}`, '    maxRecallResults: 3', '    maxRecallBytes: 8192'])
     expect(ctx.memory).toBeDefined()
   }, 30_000)
 
+  it('loads when maxRecallBytes is exactly the minimum for one complete maximum-size record', async () => {
+    const ctx = await boot(['    injectMaxBytes: 2048', '    maxRecallResults: 3', '    maxRecallBytes: 1153'])
+    expect(ctx.memory.maxRecordBytes).toBe(256)
+  }, 30_000)
+
   it.each([
-    { label: 'injectMaxBytes is omitted', configLines: ['    maxRecallResults: 3'], failure: /injectMaxBytes/ },
-    { label: 'maxRecallResults is omitted', configLines: ['    injectMaxBytes: 2048'], failure: /maxRecallResults/ },
-    { label: 'maxRecallResults is zero', configLines: ['    injectMaxBytes: 2048', '    maxRecallResults: 0'], failure: /maxRecallResults/ },
-    { label: 'injectMaxBytes is negative', configLines: ['    injectMaxBytes: -1', '    maxRecallResults: 3'], failure: /injectMaxBytes/ },
-    { label: 'injectMaxBytes is 10 (positive but below SNAPSHOT_MIN_BYTES)', configLines: ['    injectMaxBytes: 10', '    maxRecallResults: 3'], failure: /injectMaxBytes/ },
+    { label: 'injectMaxBytes is omitted', configLines: ['    maxRecallResults: 3', '    maxRecallBytes: 8192'], failure: /injectMaxBytes/ },
+    { label: 'maxRecallResults is omitted', configLines: ['    injectMaxBytes: 2048', '    maxRecallBytes: 8192'], failure: /maxRecallResults/ },
+    { label: 'maxRecallResults is zero', configLines: ['    injectMaxBytes: 2048', '    maxRecallResults: 0', '    maxRecallBytes: 8192'], failure: /maxRecallResults/ },
+    { label: 'maxRecallBytes is omitted', configLines: ['    injectMaxBytes: 2048', '    maxRecallResults: 3'], failure: /maxRecallBytes/ },
+    { label: 'maxRecallBytes is zero', configLines: ['    injectMaxBytes: 2048', '    maxRecallResults: 3', '    maxRecallBytes: 0'], failure: /maxRecallBytes/ },
+    { label: 'injectMaxBytes is negative', configLines: ['    injectMaxBytes: -1', '    maxRecallResults: 3', '    maxRecallBytes: 8192'], failure: /injectMaxBytes/ },
+    { label: 'injectMaxBytes is 10 (positive but below SNAPSHOT_MIN_BYTES)', configLines: ['    injectMaxBytes: 10', '    maxRecallResults: 3', '    maxRecallBytes: 8192'], failure: /injectMaxBytes/ },
     {
       label: 'injectMaxBytes is one less than SNAPSHOT_MIN_BYTES',
-      configLines: [`    injectMaxBytes: ${String(SNAPSHOT_MIN_BYTES - 1)}`, '    maxRecallResults: 3'],
+      configLines: [`    injectMaxBytes: ${String(SNAPSHOT_MIN_BYTES - 1)}`, '    maxRecallResults: 3', '    maxRecallBytes: 8192'],
       failure: /injectMaxBytes/,
     },
   ])('fails loading when $label', async ({ configLines, failure }) => {
     await expect(boot(configLines)).rejects.toThrow(failure)
+  }, 30_000)
+
+  it('fails loading when maxRecallBytes cannot hold one maximum-size memory', async () => {
+    await expect(boot([
+      '    injectMaxBytes: 2048',
+      '    maxRecallResults: 3',
+      '    maxRecallBytes: 1152',
+    ])).rejects.toThrow(/maxRecallBytes must be at least 1153/)
   }, 30_000)
 })

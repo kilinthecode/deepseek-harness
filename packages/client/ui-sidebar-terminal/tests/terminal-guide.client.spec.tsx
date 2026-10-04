@@ -19,7 +19,7 @@ const standard: GlobalStandardProps & SessionStandardProps = {
   useInput: unused, useChat: unused, useTrajectory: unused,
   usePanelInfo: unused, useSessions: unused, useSessionStatus: unused,
   useSessionRetainInfo: unused, useResource: unused, useWorkspaces: unused,
-  inputActions: { captureInsertion: unused, insertText: unused, setDraft: unused,
+  inputActions: { captureInsertion: unused, insertText: unused, setDraft: unused, persistDraft: unused,
     addAttachments: unused, removeAttachment: unused, pruneAttachments: unused, submit: unused },
 }
 const choices: TerminalLaunchShells = {
@@ -43,7 +43,7 @@ function mount(description: string | undefined = en.description, shortcut?: Guid
     useShortcuts: <T,>(selector: (entries: readonly ShortcutCatalogEntry[]) => T): T => selector(shortcuts),
     entryId: 'new', kind: 'terminal', title: en.new, description, t: makeTranslate(en),
     useTabInfo: () => ({ sidebar: { expanded: true, fullscreen: false }, panel: { id: 'pane-guide' as PaneId },
-      tab: { id: 'tab-guide' as TabId, kind: 'guide', contentId: 'sidebar://guide', title: 'Start',
+      tab: { id: 'tab-guide' as TabId, kind: 'guide', contentId: 'sidebar://guide', title: 'Task overview',
         visible: true, signal: new AbortController().signal,
         navigation: { address: 'sidebar://guide', params: undefined, revision: 0 },
         actions: { openTab, bindCommands: vi.fn(() => vi.fn()), openResource: vi.fn(), close: vi.fn() } } }),

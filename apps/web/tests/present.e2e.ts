@@ -10,7 +10,7 @@ import { createLaunchEnvironmentSnapshot } from '@deepseek-ai/dsh-launch-environ
 import type { SessionEvent, SessionId } from '@deepseek-ai/dsh-session'
 import type {} from '@deepseek-ai/dsh-tool-present/types'
 import {
-  acknowledgeReloadConnectionLoss, assertFinalWorkspaceSnapshot, captureExpandedTurnProcessAria,
+  acknowledgeReloadConnectionLoss, assertFinalWorkspaceSnapshot, captureExpandedTurnProcessAria, captureStableAria,
   compareOrRefreshGolden, fixtureUserPrompts, launchWebScaffold, recordFixture,
   watchConsole, webSnapshotMode, type WebScaffold,
 } from './scaffold.ts'
@@ -117,6 +117,25 @@ fs.appendFileSync(${JSON.stringify(openLog)}, JSON.stringify({ path, action, con
     expect(events.some(event => event.type === 'tool/ptc-dispatch' && event.data.name === 'present' && event.data.isError)).toBe(true)
     expect(events.some(event => event.type === 'tool/result' && event.data.message.isError)).toBe(true)
   }, 200_000)
+
+  it('opens declared outputs from the task overview', async () => {
+    await page.locator('[data-sidebar-right-expand]').click()
+    const overview = page.locator('[data-task-overview]')
+    const outputs = overview.locator('[data-task-outputs]')
+    await outputs.getByRole('button', { name: 'Open report.txt in sidebar', exact: true }).waitFor()
+    expect(await outputs.getByRole('listitem').count()).toBe(2)
+    await compareOrRefreshGolden(join(DIR, 'overview.expected.md'),
+      await captureStableAria(page, '[data-task-overview]', scaffold.workspaceCwd), MODE)
+    for (const [name, content] of [['report.txt', 'DELIVERED_REPORT'], ['说明.txt', 'DELIVERED_NOTE']] as const) {
+      await outputs.getByRole('button', { name: `Open ${name} in sidebar`, exact: true }).click()
+      const preview = page.locator('[data-document-preview]')
+      await preview.getByText(content, { exact: true }).waitFor()
+      await page.locator('[data-dockkit-tab]').filter({ hasText: name }).locator('[data-dockkit-tab-close]').click()
+      await overview.waitFor()
+    }
+    await page.locator('[data-sidebar-right-toggle]').click()
+    expect(tripwire.pageErrors).toEqual([])
+  })
 
   it('opens current source files after edits and reload, and reports deletion without downloading', async () => {
     await writeFile(join(cwd, 'report.txt'), 'EDITED_REPORT\n')

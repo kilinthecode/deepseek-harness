@@ -1,0 +1,18 @@
+- id: tool-image-generation
+  disabled: false
+
+- id: image-generation-http
+  name: '@deepseek-ai/dsh-image-generation-http'
+  config:
+    providers:
+      fixture:
+        api: openai-images
+        baseURL: https://images.snapshot.test/v1
+        apiKeyEnv: DSH_IMAGE_SNAPSHOT_KEY
+        models:
+          - id: draw
+            name: Drawing
+
+- insert:
+    - id: image-generation-fixture
+      name: './fixture.mjs'

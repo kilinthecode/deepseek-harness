@@ -69,7 +69,7 @@ type LayoutActions = {
 /**
  * Create the layout panel store handle. For the sidebar the preference IS the
  * width, so closing it forgets its drag width — reopening restores the contract
- * default. The right panel initializes at 45% of the frame on first opening
+ * default. The right panel initializes at 30% of the frame on first opening
  * and keeps that px preference across resizes and close. Drag writes clamp to
  * the current frame's range. Narrow sidebar toggles change only the expansion
  * override; opening the right panel clears that override.

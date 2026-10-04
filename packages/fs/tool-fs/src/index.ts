@@ -8,7 +8,7 @@
 import type { Context } from '@deepseek-ai/cordis'
 import z from '@deepseek-ai/schemastery'
 import type {} from '@deepseek-ai/dsh-user-approval'
-import { applyReadTool, READ_LIMIT, STREAM_MIN_SIZE } from './read.ts'
+import { applyReadTool, READ_DEFAULT_LIMIT, READ_LIMIT, STREAM_MIN_SIZE } from './read.ts'
 import { applyWriteTool } from './write.ts'
 import { applyEditTool } from './edit.ts'
 import { applyReadImageTool } from './read-image.ts'
@@ -25,7 +25,10 @@ export const inject = ['tools', 'fs', 'systemPrompt']
 export interface Config {
   /** Maximum number of lines returned by one `read` call. */
   readLimit?: number
-  /** Lines returned when `read` omits `limit`; defaults to `readLimit` and must not exceed it. */
+  /**
+   * Lines returned when `read` omits `limit`; defaults to the smaller of 500 and `readLimit`.
+   * An explicit value must not exceed `readLimit`.
+   */
   readDefaultLimit?: number
   /** Maximum characters returned for a single line before truncation. */
   readMaxLineLength?: number
@@ -57,7 +60,7 @@ function assertPositiveInteger(name: string, value: number): void {
 export function apply(ctx: Context, config: Config): void {
   // schemastery (Config) has already filled every defaulted field.
   const resolved = config as ResolvedConfig
-  const defaultLimit = resolved.readDefaultLimit ?? resolved.readLimit
+  const defaultLimit = resolved.readDefaultLimit ?? Math.min(READ_DEFAULT_LIMIT, resolved.readLimit)
   assertPositiveInteger('readLimit', resolved.readLimit)
   assertPositiveInteger('readDefaultLimit', defaultLimit)
   if (defaultLimit > resolved.readLimit) {

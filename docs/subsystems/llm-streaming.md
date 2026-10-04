@@ -904,6 +904,65 @@ declare abstract class LlmAdapter {
 
 `ContentBlockType` (the key set the `index`-correlated blocks carry) derives from [`ContentBlockMap`](#content-blocks-and-messages) above.
 
+<a id="image-generation"></a>
+
+## Image generation
+
+`ctx.imageGeneration` selects explicit configured image models independently of chat streaming. Providers return complete encoded raster bytes; consumers save them as durable attachments before publishing tool results. See the [HTTP provider](../../packages/llm/image-generation-http/README.md) for configuration and limits.
+
+Source: [`packages/llm/image-generation/src/index.ts`](../../packages/llm/image-generation/src/index.ts)
+
+```ts type-equiv
+/** A configured model that the image provider can generate with. */
+interface ImageGenerationModel {
+  /** Configuration route identifying the provider. */
+  readonly provider: string
+  /** Exact model identifier accepted by the image API. */
+  readonly model: string
+  /** Human-readable model name. */
+  readonly name: string
+}
+```
+
+```ts type-equiv
+/** An explicit model selection and text prompt; no chat-model fallback applies. */
+interface ImageGenerationRequest {
+  readonly provider: string
+  readonly model: string
+  readonly prompt: string
+}
+```
+
+```ts type-equiv
+/** Encoded raster bytes awaiting validation and durable attachment storage. */
+interface GeneratedImage {
+  readonly data: Uint8Array
+  readonly mediaType: ImageMediaType
+}
+```
+
+```ts type-equiv
+/** A complete generation response; providers reject responses without images. */
+interface ImageGenerationResult {
+  readonly images: readonly GeneratedImage[]
+  /** Provider-visible explanation accompanying the generated images, when present. */
+  readonly text?: string
+}
+```
+
+```ts type-equiv
+/** One request bound to a single provider configuration generation. */
+interface PreparedImageGeneration {
+  readonly model: ImageGenerationModel
+  /**
+   * Generate once per invocation without automatic retries. Consumers persist images before logging results.
+   * @param signal - cancellation for the whole provider request.
+   * @returns the complete encoded images and any accompanying text.
+   */
+  generate(signal: AbortSignal): Promise<ImageGenerationResult>
+}
+```
+
 <!-- BEGIN GENERATED cordis-surface (gen-cordis-catalog.ts) — do not edit between markers -->
 
 <a id="cordis-surface"></a>
@@ -938,6 +997,30 @@ async prepare(request: DeepSeekLlmApiExtensionRequest): Promise<PreparedDeepSeek
 ```
 
 Source: [`packages/llm/deepseek-llm-api-extensions/src/index.ts`](../../packages/llm/deepseek-llm-api-extensions/src/index.ts)
+
+<a id="ctximagegeneration--imagegenerationprovider-abstract-seam"></a>
+
+### `ctx.imageGeneration` — `ImageGenerationProvider` (abstract seam)
+
+Image-generation capability. Mount a provider subclass to register `ctx.imageGeneration`. Providers enforce configured model membership for every caller and bind configuration during preparation.
+
+```ts cordis-catalog
+/**
+ * List explicitly configured generation models, independently of the chat-model catalog.
+ * @returns model identities and display names; never credentials or endpoints.
+ */
+abstract listModels(): readonly ImageGenerationModel[]
+
+/**
+ * Validate a selection and bind its prompt and provider configuration before any network request.
+ * @param request - explicit provider, model, and non-blank generation prompt.
+ * @returns a generation call bound to that configuration.
+ * @throws when the provider, model, or prompt cannot be served.
+ */
+abstract prepare(request: ImageGenerationRequest): PreparedImageGeneration
+```
+
+Source: [`packages/llm/image-generation/src/index.ts`](../../packages/llm/image-generation/src/index.ts)
 
 <a id="ctxllm--llmruntime"></a>
 

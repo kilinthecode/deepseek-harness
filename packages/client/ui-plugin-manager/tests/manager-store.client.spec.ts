@@ -19,6 +19,7 @@ const BUNDLE: BundleInfo = {
   description: 'A sidebar.',
   enabled: false,
   installed: true,
+  source: 'dsh-better-sidebar@^0.16.0',
   optional: false,
   removable: true,
   rows: [{ rowId: 'sidebar', moduleName: 'dsh-better-sidebar', entryId: ROW_ENTRY }, { rowId: 'theme', moduleName: 'dsh-better-sidebar/theme' }],
@@ -111,7 +112,7 @@ it('hands a custom page the shared configuration form of its entry', () => {
 describe('packageView', () => {
   it('joins a bundle with the entries its rows run as', () => {
     expect(packageView(BUNDLE, PLUGINS)).toEqual({
-      name: 'dsh-better-sidebar', version: '0.16.0', description: 'A sidebar.',
+      name: 'dsh-better-sidebar', version: '0.16.0', description: 'A sidebar.', source: 'dsh-better-sidebar@^0.16.0',
       installed: true, optional: false, enabled: false,
       rows: [
         { rowId: 'sidebar', moduleName: 'dsh-better-sidebar', entryId: ROW_ENTRY, enabled: true, phase: 'active' },
@@ -385,9 +386,9 @@ describe('PluginManagerController', () => {
     ])
     face.toggleInstallDetails()
     expect(state().install.detailsOpen).toBe(true)
-    gate.resolve(ok({ ...APPLIED, bundle: 'dsh-new' }))
+    gate.resolve(ok({ ...APPLIED, bundle: 'dsh-new', version: '1.0.0' }))
     await vi.waitFor(() => { expect(state().install.phase).toBe('done') })
-    expect(state().install).toMatchObject({ installed: 'dsh-new', restartRequired: false, detailsOpen: true })
+    expect(state().install).toMatchObject({ installed: 'dsh-new', installedVersion: '1.0.0', restartRequired: false, detailsOpen: true })
     // The finished install settled its run; a trailing last chunk still lands
     // on it, while a chunk for a run the dialog never saw is dropped.
     controller.appendLog({ requestId, jobId: 'j1', argv, cwd: '/p', stream: 'stdout', text: '', exitCode: 0 })

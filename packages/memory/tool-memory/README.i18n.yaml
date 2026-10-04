@@ -21,11 +21,11 @@
   en: 084b025955b7b923
   zh: 4f7f0872dffd22de
 /deepseek-ai-dsh-tool-memory/use-this-package/minimal-configuration:
-  en: d8d87a32ab346aff
-  zh: e0ae2cce03dfad7a
+  en: af2006523e0a74ca
+  zh: 5dcac82e4b6b9981
 /deepseek-ai-dsh-tool-memory/use-this-package/what-each-tool-does:
-  en: 91214e38528f9cf0
-  zh: 31762b50b736a9af
+  en: d7f2f8a48a2b3ad3
+  zh: a3609681392a538b
 /deepseek-ai-dsh-tool-memory/use-this-package/the-snapshot:
   en: ca781dd937a48918
   zh: c1ded5227939dfde
@@ -72,8 +72,8 @@
   en: 3039bc5e7a796b21
   zh: 6b7a9eaf69c9ea53
 /deepseek-ai-dsh-tool-memory/model-experience/tool-schemas/what-the-model-sees:
-  en: 5db6cfa731a05d2b
-  zh: 3310790aa8f62430
+  en: ae931466fe94bc74
+  zh: 38e77da923337878
 /deepseek-ai-dsh-tool-memory/model-experience/tool-schemas/token-effect:
   en: 023a80f81229887f
   zh: bac558c70c9f8336
@@ -99,8 +99,8 @@
   en: 9717b983b6a857e3
   zh: 611a2dadf7c0c706
 /deepseek-ai-dsh-tool-memory/model-experience/tool-call-history-and-result/what-the-model-sees:
-  en: aaf7b6aad2a58fc5
-  zh: 8f6df9b8925bfca0
+  en: 7372021dd9ec7c93
+  zh: 45aa86e3fdfab0c1
 /deepseek-ai-dsh-tool-memory/model-experience/tool-call-history-and-result/what-the-model-sees/verbatim-text-for-this-field:
   en: f310d13f2c5a4d6a
   zh: 602c9de780dffcb0
@@ -108,8 +108,8 @@
   en: db6872b3151570f8
   zh: 2c3cfa9ad305406b
 /deepseek-ai-dsh-tool-memory/model-experience/tool-call-history-and-result/token-effect:
-  en: f9c9f5aea1fc75f2
-  zh: efd26eb082fa6618
+  en: 3489f0ee41eafa1e
+  zh: e252ab783482fde5
 /deepseek-ai-dsh-tool-memory/model-experience/tool-call-history-and-result/kv-cache-effect:
   en: c52a5ab8fff426e0
   zh: fd1beff5985f1ce6

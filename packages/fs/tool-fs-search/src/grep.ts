@@ -183,7 +183,7 @@ function matchNoun(count: number): string {
 
 /**
  * Group flat matches by file (first-seen order) into the model-facing body:
- * each file's display path, then one `Line N: <text>` row per match.
+ * each file's display path, then one `N: <text>` row per match.
  *
  * @param matches - the flat matches to render.
  * @returns the grouped body text.
@@ -197,7 +197,7 @@ export function formatGrepMatches(matches: GrepMatch[]): string {
   }
   const sections: string[] = []
   for (const [path, group] of byFile) {
-    sections.push(`${path}\n${group.map(m => `Line ${m.lineNumber}: ${m.line}`).join('\n')}`)
+    sections.push(`${path}\n${group.map(m => `${m.lineNumber}: ${m.line}`).join('\n')}`)
   }
   return sections.join('\n\n')
 }

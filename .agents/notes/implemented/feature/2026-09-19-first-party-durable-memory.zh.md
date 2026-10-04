@@ -12,11 +12,13 @@ agent（智能体）在会话之间会忘记一切。用户表达过的偏好、
 
 新的 `packages/memory/` 组中的两个包提供第一方记忆。
 
-`@deepseek-ai/dsh-memory` 是 `ctx.memory` 上的 Service Definition 与 Provider：基于现有存储 domain 数据形式的一个 `memory` domain，采用逐记录布局，包含以记忆名称为键的 `global` 表和以 `<project slug>__<name>` 为键的 `project` 表。一条记录携带 `name`、`type`（`user`、`feedback`、`project`、`reference`）、`scope`（`global`、`project`）、最多 256 个字符的一行 `description`、受 `maxRecordBytes` 限制的 `content`、项目记录的 `projectRoot`，以及绝不会到达模型的 ISO 时间戳。记录在打开时由 zod 以 `backup-and-skip` 校验，每个字段都有上限，内容受存储当前的 `maxRecordBytes` 限制，因此弄坏某个文件的手工编辑只会把该文件移到一旁并保留其余记录。存储对全局作用域和每个项目分别执行 `maxRecords`，执行位置是每个存储唯一的串行区段，该区段包含项目根目录查找、存在性检查、上限检查以及持久的写入或删除，因此同一进程内的重叠调用按调用顺序执行且绝不会超出上限；计数覆盖本进程已加载或写入的记录，因此其他进程的写入只有在 domain 重新打开后才计入。它通过从会话工作目录向上查找 `projectRootMarkers` 条目来解析项目根目录，在无法解析根目录时让项目作用域的写入和遗忘明确失败，此时回忆和快照只显示全局记录。
+`@deepseek-ai/dsh-memory` 是 `ctx.memory` 上的 Service Definition 与 Provider：基于现有存储 domain 数据形式的一个 `memory` domain，采用逐记录布局，包含以记忆名称为键的 `global` 表和以 `<project slug>__<name>` 为键的 `project` 表。一条记录携带 `name`、`type`（`user`、`feedback`、`project`、`reference`）、`scope`（`global`、`project`）、最多 256 个字符的一行 `description`、受 `maxRecordBytes` 限制的 `content`、项目记录的 `projectRoot`，以及绝不会到达模型的 ISO 时间戳。记录在打开时由 zod 以 `backup-and-skip` 校验，每个字段都有上限，内容受存储当前的 `maxRecordBytes` 限制，因此弄坏某个文件的手工编辑只会把该文件移到一旁并保留其余记录。每次读取或变更前，存储都会刷新 domain：先暂存并校验状态，再更新稳定的表句柄，不发出变更事件。每个存储分别串行执行自身调用，包括刷新、项目根目录查找、存在性与上限检查以及持久写入或删除；同一进程内的重叠调用按调用顺序执行，同一存储内写入不会超出上限。刷新让后续操作看见其他进程已完成的写入，但并发跨进程写入仍以最后一次发布为准，上限检查和 `ifAbsent` 不具备全局原子性。`maxRecords` 计数包括该操作刷新后可见的记录。它通过从会话工作目录向上查找 `projectRootMarkers` 条目来解析项目根目录，在无法解析根目录时让项目作用域的写入和遗忘明确失败，此时回忆和快照只显示全局记录。
 
 `@deepseek-ai/dsh-tool-memory` 是 Consumer：`ctx.tools` 上的 `memory_write`、`memory_recall` 和 `memory_forget`，位于 `TOOL_MEMORY` 位置、说明何时记忆的静态提示词段落，以及以 source 为 `{ kind: 'tool-memory', form: 'snapshot' }` 的 `user/message` 注入的可见记忆快照。快照冻结、内联预算、写入时扫描和无人值守回顾由[冻结快照与回顾说明](2026-09-25-frozen-memory-snapshot-and-review.zh.md)负责。`memoryCatalog` 投影在 `stateVersion: 3` 下为 `{ taken: boolean; stepPending: boolean }`：`step/start` 只折叠为 `stepPending: true`（`agent/request`/`prepareCall` 期间的取消既不提交系统提示词也不提交该步骤的消息），待定期间有一条 `user/message` 落盘、或本插件自己的快照消息（无条件），都折叠为 `{ taken: true, stepPending: false }`，`step/end` 清除待定状态，`compaction/summary` 将两者都清除。前置的 `agent/pre-step` 监听器在 `taken` 为 false 时每个 surface generation 至多注入一次，追加在已认领的用户消息之后；该第一步时为空的存储不注入。`memory_recall` 读取实时存储，包括快照之后保存的记忆，受 `maxRecallResults` 和存储的字节上限约束。快照受 `injectMaxBytes` 约束；`0` 关闭注入。
 
 不新增任何会话事件。每个模型可见的输入都是已有的事件类型：目录是一条 `user/message`，每次变更都是带有 `tool/result` 的 `tool/call`。因此本包不发布不变量配套插件。消息 source 由生产者拥有，所以本包声明 `MessageSourceMap` 的 `tool-memory` 成员，并将其标记为仅用于归属：未安装该生产者的读取方保留目录的内容和 source 字段，[记忆目录 source 记录](../../../../docs/persistence-changes/2026-09-24-memory-catalog-source.zh.md)把这次新增确认为同版本变更。
+
+`memory_recall` 在读取前通过存储刷新，按作用域筛选可见记录，并对完整 UTF-8 结果字节数和结果数设上限。`maxRecallBytes` 必须足以容纳一条最大尺寸记忆及其完整标题、描述、分隔符和提示；随附值为 8192，结果不会截断。
 
 base 组合包在宿主平面挂载存储，并把工具挂载在 `tool-todo` 旁边；Web 组合包在宿主平面禁用工具，而 `packages/bundle/web-app/presets/` 下的 `standard`、`ptc` 和 `cordis` 预设声明按会话挂载它们，因为一个 domain 在每个进程中只打开一次，而预设按 agent 挂载工具。
 
@@ -38,15 +40,15 @@ base 组合包在宿主平面挂载存储，并把工具挂载在 `tool-todo` �
 
 **不带归属限定的 `tool-memory` source kind。** 没有归属限定时，持久化分类器把新增的 kind 视为需要 Session 格式 5 的联合类型变更，尽管未安装该生产者的读取方已经原样保留目录。
 
-**在回忆路径中使用语义搜索或 LLM。** 已拒绝：它会破坏无密钥回放的确定性，并给读取增加模型依赖。回忆在名称、描述和内容上做子串匹配；重新考虑的触发条件是可度量的回忆未命中。
+**在回忆路径中使用语义搜索或 LLM。** 已拒绝：它会破坏无密钥回放的确定性，并给读取增加模型依赖。回忆对名称、描述或内容做不区分大小写的短语匹配，或要求所有不重复的空白分隔查询词均命中，再按精确名称及各字段中的短语/词项匹配确定性排序，之后按更新时间、名称和作用域排序；重新考虑的触发条件是可度量的回忆未命中。
 
 **仓库内的 `<project>/.dsh/memory/` 存储。** 可以让团队提交事实，但需要位于 harness home 之外的存储根目录和第二个 domain。推迟到某个团队必须通过 git 共享记忆时再考虑。
 
 ## Consequences
 
-agent 在同一 harness home 下跨会话、跨 profile 保留用户偏好、反馈、项目事实和参考资料，每个会话的开销有界，且不依赖厂商、嵌入或守护进程。记忆是人可以阅读、编辑或删除的普通 JSON 文件。每份注入的目录和每次变更都可以从会话日志回放。
+agent 在同一 harness home 下跨会话、跨 profile 保留用户偏好、反馈、项目事实和参考资料，每个会话的开销有界，且不依赖厂商、嵌入或守护进程。记忆作用域与模型路由相互独立：使用同一 harness home 的进程共享已完成的写入，刷新后的回忆不受所选模型影响。记忆是人可以阅读、编辑或删除的普通 JSON 文件。每份注入的目录和每次变更都可以从会话日志回放。
 
-代价是：进程只有在 domain 重新打开时才能看到其他进程的写入，回忆只支持子串匹配，目录预算按字节而非 token 计算，并且除了通用工具行之外没有用于整理的 UI。同时挂载厂商记忆覆盖配置的组合依赖于互不相同的工具名称以及提示词段落中不要镜像事实的指示。
+代价是：并发跨进程写入以最后一次发布为准，且不会协调上限或仅创建检查；回忆采用确定性的短语/词项匹配而非语义搜索；目录预算按字节而非 token 计算，并且除了通用工具行之外没有用于整理的 UI。同时挂载厂商记忆覆盖配置的组合依赖于互不相同的工具名称以及提示词段落中不要镜像事实的指示。
 
 ## Testing
 

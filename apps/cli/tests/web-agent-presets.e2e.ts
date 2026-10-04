@@ -28,6 +28,7 @@ const SETTINGS_NAMESPACE = 'agent-preset-registry'
 const SUBAGENT_MODEL_SELECTION_SETTINGS_NAMESPACE = 'subagent-model-selection-settings'
 import { applyChildComposition, childSessionMeta } from '@deepseek-ai/dsh-subagent'
 import { ToolCallId } from '@deepseek-ai/dsh-llm'
+import { estimateContent } from '@deepseek-ai/dsh-token-meter/estimate'
 import type {} from '@deepseek-ai/dsh-compaction-basic'
 import type {} from '@deepseek-ai/dsh-skill'
 import type {} from '@deepseek-ai/dsh-tools'
@@ -75,6 +76,7 @@ async function bootWeb(
     { id: 'storage-json', config: { root: storageRoot } },
     // Fixed Session IDs must stay inside this boot's temporary profile root.
     { id: 'session-persistence-jsonl', config: { root: join(profileHome, 'sessions') } },
+    { id: 'spill-local', config: { root: join(profileHome, 'spill') } },
     // Host rows with side effects outside this process: a bound port, a served
     // asset tree, a telemetry exporter. `api-gateway` and `directory-picker`
     // stay ENABLED on purpose — the api-proxy is the host row that injects
@@ -273,6 +275,45 @@ describe('the shipped Web composition', () => {
     } finally {
       await handle.dispose()
     }
+  })
+
+  it.each(['standard', 'ptc', 'cordis'] as const)('uses the shared read default in `%s`', async (preset) => {
+    const handle = await ctx.agents.create({
+      sessionId: SessionId(`preset-read-default-${preset}-${randomUUID()}`),
+      setup: agentCtx => ctx.agentPresets.mount(agentCtx, preset).then(() => undefined),
+    })
+    try {
+      expect(ctx.tools.schemas(handle.agent).find(schema => schema.name === 'read')).toMatchObject({
+        parameters: { properties: { limit: { description: 'Maximum number of lines to return. Defaults to 500. Maximum: 2000.' } } },
+      })
+    } finally {
+      await handle.dispose()
+    }
+  })
+
+  it.each(['standard', 'ptc', 'cordis'] as const)('bounds recoverable output with the shared spill budget in `%s`', async (preset) => {
+    const handle = await ctx.agents.create({
+      sessionId: SessionId(`preset-spill-budget-${preset}-${randomUUID()}`),
+      setup: agentCtx => ctx.agentPresets.mount(agentCtx, preset).then(() => undefined),
+    })
+    try {
+      const args = { command: 'node -e "process.stdout.write(\'x\'.repeat(30000))"', description: 'Print a synthetic log' }
+      const result = await ctx.tools.execute({
+        signal: new AbortController().signal,
+        callId: ToolCallId(`spill-budget-${preset}`),
+        name: preset === 'ptc' ? 'run_code' : 'bash',
+        arguments: preset === 'ptc'
+          ? { code: `const result = await tools.bash(${JSON.stringify(args)}); console.log(result.stdout.text); return result.stdout.text.length;`, description: 'Print a synthetic log' }
+          : args,
+        agent: handle.agent,
+      })
+      expect(result.isError).toBe(false)
+      expect(estimateContent(result.content)).toBeLessThanOrEqual(6000)
+      const text = result.content.filter(block => block.type === 'text').map(block => block.text).join('')
+      const locator = /Full formatted result stored at: ([^\n]+)\. Use read/.exec(text)?.[1]
+      expect(locator).toBeDefined()
+      expect(await readFile(locator!, 'utf8')).toContain('x'.repeat(30000))
+    } finally { await handle.dispose() }
   })
 
   it('applies the default-off subagent model allowlist only to new sessions', async () => {

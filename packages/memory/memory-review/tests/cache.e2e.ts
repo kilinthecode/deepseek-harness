@@ -37,7 +37,7 @@ describe.skipIf(!process.env.DEEPSEEK_API_KEY)('memory-review child prefix cache
     await ctx.plugin(AgentLoop, { agents: [] })
     await ctx.plugin(LlmDeepSeek)
     await mountStore(ctx, root)
-    await ctx.plugin(ToolMemory, { injectMaxBytes: 2048, maxRecallResults: 4 })
+    await ctx.plugin(ToolMemory, { injectMaxBytes: 2048, maxRecallResults: 4, maxRecallBytes: 8192 })
     await ctx.plugin(SubagentRuntime)
     await ctx.plugin(Fork, { providerName: 'fork' })
     await ctx.plugin(MemoryReview, { reviewEveryUserTurns: 1, maxReviewSteps: 8 })

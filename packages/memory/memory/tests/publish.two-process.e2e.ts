@@ -91,6 +91,14 @@ describe('two-process publication (built lib)', () => {
     const root = await mkdtemp(join(tmpdir(), 'dsh-memory-2proc-'))
     dirs.push(root)
 
+    const reader = new Context()
+    contexts.push(reader)
+    await reader.plugin(Storage)
+    await reader.plugin(StorageJson, { root })
+    await reader.plugin(StorageDomain, { backend: 'json' })
+    await reader.plugin(MemoryStore, { maxRecords: 1000, maxRecordBytes: 4096 })
+    expect((await reader.memory.visible(undefined)).global).toEqual([])
+
     const alpha = startWriter(root, 'alpha')
     const beta = startWriter(root, 'beta')
     await Promise.all([alpha.ready, beta.ready])
@@ -115,14 +123,8 @@ describe('two-process publication (built lib)', () => {
     // write of whichever process renamed last, never a mix of both.
     expect(shared.record.content).toMatch(new RegExp(`^(alpha|beta)-${COUNT - 1}$`))
 
-    // A third store over the same root reads everything back without quarantine.
-    const ctx = new Context()
-    contexts.push(ctx)
-    await ctx.plugin(Storage)
-    await ctx.plugin(StorageJson, { root })
-    await ctx.plugin(StorageDomain, { backend: 'json' })
-    await ctx.plugin(MemoryStore, { maxRecords: 1000, maxRecordBytes: 4096 })
-    const visible = await ctx.memory.visible(undefined)
+    // The already-open reader refreshes external publications without reopening.
+    const visible = await reader.memory.visible(undefined)
     expect(visible.global).toHaveLength(COUNT * 2 + 1)
     expect((await readdir(dir)).filter(name => !name.endsWith('.json'))).toEqual([])
   })

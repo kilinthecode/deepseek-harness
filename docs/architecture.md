@@ -2,7 +2,7 @@
 
 English | [中文](architecture.zh.md)
 
-Read this before changing anything under `packages/`. It assumes you know Cordis; if you do not, start with the [primer](cordis-primer.md) or the [tutorial](cordis-tutorial/index.md).
+Read this before changing anything under `packages/`. It assumes Cordis knowledge; otherwise start with the [primer](cordis-primer.md) or the [tutorial](cordis-tutorial/index.md).
 
 We recommend using an agent to explore the codebase and understand its architecture.
 
@@ -36,9 +36,9 @@ Inspect the composed tree:
 dsh --profile web --dump-config
 ```
 
-Any row it prints can be replaced by a patch of your own.
+Your patch can replace any printed row.
 
-Composition mechanics are in [app-boot](../packages/boot/app-boot/README.md#profiles); config fields are in the generated [config catalog](config-catalog.md).
+[app-boot](../packages/boot/app-boot/README.md#profiles) describes composition; the generated [config catalog](config-catalog.md) defines config fields.
 
 ## Application launch
 
@@ -52,11 +52,11 @@ The Python SDK follows the same application architecture. Its runtime wheel pack
 
 The [Electron desktop application](../apps/desktop/README.md) carries its exact dsh production runtime in signed resources and owns the reserved `$DSH_HOME/profiles/desktop`. Shared profile helpers initialize its files, reconcile installed bundles, and resolve installation and bundle dependencies without replacing pnpm-owned packages. CLI and Desktop share product data, while executable packages, activation choices, and lockfiles remain separate. The public CLI cannot manage Desktop’s profile.
 
-Electron starts the private Desktop Host in Electron Node mode. The Host invokes the shared CLI profile runner and complete Web application. The window immediately loads packaged Web assets and waits for boot injections before activating client plugins in the same document. Web owns RPC and streams; the desktop carrier connects the local page to the authenticated Host. Node IPC carries boot injections, readiness, fatal errors, and shutdown. Desktop defaults to port `19387`; profile configuration can override it. Shell-owned UI runs plugin transactions through bundled pnpm with normal user and profile configuration.
+Electron starts the private Desktop Host in Electron Node mode. The Host invokes the shared CLI profile runner and complete Web application. The window immediately loads packaged Web assets and waits for boot injections before activating client plugins in the same document. Web owns RPC and streams; the desktop carrier connects the local page to the authenticated Host. Node IPC carries boot injections, readiness, fatal errors, and shutdown. Desktop listens on an OS-assigned port by default; profile configuration can override it. Shell-owned UI runs plugin transactions through bundled pnpm with normal user and profile configuration.
 
 ## Core packages
 
-Here are some core packages that contribute to the Cordis tree.
+These core packages contribute to the Cordis tree.
 
 | Package | Owns | `ctx` key |
 |---|---|---|
@@ -69,9 +69,11 @@ Here are some core packages that contribute to the Cordis tree.
 | [`llm/llm`](subsystems/llm-streaming.md) | Message and stream vocabulary plus the adapter seam | `ctx.llm` |
 | [`webhook/webhook`](subsystems/webhook.md) | Authenticated-delivery dispatch and Workspace Session creation | `ctx.webhookRuntime` |
 
+<a id="events"></a>
+
 ## Events
 
-Events are the extension points, and picking the right domain is the first decision in most changes.
+Events are extension points; most changes start by choosing their domain.
 
 - **Session events** are durable facts appended to the log and broadcast through `session/event`. Use one when the fact must survive a reload.
 - **Agent events** (`agent/*`) carry a live `Agent`: inbox, step, status, request, validation, continuation. Use one to observe or intercept work in flight.
@@ -80,6 +82,8 @@ Events are the extension points, and picking the right domain is the first decis
 AgentLoop awaits serial `agent/created` initialization before starting queued work. Initialization failure rolls back creation; [agent-loop](../packages/core/agent-loop/README.md#understand-the-implementation) defines teardown ordering.
 
 The [event map](event-producer-consumer.md) lists every event's producers and consumers.
+
+<a id="turn-flow"></a>
 
 ## Turn flow
 
@@ -113,6 +117,8 @@ One inbox feeds the driver; injected context waits for a waking message. AgentLo
 `agent/pre-step` decides the accepted input. Listeners may rewrite or reject claimed messages; a rejected or empty first claim closes a durable turn without a step. An enter decision may set `startsRequestSeries`: the loop logs a fresh `request/header` (reason `series`, or `change` with `startsSeries: true` when the envelope also changed). Wrapping listeners preserve that declaration with `{ ...decision, messages }`. After assembly and `step/start`, `agent/request` and `prepareCall()` resolve the actual route before the system prompt and accepted users are committed; cancellation during either async phase commits neither. Prepared call capabilities govern prompt admission, not preceding `request/context`. Every attempt synchronously reconciles the same rendered assembly, appends users only on the first attempt, logs header/context as needed, and derives and freezes the request before streaming the bound call. Retries do not repeat assembly or `agent/pre-step`. Surface replacements and image-offload decisions after attachment start a new request series, including during the first resumed pre-step; unchanged resume continues the series. The first admitted step reserves the system head before user messages even for an empty prompt (no wire message). The prompt travels only as `system/message` history: an empty rendering clears all active system nodes, leaving no old prompt model-visible; capable routes append non-empty updates after cached history, including supported tool updates; incapable routes and new request series consolidate non-empty prompt text at the first system node, with logged empty replacements for non-empty later system nodes ([decision](../.agents/notes/implemented/architecture/2026-09-02-system-prompt-as-surface-node.md); [decision rule](../packages/core/agent-loop/README.md#understand-the-implementation)).
 
 The loop sends immutable requests with live cancellation and reuses freeze evidence for frozen identities; [agent-loop](../packages/core/agent-loop/README.md) owns construction and cancellation causes.
+
+Failed steps [record missing tool results](../packages/core/agent-loop/README.md#understand-the-implementation).
 
 Details: the [sequence diagram](agent-lifecycle.md), the [tool pipeline](tool-execution-pipeline.md), and [cancellation and error recovery](subsystems/core.md#the-agent-handle).
 

@@ -1,4 +1,4 @@
-# Trial a smaller omitted-limit read window; retain only after measuring complete tasks.
+# Pin provider-independent read windows in any composition.
 - id: tool-fs
   name: '@deepseek-ai/dsh-tool-fs'
   config:

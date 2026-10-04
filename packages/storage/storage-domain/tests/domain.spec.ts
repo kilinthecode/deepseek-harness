@@ -259,6 +259,87 @@ describe('table and snapshot reads', () => {
   })
 })
 
+describe('Domain.refresh', () => {
+  it('refreshes external records and global while preserving table handles and emitting no events', async () => {
+    const pool = new MemoryMediaPool()
+    const { facility, changes } = await harness({ pool })
+    const domain = await facility.open(spec)
+    const table = domain.table('items')
+    await table.put('old', { label: 'before', count: 1 })
+    await domain.global.set({ theme: 'dark' })
+    changes.length = 0
+
+    const medium = pool.media.get('demo')!
+    medium.tables.get('items')!.delete('old')
+    medium.tables.get('items')!.set('new', { label: 'external', count: 2 })
+    medium.global = { theme: 'external' }
+    await domain.refresh()
+
+    expect(domain.table('items')).toBe(table)
+    expect(table.get('old')).toBeUndefined()
+    expect(table.get('new')).toEqual({ label: 'external', count: 2 })
+    expect(domain.global.get()).toEqual({ theme: 'external' })
+    expect(changes).toEqual([])
+  })
+
+  it('leaves every live value unchanged when any refreshed value fails validation', async () => {
+    const pool = new MemoryMediaPool()
+    const { facility, changes } = await harness({ pool })
+    const domain = await facility.open(spec)
+    const table = domain.table('items')
+    await table.put('kept', { label: 'valid', count: 1 })
+    await domain.global.set({ theme: 'kept' })
+    const medium = pool.media.get('demo')!
+    medium.tables.get('items')!.set('bad', { label: 'invalid', count: 'NaN' })
+    medium.global = { theme: 42 }
+    changes.length = 0
+
+    await expect(domain.refresh()).rejects.toMatchObject({
+      code: 'invalid-record', detail: { table: 'items', key: 'bad' },
+    })
+    expect([...table.keys()]).toEqual(['kept'])
+    expect(table.get('kept')).toEqual({ label: 'valid', count: 1 })
+    expect(domain.global.get()).toEqual({ theme: 'kept' })
+    expect(changes).toEqual([])
+  })
+
+  it('runs after earlier writes and drains queued refreshes before close completes', async () => {
+    const pool = new MemoryMediaPool()
+    const { facility } = await harness({ pool })
+    const domain = await facility.open(spec)
+    const table = domain.table('items')
+    const write = table.put('queued', { label: 'queued', count: 1 })
+    const refresh = domain.refresh()
+    const close = domain.close()
+    await expect(domain.refresh()).rejects.toMatchObject({ code: 'closed' })
+    await Promise.all([write, refresh, close])
+    expect(pool.media.get('demo')!.tables.get('items')!.has('queued')).toBe(true)
+    expect(() => table.get('queued')).toThrow(/closed/)
+  })
+
+  it('keeps tables unchanged when the refreshed global fails validation and recovers on the next refresh', async () => {
+    const pool = new MemoryMediaPool()
+    const { facility, changes } = await harness({ pool })
+    const domain = await facility.open(spec)
+    const table = domain.table('items')
+    await table.put('kept', { label: 'before', count: 1 })
+    await domain.global.set({ theme: 'before' })
+    const medium = pool.media.get('demo')!
+    medium.tables.get('items')!.set('kept', { label: 'after', count: 2 })
+    medium.global = { theme: 42 }
+    changes.length = 0
+
+    await expect(domain.refresh()).rejects.toMatchObject({ code: 'invalid-record', detail: { table: '', key: '' } })
+    expect(table.get('kept')).toEqual({ label: 'before', count: 1 })
+    expect(domain.global.get()).toEqual({ theme: 'before' })
+    medium.global = { theme: 'after' }
+    await domain.refresh()
+    expect(table.get('kept')).toEqual({ label: 'after', count: 2 })
+    expect(domain.global.get()).toEqual({ theme: 'after' })
+    expect(changes).toEqual([])
+  })
+})
+
 describe('KvTable writes', () => {
   it('serializes concurrent updates on one key without losing increments', async () => {
     const { facility } = await harness()

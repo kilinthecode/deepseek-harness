@@ -1068,6 +1068,36 @@
     },
     {
       "doc": "docs/subsystems/user-questions.md",
+      "symbol": "AskUserQuestionRequestEvent",
+      "source": "packages/interaction/user-questions/src/types.ts"
+    },
+    {
+      "doc": "docs/subsystems/user-questions.md",
+      "symbol": "TimedUserQuestionResult",
+      "source": "packages/interaction/user-questions/src/index.ts"
+    },
+    {
+      "doc": "docs/subsystems/user-questions.md",
+      "symbol": "UserQuestionState",
+      "source": "packages/interaction/user-questions/src/types.ts"
+    },
+    {
+      "doc": "docs/subsystems/user-questions.md",
+      "symbol": "PendingUserQuestion",
+      "source": "packages/interaction/user-questions/src/types.ts"
+    },
+    {
+      "doc": "docs/subsystems/user-questions.md",
+      "symbol": "SettledUserQuestion",
+      "source": "packages/interaction/user-questions/src/types.ts"
+    },
+    {
+      "doc": "docs/subsystems/user-questions.md",
+      "symbol": "UserQuestionProjectionView",
+      "source": "packages/interaction/user-questions/src/types.ts"
+    },
+    {
+      "doc": "docs/subsystems/user-questions.md",
       "symbol": "UserQuestionError",
       "source": "packages/interaction/user-questions/src/index.ts"
     },
@@ -2381,6 +2411,31 @@
       "doc": "docs/subsystems/product-telemetry.md",
       "symbol": "ProductTelemetryRecord",
       "source": "packages/host/product-telemetry-otel/src/index.ts"
+    },
+    {
+      "doc": "docs/subsystems/llm-streaming.md",
+      "symbol": "ImageGenerationModel",
+      "source": "packages/llm/image-generation/src/index.ts"
+    },
+    {
+      "doc": "docs/subsystems/llm-streaming.md",
+      "symbol": "ImageGenerationRequest",
+      "source": "packages/llm/image-generation/src/index.ts"
+    },
+    {
+      "doc": "docs/subsystems/llm-streaming.md",
+      "symbol": "GeneratedImage",
+      "source": "packages/llm/image-generation/src/index.ts"
+    },
+    {
+      "doc": "docs/subsystems/llm-streaming.md",
+      "symbol": "ImageGenerationResult",
+      "source": "packages/llm/image-generation/src/index.ts"
+    },
+    {
+      "doc": "docs/subsystems/llm-streaming.md",
+      "symbol": "PreparedImageGeneration",
+      "source": "packages/llm/image-generation/src/index.ts"
     }
   ]
 }

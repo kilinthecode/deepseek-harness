@@ -914,6 +914,15 @@ describe('glob results', () => {
 })
 
 describe('grep results', () => {
+  it('keeps literal labels in matched text while using compact line numbers', async () => {
+    const { ctx, subprocess } = await setup()
+    subprocess.handler = () => runResult(`${matchLine('a.ts', 7, 'Line 99: literal matched text')}\n`)
+    const result = await call(ctx, 'grep', { pattern: 'literal' })
+    expect(text(result)).toBe('Found 1 match\n\na.ts\n7: Line 99: literal matched text')
+    if (result.isError) throw new Error('expected grep success')
+    expect(result.value).toEqual({ matches: [{ path: 'a.ts', lineNumber: 7, line: 'Line 99: literal matched text' }] })
+  })
+
   it('groups matches by file with line numbers', async () => {
     const { ctx, subprocess } = await setup()
     subprocess.handler = () => runResult([
@@ -935,20 +944,20 @@ describe('grep results', () => {
         { path: 'b.ts', lineNumber: 1, line: 'const z = 3' },
       ],
     })
-    expect(text(result)).toBe('Found 3 matches\n\na.ts\nLine 3: const x = 1\nLine 9: const y = 2\n\nb.ts\nLine 1: const z = 3')
+    expect(text(result)).toBe('Found 3 matches\n\na.ts\n3: const x = 1\n9: const y = 2\n\nb.ts\n1: const z = 3')
   })
 
   it('reports a single match in the singular', async () => {
     const { ctx, subprocess } = await setup()
     subprocess.handler = () => runResult(`${matchLine('a.ts', 1, 'hit')}\n`)
-    expect(text(await call(ctx, 'grep', { pattern: 'hit' }))).toBe('Found 1 match\n\na.ts\nLine 1: hit')
+    expect(text(await call(ctx, 'grep', { pattern: 'hit' }))).toBe('Found 1 match\n\na.ts\n1: hit')
   })
 
   it('relativizes absolute match paths against the resolved workdir', async () => {
     const { ctx, subprocess } = await setup()
     subprocess.handler = () => runResult(`${matchLine('/sessions/s1/deep/a.ts', 2, 'hit')}\n`)
     const result = await call(ctx, 'grep', { pattern: 'hit', path: '/sessions/s1' }, { agent: agent('/sessions/s1') })
-    expect(text(result)).toContain(`${join('deep', 'a.ts')}\nLine 2: hit`)
+    expect(text(result)).toContain(`${join('deep', 'a.ts')}\n2: hit`)
   })
 
   it('previews a long matched line at grepMaxLineBytes preserving UTF-8', async () => {
@@ -959,14 +968,14 @@ describe('grep results', () => {
     const result = await call(ctx, 'grep', { pattern: 'a' })
     if (result.isError) throw new Error('expected grep success')
     expect(result.value).toEqual({ matches: [{ path: 'a.txt', lineNumber: 1, line: 'aéaéaéaé' }] })
-    expect(text(result)).toContain('Line 1: aéaéa (line truncated)')
+    expect(text(result)).toContain('1: aéaéa (line truncated)')
   })
 
   it('renders a non-UTF-8 line (rg bytes form) as a placeholder instead of failing', async () => {
     const { ctx, subprocess } = await setup()
     const record = JSON.stringify({ type: 'match', data: { path: { text: 'bin.dat' }, lines: { bytes: 'AAECww==' }, line_number: 4 } })
     subprocess.handler = () => runResult(`${record}\n`)
-    expect(text(await call(ctx, 'grep', { pattern: 'x' }))).toContain('Line 4: (line is not valid UTF-8)')
+    expect(text(await call(ctx, 'grep', { pattern: 'x' }))).toContain('4: (line is not valid UTF-8)')
   })
 
   it('strips a CRLF terminator from the matched line text', () => {
@@ -997,11 +1006,11 @@ describe('grep results', () => {
         { path: 'b.ts', lineNumber: 3, line: 'three' },
       ],
     })
-    expect(text(result)).toBe('Found 2 of 3 matches\n\na.ts\nLine 1: one\nLine 2: two\n\n(Full grep result stored at: /spill/grep-results.txt. Use the fake retrieval hint.)')
+    expect(text(result)).toBe('Found 2 of 3 matches\n\na.ts\n1: one\n2: two\n\n(Full grep result stored at: /spill/grep-results.txt. Use the fake retrieval hint.)')
     expect(spill?.saves[0]).toMatchObject({
       source: { toolName: 'grep', label: 'result' },
       suggestedName: 'grep-results.txt',
-      content: 'Found 3 matches\n\na.ts\nLine 1: one\nLine 2: two\n\nb.ts\nLine 3: three',
+      content: 'Found 3 matches\n\na.ts\n1: one\n2: two\n\nb.ts\n3: three',
     })
     expect(result.additionalContexts?.[0]?.content).toEqual([{ type: 'text', text: 'grep context' }])
   })
@@ -1047,7 +1056,7 @@ describe('grep results', () => {
         { path: 'b.ts', lineNumber: 2, line: 'two' },
       ],
     })
-    expect(text(result)).toBe('Found 1 of 2 matches\n\na.ts\nLine 1: one\n\n(The complete result could not be saved; narrow pattern, path, or include to see more.)')
+    expect(text(result)).toBe('Found 1 of 2 matches\n\na.ts\n1: one\n\n(The complete result could not be saved; narrow pattern, path, or include to see more.)')
     expect(spill?.saves).toHaveLength(0)
   })
 
@@ -1056,7 +1065,7 @@ describe('grep results', () => {
     subprocess.handler = () => runResult(`${matchLine('a.ts', 1, 'one')}\n${matchLine('a.ts', 2, 'two')}\n`)
     const result = await call(ctx, 'grep', { pattern: 'o' }, { agent: agent('/w') })
     expect(result.isError).toBe(false)
-    expect(text(result)).toBe('Found 1 of 2 matches\n\na.ts\nLine 1: one\n\n(The complete result could not be saved; narrow pattern, path, or include to see more.)')
+    expect(text(result)).toBe('Found 1 of 2 matches\n\na.ts\n1: one\n\n(The complete result could not be saved; narrow pattern, path, or include to see more.)')
   })
 
   it('validates arguments (empty pattern, blank path, bad include)', async () => {
@@ -1209,7 +1218,7 @@ describe('helpers', () => {
       { path: 'a.ts', lineNumber: 1, line: 'y' },
       { path: 'b.ts', lineNumber: 5, line: 'z' },
     ])
-    expect(grouped).toBe('b.ts\nLine 2: x\nLine 5: z\n\na.ts\nLine 1: y')
+    expect(grouped).toBe('b.ts\n2: x\n5: z\n\na.ts\n1: y')
   })
 })
 

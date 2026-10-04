@@ -31,6 +31,15 @@ Installed bundles and their plugin rows display their own title and description 
 
 ### Installing a bundle
 
+The **Add plugin** control has a main button and a separate arrow for choosing how to add a plugin.
+
+| Button or menu item | Result |
+| --- | --- |
+| **Add plugin** | Opens the installation dialog with focus in its package field. |
+| Arrow: **Choose how to add a plugin** | Opens the menu of installation and plugin-contributed actions. |
+| **Install a third-party plugin** | Closes the menu and opens the same dialog for a package name, Git repository, or local directory. |
+| **Let the agent create a plugin** | When [ui-agent-preset](../ui-agent-preset/README.md#use-this-package) contributes this item, closes the menu and opens Creator to author a DSH plugin. |
+
 On first use, when pnpm uses the unconfigured official npm registry and npmmirror is offered, the Host probes both registries in parallel. The first successful HTTPS ping response selects the initial source. The dialog preserves remembered choices, manual selections, explicit manager configuration, and custom or unknown pnpm registries. An install clicked during initial probing waits for that bounded operation; a late result cannot overwrite a manual choice or reopen a closed dialog.
 
 The Host sends GET requests to `https://registry.npmjs.org/-/ping` and `https://registry.npmmirror.com/-/ping` through its normal fetch proxy. A 2xx response wins; redirects and failures do not. The remaining request is cancelled, both response bodies are discarded, and cleanup completes before the result returns. The default deadline is 1500 ms and results, including unavailable results, are cached for five minutes. Configure `registryProbeTimeoutMs` and `registryProbeCacheTtlMs` on `ui-plugin-manager`; `registryProbeEnabled: false` disables probing. If both requests fail or time out, the existing default remains selected. No IP-location service or Session content is involved.
@@ -43,7 +52,7 @@ When the Host attributes a network failure or timeout to a GitHub address and of
 
 ### Switching a bundle
 
-A bundle's page shows its full package name under the title, the spec that installs it elsewhere. A bundle's switch changes its layer selection. A profile with HMR recomposes before the operation completes; one without HMR, and a bundle a higher layer overrides, say so in a toast. A bundle the Host cannot read carries a problem tag and its reason on its page and cannot be switched on; one that provides the management components stays locked. The Host answers with error codes, which the page's dictionary words; pnpm's and the Loader's own diagnostics are shown as they are. The page excludes built-in profile bundles from cards and counts even when the profile holds them as dependencies or the Host reports an error. The Host inventory remains complete; the Settings Plugins section's Plugin list tab inspects their plugins.
+A bundle's page shows its full package name under the title. Its **Source** section, after the rows, names the spec that installs it elsewhere, as `pnpm add` accepts it, or **Built in** for an official bundle the installation ships, then its current version. A bundle's switch changes its layer selection. A profile with HMR recomposes before the operation completes; one without HMR, and a bundle a higher layer overrides, say so in a toast. A bundle the Host cannot read carries a problem tag and its reason on its page and cannot be switched on; one that provides the management components stays locked. The Host answers with error codes, which the page's dictionary words; pnpm's and the Loader's own diagnostics are shown as they are. The page excludes built-in profile bundles from cards and counts even when the profile holds them as dependencies or the Host reports an error. The Host inventory remains complete; the Settings Plugins section's Plugin list tab inspects their plugins.
 
 ### Switching one row of a bundle
 
@@ -92,6 +101,8 @@ Package management uses the profile's dependency records: installed bundles can 
 The Host entry exposes `pluginRegistryProbe.fastest()` through the generated Remote interface. It shares pending comparisons, expires cached results, and aborts and awaits outstanding probes on unload. Calls after unload return a rejected Promise.
 
 The browser plugin registers the `plugins` sidebar entry and its `main` panel through `ctx.slots.inject()`, so both follow late slot declaration, locale changes and teardown. The page is global and belongs to no Session. Display text comes from package metadata and the page's dictionary.
+
+The add control reuses `Button`, `Menu`, and `MenuItemButton`. Both installation actions call the same `openInstall` callback and use `InstallDialog` and `PluginManagerController`. The root-scoped list slot `plugins.add.actions` accepts contributed `MenuItemButton` rows after the install action; each contribution receives an `onDismiss()` callback to close the menu before starting its action.
 
 ### The store
 
@@ -143,7 +154,7 @@ These limits define the reach of the management view; they are current package c
 - **Only bundles are managed** — a dependency without a bundle patch is refused before it installs; one the profile already holds is left off the page unless the profile selects it, and loading plain plugin modules stays a file operation.
 - **Rows show a phase, not a reason** — a failed row reads as failed without the Host's error text; the Host log has it.
 - **One install at a time** — the dialog runs one pnpm command; a second spec waits for the first to finish.
-- **No version picker** — the spec is typed as pnpm accepts it; the page neither lists registry versions nor offers upgrades.
+- **No version picker** — the spec is typed as pnpm accepts it; the page neither lists registry versions nor offers upgrades. Its refusals and the incompatibility reason on an installed plugin tell the person to upgrade a profile-installed plugin by uninstalling and installing it again, and that a plugin shipped with DSH upgrades with DSH.
 - **The registry choice is this browser's** — it lives in `localStorage`, so another browser applies its own initial recommendation; the `dsh plugin` command and the agent tool use the Host's configured registry.
 - **Every registry read runs pnpm** — opening the dialog, the check, and the install each ask pnpm what its own configuration names; a machine without pnpm reads it as unknown and is offered no fallback.
 

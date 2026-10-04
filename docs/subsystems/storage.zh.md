@@ -112,18 +112,29 @@ interface Domain<S extends DomainSpec> {
   table<N extends keyof S['tables'] & string>(name: N): KvTable<TableKeyOf<S, N>, TableValueOf<S, N>>
 
   /**
-   * Close this domain: reject new writes immediately, drain already-queued
-   * writes (their events still emit), release the backend unit, then free
+   * Close this domain: reject new writes and refreshes immediately, drain
+   * already-queued work (write events still emit), release the backend unit, then free
    * the domain name for a later open. Idempotent — repeated calls share one
    * teardown. The consumer owns this call (typically as its own `ctx.effect`
    * disposer); the facility closes any domain left open when it unmounts.
    * @returns resolution after the unit is released.
    */
   close(): Promise<void>
+
+  /**
+   * Reload and validate the backend snapshot on the write chain, preserving
+   * table handles and emitting no change events. A rejected load leaves live
+   * table and global values unchanged. External freshness depends on the backend.
+   * @returns resolution after the in-memory snapshot has been replaced.
+   * @throws {@link DomainError} for invalid stored data or a closing domain.
+   */
+  refresh(): Promise<void>
 }
 ```
 
 读取是同步的，来自权威的内存态：`KvTable` 暴露 `get`/`entries`/`keys`/`size`（快照迭代器，在排队写入落地期间保持稳定），global 句柄的 `get()` 在第一次 `set` 将 slot 物化到介质之前一直返回 spec 的 `initial`。每次写入——`put`、`delete`、`update`、`global.set`——都在同一条逐领域写链上排队，先在后端完成持久化，再更新内存，最后发出 `domain/changed`；后端写入被拒时内存原样不动，因此读取绝不会偏离介质。`update(key, fn)` 在其写链 slot 上是一次原子的读-改-写（键缺失时拒绝 `missing-key`）；`delete` 一个不存在的键 resolve 为 `false`，不产生写入也不产生事件。返回的记录就是存储的对象本身，不是副本——请经 `put`/`update` 整体替换，绝不要就地修改。
+
+`refresh()` 在同一写入队列上重新读取并校验后端快照，整体替换表与全局值，保持表句柄稳定且不发出 `domain/changed`。加载失败时实时状态不变；外部变更是否可见取决于后端（按记录 JSON 与 SQLite 会重新读取，整文件 JSON 返回其缓存状态）。
 
 ## 领域 facility：`ctx.storageDomain`
 

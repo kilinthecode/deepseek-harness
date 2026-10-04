@@ -16,7 +16,7 @@ DeepSeek Harness 为 agent（智能体）保存持久记忆：你是谁、你喜
 
 > 忘掉名为 prefers-pnpm 的记忆。
 
-模型用 `memory_recall` 读取快照里只显示为一行索引的记忆，或快照之后新保存的记忆。它用 `memory_write` 保存或替换一条记忆，用 `memory_forget` 删除一条记忆。
+模型用 `memory_recall` 读取快照里只显示为一行索引的记忆，或快照之后新保存的记忆。回忆将精确名称和相关短语排在关键词匹配之前，支持关键词分布在名称、描述与内容中，并可按一个作用域筛选。随附组合将完整记录限制在 8192 字节的结果预算内；还有更多匹配时，模型缩小查询或作用域。它用 `memory_write` 保存或替换一条记忆，用 `memory_forget` 删除一条记忆。
 
 模型自行决定什么值得保留。它的指令要求它保存偏好、反馈、项目事实和参考资料，绝不保存任务进度、临时状态、密钥，或仓库中已有记录的内容。
 
@@ -28,6 +28,12 @@ DeepSeek Harness 为 agent（智能体）保存持久记忆：你是谁、你喜
 
 每条记忆还有一个作用域。`global` 记忆在同一 harness home 下的每个会话中可见。`project` 记忆只在工作目录位于同一项目内的会话中可见，项目通过从工作目录向上查找第一个包含 `.git` 条目的目录来确定。不在任何项目内的会话只能读写全局记忆。
 
+## 在模型之间共享记忆
+
+模型与进程内 subagent 使用同一个存储：切换模型不会创建另一份记忆。使用同一 harness home 的独立应用进程共享记录；每次记忆访问都会刷新存储，因此 `memory_recall` 无需重启即可看到已完成的写入。共享项目事实使用项目作用域，用户偏好使用全局作用域。每个对话保留其现有快照直到压缩。
+
+临时任务进度与队友之间的消息使用实验性的 [Agent Teams 任务看板与邮箱](../../../packages/experimental/agent-team/README.zh.md)；持久记忆保存跨会话仍有用的事实。
+
 ## 查看、编辑或删除记忆
 
 每条记忆都是 harness home（`~/.dsh`，或 `DSH_HOME` 指定的目录）下的一个可读 JSON 文件：
@@ -37,11 +43,11 @@ DeepSeek Harness 为 agent（智能体）保存持久记忆：你是谁、你喜
 ~/.dsh/storages/memory/project/<slug>__<name>.json
 ```
 
-项目 `<slug>` 是项目目录名加上由其完整路径派生的八个十六进制字符。用任意编辑器编辑文件，或删除文件以忘掉该记忆。无法解析的文件会在存储打开时被移到一旁，命名为 `<name>.json.bak.<timestamp>`，其他记忆仍然可用。包含隐藏 unicode、看起来像提示词注入，或为 20 个及以上字符的带引号密钥赋值的写入会被拒绝。未通过该扫描的已存文件不会被改名为 `.bak`；快照和回忆以 `[blocked]` 显示它，而不内联正文。[存储包 README](../../../packages/memory/memory/README.zh.md) 记录了记录的各个字段。
+项目 `<slug>` 是项目目录名加上由其完整路径派生的八个十六进制字符。用任意编辑器编辑文件，或删除文件以忘掉该记忆。无法解析的文件会在存储打开或刷新时被移到一旁，命名为 `<name>.json.bak.<timestamp>`，其他记忆仍然可用。包含隐藏 unicode、看起来像提示词注入，或为 20 个及以上字符的带引号密钥赋值的写入会被拒绝。未通过该扫描的已存文件不会被改名为 `.bak`；快照和回忆以 `[blocked]` 显示它，而不内联正文。[存储包 README](../../../packages/memory/memory/README.zh.md) 记录了记录的各个字段。
 
 ## 配置或关闭
 
-存储、工具和回顾是三个组合配置项：`memory`、`tool-memory` 与 `memory-review`，其取值由随附的 [base bundle](../../../packages/bundle/base/cordis.patch.yml) 设定。存储限制每个作用域的记忆数量（`maxRecords`）和单条记忆的字节数（`maxRecordBytes`）；工具限制快照字节数（`injectMaxBytes`，随附为 8192）和单次回忆返回的记忆数（`maxRecallResults`）；回顾统计两次 fork 之间的用户类消息（`reviewEveryUserTurns`，随附为 10），并限制子会话步骤（`maxReviewSteps`，随附为 8）。生成的[配置目录](../../config-catalog.zh.md#deepseek-aidsh-memory)列出了全部字段。
+存储、工具和回顾是三个组合配置项：`memory`、`tool-memory` 与 `memory-review`，其取值由随附的 [base bundle](../../../packages/bundle/base/cordis.patch.yml) 设定。存储限制每个作用域的记忆数量（`maxRecords`）和单条记忆的字节数（`maxRecordBytes`）；工具限制快照字节数（`injectMaxBytes`，随附为 8192）和单次回忆返回的记忆数（`maxRecallResults`）及完整回忆文本（`maxRecallBytes`，随附为 8192）；回顾统计两次 fork 之间的用户类消息（`reviewEveryUserTurns`，随附为 10），并限制子会话步骤（`maxReviewSteps`，随附为 8）。生成的[配置目录](../../config-catalog.zh.md#deepseek-aidsh-memory)列出了全部字段。
 
 在用户补丁层中覆盖它们：针对单个 profile 使用 `$DSH_HOME/profiles/<name>/cordis.patch.yml`，针对所有 profile 使用 `$DSH_HOME/cordis.patch.yml`。补丁会整体替换该配置项的 `config`，因此必须写出每个必填字段。下面的写法保留工具但停止注入快照：
 
@@ -50,6 +56,7 @@ DeepSeek Harness 为 agent（智能体）保存持久记忆：你是谁、你喜
   config:
     injectMaxBytes: 0
     maxRecallResults: 8
+    maxRecallBytes: 8192
 ```
 
 下面的写法保持插件挂载但从不启动回顾：
@@ -75,8 +82,8 @@ DeepSeek Harness 为 agent（智能体）保存持久记忆：你是谁、你喜
 ## 限制
 
 - 移动或重命名项目目录会使其项目记忆成为孤儿，因为项目记忆以其根目录的完整路径作为键；请在新位置重新写入。
-- 同一 Web 宿主中的兄弟对话共享存储，但各自拍摄自己的快照；一个对话中的写入出现在兄弟对话的下一次压缩之后，或出现在新对话中。其他进程（例如长期运行的 `dsh web` 宿主旁边的一次 headless 运行）写入的记忆只有在存储重新打开（重启）后才会出现。
-- 回忆用一个不区分大小写的短语匹配记忆的名称、描述和内容；没有排序打分或语义搜索。
+- 进程间共享提供刷新的读取，而非跨写入者事务：同时写入新名称可能超出作用域上限；同时写入同一名称时以最后一次完整发布为准。
+- 回忆使用确定性的短语与关键词匹配；不支持同义词、embedding 或语义搜索。
 - 记忆工具的调用在 Web UI 中显示为通用工具行；目前还没有记忆面板。回顾子会话是带 `memory-review` 标签的普通 subagent 行。
 
 通过 MCP 连接的第三方记忆服务器是另一条默认关闭的路径，见[连接第三方记忆 MCP 服务](mcp-memory.zh.md)；两者可以同时启用。

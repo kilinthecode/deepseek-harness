@@ -9,7 +9,7 @@ import { chromium } from 'playwright'
 import { FiberState } from '@deepseek-ai/cordis'
 import { OPTIONAL_BUNDLES } from '@deepseek-ai/dsh-app-boot'
 import { createUserMessage } from '@deepseek-ai/dsh-llm'
-import { afterAll, beforeAll, describe, expect, it, onTestFailed } from 'vitest'
+import { afterAll, beforeAll, describe, expect, it, onTestFailed, onTestFinished, vi } from 'vitest'
 import { join } from 'node:path'
 import {
   SCAFFOLD_DEFAULTS_BUNDLE, assertFixtureInventory, captureStableAria, compareOrRefreshGolden,
@@ -146,9 +146,11 @@ describe('web e2e: plugin manager', () => {
     expect(tripwire.pageErrors).toEqual([])
   }, 60_000)
 
-  it('decodes manifest icons for disabled bundles and independent plugin rows', async () => {
+  it('prefers manifest icons for packages and reads exported icons for subpath plugins', async () => {
     const panel = await openPluginsPanel()
+    onTestFinished(closeSettings)
     const fixtureIcon = `data:image/svg+xml;base64,${(await readFile(join(FIXTURE_PLUGINS, 'fixture-bundle/icon.svg'))).toString('base64')}`
+    const fallbackIcon = `data:image/svg+xml;base64,${(await readFile(join(FIXTURE_PLUGINS, 'fixture-bundle/fallback-icon.svg'))).toString('base64')}`
     const teamIcon = `data:image/svg+xml;base64,${(await readFile(fileURLToPath(new URL('../../../packages/experimental/agent-team-profile/icon.svg', import.meta.url)))).toString('base64')}`
     const images: string[] = []
     const checkImage = async (selector: string, source: string, label: string) => {
@@ -184,13 +186,17 @@ describe('web e2e: plugin manager', () => {
     await panel.getByRole('button', { name: '返回插件列表' }).click()
     await panel.getByRole('button', { name: '查看 @fixture/bundle', exact: true }).click()
     await checkImage('[data-plugin-detail]', fixtureIcon, 'Third-party bundle detail')
-    await checkImage('[data-plugin-row="fixture-search"]', fixtureIcon, 'Independent search row')
+    await checkImage('[data-plugin-row="fixture-search"]', fallbackIcon, 'Independent search row')
+    expect(await panel.locator('[data-plugin-row="fixture-review"] img').count()).toBe(0)
+    expect(await panel.locator('[data-plugin-row="fixture-review"] svg').count()).toBeGreaterThan(0)
+    images.push('Independent review row: generic artwork')
     await compareOrRefreshGolden(join(SNAPSHOT_DIR, 'icons.expected.md'), images.join('\n'), MODE)
     await panel.getByRole('button', { name: '返回插件列表' }).click()
     expect(tripwire.pageErrors).toEqual([])
   })
 
   it('localizes independent exports and falls back per field without activating the plugins', async () => {
+    onTestFinished(closeSettings)
     onTestFailed(() => saveFailureShot(page, 'web-e2e-plugin-manager-exports'))
     const panel = await openPluginsPanel()
     await panel.getByRole('button', { name: '查看 @fixture/bundle' }).click()
@@ -207,19 +213,19 @@ describe('web e2e: plugin manager', () => {
       await setLanguage('en')
       await search.getByText('File Search', { exact: true }).waitFor()
       expect(await review.getByText('@fixture/bundle/review', { exact: true }).count()).toBeGreaterThan(0)
-      expect(await search.getByText('Search package introduction.', { exact: true }).count()).toBe(1)
+      expect(await search.getByText('Search package introduction.', { exact: true }).count()).toBe(0)
       expect(await review.getByText('审查工作区中的改动。', { exact: true }).count()).toBe(0)
       await compareOrRefreshGolden(EXPORTS_EN_EXPECTED, await captureStableAria(page, '[data-plugin-panel]', scaffold.workspaceCwd), MODE)
       expect(await panel.locator('[data-plugin-name]').textContent()).toBe('@fixture/bundle')
     } finally {
       await setLanguage('zh')
-      await closeSettings()
     }
     await panel.getByRole('button', { name: '返回插件列表' }).click()
     expect(tripwire.pageErrors).toEqual([])
   })
 
   it('updates built-in names and descriptions when the UI language changes', async () => {
+    onTestFinished(closeSettings)
     onTestFailed(() => saveFailureShot(page, 'web-e2e-plugin-manager-locale'))
     const panel = await openPluginsPanel()
     await panel.getByRole('button', { name: '查看 智能体团队', exact: true }).click()
@@ -245,7 +251,6 @@ describe('web e2e: plugin manager', () => {
       }
     } finally {
       await setLanguage('zh')
-      await closeSettings()
     }
     await panel.getByRole('button', { name: '查看 智能体团队', exact: true }).waitFor()
     expect(tripwire.pageErrors).toEqual([])
@@ -310,6 +315,156 @@ describe('web e2e: plugin manager', () => {
       await teamPage.close()
     }
     expect(tripwire.pageErrors).toEqual([])
+  }, 60_000)
+
+  it('mounts the delivered Automation tasks rows without a bundle switch', async () => {
+    onTestFailed(() => saveFailureShot(page, 'web-e2e-plugin-manager-schedule'))
+    const panel = await openPluginsPanel()
+    const scheduleRows = () => [...scaffold.ctx.loader.entries()]
+      .filter(entry => ['schedule', 'ui-schedule'].includes(entry.options.id))
+    // The delivered Web composition ships both rows enabled, so no bundle card
+    // offers a switch for them.
+    expect(scheduleRows()).toHaveLength(2)
+    expect(scheduleRows().every(entry => entry.fiber?.state === FiberState.ACTIVE)).toBe(true)
+    expect(await panel.getByRole('button', { name: '查看 自动化任务', exact: true }).count()).toBe(0)
+    expect(await panel.getByRole('switch', { name: '启用 自动化任务', exact: true }).count()).toBe(0)
+    await page.getByRole('navigation', { name: '全局面板' }).getByRole('button', { name: '自动化任务', exact: true }).waitFor()
+    expect(tripwire.pageErrors).toEqual([])
+  }, 60_000)
+
+  it('keeps IME confirmation Enter in install fields and submits only a plain Enter', async () => {
+    const context = await browser.newContext({ viewport: { width: 1680, height: 1000 }, locale: ZH_BROWSER_LOCALE })
+    const manager = scaffold.ctx.pluginManager
+    const manifest = await homeFile('profiles', 'scaffold', 'package.json')
+    const registrySpy = vi.spyOn(manager, 'registries').mockResolvedValue({
+      registry: null, fallbackRegistries: [], resolved: 'https://registry.npmjs.org/',
+    })
+    const inspectSpy = vi.spyOn(manager, 'inspect').mockImplementation(async (spec, options) => ({
+      status: 'accepted', kind: 'registry', name: spec, version: '1.0.0', bundle: true, registry: options?.registry ?? null,
+    }))
+    const installSpy = vi.spyOn(manager, 'installBundle').mockImplementation(async spec => ({
+      changed: false, application: 'failed', stage: 'install', target: spec,
+      error: { code: 'operation-error', diagnostic: 'IME fixture: no package was installed' },
+    }))
+    try {
+      const probe = await context.newPage()
+      const consoleWatch = watchConsole(probe)
+      onTestFailed(() => saveFailureShot(probe, 'web-e2e-plugin-manager-ime-enter'))
+      await probe.clock.install()
+      await probe.goto(scaffold.authenticatedUrl, { waitUntil: 'load' })
+      await probe.getByRole('navigation', { name: '全局面板' }).getByRole('button', { name: '插件', exact: true }).click()
+      const panel = probe.locator('[data-plugin-panel]')
+      await panel.getByRole('button', { name: '查看 @fixture/bundle', exact: true }).waitFor({ timeout: 20_000 })
+      const trace: string[] = ['Synthetic browser KeyboardEvents, not an OS input-method test.']
+      for (const target of ['package', 'custom registry'] as const) {
+        inspectSpy.mockClear()
+        installSpy.mockClear()
+        await panel.getByRole('button', { name: '添加插件', exact: true }).click()
+        const dialog = probe.getByRole('dialog', { name: '添加插件', exact: true })
+        await dialog.waitFor({ timeout: 10_000 })
+        const spec = target === 'package' ? 'ime-confirm-package' : 'ime-confirm-registry'
+        const specField = dialog.getByRole('textbox', { name: '包名或地址', exact: true })
+        await specField.fill(spec)
+        let field = specField
+        const customRegistry = 'https://registry.example.test/'
+        if (target === 'custom registry') {
+          const registryToggle = dialog.getByRole('button', { name: /^安装源/ })
+          await registryToggle.click()
+          const registry = probe.locator('[data-install-registry]')
+          const offered = registry.getByRole('radio', { name: 'npm 官方源 registry.npmjs.org', exact: true })
+          const custom = registry.getByRole('radio', { name: '自定义地址', exact: true })
+          field = registry.getByRole('textbox', { name: '自定义地址', exact: true })
+          expect(await offered.isChecked()).toBe(true)
+          expect(await custom.isChecked()).toBe(false)
+          await offered.focus()
+          await probe.keyboard.press('Tab')
+          expect(await field.evaluate(element => element === document.activeElement)).toBe(true)
+          expect(await offered.isChecked()).toBe(true)
+          expect(await custom.isChecked()).toBe(false)
+          await probe.keyboard.press('Shift+Tab')
+          expect(await offered.evaluate(element => element === document.activeElement)).toBe(true)
+          await probe.keyboard.press('Shift+Tab')
+          await registry.waitFor({ state: 'detached' })
+          expect(await registryToggle.evaluate(element => element === document.activeElement)).toBe(true)
+          await probe.keyboard.press('Enter')
+          await custom.focus()
+          await probe.keyboard.press('Space')
+          expect(await custom.isChecked()).toBe(true)
+          expect(await offered.isChecked()).toBe(false)
+          expect(await field.evaluate(element => element === document.activeElement)).toBe(true)
+          await field.fill(customRegistry)
+          await probe.keyboard.press('Shift+Tab')
+          expect(await custom.evaluate(element => element === document.activeElement)).toBe(true)
+          await probe.keyboard.press('Tab')
+          expect(await field.evaluate(element => element === document.activeElement)).toBe(true)
+          await probe.keyboard.press('Tab')
+          await registry.waitFor({ state: 'detached' })
+          expect(await registryToggle.evaluate(element => element === document.activeElement)).toBe(true)
+          await probe.keyboard.press('Enter')
+          await custom.focus()
+          await probe.keyboard.press('Tab')
+          expect(await field.evaluate(element => element === document.activeElement)).toBe(true)
+          expect(await custom.isChecked()).toBe(true)
+        }
+        const value = target === 'package' ? spec : customRegistry
+        const assertUnsubmitted = async (label: string) => {
+          expect(await field.inputValue()).toBe(value)
+          expect(await field.isEditable()).toBe(true)
+          expect(await dialog.getByRole('button', { name: '安装', exact: true }).isEnabled()).toBe(true)
+          expect(inspectSpy).not.toHaveBeenCalled()
+          expect(installSpy).not.toHaveBeenCalled()
+          trace.push(`${target} / ${label}: inspect=0, install=0; editable; value retained`, await field.ariaSnapshot())
+        }
+        await probe.clock.pauseAt(await probe.evaluate(() => Date.now() + 1000))
+        try {
+          for (const event of [
+            { label: 'isComposing=true', isComposing: true, keyCode: 13 },
+            { label: 'Safari isComposing=false, keyCode=229', isComposing: false, keyCode: 229 },
+          ]) {
+            await field.dispatchEvent('keydown', {
+              key: 'Enter', code: 'Enter', bubbles: true, cancelable: true,
+              isComposing: event.isComposing, keyCode: event.keyCode,
+            })
+            await assertUnsubmitted(event.label)
+          }
+          const unmarkedEnter = { key: 'Enter', code: 'Enter', bubbles: true, cancelable: true, isComposing: false, keyCode: 13 }
+          await field.dispatchEvent('compositionstart')
+          await field.dispatchEvent('keydown', unmarkedEnter)
+          await assertUnsubmitted('compositionstart + unmarked Enter')
+          await field.dispatchEvent('compositionend')
+          await field.dispatchEvent('keydown', unmarkedEnter)
+          await assertUnsubmitted('compositionend + immediate unmarked Enter')
+          await probe.clock.runFor(9)
+          await field.dispatchEvent('keydown', unmarkedEnter)
+          await assertUnsubmitted('compositionend + 9ms unmarked Enter')
+          await probe.clock.runFor(2)
+        } finally {
+          await probe.clock.resume()
+        }
+        await field.press('Enter')
+        await expect.poll(() => inspectSpy.mock.calls.length, { timeout: 10_000 }).toBe(1)
+        await expect.poll(() => installSpy.mock.calls.length, { timeout: 10_000 }).toBe(1)
+        expect(inspectSpy.mock.calls[0]?.[0]).toBe(spec)
+        expect(installSpy.mock.calls[0]?.[0]).toBe(spec)
+        expect(installSpy.mock.calls[0]?.[1]).toMatchObject({ enabled: false, registry: target === 'package' ? null : customRegistry })
+        const failed = probe.getByRole('dialog', { name: '插件安装失败', exact: true })
+        await failed.waitFor({ timeout: 10_000 })
+        trace.push(`${target} / plain Enter: inspect=1, install=1`, await failed.ariaSnapshot())
+        await failed.getByRole('button', { name: '关闭', exact: true }).click()
+        await failed.waitFor({ state: 'hidden', timeout: 10_000 })
+      }
+      expect(await homeFile('profiles', 'scaffold', 'package.json')).toBe(manifest)
+      expect(consoleWatch.pageErrors).toEqual([])
+      trace.push('Profile manifest unchanged; controlled Host result performed no package installation.')
+      await compareOrRefreshGolden(join(SNAPSHOT_DIR, 'ime-enter.expected.md'), trace.join('\n'), MODE)
+    } finally {
+      try { await context.close() }
+      finally {
+        registrySpy.mockRestore()
+        inspectSpy.mockRestore()
+        installSpy.mockRestore()
+      }
+    }
   }, 60_000)
 
   it('checks a spec before installing it and words what the check refused', async () => {

@@ -24,14 +24,14 @@
   en: ccff8041c00fdd3f
   zh: 343e94e000d0d904
 /deepseek-ai-dsh-memory/use-this-package/where-memories-live:
-  en: 629a5787503a96aa
-  zh: 66217c49b4cd6bfd
+  en: 49733672412cf469
+  zh: 2494a417e24f01ce
 /deepseek-ai-dsh-memory/use-this-package/scopes-and-the-project-root:
   en: c51d13a9406a8695
   zh: 8cf8eda530dc2fb2
 /deepseek-ai-dsh-memory/use-this-package/what-each-operation-does:
-  en: 60aa0a3032761864
-  zh: d2976bb141dc0f47
+  en: 27d727035fc57b59
+  zh: c90b42d8c1fe6619
 /deepseek-ai-dsh-memory/use-this-package/write-time-scan:
   en: fa302dd707436afa
   zh: e00d5a7ec04644be
@@ -45,11 +45,11 @@
   en: d01ae4d7e3edfacf
   zh: 7b5adb5e91f00952
 /deepseek-ai-dsh-memory/understand-the-implementation/lifecycle:
-  en: 67f38b6cc955aee5
-  zh: e4586f655dd7673b
+  en: 44149b5840751069
+  zh: ce13b2fb4e13ac20
 /deepseek-ai-dsh-memory/understand-the-implementation/concurrency:
-  en: c9d1f9a2e97a5681
-  zh: 0c8db10f2b3a5988
+  en: 867f3a8dddc46514
+  zh: 6622b3c31fad0fd1
 /deepseek-ai-dsh-memory/understand-the-implementation/no-invariant-companion:
   en: 9c6b2ceda64a3f4d
   zh: d11d4c3ea90e9a18
@@ -63,8 +63,8 @@
   en: 40294c1c31b74824
   zh: 63e2ea2570cc4605
 /deepseek-ai-dsh-memory/known-limitations-and-deferred-work:
-  en: 397fbd0392230bf8
-  zh: 5cc3bae45f8f5032
+  en: 0599d6deb6e73fde
+  zh: 2f40b0a723e92f2d
 /deepseek-ai-dsh-memory/known-limitations-and-deferred-work/dev-note:
   en: ac1d08360a93382b
   zh: 5202abd09f7b6e99

@@ -261,6 +261,98 @@
       }
     },
     {
+      "name": "memory_forget",
+      "description": "Delete one saved memory by name and scope.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": "string",
+            "description": "Name of the memory to delete."
+          },
+          "scope": {
+            "type": "string",
+            "description": "Scope the memory lives in.",
+            "enum": [
+              "global",
+              "project"
+            ]
+          }
+        },
+        "required": [
+          "name",
+          "scope"
+        ]
+      }
+    },
+    {
+      "name": "memory_recall",
+      "description": "Read shared memories from the live store. Narrow query or scope for more matches.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "query": {
+            "type": "string",
+            "description": "Case-insensitive phrase or whitespace-separated keywords in name, description, and content. Omit for newest memories."
+          },
+          "scope": {
+            "type": "string",
+            "description": "Restrict results to global or project memories.",
+            "enum": [
+              "global",
+              "project"
+            ]
+          }
+        }
+      }
+    },
+    {
+      "name": "memory_write",
+      "description": "Save one durable memory for future sessions.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": "string",
+            "description": "Stable lowercase kebab-case identifier (1 to 64 characters), e.g. \"prefers-pnpm\". Writing an existing name in the same scope replaces that memory."
+          },
+          "type": {
+            "type": "string",
+            "description": "user (who the user is and how they like to work) | feedback (feedback or corrections on how to do the work) | project (a durable fact or constraint about the current project) | reference (a pointer to an external resource such as a URL, ticket, or dashboard).",
+            "enum": [
+              "user",
+              "feedback",
+              "project",
+              "reference"
+            ]
+          },
+          "scope": {
+            "type": "string",
+            "description": "project for facts about the current repository (visible in sessions inside its project root) | global for everything else (visible in every session).",
+            "enum": [
+              "global",
+              "project"
+            ]
+          },
+          "description": {
+            "type": "string",
+            "description": "One line (no line breaks, at most 256 characters) shown in the memory snapshot; make it specific enough to decide whether to recall the memory."
+          },
+          "content": {
+            "type": "string",
+            "description": "A declarative fact that remains true in every future session: the fact, why it matters, and how to apply it. Not a command."
+          }
+        },
+        "required": [
+          "name",
+          "type",
+          "scope",
+          "description",
+          "content"
+        ]
+      }
+    },
+    {
       "name": "read",
       "description": "Read a UTF-8 text file and return line-numbered content.",
       "parameters": {
@@ -276,7 +368,7 @@
           },
           "limit": {
             "type": "number",
-            "description": "Maximum number of lines to return. Defaults to 2000."
+            "description": "Maximum number of lines to return. Defaults to 500. Maximum: 2000."
           }
         },
         "required": [
@@ -313,6 +405,13 @@
           "message": {
             "type": "string",
             "description": "The message to deliver to the agent."
+          },
+          "images": {
+            "type": "array",
+            "description": "Attachment ids of images already shown in this conversation, appended to the message.",
+            "items": {
+              "type": "string"
+            }
           }
         },
         "required": [
@@ -351,6 +450,13 @@
             "type": "string",
             "description": "The complete, self-contained task for the subagent. It does not share this conversation's context, so include everything it needs."
           },
+          "images": {
+            "type": "array",
+            "description": "Attachment ids of images already shown in this conversation, appended to the prompt.",
+            "items": {
+              "type": "string"
+            }
+          },
           "run_in_background": {
             "type": "boolean",
             "description": "Defaults to true. Set false only when your next action depends on the result."
@@ -375,6 +481,13 @@
           "prompt": {
             "type": "string",
             "description": "The task for the subagent. It already sees this conversation's completed turns, so build on them freely and state only what is new."
+          },
+          "images": {
+            "type": "array",
+            "description": "Attachment ids of images already shown in this conversation, appended to the prompt.",
+            "items": {
+              "type": "string"
+            }
           }
         },
         "required": [
@@ -877,6 +990,98 @@
         }
       },
       {
+        "name": "memory_forget",
+        "description": "Delete one saved memory by name and scope.",
+        "parameters": {
+          "type": "object",
+          "properties": {
+            "name": {
+              "type": "string",
+              "description": "Name of the memory to delete."
+            },
+            "scope": {
+              "type": "string",
+              "description": "Scope the memory lives in.",
+              "enum": [
+                "global",
+                "project"
+              ]
+            }
+          },
+          "required": [
+            "name",
+            "scope"
+          ]
+        }
+      },
+      {
+        "name": "memory_recall",
+        "description": "Read shared memories from the live store. Narrow query or scope for more matches.",
+        "parameters": {
+          "type": "object",
+          "properties": {
+            "query": {
+              "type": "string",
+              "description": "Case-insensitive phrase or whitespace-separated keywords in name, description, and content. Omit for newest memories."
+            },
+            "scope": {
+              "type": "string",
+              "description": "Restrict results to global or project memories.",
+              "enum": [
+                "global",
+                "project"
+              ]
+            }
+          }
+        }
+      },
+      {
+        "name": "memory_write",
+        "description": "Save one durable memory for future sessions.",
+        "parameters": {
+          "type": "object",
+          "properties": {
+            "name": {
+              "type": "string",
+              "description": "Stable lowercase kebab-case identifier (1 to 64 characters), e.g. \"prefers-pnpm\". Writing an existing name in the same scope replaces that memory."
+            },
+            "type": {
+              "type": "string",
+              "description": "user (who the user is and how they like to work) | feedback (feedback or corrections on how to do the work) | project (a durable fact or constraint about the current project) | reference (a pointer to an external resource such as a URL, ticket, or dashboard).",
+              "enum": [
+                "user",
+                "feedback",
+                "project",
+                "reference"
+              ]
+            },
+            "scope": {
+              "type": "string",
+              "description": "project for facts about the current repository (visible in sessions inside its project root) | global for everything else (visible in every session).",
+              "enum": [
+                "global",
+                "project"
+              ]
+            },
+            "description": {
+              "type": "string",
+              "description": "One line (no line breaks, at most 256 characters) shown in the memory snapshot; make it specific enough to decide whether to recall the memory."
+            },
+            "content": {
+              "type": "string",
+              "description": "A declarative fact that remains true in every future session: the fact, why it matters, and how to apply it. Not a command."
+            }
+          },
+          "required": [
+            "name",
+            "type",
+            "scope",
+            "description",
+            "content"
+          ]
+        }
+      },
+      {
         "name": "read",
         "description": "Read a UTF-8 text file and return line-numbered content.",
         "parameters": {
@@ -892,7 +1097,7 @@
             },
             "limit": {
               "type": "number",
-              "description": "Maximum number of lines to return. Defaults to 2000."
+              "description": "Maximum number of lines to return. Defaults to 500. Maximum: 2000."
             }
           },
           "required": [
@@ -929,6 +1134,13 @@
             "message": {
               "type": "string",
               "description": "The message to deliver to the agent."
+            },
+            "images": {
+              "type": "array",
+              "description": "Attachment ids of images already shown in this conversation, appended to the message.",
+              "items": {
+                "type": "string"
+              }
             }
           },
           "required": [
@@ -967,6 +1179,13 @@
               "type": "string",
               "description": "The complete, self-contained task for the subagent. It does not share this conversation's context, so include everything it needs."
             },
+            "images": {
+              "type": "array",
+              "description": "Attachment ids of images already shown in this conversation, appended to the prompt.",
+              "items": {
+                "type": "string"
+              }
+            },
             "run_in_background": {
               "type": "boolean",
               "description": "Defaults to true. Set false only when your next action depends on the result."
@@ -991,6 +1210,13 @@
             "prompt": {
               "type": "string",
               "description": "The task for the subagent. It already sees this conversation's completed turns, so build on them freely and state only what is new."
+            },
+            "images": {
+              "type": "array",
+              "description": "Attachment ids of images already shown in this conversation, appended to the prompt.",
+              "items": {
+                "type": "string"
+              }
             }
           },
           "required": [

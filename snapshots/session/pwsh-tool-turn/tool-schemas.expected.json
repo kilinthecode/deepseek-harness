@@ -214,13 +214,21 @@
     },
     {
       "name": "memory_recall",
-      "description": "Read saved global memories and the current project's memories from the live store, including memories saved after the snapshot. Use it for snapshot entries shown only as an index line; inlined snapshot entries need no recall.",
+      "description": "Read shared memories from the live store. Narrow query or scope for more matches.",
       "parameters": {
         "type": "object",
         "properties": {
           "query": {
             "type": "string",
-            "description": "Case-insensitive substring matched against name, description, and content. Omit to list the newest memories."
+            "description": "Case-insensitive phrase or whitespace-separated keywords in name, description, and content. Omit for newest memories."
+          },
+          "scope": {
+            "type": "string",
+            "description": "Restrict results to global or project memories.",
+            "enum": [
+              "global",
+              "project"
+            ]
           }
         }
       }
@@ -332,7 +340,7 @@
           },
           "limit": {
             "type": "number",
-            "description": "Maximum number of lines to return. Defaults to 2000."
+            "description": "Maximum number of lines to return. Defaults to 500. Maximum: 2000."
           }
         },
         "required": [

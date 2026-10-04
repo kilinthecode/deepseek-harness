@@ -111,13 +111,13 @@ describe('search tools over the real subprocess service + the packaged rg', () =
       expect(result.isError).toBe(false)
       const output = text(result)
       expect(output).toContain('Found 3 matches')
-      expect(output).toContain(`${join('src', 'alpha.ts')}\nLine 1: export const alpha = 1\nLine 2: // TODO: refit alpha`)
-      expect(output).toContain('notes.md\nLine 1: alpha appears here too')
+      expect(output).toContain(`${join('src', 'alpha.ts')}\n1: export const alpha = 1\n2: // TODO: refit alpha`)
+      expect(output).toContain('notes.md\n1: alpha appears here too')
     })
 
     it('greps a single FILE target', async () => {
       const result = await call('grep', { pattern: 'alpha', path: 'notes.md' }, agent())
-      expect(text(result)).toBe('Found 1 match\n\nnotes.md\nLine 1: alpha appears here too')
+      expect(text(result)).toBe('Found 1 match\n\nnotes.md\n1: alpha appears here too')
     })
 
     it('greps a directory target with an include filter', async () => {
@@ -143,7 +143,7 @@ describe('search tools over the real subprocess service + the packaged rg', () =
     it('a leading-dash pattern is a pattern, not a flag', async () => {
       await writeFile(join(dir, 'dashes.txt'), 'value --flag value\n')
       const result = await call('grep', { pattern: '--flag', path: 'dashes.txt' }, agent())
-      expect(text(result)).toBe('Found 1 match\n\ndashes.txt\nLine 1: value --flag value')
+      expect(text(result)).toBe('Found 1 match\n\ndashes.txt\n1: value --flag value')
     })
 
     it('classifies a real rg regex error as SEARCH_INVALID_PATTERN', async () => {
@@ -168,7 +168,7 @@ describe('search tools over the real subprocess service + the packaged rg', () =
         const globbed = await call('glob', { pattern: '*.ts' }, agentObj)
         expect(text(globbed)).toBe('only-here.ts')
         const grepped = await call('grep', { pattern: 'sessionFile' }, agentObj)
-        expect(text(grepped)).toContain('only-here.ts\nLine 1: const sessionFile = true')
+        expect(text(grepped)).toContain('only-here.ts\n1: const sessionFile = true')
       } finally {
         await rm(sessionDir, { recursive: true, force: true })
       }

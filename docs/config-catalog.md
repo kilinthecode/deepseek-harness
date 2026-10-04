@@ -184,7 +184,7 @@ export interface Config {
 ## `@deepseek-ai/dsh-api-gateway`
 
 - `inject`: `typert`
-- `source`: [`packages/api/gateway/src/index.ts:145`](../packages/api/gateway/src/index.ts)
+- `source`: [`packages/api/gateway/src/index.ts:146`](../packages/api/gateway/src/index.ts)
 
 ```ts config-catalog
 /** Gateway transport configuration. */
@@ -229,6 +229,8 @@ export interface Config {
 export interface Config {
   /** Override platform desktop-opener detection. */
   readonly nativeOpen?: boolean
+  /** Positive integral milliseconds of list work before yielding between complete rows. */
+  readonly listWorkSliceMs?: number
 }
 ```
 <!-- END GENERATED config-catalog:@deepseek-ai/dsh-api-session-controller -->
@@ -746,6 +748,8 @@ export interface ToolResultPruneConfig {
 export interface Config {
   /** Maximum synchronous VM evaluation time in milliseconds. */
   vmTimeoutMs?: number
+  /** Maximum wait for a valid Client inspect response in milliseconds. */
+  clientInspectTimeoutMs?: number
 }
 ```
 <!-- END GENERATED config-catalog:@deepseek-ai/dsh-cordis-host-runner -->
@@ -1346,7 +1350,7 @@ export interface Config {
 ## `@deepseek-ai/dsh-hmr`
 
 - `refs`: `ChokidarOptions` (`chokidar`)
-- `source`: [`packages/boot/hmr/src/index.ts:51`](../packages/boot/hmr/src/index.ts)
+- `source`: [`packages/boot/hmr/src/index.ts:53`](../packages/boot/hmr/src/index.ts)
 
 ```ts config-catalog
 /** Module roots and watcher timing, with Chokidar deployment options. */
@@ -1554,6 +1558,48 @@ export interface Config {
 }
 ```
 <!-- END GENERATED config-catalog:@deepseek-ai/dsh-host-webserver -->
+
+<!-- BEGIN GENERATED config-catalog:@deepseek-ai/dsh-image-generation-http -->
+<a id="deepseek-aidsh-image-generation-http"></a>
+
+## `@deepseek-ai/dsh-image-generation-http`
+
+- `source`: [`packages/llm/image-generation-http/src/config.ts:30`](../packages/llm/image-generation-http/src/config.ts)
+
+```ts config-catalog
+/** HTTP image-generation configuration; an empty provider dictionary is dormant. */
+export interface Config {
+  /** Named image routes with explicit model lists; an empty dictionary is dormant. */
+  providers?: Record<string, ImageApiProfile>
+  /** Whole-request deadline in milliseconds, including response body reads. Default 300000. */
+  timeoutMs?: number
+  /** Limit on complete encoded response bytes, including JSON and base64. Default 33554432. */
+  maxResponseBytes?: number
+}
+
+/** One explicitly configured image-generation route. */
+export interface ImageApiProfile {
+  /** Image endpoint protocol; image-input capability never selects this value. */
+  api: ImageGenerationApi
+  /** API root, including its version segment; operation paths are appended. */
+  baseURL: string
+  /** Credential reference resolved through the credential service or launch environment. */
+  apiKeyEnv?: string
+  /** Deployment headers; credentials belong in `apiKeyEnv`. */
+  headers?: Record<string, string>
+  /** Explicit image model allowlist. At least one entry is required. */
+  models: {
+    /** Exact model id supported by this image endpoint. */
+    id: string
+    /** Display name; omission uses the model id. */
+    name?: string
+  }[]
+}
+
+/** Image wire protocols implemented by this provider. */
+export type ImageGenerationApi = 'openai-images' | 'openrouter-images' | 'google-generate-content'
+```
+<!-- END GENERATED config-catalog:@deepseek-ai/dsh-image-generation-http -->
 
 <!-- BEGIN GENERATED config-catalog:@deepseek-ai/dsh-invariants -->
 <a id="deepseek-aidsh-invariants"></a>
@@ -2142,7 +2188,8 @@ export interface Config {
   /**
    * Cap on records in the global scope and, separately, in each project. A
    * write that would exceed it fails so the agent curates with `forget`. The
-   * count covers the records this process has loaded or written.
+   * count covers the refreshed snapshot; simultaneous writes by another
+   * process are outside this process's serialized capacity check.
    */
   maxRecords: number
   /**
@@ -2593,8 +2640,8 @@ export interface Config {
 
 ## `@deepseek-ai/dsh-schedule`
 
-- `inject`: `agents` · `sessions` · `tools` · `storageDomain` · `sessionController` · `sessionPersistence`
-- `source`: [`packages/schedule/schedule/src/index.ts:73`](../packages/schedule/schedule/src/index.ts)
+- `inject`: `agents` · `sessions` · `storageDomain` · `sessionController` · `sessionPersistence`
+- `source`: [`packages/schedule/schedule/src/index.ts:72`](../packages/schedule/schedule/src/index.ts)
 
 ```ts config-catalog
 /** Configuration for the Host Schedule domain. */
@@ -3098,7 +3145,7 @@ export interface Config {
 ## `@deepseek-ai/dsh-storage-domain`
 
 - `inject`: `storage`
-- `source`: [`packages/storage/storage-domain/src/index.ts:52`](../packages/storage/storage-domain/src/index.ts)
+- `source`: [`packages/storage/storage-domain/src/index.ts:53`](../packages/storage/storage-domain/src/index.ts)
 
 ```ts config-catalog
 /**
@@ -3487,6 +3534,15 @@ export interface Config {
    * regain the foreground before `inferred_idle` settles; at least one `pollIntervalMs`.
    */
   handoffGraceMs?: number
+  /**
+   * Extra wait beyond `idleSilenceMs` and `handoffGraceMs`, once a prompt marker was seen but
+   * its printable tail has not arrived, before `inferred_idle` settles. The marker is written
+   * by the shell's own prompt function and the tail by the same render, so a missing tail is a
+   * delivery delay on a contended host rather than an absent prompt. Zero keeps the bound at
+   * `idleSilenceMs + handoffGraceMs`; any other value covers at least one `pollIntervalMs`, so a
+   * nonzero tolerance always contains a readiness poll.
+   */
+  promptTailGraceMs?: number
   /** Absolute bound for one send and the complete pwsh startup sequence. */
   timeoutMs?: number
   /** Grace before teardown escalates to `SIGKILL`. */
@@ -3547,6 +3603,25 @@ export interface Config {
 export type TokenMeterConfig = Record<string, never>
 ```
 <!-- END GENERATED config-catalog:@deepseek-ai/dsh-token-meter -->
+
+<!-- BEGIN GENERATED config-catalog:@deepseek-ai/dsh-tool-ask-user -->
+<a id="deepseek-aidsh-tool-ask-user"></a>
+
+## `@deepseek-ai/dsh-tool-ask-user`
+
+- `inject`: `tools` · `userQuestions`
+- `source`: [`packages/interaction/tool-ask-user/src/index.ts:16`](../packages/interaction/tool-ask-user/src/index.ts)
+
+```ts config-catalog
+/** Cordis row selecting the tool schema and its default foreground wait. */
+export interface Config {
+  /** Tool definition selected by this Cordis row. Defaults to the blocking legacy tool. */
+  mode?: 'legacy' | 'timed'
+  /** Foreground wait before automatic continuation. Defaults to 120 seconds. */
+  timeout?: number
+}
+```
+<!-- END GENERATED config-catalog:@deepseek-ai/dsh-tool-ask-user -->
 
 <!-- BEGIN GENERATED config-catalog:@deepseek-ai/dsh-tool-bash -->
 <a id="deepseek-aidsh-tool-bash"></a>
@@ -3614,7 +3689,10 @@ export interface Config {
 export interface Config {
   /** Maximum number of lines returned by one `read` call. */
   readLimit?: number
-  /** Lines returned when `read` omits `limit`; defaults to `readLimit` and must not exceed it. */
+  /**
+   * Lines returned when `read` omits `limit`; defaults to the smaller of 500 and `readLimit`.
+   * An explicit value must not exceed `readLimit`.
+   */
   readDefaultLimit?: number
   /** Maximum characters returned for a single line before truncation. */
   readMaxLineLength?: number
@@ -3757,6 +3835,12 @@ export interface Config {
   injectMaxBytes: number
   /** Most records one `memory_recall` call returns. */
   maxRecallResults: number
+  /**
+   * UTF-8 byte cap for complete `memory_recall` text, including separators and
+   * the omission hint. Must fit one `ctx.memory.maxRecordBytes` body with the
+   * largest name, type, scope, and description; smaller values fail plugin load.
+   */
+  maxRecallBytes: number
 }
 ```
 <!-- END GENERATED config-catalog:@deepseek-ai/dsh-tool-memory -->
@@ -3814,7 +3898,7 @@ export interface Config {
 ## `@deepseek-ai/dsh-tool-pwsh-persistent`
 
 - `inject`: `tools` · `terminals`
-- `source`: [`packages/shell/tool-pwsh-persistent/src/index.ts:456`](../packages/shell/tool-pwsh-persistent/src/index.ts)
+- `source`: [`packages/shell/tool-pwsh-persistent/src/index.ts:457`](../packages/shell/tool-pwsh-persistent/src/index.ts)
 
 ```ts config-catalog
 /** Configuration for the persistent pwsh tool. */
@@ -4271,7 +4355,7 @@ export interface Config {
 
 - `inject`: `web`
 - `refs`: `Volatile` (`@deepseek-ai/cordis`)
-- `source`: [`packages/web/web-search-deepseek/src/index.ts:46`](../packages/web/web-search-deepseek/src/index.ts)
+- `source`: [`packages/web/web-search-deepseek/src/index.ts:49`](../packages/web/web-search-deepseek/src/index.ts)
 
 ```ts config-catalog
 /** Plugin config (all optional — `apply` fills env-var and constant defaults). */
@@ -4519,9 +4603,10 @@ These load from a `cordis.yml` entry with no `config:` block; they declare no co
 | `@deepseek-ai/dsh-subprocess-local` | — | [`packages/subprocess/subprocess-local/src/index.ts`](../packages/subprocess/subprocess-local/src/index.ts) |
 | `@deepseek-ai/dsh-subprocess-ssh` | `ssh` | [`packages/ssh/subprocess-ssh/src/index.ts`](../packages/ssh/subprocess-ssh/src/index.ts) |
 | `@deepseek-ai/dsh-terminal` | — | [`packages/terminal/terminal/src/index.ts`](../packages/terminal/terminal/src/index.ts) |
-| `@deepseek-ai/dsh-tool-ask-user` | `tools` · `userQuestions` | [`packages/interaction/tool-ask-user/src/index.ts`](../packages/interaction/tool-ask-user/src/index.ts) |
 | `@deepseek-ai/dsh-tool-call-timeout-policy` | `tools` | [`packages/guard/timeout-policy/src/index.ts`](../packages/guard/timeout-policy/src/index.ts) |
 | `@deepseek-ai/dsh-tool-cordis` | `tools` · `cordisInspect` | [`packages/extensions/tool-cordis/src/index.ts`](../packages/extensions/tool-cordis/src/index.ts) |
+| `@deepseek-ai/dsh-tool-image-generation` | `tools` · `imageGeneration` · `attachments` | [`packages/llm/tool-image-generation/src/index.ts`](../packages/llm/tool-image-generation/src/index.ts) |
+| `@deepseek-ai/dsh-tool-schedule` | `tools` | [`packages/schedule/tool-schedule/src/index.ts`](../packages/schedule/tool-schedule/src/index.ts) |
 | `@deepseek-ai/dsh-tool-subagent-control` | `tools` · `subagents` | [`packages/subagent/tool-subagent-control/src/index.ts`](../packages/subagent/tool-subagent-control/src/index.ts) |
 | `@deepseek-ai/dsh-user-questions` | — | [`packages/interaction/user-questions/src/index.ts`](../packages/interaction/user-questions/src/index.ts) |
 | `@deepseek-ai/dsh-webhook` | `agents` · `agentDefaultModel` · `agentPresets` · `permissionPresets` · `sessionTitle` · `workspaceRegistry` | [`packages/webhook/webhook/src/index.ts`](../packages/webhook/webhook/src/index.ts) |
@@ -4542,6 +4627,7 @@ Abstract service classes — a deployment loads a concrete implementation packag
 | `@deepseek-ai/dsh-file-reference` | `FileReferenceService` | — | [`packages/context/file-reference/src/index.ts`](../packages/context/file-reference/src/index.ts) |
 | `@deepseek-ai/dsh-fs` | `FileSystem` | — | [`packages/fs/fs/src/index.ts`](../packages/fs/fs/src/index.ts) |
 | `@deepseek-ai/dsh-host-directory-picker` | `DirectoryPicker` | — | [`packages/host/directory-picker/src/index.ts`](../packages/host/directory-picker/src/index.ts) |
+| `@deepseek-ai/dsh-image-generation` | `ImageGenerationProvider` | — | [`packages/llm/image-generation/src/index.ts`](../packages/llm/image-generation/src/index.ts) |
 | `@deepseek-ai/dsh-jobs` | `JobRegistry` | — | [`packages/jobs/jobs/src/index.ts`](../packages/jobs/jobs/src/index.ts) |
 | `@deepseek-ai/dsh-ptc-runtime` | `PtcRuntime` | — | [`packages/ptc-runtime/ptc-runtime/src/index.ts`](../packages/ptc-runtime/ptc-runtime/src/index.ts) |
 | `@deepseek-ai/dsh-sandbox` | `SandboxProvider` | — | [`packages/sandbox/sandbox/src/index.ts`](../packages/sandbox/sandbox/src/index.ts) |

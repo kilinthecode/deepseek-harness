@@ -1,0 +1,12 @@
+version: 1
+scenario: image-generation
+profile: headless
+composition: image-generation
+recording: authored
+header:
+  class: image-generation
+  pin: true
+replay:
+  override: true
+environment:
+  DSH_IMAGE_SNAPSHOT_KEY: snapshot-key

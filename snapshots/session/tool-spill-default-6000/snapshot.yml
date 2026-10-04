@@ -1,0 +1,12 @@
+version: 1
+scenario: tool-spill-default-6000
+profile: headless
+composition: tool-spill-default-6000
+recording: authored
+header:
+  class: tool-spill-default-6000
+  pin: true
+  systemPromptSource: text-turn
+  toolSchemasSource: text-turn
+replay:
+  override: true

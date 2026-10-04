@@ -8,6 +8,8 @@ Reference patterns for harness extensions. The snippets omit imports and helper 
 
 A tool registers on `ctx.tools`. The annotated `defineTool` example (typed `execute` arguments, result construction, the `run_in_background` pattern) lives in [adding-a-tool.md](adding-a-tool.md) — that guide is the source of truth for tool definitions. Raw JSON-Schema `ToolDefinition`s are also accepted by `ctx.tools.register()` directly (that is how MCP-sourced tools arrive); `defineTool` is the typed helper for first-party tools.
 
+<a id="a-hook-plugin-permission-gate-example"></a>
+
 ## A hook plugin (permission-gate example)
 
 This permission gate is one example of a hook plugin. It returns a typed decision from the `tools/pre-execute` gate to allow or deny a call; sandbox, permission, and plan-mode plugins can use this extension point. Hook plugins can intercept other extension points and are not inherently permission gates. A "native hook" is an ordinary Cordis plugin on an interception point; it needs no external protocol.
@@ -95,6 +97,8 @@ export function apply(ctx: Context) {
 
 Shipped applications contribute profile layers through `packages/bundle/*/cordis.patch.yml`, and the product `dsh` launcher owns Web, ACP, SDK, and one-shot headless execution through named profiles. Optional user-facing overlays live under `apps/cli/config/examples/`; profile integration tests live under `apps/cli/tests/profiles/`, while package-specific Loader compositions stay with their package tests.
 
+<a id="the-feature--mechanism-map"></a>
+
 ## The feature → mechanism map
 
 Every product feature maps to a listener on a documented extension point — the microkernel claim made checkable ([microkernel Agent Note](../../.agents/notes/implemented/architecture/2026-06-11-microkernel-event-taxonomy.md)). No row modifies the loop.
@@ -124,7 +128,7 @@ Every product feature maps to a listener on a documented extension point — the
 | MCP | one plugin per server: discover tools → `ctx.tools.register()` |
 | Skills | section + tool registration; `inject()` skill content on invocation |
 | Memory | section provider + tool |
-| Scheduled tasks (cron) | a plugin registers model-callable scheduling tools; timer fires → `followup(…, {source: {kind: 'plugin', plugin: 'schedule'}})` when idle / `inject()` notification when busy |
+| Scheduled tasks (cron) | a plugin registers model-callable scheduling tools; a due timer delivers through `followup(…, {source: {kind: 'schedule'}})` |
 | UI (GUI; CLI emits JSONL) | listen to `agent/assistant-stream` for live chunks and `session/event` for durable settlements, boundaries, and tool activity; input → `followup()` |
 | Web Client Chat business node | register a `ConversationNodeDefinition` and `conversation.chat.node` keyed renderer |
 | SessionTelemetryBackend / replayable trace | `session/event` → JSONL; replay = `sessions.create(id, { seed })` |

@@ -5,6 +5,14 @@ export const NS = 'subagent'
 
 /** Simplified Chinese dictionary (the key-set source of truth). */
 export const zh = {
+  'overview.title': '子智能体',
+  'overview.empty': '还没有子智能体',
+  'overview.running': '{count} 个运行中',
+  'overview.done': '{count} 个已完成',
+  'overview.idle': '{count} 个当前未运行',
+  'overview.all': '查看全部 {count} 个子智能体',
+  'overview.collapse': '收起子智能体列表',
+
   'duration.seconds': '{seconds}秒',
   'duration.minutes': '{minutes}分{seconds}秒',
   'duration.hours': '{hours}小时{minutes}分{seconds}秒',
@@ -48,6 +56,14 @@ export const zh = {
 
 /** English dictionary, key-identical to the Chinese source of truth. */
 export const en: Record<SubagentKey, string> = {
+  'overview.title': 'Subagents',
+  'overview.empty': 'No subagents yet',
+  'overview.running': '{count} running',
+  'overview.done': '{count} done',
+  'overview.idle': '{count} inactive',
+  'overview.all': 'View all {count} subagents',
+  'overview.collapse': 'Show fewer subagents',
+
   'duration.seconds': '{seconds}s',
   'duration.minutes': '{minutes}m {seconds}s',
   'duration.hours': '{hours}h {minutes}m {seconds}s',

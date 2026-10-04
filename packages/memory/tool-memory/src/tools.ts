@@ -15,7 +15,8 @@ import type { GenericCallView, ToolDefinition, ToolExecution } from '@deepseek-a
 
 const WRITE_DESCRIPTION = 'Save one durable memory for future sessions.'
 
-const RECALL_DESCRIPTION = 'Read saved global memories and the current project\'s memories from the live store, including memories saved after the snapshot. Use it for snapshot entries shown only as an index line; inlined snapshot entries need no recall.'
+const RECALL_DESCRIPTION = 'Read shared memories from the live store. Narrow query or scope for more matches.'
+const RECALL_MORE_TEXT = 'More matches; narrow query or scope.'
 
 const FORGET_DESCRIPTION = 'Delete one saved memory by name and scope.'
 
@@ -179,8 +180,9 @@ export function createMemoryWriteTool(memory: MemoryStore, options: MemoryWriteT
  * Register `memory_write`, `memory_recall`, and `memory_forget` on `ctx.tools`.
  * @param ctx - registrant context carrying `tools` and `memory`; registrations dispose with it.
  * @param maxRecallResults - most records one `memory_recall` call returns.
+ * @param maxRecallBytes - UTF-8 byte cap for the complete rendered result.
  */
-export function registerMemoryTools(ctx: Context, maxRecallResults: number): void {
+export function registerMemoryTools(ctx: Context, maxRecallResults: number, maxRecallBytes: number): void {
   ctx.tools.register(createMemoryWriteTool(ctx.memory))
 
   ctx.tools.register(defineTool({
@@ -189,7 +191,12 @@ export function registerMemoryTools(ctx: Context, maxRecallResults: number): voi
     parameters: {
       query: {
         type: 'string',
-        description: 'Case-insensitive substring matched against name, description, and content. Omit to list the newest memories.',
+        description: 'Case-insensitive phrase or whitespace-separated keywords in name, description, and content. Omit for newest memories.',
+      },
+      scope: {
+        type: 'string',
+        enum: [...MEMORY_SCOPES],
+        description: 'Restrict results to global or project memories.',
       },
     },
     output: {
@@ -198,23 +205,38 @@ export function registerMemoryTools(ctx: Context, maxRecallResults: number): voi
         additionalProperties: false,
         properties: {
           memories: { type: 'array', required: true, items: MEMORY_VIEW_SCHEMA },
+          hasMore: { type: 'boolean' },
         },
       },
       render: (_args, value) => [{
         type: 'text',
         text: value.memories.length === 0
           ? 'No saved memories match.'
-          : value.memories.map(memory => renderRecalled(memory, text => ctx.memory.scan(text))).join('\n\n'),
+          : value.memories.map(memory => renderRecalled(memory, text => ctx.memory.scan(text))).join('\n\n')
+            + (value.hasMore === true ? `\n\n${RECALL_MORE_TEXT}` : ''),
       }],
     },
     async execute(args, exec) {
       const agent = requireAgent(exec, 'memory_recall')
       const records = await ctx.memory.recall({
         query: args.query,
-        limit: maxRecallResults,
+        scope: args.scope,
+        limit: maxRecallResults + 1,
         cwd: agent.session.header.cwd,
       })
-      return { memories: records.map(view) }
+      const candidates = records.map(view)
+      const rendered = candidates.map(memory => renderRecalled(memory, text => ctx.memory.scan(text)))
+      const count = Math.min(maxRecallResults, candidates.length)
+      let included = 0
+      for (let candidateCount = 1; candidateCount <= count; candidateCount += 1) {
+        const hasMore = candidateCount < candidates.length
+        const resultText = rendered.slice(0, candidateCount).join('\n\n')
+          + (hasMore ? `\n\n${RECALL_MORE_TEXT}` : '')
+        if (Buffer.byteLength(resultText, 'utf8') <= maxRecallBytes) included = candidateCount
+      }
+      const hasMore = included < candidates.length
+      const memories = candidates.slice(0, included)
+      return hasMore ? { memories, hasMore: true } : { memories }
     },
     presentCall: args => present('Recall memories', 'search', args),
   }))

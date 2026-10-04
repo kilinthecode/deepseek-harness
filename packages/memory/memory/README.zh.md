@@ -59,7 +59,7 @@ kind: "package-reference"
 
 ### 记忆存放在哪里
 
-使用 JSON 后端时，每条记忆是一个文件：全局记录位于 `<root>/memory/global/<name>.json`，项目记录位于 `<root>/memory/project/<slug>__<name>.json`，其中 `<slug>` 是项目目录经过清理的基础名加上根路径哈希的八个十六进制字符。每个文件保存 `{ "version": 1, "record": { … } }`，可以放心手工阅读或编辑。存储打开时，无法解析或违反字段上限的文件会被移到一旁改名为 `<name>.json.bak.<timestamp>`，其余记忆仍然可用。上限覆盖每个字段：名称格式、256 个字符的描述、不超过当前 `maxRecordBytes` 的内容（因此调低上限会把更大的记录移到一旁）、至多 32,767 个字符的项目根目录，以及 ISO-8601 UTC 时间戳。写入要求描述为单行；含换行的手工编辑文件仍会加载，不会被隔离。
+使用 JSON 后端时，每条记忆是一个文件：全局记录位于 `<root>/memory/global/<name>.json`，项目记录位于 `<root>/memory/project/<slug>__<name>.json`，其中 `<slug>` 是项目目录经过清理的基础名加上根路径哈希的八个十六进制字符。每个文件保存 `{ "version": 1, "record": { … } }`，可以放心手工阅读或编辑。存储打开或刷新时，无法解析或违反字段上限的文件会被移到一旁改名为 `<name>.json.bak.<timestamp>`，其余记忆仍然可用。上限覆盖每个字段：名称格式、256 个字符的描述、不超过当前 `maxRecordBytes` 的内容（因此调低上限会把更大的记录移到一旁）、至多 32,767 个字符的项目根目录，以及 ISO-8601 UTC 时间戳。写入要求描述为单行；含换行的手工编辑文件仍会加载，不会被隔离。
 
 ### 作用域与项目根目录
 
@@ -67,7 +67,7 @@ kind: "package-reference"
 
 ### 每个操作做什么
 
-`write` 校验名称（小写 kebab-case，1 到 64 个字符），将描述修剪为 1 到 256 个字符的单行（U+000A、U+000D、U+2028 和 U+2029 以 `invalid-description` 失败，消息为 `description must be a single line of 1 to 256 characters after trimming`），修剪内容（最多 `maxRecordBytes`），先扫描描述再扫描内容并将发现拒绝为 `blocked-content`，按本进程已加载或写入的记录执行作用域上限（`over-cap` 只把作用域称为 `global` 或 `project`：`the project scope already holds <count> memories (cap <max>); forget one before writing`），并在返回 `created` 或 `updated` 之前持久地插入或替换记录。若项目写入的键已被另一项目的记录占用，则以 `project-key-collision` 失败，消息为 `cannot write project memory "<name>": another project's record already occupies this key`，并保持该记录不变。`recall` 在可见记录的名称、描述和内容上做不区分大小写的子串匹配，按最新优先、再按名称、再以全局先于项目的顺序返回，并受调用方的数量限制。`forget` 删除一条记录，不存在时以 `not-found` 失败；若项目遗忘的键被另一项目的记录占用，则以 `project-key-collision` 失败，消息为 `cannot forget project memory "<name>": another project's record occupies this key`，并保持该记录不变。写入请求可将 `ifAbsent` 设为仅创建：该检查在与存在性查找相同的串行区段内进行，若该名称与作用域已有记录，则以 `already-exists` 失败，消息为 `a <scope> memory named "<name>" already exists; choose a different name`，并保持该记录不变。`visible` 返回所有全局记录加上当前项目的记录。`scan` 返回与 `scanMemoryText` 相同的发现。每次拒绝都是带有稳定 `code` 和面向模型的消息的 `MemoryError`。
+`write` 校验名称（小写 kebab-case，1 到 64 个字符），将描述修剪为 1 到 256 个字符的单行（U+000A、U+000D、U+2028 和 U+2029 以 `invalid-description` 失败，消息为 `description must be a single line of 1 to 256 characters after trimming`），修剪内容（最多 `maxRecordBytes`），先扫描描述再扫描内容并将发现拒绝为 `blocked-content`，按刷新的后端快照执行作用域上限（`over-cap` 只把作用域称为 `global` 或 `project`：`the project scope already holds <count> memories (cap <max>); forget one before writing`），并在返回 `created` 或 `updated` 之前持久地插入或替换记录。相同内容的替换返回 `updated`，但不重写文件或更改时间戳。若项目写入的键已被另一项目的记录占用，则以 `project-key-collision` 失败，消息为 `cannot write project memory "<name>": another project's record already occupies this key`，并保持该记录不变。`recall` 在名称、描述和内容中匹配不区分大小写的完整短语，或全部不重复的空白分隔查询词。可选的作用域筛选将可见记录限制为 `global` 或 `project`。完全匹配的名称优先，其次依次比较名称、描述和内容中的短语及词项匹配；相同时按最新、名称、全局先于项目排序。省略查询时列出最新记录，调用方的限制控制结果数量。`forget` 删除一条记录，不存在时以 `not-found` 失败；若项目遗忘的键被另一项目的记录占用，则以 `project-key-collision` 失败，消息为 `cannot forget project memory "<name>": another project's record occupies this key`，并保持该记录不变。写入请求可将 `ifAbsent` 设为仅创建：该检查在与存在性查找相同的串行区段内进行，若该名称与作用域已有记录，则以 `already-exists` 失败，消息为 `a <scope> memory named "<name>" already exists; choose a different name`，并保持该记录不变。`visible` 返回所有全局记录加上当前项目的记录。`scan` 返回与 `scanMemoryText` 相同的发现。每次拒绝都是带有稳定 `code` 和面向模型的消息的 `MemoryError`。
 
 ### 写入时扫描
 
@@ -102,11 +102,11 @@ kind: "package-reference"
 
 ### 生命周期
 
-服务在其初始化期间打开 `memory` domain，因此注入 `memory` 的消费方总能看到已打开的存储，并随自身 fiber 关闭该 domain。释放（disposal）先停止接受新的写入与遗忘（在释放开始之后才启动的写入或遗忘会以一个 `code` 为 `disposing`、消息为 `memory store is disposing: no new writes or forgets are accepted` 的 `MemoryError` 失败），再等待所有已按调用顺序排队的写入与遗忘完成，然后才关闭 domain，因此排在另一次写入之后的写入绝不会被 domain 已关闭的错误拒绝，而是得到它自己的结果。一个 domain 在每个进程中只打开一次；这正是 Web profile 中存储位于宿主平面、而工具按 agent 预设组合的原因。
+服务在其初始化期间打开 `memory` domain，因此注入 `memory` 的消费方总能看到已打开的存储，并随自身 fiber 关闭该 domain。读取与修改共用一个队列；操作会先刷新已打开的 domain，再读取快照或检查写入的存在性与上限。释放（disposal）会拒绝新读取与写入，排空已排队的操作，然后关闭 domain。一个 domain 在每个进程中只打开一次；这正是 Web profile 中存储位于宿主平面、而工具按 agent 预设组合的原因。
 
 ### 并发
 
-不同记录是不同文件，因此两个进程写入不同记忆绝不会冲突。两个进程写入同一记录时，以最后一次完整发布为准，绝不会产生撕裂的文件。在同一进程内，存储的每次 `write` 与 `forget` 都按调用顺序在同一个串行区段中执行，该区段包含项目根目录查找、存在性检查、上限检查以及持久的写入或删除，因此并行工具调用或多个 agent 的重叠调用绝不会超出 `maxRecords`；同名重叠只对较早的调用报告 `created` 并保留其 `createdAt`；对同一记录的两次重叠遗忘，第二次报告 `not-found`。进程在打开时加载一次存储；其他进程写入的记忆只有在 domain 重新打开时才可见并计入上限，因此两个进程同时写入新名称时，合计可能超出 `maxRecords`。
+不同记录是不同文件，因此两个进程写入不同记忆绝不会冲突。两个进程写入同一记录时，以最后一次完整发布为准，绝不会产生撕裂的文件。同一进程内的读取与修改按调用顺序执行；每次操作都会先刷新，修改则在同一区段内完成项目根目录查找、存在性检查、上限检查以及持久的写入或删除。同名重叠只对较早的调用报告 `created` 并保留其 `createdAt`；对同一记录的两次重叠遗忘，第二次报告 `not-found`。刷新后，已完成的外部写入会对读取与上限检查可见。不同进程之间没有原子上限预留或 `ifAbsent` 检查，因此并发的新名称写入可能合计超出 `maxRecords`，并发的仅创建调用也可能都通过。
 
 ### 没有不变量配套插件
 
@@ -143,8 +143,8 @@ kind: "package-reference"
 
 这些限制定义了存储何时不适用。它们是当前的包约束，而不是任务待办。
 
-- **跨进程写入在重新打开时才可见**——进程在 domain 打开时读取一次存储，因此另一个进程写入的记忆（例如长期运行的 Web 宿主旁的一次 headless 运行）只有在 domain 重新打开后才可见并计入 `maxRecords`；两个进程写入同一记录时以最后一次完整发布为准。
-- **仅支持子串回忆**——`recall` 是不区分大小写的子串匹配；没有排序打分、同义词处理或语义搜索。
+- **外部可见性取决于刷新**——读取与上限检查会刷新已打开的 domain，因此已完成的外部逐记录 JSON 或 SQLite 写入随后可见；刷新不会让跨进程的多记录操作变为原子操作。
+- **回忆使用词法排序**——`recall` 匹配完整短语或所有不重复的空白分隔词，并按名称与文本匹配排序；不处理同义词或语义相似度。
 - **没有仓库内存储**——项目记忆按项目根目录存放在 harness home 下，不会随仓库提交，也无法通过 git 共享。
 - **项目身份是根目录的绝对路径**——项目记录保存其根目录，并以由该路径派生的 slug 作为键，因此移动或重命名仓库目录会使其项目记忆成为孤儿；新路径下的会话看不到它们，除非重新写入。
 - **内容上限按字节计算**——`maxRecordBytes` 统计 UTF-8 字节，因此多字节字符的文字能容纳的字符数少于 ASCII。

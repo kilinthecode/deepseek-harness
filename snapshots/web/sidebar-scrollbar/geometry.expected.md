@@ -28,8 +28,8 @@
 - scrollbar-width: auto
 - scrollbar-color: auto
 - ::-webkit-scrollbar-thumb:hover declarations: var(--dsh-scrollbar-thumb-hover)
-- --dsh-scrollbar-thumb, pointer over the list: rgb(84, 85, 87)
-- --dsh-scrollbar-thumb-hover, pointer over the list: rgb(101, 103, 107)
+- --dsh-scrollbar-thumb, pointer over the list: rgb(84, 84, 84)
+- --dsh-scrollbar-thumb-hover, pointer over the list: rgb(101, 101, 101)
 - list overflows: true
 - reserved band: 5px
 - scrollbar inset from the sidebar edge: 2px

@@ -346,6 +346,23 @@ describe('web e2e: persisted subagent conversation and human continuation', () =
     if (failures.length > 1) throw new AggregateError(failures, 'subagent Web teardown failed')
   })
 
+  it('opens direct children from the task overview with recorded completion evidence', async () => {
+    await page.locator('[data-sidebar-right-expand]').click()
+    const overview = page.locator('[data-task-subagents]')
+    await overview.getByText('2 done', { exact: true }).waitFor()
+    expect(await overview.getByRole('listitem').count()).toBe(2)
+    expect(await overview.getByText(NESTED_LABEL, { exact: true }).count()).toBe(0)
+    await compareOrRefreshGolden(fileURLToPath(new URL('../../../snapshots/web/subagent-conversation/overview.expected.md', import.meta.url)),
+      await captureStableAria(page, '[data-task-subagents]', scaffold.workspaceCwd), MODE)
+    await page.locator('[data-task-overview]').getByRole('heading', { name: 'workspace', exact: true }).waitFor()
+    await page.locator('[data-task-overview]').screenshot({ path: join(tmpdir(), 'dsh-task-overview-subagents.png') })
+    await overview.getByRole('button', { name: `Open ${ONE_SHOT_LABEL} in sidebar`, exact: true }).click()
+    await page.locator('[data-sidebar-chat]').getByText('One-shot tasks do not accept follow-ups; review the full execution record here.').waitFor()
+    await page.locator('[data-dockkit-tab]').filter({ hasText: ONE_SHOT_LABEL }).locator('[data-dockkit-tab-close]').click()
+    await page.locator('[data-sidebar-chat]').waitFor({ state: 'detached' })
+    await page.locator('[data-sidebar-right-toggle]').click()
+  })
+
   it('lists direct subagents by label in the reference menu', async () => {
     onTestFailed(() => saveFailureShot(page, 'web-e2e-subagent-reference-title'))
     expect(liveReferenceOptions.some(text => text.includes(LABEL))).toBe(true)
@@ -412,7 +429,7 @@ describe('web e2e: persisted subagent conversation and human continuation', () =
       await captureStableAria(page, '[data-sidebar-chat]', scaffold.workspaceCwd),
       MODE,
     )
-    await page.locator('[data-sidebar-right-panel] [data-dockkit-tab-close]').click()
+    await page.locator('[data-dockkit-tab]').filter({ hasText: LABEL }).locator('[data-dockkit-tab-close]').click()
     await sidebarChat.waitFor({ state: 'detached' })
 
     await page.getByRole('button', { name: '2 subagents' }).hover()
@@ -420,7 +437,7 @@ describe('web e2e: persisted subagent conversation and human continuation', () =
     await page.locator('[data-sidebar-chat]').getByText(
       'One-shot tasks do not accept follow-ups; review the full execution record here.',
     ).waitFor({ timeout: 15_000 })
-    await page.locator('[data-sidebar-right-panel] [data-dockkit-tab-close]').click()
+    await page.locator('[data-dockkit-tab]').filter({ hasText: ONE_SHOT_LABEL }).locator('[data-dockkit-tab-close]').click()
     await page.locator('[data-sidebar-chat]').waitFor({ state: 'detached' })
   })
 

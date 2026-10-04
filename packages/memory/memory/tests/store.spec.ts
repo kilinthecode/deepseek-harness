@@ -1,4 +1,4 @@
-import { mkdir, mkdtemp, readdir, readFile, rm, writeFile } from 'node:fs/promises'
+import { mkdir, mkdtemp, readdir, readFile, rm, stat, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
@@ -111,6 +111,23 @@ describe('MemoryStore over the json backend', () => {
     expect(second.record.content).toBe('Run pnpm; npm is banned.')
     expect(second.record.description).toBe('pnpm only')
     expect(await readdir(join(root, 'memory', 'global'))).toEqual(['prefers-pnpm.json'])
+  })
+
+  it.each(['global', 'project'] as const)('returns identical %s writes without republishing or changing timestamps', async (scope) => {
+    const root = await freshRoot()
+    const ctx = await open(root)
+    const repo = await project(root, 'repo')
+    const request = write({ scope, cwd: repo.cwd })
+    const first = await ctx.memory.write(request)
+    const filename = scope === 'global' ? 'prefers-pnpm.json' : `${projectSlug(repo.root)}__prefers-pnpm.json`
+    const path = join(root, 'memory', scope, filename)
+    const before = await stat(path, { bigint: true })
+    vi.setSystemTime(BASE + 60_000)
+    const same = await ctx.memory.write({ ...request, description: ' Uses pnpm, never npm ', content: ' Run pnpm for installs. ' })
+    const after = await stat(path, { bigint: true })
+    expect(same).toEqual({ outcome: 'updated', record: first.record })
+    expect(after.mtimeNs).toBe(before.mtimeNs)
+    expect(after.ino).toBe(before.ino)
   })
 
   it('rejects invalid names, descriptions, and content before touching the medium', async () => {
@@ -288,6 +305,65 @@ describe('MemoryStore over the json backend', () => {
     expect(await ctx.memory.recall({ limit: -1 })).toEqual([])
   })
 
+  it('ranks exact names, phrase locations, term field counts, and newest ties deterministically', async () => {
+    const ctx = await open(await freshRoot(), { maxRecords: 10 })
+    await ctx.memory.write(write({ name: 'alpha', description: 'single', content: 'single' }))
+    vi.setSystemTime(BASE + 1000)
+    await ctx.memory.write(write({ name: 'fresh-hit', description: 'single', content: 'alpha beta' }))
+    vi.setSystemTime(BASE + 2000)
+    await ctx.memory.write(write({ name: 'phrase-name', description: 'single', content: 'alpha beta details' }))
+    vi.setSystemTime(BASE + 3000)
+    await ctx.memory.write(write({ name: 'phrase-description', description: 'alpha beta', content: 'single' }))
+    vi.setSystemTime(BASE + 4000)
+    await ctx.memory.write(write({ name: 'phrase-content', description: 'single', content: 'alpha beta' }))
+    vi.setSystemTime(BASE + 5000)
+    await ctx.memory.write(write({ name: 'terms-name', description: 'alpha', content: 'beta' }))
+    vi.setSystemTime(BASE + 6000)
+    await ctx.memory.write(write({ name: 'unicode', description: 'Café preferences', content: 'single' }))
+    vi.setSystemTime(BASE + 7000)
+    await ctx.memory.write(write({ name: 'alpha-beta', content: 'single' }))
+    vi.setSystemTime(BASE + 8000)
+    await ctx.memory.write(write({ name: 'alpha-beta-rule', content: 'single' }))
+
+    expect((await ctx.memory.recall({ query: 'alpha', limit: 8 })).map(record => record.name).slice(0, 2))
+      .toEqual(['alpha', 'alpha-beta-rule'])
+    expect((await ctx.memory.recall({ query: 'alpha beta alpha', limit: 8 })).map(record => record.name))
+      .toEqual(['alpha-beta-rule', 'alpha-beta', 'phrase-description', 'terms-name', 'phrase-content', 'phrase-name', 'fresh-hit'])
+    expect((await ctx.memory.recall({ query: 'alpha beta', limit: 8 })).map(record => record.name).slice(0, 4))
+      .toEqual(['phrase-description', 'phrase-content', 'phrase-name', 'fresh-hit'])
+    expect((await ctx.memory.recall({ query: 'CAFÉ', limit: 8 })).map(record => record.name)).toEqual(['unicode'])
+    expect((await ctx.memory.recall({ query: 'alpha-beta', limit: 8 })).map(record => record.name).slice(0, 2))
+      .toEqual(['alpha-beta', 'alpha-beta-rule'])
+    expect((await ctx.memory.recall({ query: 'alpha', scope: 'project', limit: 8 })).map(record => record.name)).toEqual([])
+  })
+
+  it('refreshes an open reader after external creates, updates, deletes, and project writes', async () => {
+    const root = await freshRoot()
+    const reader = await open(root)
+    const writer = await open(root)
+    const alpha = await project(root, 'alpha')
+    const beta = await project(root, 'beta')
+    expect((await reader.memory.visible(alpha.cwd)).global).toEqual([])
+    await writer.memory.write(write({ name: 'external' }))
+    await writer.memory.write(write({ name: 'project-note', scope: 'project', cwd: alpha.cwd }))
+    expect((await reader.memory.visible(alpha.cwd)).global.map(record => record.name)).toEqual(['external'])
+    expect((await reader.memory.visible(alpha.cwd)).project?.records.map(record => record.name)).toEqual(['project-note'])
+    expect((await reader.memory.visible(beta.cwd)).project?.records).toEqual([])
+    await writer.memory.write(write({ name: 'external', content: 'changed externally' }))
+    expect((await reader.memory.recall({ query: 'changed externally', limit: 8 })).map(record => record.content))
+      .toEqual(['changed externally'])
+    await writer.memory.forget({ name: 'external', scope: 'global' })
+    expect((await reader.memory.visible(alpha.cwd)).global).toEqual([])
+  })
+
+  it('refreshes before a cap check so completed external writes count', async () => {
+    const root = await freshRoot()
+    const reader = await open(root, { maxRecords: 1 })
+    const writer = await open(root, { maxRecords: 1 })
+    await writer.memory.write(write({ name: 'external' }))
+    await expect(reader.memory.write(write({ name: 'local' }))).rejects.toMatchObject({ code: 'over-cap' })
+  })
+
   it('orders same-instant records by name', async () => {
     const root = await freshRoot()
     const ctx = await open(root)
@@ -442,15 +518,14 @@ describe('MemoryStore over the json backend', () => {
     expect((await ctx.memory.write(write())).outcome).toBe('created')
   })
 
-  it('lets two stores over one root each publish their own record files', async () => {
+  it('refreshes one store after another store publishes records in the same process', async () => {
     const root = await freshRoot()
     const left = await open(root)
     const right = await open(root)
     await left.memory.write(write({ name: 'from-left' }))
     await right.memory.write(write({ name: 'from-right' }))
     expect((await readdir(join(root, 'memory', 'global'))).sort()).toEqual(['from-left.json', 'from-right.json'])
-    // Each process sees only what it loaded plus its own writes until it reopens.
-    expect((await left.memory.visible(undefined)).global.map(record => record.name)).toEqual(['from-left'])
+    expect((await left.memory.visible(undefined)).global.map(record => record.name).sort()).toEqual(['from-left', 'from-right'])
     const reopened = await open(root)
     expect((await reopened.memory.visible(undefined)).global.map(record => record.name).sort()).toEqual(['from-left', 'from-right'])
   })
@@ -610,14 +685,17 @@ describe('MemoryStore over the json backend', () => {
     const store = ctx.memory
     const first = store.write(write({ name: 'first' }))
     const second = store.write(write({ name: 'second' }))
+    const queuedRead = store.visible(undefined)
     await fiber.dispose()
     const [firstResult, secondResult] = await Promise.all([first, second])
+    expect((await queuedRead).global.map(record => record.name).sort()).toEqual(['first', 'second'])
     expect(firstResult.outcome).toBe('created')
     expect(secondResult.outcome).toBe('created')
     await expect(store.write(write({ name: 'after-dispose' }))).rejects.toMatchObject({
       code: 'disposing',
-      message: 'memory store is disposing: no new writes or forgets are accepted',
+      message: 'memory store is disposing: no new reads or writes are accepted',
     })
+    await expect(store.visible(undefined)).rejects.toMatchObject({ code: 'disposing' })
 
     const reopened = await open(root)
     expect((await reopened.memory.visible(undefined)).global.map(record => record.name).sort())

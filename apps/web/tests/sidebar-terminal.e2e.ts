@@ -135,7 +135,7 @@ describe.skipIf(process.platform === 'win32')('Web sidebar terminal', () => {
     await selectTerminalTheme(page, 'Dark')
     await expect.poll(() => screen.evaluate(element => getComputedStyle(element).color)).toBe('rgb(255, 255, 255)')
     await selectTerminalTheme(page, 'Light')
-    await expect.poll(() => screen.evaluate(element => getComputedStyle(element).color)).toBe('rgb(15, 17, 21)')
+    await expect.poll(() => screen.evaluate(element => getComputedStyle(element).color)).toBe('rgb(0, 0, 0)')
     expect({ ansi: await colorOf('ANSI_CUSTOM'), extended: await colorOf('EXTENDED_CUSTOM') }).toEqual(customLight)
     await command(page, "printf '\\033]104;1;255\\007'")
     await expect.poll(async () => (await colorOf('ANSI_CUSTOM')).foreground).not.toBe(customLight.ansi.foreground)
@@ -155,7 +155,7 @@ describe.skipIf(process.platform === 'win32')('Web sidebar terminal', () => {
     await command(page, "printf '\\033]110\\007\\033]111\\007\\033]112\\007'")
     await expect.poll(defaults).toEqual({ foreground: 'rgb(255, 255, 255)', background: 'rgb(0, 0, 0)' })
     await selectTerminalTheme(page, 'Light')
-    await expect.poll(defaults).toEqual({ foreground: 'rgb(15, 17, 21)', background: 'rgb(255, 255, 255)' })
+    await expect.poll(defaults).toEqual({ foreground: 'rgb(0, 0, 0)', background: 'rgb(255, 255, 255)' })
 
     const cursorColors = () => screen.locator('.xterm-cursor').evaluate((cursor) => {
       const style = getComputedStyle(cursor)

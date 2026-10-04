@@ -568,7 +568,7 @@
           },
           "limit": {
             "type": "number",
-            "description": "Maximum number of lines to return. Defaults to 2000."
+            "description": "Maximum number of lines to return. Defaults to 500. Maximum: 2000."
           }
         },
         "required": [

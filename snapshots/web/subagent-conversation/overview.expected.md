@@ -1,0 +1,9 @@
+- heading "Subagents" [level=3]
+- paragraph: 2 done
+- list:
+  - listitem:
+    - button "event-sourcing researcher completed"
+    - button "Open event-sourcing researcher in sidebar"
+  - listitem:
+    - button "event-sourcing reviewer completed"
+    - button "Open event-sourcing reviewer in sidebar"

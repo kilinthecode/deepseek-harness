@@ -426,10 +426,9 @@ describe('web e2e: clickable links gallery', () => {
     await assertFixtureInventory(SNAPSHOT_DIR, ['ui.expected.md'])
 
     // The link language itself — ARIA records none of it, so pin the computed
-    // styles: link-blue 500-weight text, no underline at rest, dotted underline
-    // on hover, and a leading currentColor glyph. Light theme, so the link
-    // alias resolves to deepseek-500.
-    const LINK_BLUE = 'rgb(65, 118, 230)'
+    // Links use neutral 500-weight text, no underline at rest, a dotted
+    // underline on hover, and a leading currentColor glyph.
+    const LINK_COLOR = 'rgb(0, 0, 0)'
     const styleOf = async (target: ReturnType<Page['locator']>, property: string): Promise<string> =>
       target.evaluate((el, p) => getComputedStyle(el).getPropertyValue(p), property)
     const guideLink = markdown.locator(`a[href="${GUIDE_URL}"]`).first()
@@ -439,7 +438,7 @@ describe('web e2e: clickable links gallery', () => {
       ['search source', sourceLink.first()],
       ['fetch url', page.locator(`[data-web="fetch"] a[href="${FETCH_URL}"]`)],
     ] as const) {
-      expect.soft(await styleOf(link, 'color'), `${name} color`).toBe(LINK_BLUE)
+      expect.soft(await styleOf(link, 'color'), `${name} color`).toBe(LINK_COLOR)
       expect.soft(await styleOf(link, 'font-weight'), `${name} weight`).toBe('500')
       expect.soft(await styleOf(link, 'text-decoration-line'), `${name} at rest`).toBe('none')
       expect.soft(await link.locator('svg').count(), `${name} glyph`).toBe(1)
@@ -458,7 +457,7 @@ describe('web e2e: clickable links gallery', () => {
     await mentions.first().hover()
     expect(await styleOf(mentions.first(), 'text-decoration-style')).toBe('dotted')
     // The excluded grey affordance: tool-row file links keep their own color.
-    expect(await styleOf(page.locator('button[class*="fileLink"]').first(), 'color')).not.toBe(LINK_BLUE)
+    expect(await styleOf(page.locator('button[class*="fileLink"]').first(), 'color')).not.toBe(LINK_COLOR)
 
     // Ordinary message HTTP(S) links delegate to the right Sidebar Browser.
     await guideLink.click()

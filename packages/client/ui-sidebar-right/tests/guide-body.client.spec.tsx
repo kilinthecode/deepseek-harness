@@ -21,6 +21,8 @@ import type { GuideBodyProps } from '../src/client/tabs/guide/GuideBody.tsx'
 import type { SidebarRightGuideBox } from '../src/client/tab-registry.ts'
 import { bindSnapshotSelector } from '@deepseek-ai/dsh-client-test-runtime'
 import css from '../src/client/tabs/guide/GuideBody.module.css'
+import { en } from '../src/client/locales.ts'
+import { makeTranslate } from '@deepseek-ai/dsh-client-test-runtime'
 
 afterEach(cleanup)
 
@@ -31,7 +33,7 @@ const standard: GlobalStandardProps & SessionStandardProps = {
   useInput: unused, useChat: unused, useTrajectory: unused,
   usePanelInfo: unused, useSessions: unused, useSessionStatus: unused,
   useSessionRetainInfo: unused, useResource: unused, useWorkspaces: unused,
-  inputActions: { captureInsertion: unused, insertText: unused, setDraft: unused,
+  inputActions: { captureInsertion: unused, insertText: unused, setDraft: unused, persistDraft: unused,
     addAttachments: unused, removeAttachment: unused, pruneAttachments: unused, submit: unused },
 }
 
@@ -63,7 +65,7 @@ function mountGuide(entries: readonly SidebarRightGuideBox[], custom?: (key: str
   const openTab = vi.fn()
   const renderSlot = vi.fn<GuideBodyProps['renderSlotChain']>((_seat, _owner, options) => options?.fallback)
   const props: GuideBodyProps = {
-    ...standard, SessionProvider: ({ children }) => children,
+    ...standard, t: makeTranslate(en), useSessions: selector => selector({ ids: [], byId: {}, phase: 'ready', projectionsBySession: {} }), SessionProvider: ({ children }) => children,
     useShortcuts: <T,>(selector: (entries: readonly ShortcutCatalogEntry[]) => T): T => selector(shortcuts),
     useTabInfo: () => ({ sidebar: { expanded: true, fullscreen: false }, panel: { id: 'pane-guide' as PaneId },
       tab: { ...TAB, visible: true, signal: new AbortController().signal,
@@ -96,9 +98,9 @@ describe('GuideBody', () => {
     expect(renderSlot).toHaveBeenCalledWith('sidebar.right.tab.guide', {}, {
       hookContext: useTabInfo, fallback: expect.anything() as ReactNode,
     })
-    // The guide draws no words of its own; every word is a capsule's.
+    // Task facts and tool launchers share one overview.
     const guide = view.container.querySelector('[data-sidebar-right-guide]')
-    expect(guide?.textContent).toBe('files titleterminal title')
+    expect(guide?.textContent).toBe('Task overviewToolsfiles titleterminal title')
     // One capsule per entry, in the registry's order, each with its own title; only the first brought a glyph.
     expect(boxes()).toEqual(['files', 'terminal'])
     const [files, terminal] = [...view.container.querySelectorAll('[data-sidebar-right-guide-entry]')]

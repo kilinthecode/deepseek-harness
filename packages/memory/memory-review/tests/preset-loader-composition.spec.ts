@@ -100,6 +100,7 @@ async function boot(): Promise<Context> {
     '        config:',
     '          injectMaxBytes: 2048',
     '          maxRecallResults: 4',
+    '          maxRecallBytes: 8192',
     '      - id: memory-review',
     '        name: cordis:memory-review',
     '        config:',

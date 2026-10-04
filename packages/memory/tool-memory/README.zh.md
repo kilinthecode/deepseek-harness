@@ -33,25 +33,27 @@ kind: "package-reference"
 
 ### 最小配置
 
-两个字段均为必填且无默认值；省略任一字段的组合会在加载时失败。
+三个字段均为必填且无默认值；省略任一字段的组合会在加载时失败。
 
 ```yaml
 - name: '@deepseek-ai/dsh-tool-memory'
   config:
     injectMaxBytes: 8192
     maxRecallResults: 8
+    maxRecallBytes: 8192
 ```
 
 | 字段 | 默认值 | 含义 |
 |---|---|---|
 | `injectMaxBytes` | 必填 | 注入快照的 UTF-8 字节预算；随附组合使用 `8192`；`0` 关闭注入但工具仍然可用；正值小于 `SNAPSHOT_MIN_BYTES` 时加载失败 |
 | `maxRecallResults` | 必填 | 单次 `memory_recall` 调用最多返回的记录数 |
+| `maxRecallBytes` | 必填 | 完整回忆结果的 UTF-8 字节上限，包含分隔符与省略提示；加载时必须足以容纳一条最大存储记忆及最坏情况的标题和描述 |
 
 生成的[配置目录](../../../docs/config-catalog.zh.md#deepseek-aidsh-tool-memory)是受支持字段的完整来源。
 
 ### 每个工具做什么
 
-`memory_write` 接收名称、类型、作用域、一行描述和内容，保存该记忆或替换同一作用域内同名的记忆；它回答 `Saved global memory "<name>".` 或 `Updated project memory "<name>".`。`memory_recall` 读取实时存储，包括快照之后保存的记忆：它接收可选的查询，在全局记忆和当前项目记忆的名称、描述或内容上做不区分大小写的子串匹配，最多返回 `maxRecallResults` 条最新匹配；每条匹配渲染为带标题的块，或在描述或内容未通过 `scan` 时渲染为拦截形式（文件不会被改名为 `.bak`）；没有匹配时回答 `No saved memories match.`。`memory_forget` 接收名称和作用域，回答 `Forgot <scope> memory "<name>".`。存储的拒绝会以工具错误的形式携带存储消息到达模型，例如来自没有项目根目录的会话的项目作用域写入、超长内容、被拦截的描述或内容，或已达上限的作用域。每个工具都需要一个拥有它的 agent 会话，因为会话的工作目录决定项目作用域。
+`memory_write` 接收名称、类型、作用域、一行描述和内容，保存该记忆或替换同一作用域内同名的记忆；它回答 `Saved global memory "<name>".` 或 `Updated project memory "<name>".`。`memory_recall` 读取实时存储，包括快照之后保存的记忆：它接受可选的查询和作用域，按名称、描述或内容中的不区分大小写短语或所有空白分隔词搜索可见的全局和项目记忆，并在 `maxRecallBytes` 内最多返回 `maxRecallResults` 个完整标题块；若字节数或条数上限排除了匹配项，会追加 `More matches; narrow query or scope.` 并在工具结果中设置 `hasMore: true`。当 `hasMore` 为 false 时，结果会省略该字段。描述或内容未通过 `scan` 时，每条匹配使用拦截形式，且不会将文件改名为 `.bak`；没有匹配时回答 `No saved memories match.`。`memory_forget` 接收名称和作用域，回答 `Forgot <scope> memory "<name>".`。存储的拒绝会以工具错误的形式携带存储消息到达模型，例如来自没有项目根目录的会话的项目作用域写入、超长内容、被拦截的描述或内容，或已达上限的作用域。每个工具都需要一个拥有它的 agent 会话，因为会话的工作目录决定项目作用域。
 
 ### 快照
 
@@ -138,7 +140,8 @@ You have durable memory that persists across sessions. When saved memories exist
 
 #### 模型看到什么
 
-生成的 [`memory_write`、`memory_recall` 与 `memory_forget` schema](../../../docs/tool-catalog.zh.md#deepseek-aidsh-tool-memory)：`memory_write` 需要 `name`、`type`、`scope`、`description` 和 `content`，其中 `type` 与 `scope` 为枚举；`memory_recall` 接收可选的 `query`；`memory_forget` 需要 `name` 与 `scope`。
+生成的 [`memory_write`、`memory_recall` 与 `memory_forget` schema](../../../docs/tool-catalog.zh.md#deepseek-aidsh-tool-memory)：`memory_write` 需要 `name`、`type`、`scope`、`description` 和 `content`，其中 `type` 与 `scope` 为枚举；`memory_recall` 接收可选的 `query` 与 `scope`；`memory_forget` 需要 `name` 与 `scope`。
+
 
 #### Token 影响
 
@@ -180,7 +183,7 @@ Saved memories (snapshot):
 
 #### 模型看到什么
 
-每次调用都保留其参数。`memory_write` 返回 `Saved <scope> memory "<name>".` 或 `Updated <scope> memory "<name>".`；`memory_forget` 返回 `Forgot <scope> memory "<name>".`；`memory_recall` 返回 `No saved memories match.` 或按下面的成功形式为每条记忆返回一个块；当描述或内容未通过 `scan` 时，该块改为拦截形式。稳定的失败包括 `Error: <tool> requires an owning agent session`、存储的 `MemoryError` 消息（无效名称、空的或超长的描述或内容、被拦截的描述或内容、已达上限的作用域、`project scope is unavailable …; use scope "global"`，以及 `no <scope> memory named "<name>"`），以及注册表的 schema 拒绝。
+每次调用都保留其参数。`memory_write` 返回 `Saved <scope> memory "<name>".` 或 `Updated <scope> memory "<name>".`；`memory_forget` 返回 `Forgot <scope> memory "<name>".`；`memory_recall` 返回 `No saved memories match.` 或完整的成功块；若条数或字节上限排除了匹配项，会追加 `More matches; narrow query or scope.`；当描述或内容未通过 `scan` 时，该块改为拦截形式。稳定的失败包括 `Error: <tool> requires an owning agent session`、存储的 `MemoryError` 消息（无效名称、空的或超长的描述或内容、被拦截的描述或内容、已达上限的作用域、`project scope is unavailable …; use scope "global"`，以及 `no <scope> memory named "<name>"`），以及注册表的 schema 拒绝。
 
 ##### 该字段的逐字文本
 
@@ -200,7 +203,7 @@ Saved memories (snapshot):
 
 #### Token 影响
 
-写入与遗忘的结果是简短的一行。回忆结果随返回的记忆增长，最多 `maxRecallResults` 条正文、每条最多为存储的 `maxRecordBytes`，并保留到压缩为止。
+写入与遗忘的结果是简短的一行。回忆结果最多 `maxRecallBytes` 个 UTF-8 字节，包含块分隔符和省略提示，并且只包含完整记忆块；每条返回正文最多为存储的 `maxRecordBytes`。
 
 #### KV Cache 影响
 

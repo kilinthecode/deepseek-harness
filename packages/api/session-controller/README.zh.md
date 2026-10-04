@@ -33,6 +33,8 @@ Client journal 在发布 follow 快照、live entry 或历史页之前验证当�
 
 每个 `session/modelCatalog` 模型行携带一个可选的 `inputModalities` 列表，复制自 LLM registry 解析出的模型信息：缺省表示能力未知，列出但不含 `'image'` 则标记该路由仅支持文本。catalog 成员关系仍是建议性的；prompt 准入会先检查 Session 已解析的模型，再接纳带图片的 prompt。
 
+Host 仅在配置的工作时间片耗尽时，于完整条目之间让出事件循环；剩余工作较少时直接返回，不强制让出。每行及每次让出之后检查请求取消，取消时拒绝返回部分结果。每行同步计算；列表不承诺跨 Session 的统一快照。已经进入冷态队列的 Session 若在让出期间接入，仍返回缓存行：Client 对进行中请求的变更重放会纠正其可用性，带序号的投影会覆盖缓存提示。
+
 Client 列表行和驻留 Session 使用当前 `sessionListMetadata` 投影纠正过期的空白会话提示；最近活动时间取摘要时间戳与投影中最后一次用户提示词时间的较晚值。当 SessionManager 在列表行到达前创建实例时，会使用已保留的该 Session 元数据对账空白状态。因此，即使旧列表响应仍将已有对话标为空白，新会话操作也不会复用已经打开过的对话。
 
 显式 ID 的 `session.create` 会收养活动 Session，或恢复持久化 Session 并持续持有其写锁。写锁争用返回 `session/writer-held`；调用方可以尝试其他空白会话，同时保留其他失败。`session.list` 根据缓存元数据列出持久化空白会话，不打开冷日志正文。
@@ -92,6 +94,7 @@ GUI 模型选择要求确切提供方／模型对出现在可用目录中；不�
 | 字段 | 默认值 | 含义 |
 |---|---:|---|
 | `nativeOpen` | 平台探测 | 是否能把 Session 工作区路径交给原生桌面打开器 |
+| `listWorkSliceMs` | `16` | 列表工作时间片，单位为毫秒，取正整数；在完整条目之间检查 |
 
 生成的[配置目录](../../../docs/config-catalog.zh.md#deepseek-aidsh-api-session-controller)是所有受支持字段及其 JSDoc 的完整来源。
 
@@ -110,6 +113,7 @@ GUI 模型选择要求确切提供方／模型对出现在可用目录中；不�
 
 <a id="known-limitations-and-deferred-work"></a>
 
+- 单个摘要、查询提供方自身的枚举、最终排序和响应序列化都可能超出列表时间片目标；它不是 Host 延迟的硬上限。
 - 图片字节上限不校验解码后的尺寸或像素数。
 - follow 恢复失败会对调用方可见，而不会无限重试。
 - 浏览器原始字节上传使用一次不带断点续传偏移的流式 HTTP 请求；重试会从第零字节重新传输整个文件。

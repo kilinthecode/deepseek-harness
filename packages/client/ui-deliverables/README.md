@@ -38,6 +38,10 @@ The Web `standard`, `ptc`, and `cordis` presets expose `present` for final files
 
 The `present` tool row retains its document icon and recorded result across progress, success, failure, and interruption. Native actions share pending state and publish progress or retryable errors on the card. Successful open or reveal feedback stays visible for five seconds, fades over 200ms, then restores the file description; failures remain visible until another attempt. Desktop metadata is loaded when cards mount and invalidated on connection replacement. Without a Host desktop, cards retain Sidebar preview but omit native controls; failed metadata reads offer Retry. Delivery cards and change review expose `deliverables.file.actions` and `deliverables.review.file.actions`, supplied by [ui-open-in-app](../ui-open-in-app/README.md). Association GET requests and native POST actions both validate the recorded file coordinates and Session filesystem mapping before using the Host desktop.
 
+### Task overview
+
+The right task overview shows the selected closed turn’s recorded changes and the latest declaration of each output path across loaded turns, including a running turn. Changes select the latest turn initially; loaded history selects another turn without adding overlapping counts together. File rows open that turn’s review at the recorded file; output rows open their file previews. Outputs start with four rows and expand to the full loaded list. Coding Tools off hides change facts and prevents summary reads while retaining outputs. Comparisons no longer served by the Host show an unavailable notice.
+
 ### The changed-files card
 
 Coding Tools must be enabled to show this card or request its summary. Turning the preference off removes the card immediately while explicit delivery cards, inline file links, and recorded workspace changes remain available.

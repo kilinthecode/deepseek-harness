@@ -1,11 +1,8 @@
 /**
- * InputHub: the SessionInputResolver implementation (`ctx.conversation.input`) — one
- * SessionInputShell per session, created inside the uiSession provide
- * materialization (the 'input' standard-kit entry IS the
- * creation trigger) and torn down by the scope disposer (instance-and-scope
- * share one lifecycle). The hub registers the scoped input-mutation
- * listeners on each Session context and owns the default-sink choreography: every session is a
- * real host entity, so the sink is one unconditional prompt path.
+ * Session-bound input registry and default-send routing for Conversation.
+ * Each retained Session binding owns one shell, its input listeners, and its
+ * catalog subscription. Saved drafts enter the model before the first lookup
+ * returns; Session-scope disposal releases the shell and its resources.
  */
 import type { Context } from '@deepseek-ai/cordis'
 import type {
@@ -16,7 +13,7 @@ import type { TranslateNS } from '@deepseek-ai/dsh-client-locale/client'
 import type { InboxState } from '@deepseek-ai/dsh-agent/types'
 import type { ObservableSnapshot } from '@deepseek-ai/dsh-client-store'
 import type {
-  DraftAttachmentId, DraftAttachmentSerializationResult, InputTriggerController,
+  DraftAttachmentId, DraftAttachmentSerializationResult, DraftInitializationOptions, DraftInitializationResult, InputTriggerController,
   SessionInputResolver, SessionInput, SubmitOutcome,
 } from '../contract/input.ts'
 import type { ComposerKeyboard } from '../contract/draft-editor.ts'
@@ -25,6 +22,7 @@ import type { ComposerRouteImage } from '../contract/composer-route-image.ts'
 import type { ComposerAttachment } from '../contract/slots.ts'
 import type { PopupDismissFace } from './facade.ts'
 import { SessionInputShell } from './facade.ts'
+import { readConversationDraft } from '../stores.ts'
 
 /** Structural command face for per-session popup resolution. */
 interface CommandFace {
@@ -80,11 +78,17 @@ export class InputHub implements SessionInputResolver {
     return this.shellFor(binding)
   }
 
+  requestDraftInitialization(binding: SessionBinding, options: DraftInitializationOptions): DraftInitializationResult {
+    if (this.sessions().binding(binding.sessionId) !== binding) {
+      throw new Error('conversation.input.requestDraftInitialization requires a retained Session binding')
+    }
+    return this.shellFor(binding).requestDraftInitialization(options)
+  }
+
   /**
-   * Resident shell for one session binding — the provide-channel entry
-   * (called during scope materialization, BEFORE the scope record is
-   * queryable, hence binding-fed and hence the thunked slash/popup deps).
-   * Wires the scoped event listeners + teardown into the session scope.
+   * Resolve the resident shell for an already-retained, addressable Session binding.
+   * Draft import completes before return. The Session scope owns input listeners,
+   * the inject-managed catalog subscription, and shell teardown.
    * @param binding - session assembly handle.
    * @returns the shell.
    */
@@ -149,6 +153,13 @@ export class InputHub implements SessionInputResolver {
         for (const attachmentId of drafts) conversation?.releaseDraftAttachment(attachmentId)
       }
     }, 'conversation.input: session shell')
+    actx.inject(['inputTriggers'], (scope) => {
+      scope.effect(() => {
+        shell.refreshLexiconSubscription()
+        return () => { shell.refreshLexiconSubscription() }
+      }, 'conversation.input: reference catalogs')
+    })
+    shell.setDraft(readConversationDraft(binding.sessionId))
     return shell
   }
 

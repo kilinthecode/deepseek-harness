@@ -47,14 +47,14 @@ it('shares menu transparency and blur across palettes and follows native menu bo
         try { return getComputedStyle(overlay).backgroundColor } finally { overlay.remove() }
       })
       expect(overlayFill).toBe(platform === 'darwin'
-        ? dark ? 'rgba(48, 49, 54, 0.94)' : 'rgba(248, 249, 250, 0.94)'
-        : dark ? 'rgba(67, 69, 74, 0.45)' : 'rgba(248, 249, 250, 0.58)')
+        ? dark ? 'rgba(41, 41, 41, 0.94)' : 'rgba(250, 250, 250, 0.94)'
+        : dark ? 'rgba(41, 41, 41, 0.45)' : 'rgba(250, 250, 250, 0.58)')
       await account.click()
       const menu = page.getByRole('menu').filter({ has: page.getByRole('menuitem', { name: 'Settings', exact: true }) })
       await menu.waitFor()
       const appearance = await material(menu)
       expect(appearance).toMatchObject({
-        fill: dark ? 'rgba(67, 69, 74, 0.45)' : 'rgba(248, 249, 250, 0.58)',
+        fill: dark ? 'rgba(41, 41, 41, 0.45)' : 'rgba(250, 250, 250, 0.58)',
         blur: 'blur(40px) saturate(1.5)',
       })
       expect(appearance.shadow).toContain(`${dark ? 'rgba(255, 255, 255, 0.16)' : 'rgba(0, 0, 0, 0.04)'} 0px 0px 0px 0.5px`)

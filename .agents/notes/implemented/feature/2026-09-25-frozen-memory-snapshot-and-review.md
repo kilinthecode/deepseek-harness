@@ -58,13 +58,13 @@ Hermes Agent removed the pre-compaction flush at [`ea01bdce`](https://github.com
 
 ## Consequences
 
-Turns after the first step reuse the request prefix: the snapshot is append-only after the claimed user message and runtime context, and it is not refreshed until compaction. Sibling Web sessions see new writes in the next snapshot (after compaction or in a new session). A conversation that starts empty has no snapshot until compaction. Cross-process writes still appear only when the domain reopens.
+Turns after the first step reuse the request prefix: the snapshot is append-only after the claimed user message and runtime context, and it is not refreshed until compaction. Sibling Web sessions see new writes in the next snapshot (after compaction or in a new session). A conversation that starts empty has no snapshot until compaction. Memory scopes and model routing are independent; processes using the same harness home share completed writes, which later recalls see after refreshing the domain. Each read or mutation refreshes the domain. Simultaneous cross-process writes remain last-publication-wins, and per-process cap and `ifAbsent` checks are not globally atomic.
 
 Unattended review spends one cached-rate replay of the parent prefix every ten user-kind turns while the process lives. The child's first step may compact when the parent is near its threshold, which drops the warm cache read. Web shows an ordinary subagent row labelled `memory-review`.
 
 ## Deferred
 
-Revisit `/memory` when JSON files prove insufficient and a recorded GIF exists; a Web memory panel when generic tool rows prove insufficient for curation; routed digest review after a measured dollar cost; write-approval via `ctx.approval.request` after a first unattended-loss incident; a MemoryProvider ABC for a vendor that cannot be MCP; prepend for cross-session sharing after measured same-cwd cold prefill once `{{cwd}}` and time-context stop diverging; a git-shared store when a team must commit facts; semantic recall after measured substring misses; a subagent memory-write ban when composition `toolFilter` is the chosen enforcement.
+Revisit `/memory` when JSON files prove insufficient and a recorded GIF exists; a Web memory panel when generic tool rows prove insufficient for curation; routed digest review after a measured dollar cost; write-approval via `ctx.approval.request` after a first unattended-loss incident; a MemoryProvider ABC for a vendor that cannot be MCP; prepend for cross-session sharing after measured same-cwd cold prefill once `{{cwd}}` and time-context stop diverging; a git-shared store when a team must commit facts; semantic recall after measured misses in deterministic phrase/all-terms recall; a subagent memory-write ban when composition `toolFilter` is the chosen enforcement.
 
 ## Testing
 

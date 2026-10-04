@@ -34,6 +34,7 @@ import { managementText, noticeText, packageText, registryText, rowText, type Tr
 import type { PluginPackageRef, PluginRowRef, PluginsSubject } from './slot-contract.ts'
 import type { ConfigPageForm } from './slot-contract.ts'
 import css from './PluginManagerPage.module.css'
+import sourceCss from './PluginSourceFacts.module.css'
 
 /** Full component props assembled by the main slot renderer. */
 export type PluginManagerPageProps =
@@ -265,6 +266,35 @@ function RowsSection({ rows, t, resolveText, toggle, configure }: {
             ))}
           </ul>
         )}
+    </section>
+  )
+}
+
+/**
+ * Where a bundle comes from: the spec that installs it elsewhere, or built in
+ * for one whose loaded copy the installation supplies, and its version. A
+ * selected bundle that neither the profile nor the installation holds has no
+ * section.
+ */
+function SourceSection({ pkg, t }: { readonly pkg: PackageView; readonly t: Translate }): ReactNode {
+  if (pkg.source === undefined && !pkg.installed && !pkg.optional) return null
+  return (
+    <section className={css.detailSection} data-plugin-source>
+      <h4 className={css.sectionTitle}>{t('sourceTitle')}</h4>
+      <dl className={sourceCss.facts}>
+        <div>
+          <dt>{t('sourceSpec')}</dt>
+          <dd>{pkg.source === undefined ? t('sourceBuiltIn') : <code>{pkg.source}</code>}</dd>
+        </div>
+        {pkg.version === undefined
+          ? null
+          : (
+            <div>
+              <dt>{t('sourceVersion')}</dt>
+              <dd>{pkg.version}</dd>
+            </div>
+          )}
+      </dl>
     </section>
   )
 }
@@ -503,9 +533,9 @@ function RowDetail({ pkg, row, t, resolveText, onBack, renderSlot, form }: {
  * One package's page: the crumb back to the list; its icon with its switch
  * and, for a package the profile installed, uninstall; its title beside its
  * version tag, its beta tag, and its problem tag; the package name the title
- * stands for, which is what installs it elsewhere; its one-liner; the Host's
- * problem when it reports one; the configuration the bundle registered for
- * itself; and its rows with their switches and configure controls.
+ * stands for; its one-liner; the Host's problem when it reports one; the
+ * configuration the bundle registered for itself; its rows with their switches
+ * and configure controls; and where it comes from.
  */
 function PackageDetail({
   pkg, t, resolveText, busy, rowBusy, configured, configure, renderSlot,
@@ -587,6 +617,7 @@ function PackageDetail({
           toggle={pkg.enabled ? { busy: row => busy || rowBusy(row), onSetEnabled: onSetRowEnabled } : undefined}
           configure={configure}
         />
+        <SourceSection pkg={pkg} t={t} />
         {renderSlot('plugins.detail.section', { subject })}
       </div>
     </div>
@@ -997,6 +1028,7 @@ function InstallDialog({
     : null
   // Another registry is worth offering only for a failure the Host laid at the one it asked.
   const changeable = phase === 'failed' && !approvable && install.failure?.failedAt === 'registry'
+  const subject = install.subject
   return (
     <Modal open={install.open} onClose={onClose} title={heading} headless className={css.installDialog as string}>
       <div className={css.wizard} data-install-phase={phase}>
@@ -1033,7 +1065,9 @@ function InstallDialog({
             {uncertaintyText === null ? null : <p className={css.wizardSub} role="alert">{uncertaintyText}</p>}
             {phase === 'unknown' ? <p className={css.wizardSub}>{t('installUnknownDescription')}</p> : null}
           </div>
-          {install.subject === null ? null : <SubjectCard subject={install.subject} t={t} />}
+          {subject === null
+            ? null
+            : <SubjectCard subject={phase === 'done' && install.installedVersion !== null ? { ...subject, version: install.installedVersion } : subject} t={t} />}
           {approvable
             ? (
               <section className={css.approval} role="group" aria-labelledby={approvalId} data-install-approval>
@@ -1053,6 +1087,18 @@ function InstallDialog({
             : null}
           {phase === 'done' && install.restartRequired
             ? <p className={css.resultWarn} role="status">{t('installDoneRestart')}</p>
+            : null}
+          {phase === 'done' && subject?.kind === 'registry' && subject.name !== undefined && subject.version !== undefined
+            && install.installedVersion !== null && install.installedVersion !== subject.version
+            // A fallback registry can serve another release than the one inspected, so only a single-registry run is explained.
+            && (install.attempts?.registries.length ?? 1) === 1
+            ? (
+              <p className={css.resultWarn} role="status">
+                {t('installDoneOtherVersion', {
+                  installed: install.installedVersion, version: subject.version, exact: `${subject.name}@${subject.version}`,
+                })}
+              </p>
+            )
             : null}
           {phase === 'done' && install.approvedBuilds.length > 0
             ? <p className={css.result} role="status">{t('installDoneApproved', { names: install.approvedBuilds.join(', ') })}</p>

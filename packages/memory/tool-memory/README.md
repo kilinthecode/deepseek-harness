@@ -33,25 +33,27 @@ Choose it when an agent should carry user preferences, working-style feedback, p
 
 ### Minimal configuration
 
-Both fields are required with no default; a composition that omits either fails at load.
+All three fields are required with no default; a composition that omits any of them fails at load.
 
 ```yaml
 - name: '@deepseek-ai/dsh-tool-memory'
   config:
     injectMaxBytes: 8192
     maxRecallResults: 8
+    maxRecallBytes: 8192
 ```
 
 | Field | Default | Meaning |
 |---|---|---|
 | `injectMaxBytes` | required | UTF-8 byte budget of the injected snapshot; shipped compositions use `8192`; `0` disables injection while the tools stay available; a positive value below `SNAPSHOT_MIN_BYTES` fails load |
 | `maxRecallResults` | required | Most records one `memory_recall` call returns |
+| `maxRecallBytes` | required | UTF-8 byte cap for the complete rendered recall result, including separators and the omission hint; load fails unless it can hold one maximum-size stored memory with worst-case heading and description |
 
 The generated [configuration catalog](../../../docs/config-catalog.md#deepseek-aidsh-tool-memory) is the exhaustive source for the accepted fields.
 
 ### What each tool does
 
-`memory_write` takes a name, a type, a scope, a one-line description, and the content, and saves the memory or replaces the one with the same name in the same scope; it answers `Saved global memory "<name>".` or `Updated project memory "<name>".` `memory_recall` reads the live store, including memories saved after the snapshot: it takes an optional query, matches it as a case-insensitive substring of name, description, or content across the global memories and the current project's memories, and returns up to `maxRecallResults` of the newest matches; each match is rendered as a headed block, or as the blocked form when description or content fails `scan` (the file is not renamed `.bak`); with no match it answers `No saved memories match.` `memory_forget` takes a name and a scope and answers `Forgot <scope> memory "<name>".` A store rejection reaches the model as a tool error with the store's message, for example a project-scoped write from a session with no project root, an oversize content, a blocked description or content, or a scope that reached its cap. Every tool needs an owning agent session, because the session's working directory selects the project scope.
+`memory_write` takes a name, a type, a scope, a one-line description, and the content, and saves the memory or replaces the one with the same name in the same scope; it answers `Saved global memory "<name>".` or `Updated project memory "<name>".` `memory_recall` reads the live store, including memories saved after the snapshot: it accepts an optional query and scope, searches visible global and project memories by a case-insensitive phrase or all whitespace-separated query terms in name, description, or content, and returns up to `maxRecallResults` complete headed blocks within `maxRecallBytes`; a byte or count limit that excludes matches adds `More matches; narrow query or scope.` and sets `hasMore: true` in the tool result. The result omits `hasMore` when it is false. Each match uses the blocked form when description or content fails `scan`, without renaming the file `.bak`; no match answers `No saved memories match.` `memory_forget` takes a name and a scope and answers `Forgot <scope> memory "<name>".` A store rejection reaches the model as a tool error with the store's message, for example a project-scoped write from a session with no project root, an oversize content, a blocked description or content, or a scope that reached its cap. Every tool needs an owning agent session, because the session's working directory selects the project scope.
 
 ### The snapshot
 
@@ -138,7 +140,8 @@ Prefix-stable while the plugin stays mounted; mounting or unmounting it changes 
 
 #### What the model sees
 
-The generated [`memory_write`, `memory_recall`, and `memory_forget` schemas](../../../docs/tool-catalog.md#deepseek-aidsh-tool-memory): `memory_write` requires `name`, `type`, `scope`, `description`, and `content` with `type` and `scope` as enums; `memory_recall` takes an optional `query`; `memory_forget` requires `name` and `scope`.
+The generated [`memory_write`, `memory_recall`, and `memory_forget` schemas](../../../docs/tool-catalog.md#deepseek-aidsh-tool-memory): `memory_write` requires `name`, `type`, `scope`, `description`, and `content` with `type` and `scope` as enums; `memory_recall` takes optional `query` and `scope`; `memory_forget` requires `name` and `scope`.
+
 
 #### Token effect
 
@@ -180,7 +183,7 @@ Append-only after the reusable request prefix; never refreshed within a surface 
 
 #### What the model sees
 
-Each call retains its arguments. `memory_write` returns `Saved <scope> memory "<name>".` or `Updated <scope> memory "<name>".`; `memory_forget` returns `Forgot <scope> memory "<name>".`; `memory_recall` returns `No saved memories match.` or one block per memory in the success form below; when description or content fails `scan`, that block is the blocked form instead. Stable failures are `Error: <tool> requires an owning agent session`, the store's `MemoryError` messages (an invalid name, an empty or oversize description or content, a blocked description or content, a scope at its cap, `project scope is unavailable …; use scope "global"`, and `no <scope> memory named "<name>"`), and the registry's schema rejections.
+Each call retains its arguments. `memory_write` returns `Saved <scope> memory "<name>".` or `Updated <scope> memory "<name>".`; `memory_forget` returns `Forgot <scope> memory "<name>".`; `memory_recall` returns `No saved memories match.` or complete blocks in the success form below, followed by `More matches; narrow query or scope.` when the count or byte cap excludes matches; when description or content fails `scan`, that block is the blocked form instead. Stable failures are `Error: <tool> requires an owning agent session`, the store's `MemoryError` messages (an invalid name, an empty or oversize description or content, a blocked description or content, a scope at its cap, `project scope is unavailable …; use scope "global"`, and `no <scope> memory named "<name>"`), and the registry's schema rejections.
 
 ##### Verbatim text for this field
 
@@ -200,7 +203,7 @@ Each call retains its arguments. `memory_write` returns `Saved <scope> memory "<
 
 #### Token effect
 
-Write and forget results are one short line. A recall result grows with the returned memories, at most `maxRecallResults` bodies of at most the store's `maxRecordBytes` each, and stays until compaction.
+Write and forget results are one short line. A recall result is at most `maxRecallBytes` UTF-8 bytes including block separators and the omission hint, and contains only complete memory blocks; each returned body is at most the store's `maxRecordBytes`.
 
 #### KV Cache effect
 

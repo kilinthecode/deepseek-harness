@@ -1,0 +1,10 @@
+version: 1
+scenario: fs-read-window-default-500
+profile: headless
+composition: fs-read-window-default-500
+recording: authored
+header:
+  class: fs-read-window-default-500
+  pin: true
+  systemPromptSource: text-turn
+  toolSchemasSource: text-turn

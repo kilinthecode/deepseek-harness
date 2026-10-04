@@ -211,7 +211,7 @@ export async function harness(
   await mountAgentLoopTestDependencies(ctx)
   await ctx.plugin(AgentLoop, { agents: [] })
   await mountStore(ctx, root)
-  await ctx.plugin(ToolMemory, { injectMaxBytes: 2048, maxRecallResults: 4 })
+  await ctx.plugin(ToolMemory, { injectMaxBytes: 2048, maxRecallResults: 4, maxRecallBytes: 8192 })
   await ctx.plugin(SubagentRuntime)
   await ctx.plugin(Fork, { providerName: 'fork' })
   const reviewFiber = await ctx.plugin(MemoryReview, config)
@@ -279,7 +279,7 @@ export async function presetScopedHarness(
   await ctx.agentPresets.register({
     id: presetId,
     plugins: [
-      { id: 'tool-memory', name: 'cordis:tool-memory', config: { injectMaxBytes: 2048, maxRecallResults: 4 } },
+      { id: 'tool-memory', name: 'cordis:tool-memory', config: { injectMaxBytes: 2048, maxRecallResults: 4, maxRecallBytes: 8192 } },
       { id: 'memory-review', name: 'cordis:memory-review', config },
     ],
   })

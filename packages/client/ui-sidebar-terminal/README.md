@@ -9,7 +9,7 @@ English | [中文](README.zh.md)
 
 ## Summary
 
-Choose an installed shell from the right sidebar's Start page to run commands in the Session workspace. Rename terminals in their tabs and recover retained processes after reloading the page. Collapse the sidebar to keep commands running; close a terminal tab to request process termination. Tab completion follows the shell configuration. Commands use the execution environment’s system-user permissions independently of Agent permissions; see [user-terminal execution](../../api/terminal-controller/README.md#use-this-package).
+Choose an installed shell from the right sidebar's Task overview to run commands in the Session workspace. Rename terminals in their tabs and recover retained processes after reloading the page. Collapse the sidebar to keep commands running; close a terminal tab to request process termination. Tab completion follows the shell configuration. Commands use the execution environment’s system-user permissions independently of Agent permissions; see [user-terminal execution](../../api/terminal-controller/README.md#use-this-package).
 
 ## Table of Contents
 
@@ -25,7 +25,7 @@ Choose an installed shell from the right sidebar's Start page to run commands in
 <a id="use-this-package"></a>
 ## Use this package
 
-The `terminal.new` command creates a separate terminal in the focused dock pane, replacing a guide and retaining existing content pages. From the conversation or a floating content page, it uses the active dock pane. The guide card right-aligns the current effective shortcut as unboxed text without a duplicate tooltip. Windows and macOS Web use the [shortcut service’s platform defaults](../shortcuts/README.md); Linux Web leaves the command unbound by default.
+The `terminal.new` command creates a separate terminal in the focused dock pane, replacing a guide and retaining existing content pages. From the conversation or a floating content page, it uses the active dock pane. The compact overview row right-aligns the current effective shortcut as unboxed text without a duplicate tooltip. Windows and macOS Web use the [shortcut service’s platform defaults](../shortcuts/README.md); Linux Web leaves the command unbound by default.
 
 Open the right sidebar and click **New terminal** to open the remembered available shell immediately. The separate arrow beside the title opens the installed-shell menu; selecting an item remembers it and opens that shell directly. Discovery runs when the menu opens and does not allocate a terminal. A failed lookup offers Retry in the menu. Use **New tab** to return to the guide and open another terminal.
 

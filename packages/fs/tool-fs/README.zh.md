@@ -52,12 +52,12 @@ kind: "package-reference"
 
 ### 配置
 
-所有键均为可选；默认值是随产品交付的读取上限。
+所有键均为可选。默认值适用于每种组合和模型路由；显式配置可以覆盖它们。
 
 | 键 | 默认值 | 含义 |
 |---|---|---|
 | `readLimit` | `2000` | 一次 `read` 调用返回的最大行数 |
-| `readDefaultLimit` | `readLimit` | 省略 `limit` 时返回的行数；必须为不大于 `readLimit` 的正整数 |
+| `readDefaultLimit` | `min(500, readLimit)` | 省略 `limit` 时返回的行数；必须为不大于 `readLimit` 的正整数 |
 | `readMaxLineLength` | `2000` | 每行截断前保留的字符数 |
 | `readMaxBytes` | `51200` | 一次 `read` 调用所选行的字节上限；溢出时以「已达上限」footer 结束窗口 |
 | `readStreamMinSize` | `10485760` | 大于等于该大小或大小未知的文件采用流式读取，而不是整体加载到内存 |

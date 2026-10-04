@@ -10,14 +10,14 @@
   ],
   "columns": [
     280,
-    644,
-    756
+    896,
+    504
   ],
   "columnTransition": "all",
   "expanded": true,
   "mode": "push",
-  "panelContentWidth": 756,
-  "panelOuterWidth": 756,
+  "panelContentWidth": 504,
+  "panelOuterWidth": 504,
   "coversViewport": false,
   "resizeHandleWidth": 8,
   "expandedDirectories": [],
@@ -30,7 +30,7 @@
           "selected": true
         },
         {
-          "title": "Start",
+          "title": "Task overview",
           "selected": false
         }
       ]
@@ -58,8 +58,8 @@
   ],
   "columns": [
     280,
-    644,
-    756
+    896,
+    504
   ],
   "columnTransition": "none",
   "expanded": true,
@@ -78,7 +78,7 @@
           "selected": true
         },
         {
-          "title": "Start",
+          "title": "Task overview",
           "selected": false
         }
       ]
@@ -126,7 +126,7 @@
           "selected": true
         },
         {
-          "title": "Start",
+          "title": "Task overview",
           "selected": false
         }
       ]
@@ -191,8 +191,8 @@
   ],
   "columns": [
     280,
-    644,
-    756
+    896,
+    504
   ],
   "columnTransition": "none",
   "expanded": true,
@@ -211,7 +211,7 @@
           "selected": true
         },
         {
-          "title": "Start",
+          "title": "Task overview",
           "selected": false
         }
       ]
@@ -239,14 +239,14 @@
   ],
   "columns": [
     280,
-    644,
-    756
+    896,
+    504
   ],
   "columnTransition": "all",
   "expanded": true,
   "mode": "push",
-  "panelContentWidth": 756,
-  "panelOuterWidth": 756,
+  "panelContentWidth": 504,
+  "panelOuterWidth": 504,
   "coversViewport": false,
   "resizeHandleWidth": 8,
   "expandedDirectories": [],
@@ -274,14 +274,14 @@
   ],
   "columns": [
     280,
-    644,
-    756
+    896,
+    504
   ],
   "columnTransition": "all",
   "expanded": true,
   "mode": "push",
-  "panelContentWidth": 756,
-  "panelOuterWidth": 756,
+  "panelContentWidth": 504,
+  "panelOuterWidth": 504,
   "coversViewport": false,
   "resizeHandleWidth": 8,
   "expandedDirectories": [],
@@ -294,7 +294,7 @@
           "selected": true
         },
         {
-          "title": "Start",
+          "title": "Task overview",
           "selected": false
         }
       ]
@@ -342,7 +342,7 @@
           "selected": true
         },
         {
-          "title": "Start",
+          "title": "Task overview",
           "selected": false
         }
       ]
@@ -390,7 +390,7 @@
           "selected": true
         },
         {
-          "title": "Start",
+          "title": "Task overview",
           "selected": false
         }
       ]
@@ -438,7 +438,7 @@
           "selected": true
         },
         {
-          "title": "Start",
+          "title": "Task overview",
           "selected": false
         }
       ]
@@ -486,7 +486,7 @@
           "selected": true
         },
         {
-          "title": "Start",
+          "title": "Task overview",
           "selected": false
         }
       ]

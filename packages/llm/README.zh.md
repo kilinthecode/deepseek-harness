@@ -25,6 +25,9 @@ llm 组提供 harness 的模型调用能力：一个提供方无关的服务，�
 | 包 | 职责 | ctx key |
 |---|---|---|
 | [`llm/`](llm/README.zh.md) | 通过已注册的提供方适配器流式发起一次模型调用，并共享 harness 的消息、块与分片词汇 | `ctx.llm` |
+| [`image-generation/`](image-generation/README.zh.md) | 定义显式图像模型发现和准备后的文本生成图像请求 | `ctx.imageGeneration` |
+| [`image-generation-http/`](image-generation-http/README.zh.md) | 提供已配置的 OpenAI、OpenRouter 和 Gemini 图像 API | `ctx.imageGeneration` |
+| [`tool-image-generation/`](tool-image-generation/README.zh.md) | 发现图像模型并发布生成预览及原始文件 | 使用 `ctx.imageGeneration` |
 | [`llm-deepseek/`](llm-deepseek/README.zh.md) | 共享 Messages 协议、请求配置与模型能力 | — |
 | [`llm-deepseek-api-key/`](llm-deepseek-api-key/README.zh.md) | API key 鉴权与 official 模型发现 | `ctx.llm` |
 | [`llm-deepseek-account/`](llm-deepseek-account/README.zh.md) | 账号 token 鉴权、失效处理与模型发现 | `ctx.llm` |

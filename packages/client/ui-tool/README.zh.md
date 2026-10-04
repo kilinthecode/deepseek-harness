@@ -29,7 +29,7 @@ kind: "package-reference"
 
 共享工具行和 Bash 行的失败、停止摘要在悬停时仍保留错误色和警告色；只有不处于这两种状态的摘要会在悬停时加深。
 
-派发前，模型已给出名称的调用显示为不可展开的一行，使用工具自己的图标与标题。通用行显示为`工具调用 · <工具名>`。准备阶段不提供完整参数、文件链接、结果或依赖参数的交互。write/edit 的摘要显示「正在准备内容 NKB」；N 为 `Math.ceil(raw.length / 1024)`，是原始参数字符串长度的整数近似值，不是文件字节数。`tool/call` 才启用既有调用展示；参数块结束本身不代表开始执行。
+派发前，模型已给出名称的调用显示为不可展开的一行，使用工具自己的图标与标题。通用行显示为 `工具调用 · <工具名>`。read/write/edit 在 `file_path` 闭合且解码无误后显示可打开的路径；write/edit 在内容流入时还在该路径后显示「正在准备内容 NKB」，不将它单独作为摘要。N 按解码后内容的 UTF-16 长度除以 1024 向上取整，不是文件字节数。命令行显示流入中的描述。`tool/call` 才启用既有调用展示；参数块结束本身不代表开始执行。
 
 ### 注册业务工具视图
 
@@ -43,13 +43,19 @@ ctx.slots.inject('tool.call.toolview', () =>
   }, BusinessToolRow))
 ```
 
-owner 载荷为 `ToolCallOwnerProps`：`callId`、`toolName`、`phase` 判别字段及对应阶段的冻结 `block`、可选 `cwd` 与 `home`、会话授权的 `loadImage` loader（供结果携带持久图像的视图使用），以及普通的 `openFile`/`inspect` 回调。PTC dispatch 块保留事件的 `parentCallId`；根会话调用没有该字段，因此后代调用都走同一条按 key 分发路径：已注册视图的调用（如 `read_image`）也会在嵌套处渲染对应卡片，未注册的后代调用则保持通用压平形式。路径摘要先相对会话 cwd 缩短，再把剩余的 POSIX Host home 写成 `~`；`filePath` 与 Host 打开仍使用作者给出的文件系统路径。注册项会收到常规的会话 slot 运行时共享数据，但不会收到 React 节点或运行时服务。
+owner 载荷为 `ToolCallOwnerProps`：`callId`、`toolName`、`phase` 判别字段及对应阶段的 `block`、可选 `cwd` 与 `home`、会话授权的 `loadImage` loader（供结果携带持久图像的视图使用），以及普通的 `openFile`/`inspect` 回调。PTC dispatch 块保留事件的 `parentCallId`；根会话调用没有该字段，因此后代调用都走同一条按 key 分发路径：已注册视图的调用（如 `read_image`）也会在嵌套处渲染对应卡片，未注册的后代调用则保持通用压平形式。路径摘要先相对会话 cwd 缩短，再把剩余的 POSIX Host home 写成 `~`；`filePath` 与 Host 打开仍使用作者给出的文件系统路径。注册项会收到常规的会话 slot 运行时共享数据，但不会收到 React 节点或运行时服务。
 
 ### 内置视图
 
-每个注册视图都接收[工具 slot 类型](src/client/contract/slots.ts)声明的显式 `preparing`、`start` 和 `result` props。通用行在三个阶段使用同一个 `ToolRow`。行模型统一选择标题，并组合通用工具名前缀与已有参数摘要，不按生命周期阶段改变前缀；专用标题不附带英文名。准备阶段的共享参数解析入口直接返回无调用，不解析部分 JSON。write/edit 将准备态和派发后阶段拆成两个组件，只有准备态组件调用 `useToolCallArgumentsPartial`，start 与 result 共用派发后组件。Bash、Skill、Cordis 等自定义 renderer 分别处理准备态，其依赖参数的组件接收 `StartedToolCallViewProps`。
+每个注册视图都接收[工具 slot 类型](src/client/contract/slots.ts)声明的显式 `preparing`、`start` 和 `result` props。所有块都提供 `name` 和懒计算的 `args` 读器，原有 `argsRaw` 和 result 的 `call` 字段仍可使用。行模型统一选择标题，并组合通用工具名前缀与已有参数摘要，不按生命周期阶段改变前缀；专用标题不附带英文名。write/edit 和 Bash 在各阶段共用组件。自定义 renderer 可保留独立准备态分支；依赖参数的组件接收 `StartedToolCallViewProps`。
 
-本包拥有 generic fallback，以及 shell/pwsh、read、read_image、write/edit、运行中的 `str_replace_editor` `create`／`str_replace`、grep/glob、web、todo、question 与 PTC dispatch 的内置展示。结构化卡片直接从第一方原始 event 字段派生；Host `presentCall` 与 `presentResult` 值不会进入 Client。运行中与已完成的前台标准 `bash`/`pwsh` 和 `terminal_send` 调用，无论位于根还是 PTC dispatch 子调用中，都在通过相同的参数、结果和错误检查后使用 terminal 卡片。持久 `bash`/`pwsh` 调用仅在运行中使用 terminal 卡片。以已识别的 spill 策略提示结尾的 shell 输出，在 shell 行中使用可展开的 generic 输出，在 Details 中使用 generic 输出；位置被改变或被省略的退出标记无法证明成功。已完成的持久 shell 结果保持 generic 展示，因为 reset 与部分输出诊断不一定描述单个进程的退出状态；根调用的持久 shell 结果可展开，后台启动回执则保持折叠。带有 `AUTO_REVIEW_DENIED` 的原生或 PTC dispatch 失败会在折叠行显示 Auto review 裁决，展开时显示一行归一化后的“未执行”原因；原因缺失或只有空白时使用本地化 fallback 文案。成功的问题行按稳定 id 配对调用中的问题与结果中的回答，展开后显示可读的问答行。已取消或已中断的问题行显示其裁决与原始问题，不虚构回答。不受支持、格式错误或含糊的输入回退为压平的工具输入／结果文本。`ui-skill` 展示了业务包自行拥有的 `skill` 注册项。
+文件工具行优先使用完整的 `file_path`；其他通用行（包括搜索和未注册的工具）优先使用非空 `description`，再回退到各自类别的参数摘要。应在渲染或构造视图时读取 `args`：准备态读器原地增长，后续仅在已观察答案变化时重新发布块。
+
+本包拥有 generic fallback，以及 shell/pwsh、read、read_image、write/edit、运行中的 `str_replace_editor` `create`／`str_replace`、grep/glob、web、todo、question 与 PTC dispatch 的内置展示。结构化卡片直接从第一方原始 event 字段派生；Host `presentCall` 与 `presentResult` 值不会进入 Client。运行中与已完成的前台标准 `bash`/`pwsh` 和 `terminal_send` 调用，无论位于根还是 PTC dispatch 子调用中，都在通过相同的参数、结果和错误检查后使用 terminal 卡片。持久 `bash`/`pwsh` 调用仅在运行中使用 terminal 卡片。以已识别的 spill 策略提示结尾的 shell 输出，在 shell 行中使用可展开的 generic 输出，在 Details 中使用 generic 输出；位置被改变或被省略的退出标记无法证明成功。已完成的持久 shell 结果保持 generic 展示，因为 reset 与部分输出诊断不一定描述单个进程的退出状态；根调用的持久 shell 结果可展开，后台启动回执则保持折叠。带有 `AUTO_REVIEW_DENIED` 的原生或 PTC dispatch 失败会在折叠行显示 Auto review 裁决，展开时显示一行归一化后的“未执行”原因；原因缺失或只有空白时使用本地化 fallback 文案。`ui-skill` 展示了业务包自行拥有的 `skill` 注册项。
+
+问题行按 id 配对问题与答案；答案来自工具结果，迟到回答则来自 `userQuestions` 投影。可回答的调用提供按钮以重新打开面板。迟到回复进入 agent Inbox 后，问题行显示已提交的答案；等待准入期间，「查看回答」展开只读的行内记录。带有答案的已结算调用则以只读方式打开面板。没有答案的已关闭调用和无效记录不提供按钮。已取消和已中断的行显示裁决，不虚构答案。若面板提供方不接受按钮操作，点击会展开该行。不受支持或含糊的输入回退为压平的工具文本。
+
+回答面板按钮归问题 renderer 所有。它使用 `DisclosureRow` 组合自己的操作与 transcript；通用 `ToolRow` 不选择或派发问题操作。
 
 -----
 
@@ -68,7 +74,7 @@ owner 载荷为 `ToolCallOwnerProps`：`callId`、`toolName`、`phase` 判别字
 Tool 所有者属性将 Chat 注入的稳定 `useDisclosure` 钩子传给根调用及嵌套调用。工具行在拥有展开正文的位置调用它，中间 renderer 不订阅。每次调用拥有独立展开状态，外层轮次收起时重置该状态，不替换 React 身份；展示模式切换保留该状态。
 
 
-slot 注入的 `useToolCallArgumentsPartial` 钩子按需订阅所属 Step 的 `assistant-step` 来源，并选取当前 callId 的原始参数前缀。来源或调用不存在时返回空字符串。同一步骤中的其他调用可能触发快照检查，但选中的字符串未变时不会刷新使用方。不调用钩子的工具不新增订阅，已派发的调用不再提供参数前缀来源。
+Tool Definition 拥有[懒计算参数视图](../../util/values/README.zh.md)。工具行通过读器选择字段和更新粒度，不另设订阅或注册。delta 追加时不扫描；按帧合批的发布会刷新已观察答案，仅在答案变化时替换块引用。需要完整派发参数的卡片模型继续读取 `argsRaw`。
 
 ### 卡片
 
@@ -84,6 +90,11 @@ Auto 拒绝优先于按工具名选择的专门视图。其通用行保留调用
 展开后的状态圆点和文字使用静态语义色。操作回执和任务输出的标题保持中性色，展开时省略标题中的状态。中断回执仅确认已发出中断请求。
 
 terminal model 使用浏览器安全入口 `@deepseek-ai/dsh-spill-policy/notice` 的 `hasSpillNotice`，而非独立的 UI 匹配规则。[spill-policy README](../../spill/spill-policy/README.zh.md#shared-notice-ownership) 负责提示文本的格式化与识别。该检查保守地选择通用输出；匹配的文本无法证明其来源，回放也不改变已记录的结果字节。
+
+### 声明的可选能力
+
+本包声明可选的 `UserQuestionPanels` 能力；`ui-user-questions` 提供它。`reveal(sessionId, callId)` 打开可回答的面板，`review(sessionId, callId, record)` 以只读方式打开已记录的答案。行通过 `ctx.get('userQuestionPanels')` 读取此能力；未组合问题 UI 时仍保留文本记录。
+
 </details>
 
 -----
@@ -96,6 +107,7 @@ terminal model 使用浏览器安全入口 `@deepseek-ai/dsh-spill-policy/notice
 - [ui-conversation](../ui-conversation/README.zh.md)——把 `tool-call` 节点分派给本包的聊天界面。
 - [ui-primitives](../ui-primitives/README.zh.md)——内置视图所拼装的输出卡片原子组件。
 - [ui-skill](../ui-skill/README.zh.md)——`skill` 工具的业务自有注册。
+- [ui-user-questions](../ui-user-questions/README.zh.md)——`ask_user_question` 行重新打开的提问面板。
 - [Auto review](../../experimental/auto-review/README.zh.md)——结构化拒绝身份与用户可见原因的 owner。
 - [Conversation 子系统](../../../docs/subsystems/conversation.zh.md)——业务自有功能如何注册 Conversation node。
 - [slot 系统标准](../../../.agents/notes/implemented/architecture/2026-07-22-slot-type-chain-implementation.zh.md)——keyed slot 背后的组合模型。

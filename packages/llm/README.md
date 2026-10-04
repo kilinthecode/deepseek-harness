@@ -25,6 +25,9 @@ The llm group provides the harness's model-call capability: one provider-neutral
 | Package | Role | ctx key |
 |---|---|---|
 | [`llm/`](llm/README.md) | Streams one model call through a registered provider adapter and shares the harness message, block, and chunk vocabulary | `ctx.llm` |
+| [`image-generation/`](image-generation/README.md) | Defines explicit image-model discovery and prepared text-to-image requests | `ctx.imageGeneration` |
+| [`image-generation-http/`](image-generation-http/README.md) | Serves configured OpenAI, OpenRouter, and Gemini image APIs | `ctx.imageGeneration` |
+| [`tool-image-generation/`](tool-image-generation/README.md) | Discovers image models and publishes generated previews with original files | uses `ctx.imageGeneration` |
 | [`llm-deepseek/`](llm-deepseek/README.md) | Shared Messages protocol, request configuration, and model capabilities | — |
 | [`llm-deepseek-api-key/`](llm-deepseek-api-key/README.md) | API-key authentication and discovery for the official route | `ctx.llm` |
 | [`llm-deepseek-account/`](llm-deepseek-account/README.md) | Account-token authentication, invalidation, and discovery | `ctx.llm` |

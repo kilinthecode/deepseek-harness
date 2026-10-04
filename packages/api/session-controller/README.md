@@ -33,6 +33,8 @@ Each endpoint states its activation policy. List reads only stored headers and p
 
 Each `session/modelCatalog` model row carries an optional `inputModalities` list copied from the LLM registry's resolved model info: an absent list means unknown capability, and a present list omitting `'image'` marks the route text-only. Catalog membership stays advisory; prompt admission checks the Session's resolved model before it admits an image-bearing prompt.
 
+Host list generation yields between complete rows only when its configured work slice is exhausted; cheap remaining work returns without a forced yield. Request cancellation is checked per row and after each yield and rejects without partial results. Each row is synchronous; the list does not promise one cross-Session snapshot. A Session already queued as cold remains a cached row if it attaches during a yield: Client in-flight mutation replay corrects its availability, and sequenced projections supersede cached hints.
+
 Client list rows and resident Sessions use the current `sessionListMetadata` projection to reject stale blank-session hints; recency is the later of the summary timestamp and the projected last user prompt. When SessionManager creates an instance before its list row arrives, it reconciles blankness with metadata already retained for that Session. An opened conversation is therefore not reused by New Session even when an older list response still marks it blank.
 
 Explicit-id `session.create` adopts a live Session or resumes a persisted Session while retaining its writer lock. Writer contention returns `session/writer-held`; callers may try another blank without suppressing unrelated failures. `session.list` includes persisted blanks using cached metadata, without opening cold log bodies.
@@ -92,6 +94,7 @@ A successful `selectModel` response acknowledges the Session-local selection wit
 | Field | Default | Meaning |
 |---|---:|---|
 | `nativeOpen` | platform-detected | Whether Session workspace paths can be handed to a native desktop opener |
+| `listWorkSliceMs` | `16` | Positive integral list-work time slice in milliseconds; checks occur between complete rows |
 
 The generated [configuration catalog](../../../docs/config-catalog.md#deepseek-aidsh-api-session-controller) is the exhaustive source for accepted fields and their JSDoc.
 
@@ -110,6 +113,7 @@ No direct effect; model requests remain owned by the Agent and LLM packages.
 
 <a id="known-limitations-and-deferred-work"></a>
 
+- A single summary, the query provider's own enumeration, final sorting, and response serialization can exceed the list work-slice target; it is not a hard Host latency bound.
 - The image byte cap does not validate decoded dimensions or pixel count.
 - A failed follow resumption remains visible to the caller instead of retrying indefinitely.
 - The raw browser upload is one streaming HTTP request without resumable offsets; a retry sends the file again from byte zero.

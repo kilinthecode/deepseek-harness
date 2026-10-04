@@ -335,7 +335,7 @@ describe('read tool', () => {
     const { ctx, fs } = await setup()
     // Many long lines so the window hits the byte cap before EOF.
     fs.files.set('key:big.txt', Array.from({ length: 2000 }, () => 'y'.repeat(100)).join('\n'))
-    const result = await call(ctx, 'read', { file_path: 'big.txt' })
+    const result = await call(ctx, 'read', { file_path: 'big.txt', limit: 2000 })
     expect(result.isError).toBe(false)
     expect(text(result)).toContain('Output capped.')
   })
@@ -708,7 +708,35 @@ describe('read caps are plugin config', () => {
     return { ctx, fs: ctx.fs as FakeFs }
   }
 
-  it('a configured readLimit is both the default and the cap, and the schema names it', async () => {
+  it('uses a bounded default without a profile or model and permits explicit larger reads', async () => {
+    const { ctx, fs } = await setupWith({})
+    fs.files.set('key:a.txt', Array.from({ length: 600 }, (_, index) => `record ${index + 1}`).join('\n'))
+    const first = await call(ctx, 'read', { file_path: 'a.txt' })
+    expect(text(first)).toContain('(Showing lines 1-500 of 600. Use offset=501 to continue.)')
+    expect(first.meta).toMatchObject({ offset: 1, totalLines: 600 })
+    const next = await call(ctx, 'read', { file_path: 'a.txt', offset: 501 })
+    expect(text(next)).toContain('501: record 501')
+    expect(text(next)).toContain('(End of file - total 600 lines)')
+    const larger = await call(ctx, 'read', { file_path: 'a.txt', limit: 2000 })
+    expect(text(larger)).toContain('600: record 600')
+    const overCap = await call(ctx, 'read', { file_path: 'a.txt', limit: 2001 })
+    expect(overCap.isError).toBe(true)
+    expect(text(overCap)).toContain('less than or equal to 2000')
+    expect(ctx.tools.schemas().find(schema => schema.name === 'read')).toMatchObject({
+      parameters: { properties: { limit: { description: 'Maximum number of lines to return. Defaults to 500. Maximum: 2000.' } } },
+    })
+  })
+
+  it('retains a smaller default when the configured maximum is larger', async () => {
+    const { ctx, fs } = await setupWith({ readLimit: 800 })
+    fs.files.set('key:a.txt', Array.from({ length: 600 }, (_, index) => `record ${index + 1}`).join('\n'))
+    const first = await call(ctx, 'read', { file_path: 'a.txt' })
+    expect(text(first)).toContain('(Showing lines 1-500 of 600. Use offset=501 to continue.)')
+    const larger = await call(ctx, 'read', { file_path: 'a.txt', limit: 800 })
+    expect(text(larger)).toContain('600: record 600')
+  })
+
+  it('a configured smaller readLimit is both the default and the cap, and the schema names it', async () => {
     const { ctx, fs } = await setupWith({ readLimit: 2 })
     fs.files.set('key:a.txt', 'one\ntwo\nthree\nfour')
     const result = await call(ctx, 'read', { file_path: 'a.txt' })

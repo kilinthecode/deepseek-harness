@@ -35,6 +35,8 @@ The plugin registers Appearance preference cubes and a font-size stepper in the 
 
 A composition can register a third-party theme id with alias-token overrides through `ctx.theme`; the override layer folds into the active snapshot's tokens in registration order. Removing one never overwrites the last durable built-in preference. Third-party theme ids remain an in-process extension and do not cross the built-in settings schema.
 
+The main canvas is white in light mode and black in dark mode. Panels, menus, user bubbles, selection, links, and primary actions use the neutral ramp; errors, warnings, success, code differences, and syntax retain their semantic colors.
+
 ### Pre-plugin palette
 
 When the host composition includes an HTTP server, the host half embeds the registered `ui-theme` settings, or schema defaults, into each index response. Head CSS selects the document canvas color scheme before any script runs, including a `prefers-color-scheme` query for the `system` preference. A body script then sets `body[data-ds-dark-theme]` and `--dsh-content-font-size` before the loading page and application scripts, so the first paint uses the selected palette and text size.
@@ -57,11 +59,11 @@ The service owns theme and font-size state and publishes snapshots. The ui-layou
 
 `src/styles/` holds eight sheets imported in order by ui-theme's dynamic client entry: `base.css`, `corner-shape.css`, `design-platform.css`, `focus.css`, `onboarding.css`, `scrollbar.css`, `gradient-shadow-text.css`, and `shiki.css`. The client bundle compiles and injects them as plugin-owned global styles, so unload and HMR remove them with ui-theme. `scrollbar.css` consumes the `--dsw-alias-scrollbar-*` tokens and must follow `design-platform.css`, which declares them. Status marks use their own semantic state tokens. `design-platform.css` also owns the code-diff fill aliases and their static alpha palette entries, plus the `--dsw-alias-file-diff-*` code, gutter, and marker palette for file comparisons; `shiki.css` owns syntax colors.
 
-[`focus.css`](src/styles/focus.css) provides a `:focus-visible` fallback that names the ring colour through `var(--dsw-focus-ring-color, var(--dsw-alias-state-business-primary))` and the standard width through `--dsw-focus-ring-width`, never the outline style — so a control that disables its outline stays paintless, and one that declares no ring keeps the standard geometry instead of Chromium's `auto 1px`. The theme resolves this blue to `#4176E6` in light mode and `#7AAAFF` in dark mode. Component outlines and focus-ring shadows use the same colour expression, including rings on descendants and pseudo-elements. `--dsw-focus-ring-width` (2px) is the standard width; dense tables and toolbars may keep 1px, and offsets remain component-owned.
+[`focus.css`](src/styles/focus.css) provides a `:focus-visible` fallback that names the ring colour through `var(--dsw-focus-ring-color, var(--dsw-alias-state-business-primary))` and the standard width through `--dsw-focus-ring-width`, never the outline style — so a control that disables its outline stays paintless, and one that declares no ring keeps the standard geometry instead of Chromium's `auto 1px`. The theme uses the neutral `--dsw-alias-brand-primary` color for focus rings. Component outlines and focus-ring shadows use the same colour expression, including rings on descendants and pseudo-elements. `--dsw-focus-ring-width` (2px) is the standard width; dense tables and toolbars may keep 1px, and offsets remain component-owned.
 
 In pointer modality, `html[data-input-modality='pointer'] body :focus-visible:not(:read-write)` makes the ring colour transparent. Descendants and pseudo-elements inherit that value; the rule does not clear `box-shadow`, so elevation and selected-state borders remain independent of ring visibility. Editable text controls matching `:read-write` retain their own focus feedback on click. [Input modality](../ui-primitives/README.md#input-modality) determines when keyboard focus styling resumes; it does not move DOM focus.
 
-Menu icons use `--dsw-alias-menu-icon`: neutral-bluish 800 in light mode and `label-primary-dimmed` in dark mode.
+Menu icons use `--dsw-alias-menu-icon`: neutral 800 in light mode and `label-primary-dimmed` in dark mode.
 
 `base.css` suppresses only the outline of focused elements marked `data-dsh-automatic-focus` by the [primitive focus helper](../ui-primitives/README.md); ordinary keyboard focus styling, borders, shadows, and error states remain intact.
 

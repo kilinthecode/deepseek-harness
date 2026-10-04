@@ -147,10 +147,12 @@ interface ToolArgsMap {
     /** Scope the memory lives in. */
     scope: "global" | "project";
   } & Record<string, JsonValue>;
-  /** Read saved global memories and the current project's memories from the live store, including memories saved after the snapshot. Use it for snapshot entries shown only as an index line; inlined snapshot entries need no recall. */
+  /** Read shared memories from the live store. Narrow query or scope for more matches. */
   memory_recall: {
-    /** Case-insensitive substring matched against name, description, and content. Omit to list the newest memories. */
+    /** Case-insensitive phrase or whitespace-separated keywords in name, description, and content. Omit for newest memories. */
     query?: string;
+    /** Restrict results to global or project memories. */
+    scope?: "global" | "project";
   } & Record<string, JsonValue>;
   /** Save one durable memory for future sessions. */
   memory_write: {
@@ -171,7 +173,7 @@ interface ToolArgsMap {
     file_path: string;
     /** 1-based first line to return. Defaults to 1. */
     offset?: number;
-    /** Maximum number of lines to return. Defaults to 2000. */
+    /** Maximum number of lines to return. Defaults to 500. Maximum: 2000. */
     limit?: number;
   } & Record<string, JsonValue>;
   /** Read a PNG/JPEG/WebP/GIF file and return the image itself. Large images are downscaled automatically; do not install image libraries or create thumbnails to inspect an image. */
@@ -439,6 +441,7 @@ interface ToolOutputMap {
       description: string;
       content: string;
     })[];
+    hasMore?: boolean;
   };
   memory_write: {
     name: string;

@@ -6,7 +6,7 @@
     - text: Browser
     - button "Close"
   - button "New tab"
-  - button "Split"
+  - button "Split" [disabled]
   - button "Fullscreen"
   - button "Collapse right sidebar"
 - button "Back" [disabled]

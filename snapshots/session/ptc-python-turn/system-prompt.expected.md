@@ -297,8 +297,10 @@ class MemoryForgetOutput(TypedDict):
     scope: Literal["global", "project"]
 
 class MemoryRecallArgs(TypedDict):
-    # Case-insensitive substring matched against name, description, and content. Omit to list the newest memories.
+    # Case-insensitive phrase or whitespace-separated keywords in name, description, and content. Omit for newest memories.
     query: NotRequired[str]
+    # Restrict results to global or project memories.
+    scope: NotRequired[Literal["global", "project"]]
     # Additional keys beyond those declared are allowed.
 
 class MemoryRecallOutputMemories(TypedDict):
@@ -310,6 +312,7 @@ class MemoryRecallOutputMemories(TypedDict):
 
 class MemoryRecallOutput(TypedDict):
     memories: list[MemoryRecallOutputMemories]
+    hasMore: NotRequired[bool]
 
 class MemoryWriteArgs(TypedDict):
     # Stable lowercase kebab-case identifier (1 to 64 characters), e.g. "prefers-pnpm". Writing an existing name in the same scope replaces that memory.
@@ -334,7 +337,7 @@ class ReadArgs(TypedDict):
     file_path: str
     # 1-based first line to return. Defaults to 1.
     offset: NotRequired[float]
-    # Maximum number of lines to return. Defaults to 2000.
+    # Maximum number of lines to return. Defaults to 500. Maximum: 2000.
     limit: NotRequired[float]
     # Additional keys beyond those declared are allowed.
 
@@ -590,7 +593,7 @@ class Tools(Protocol):
     async def memory_forget(self, args: MemoryForgetArgs) -> MemoryForgetOutput:
         """Delete one saved memory by name and scope."""
     async def memory_recall(self, args: MemoryRecallArgs) -> MemoryRecallOutput:
-        """Read saved global memories and the current project's memories from the live store, including memories saved after the snapshot. Use it for snapshot entries shown only as an index line; inlined snapshot entries need no recall."""
+        """Read shared memories from the live store. Narrow query or scope for more matches."""
     async def memory_write(self, args: MemoryWriteArgs) -> MemoryWriteOutput:
         """Save one durable memory for future sessions."""
     async def read(self, args: ReadArgs) -> ReadOutput:

@@ -51,7 +51,8 @@ export interface Config {
   /**
    * Cap on records in the global scope and, separately, in each project. A
    * write that would exceed it fails so the agent curates with `forget`. The
-   * count covers the records this process has loaded or written.
+   * count covers the refreshed snapshot; simultaneous writes by another
+   * process are outside this process's serialized capacity check.
    */
   maxRecords: number
   /**
@@ -81,8 +82,7 @@ export const Config: z<Config> = z.object({
  * `blocked-content` is a write-time scan finding; `project-key-collision`
  * means this project's key already holds another project's record;
  * `already-exists` is an `ifAbsent` write naming a record already in that
- * scope; `disposing` is a write or forget begun after the store's domain
- * started closing.
+ * scope; `disposing` is an operation begun after disposal starts.
  */
 export type MemoryErrorCode =
   | 'invalid-name'
@@ -123,7 +123,7 @@ export interface MemoryWriteRequest {
   /**
    * When true, create only: an existing record with this name and scope is
    * rejected with `already-exists` instead of replaced. Checked inside the
-   * store's serialized write section, immediately after the existence
+   * store's serialized operation, immediately after the existence
    * lookup, so a same-name write that commits between this call's argument
    * validation and its turn in that section still loses to whichever write
    * reaches the section first.
@@ -141,12 +141,17 @@ export interface MemoryWriteResult {
 
 /** One recall request over the records visible from `cwd`. */
 export interface MemoryRecallRequest {
-  /** Case-insensitive substring matched against name, description, and content; blank matches everything. */
+  /**
+   * Lowercased and trimmed phrase or unique whitespace-separated terms matched
+   * against name, description, and content; blank matches everything.
+   */
   readonly query?: string | undefined
   /** Maximum records returned. */
   readonly limit: number
   /** Session working directory, when the session has one. */
   readonly cwd?: string | undefined
+  /** Restrict results to one memory scope. */
+  readonly scope?: MemoryScope | undefined
 }
 
 /** One forget request. */
@@ -193,11 +198,12 @@ export class MemoryStore extends Service {
 
   private domain?: Domain<MemoryDomainSpec>
   private readonly maxRecords: number
-  private readonly maxRecordBytes: number
+  /** UTF-8 byte cap on a memory body; consumers use it to check that one complete recall block fits its configured budget. */
+  readonly maxRecordBytes: number
   private readonly markers: readonly string[]
-  /** Tail of the store's single writer section; every link settles, so one rejected write never blocks the next. */
-  private writes: Promise<void> = Promise.resolve()
-  /** Set at the start of disposal; `serialized()` rejects any write or forget queued from this point on. */
+  /** Tail of the store's operation queue; every link settles, so one rejection never blocks the next. */
+  private operations: Promise<void> = Promise.resolve()
+  /** Set at the start of disposal; serialized operations reject new work. */
   private disposing = false
 
   /**
@@ -218,31 +224,31 @@ export class MemoryStore extends Service {
   }
 
   /**
-   * Stop accepting new writes and forgets, let every write and forget already
-   * queued in call order settle, then release the domain. Draining first
-   * means a write queued behind another is never rejected by a closed-domain
+   * Stop accepting new operations, drain queued reads and mutations, then release the domain. Draining first
+   * means queued work is never rejected by a closed-domain
    * error instead of its own outcome.
    * @param domain - the open domain handle to release once the queue drains.
    */
   private async closeDomain(domain: Domain<MemoryDomainSpec>): Promise<void> {
     this.disposing = true
-    await this.writes
+    await this.operations
     await domain.close()
   }
 
   /**
-   * Run one mutation after every earlier write and forget of this store has
-   * settled, so mutations run in call order and each one's project-root
-   * lookup, existence check, and capacity check see the committed results of
-   * the earlier calls. Rejects immediately, without queuing, once disposal
-   * has begun.
+   * Run one operation after earlier operations settle. Refreshing at its queue
+   * slot makes external completed writes visible before the operation reads.
+   * Rejects immediately once disposal has begun.
    */
-  private serialized<T>(mutation: () => Promise<T>): Promise<T> {
+  private serialized<T>(operation: () => Promise<T>): Promise<T> {
     if (this.disposing) {
-      return Promise.reject(new MemoryError('disposing', 'memory store is disposing: no new writes or forgets are accepted'))
+      return Promise.reject(new MemoryError('disposing', 'memory store is disposing: no new reads or writes are accepted'))
     }
-    const result = this.writes.then(mutation)
-    this.writes = result.then(noop, noop)
+    const result = this.operations.then(async () => {
+      await this.requireDomain().refresh()
+      return operation()
+    })
+    this.operations = result.then(noop, noop)
     return result
   }
 
@@ -292,13 +298,11 @@ export class MemoryStore extends Service {
    * Every record visible from one working directory: all global records plus
    * the current project's records when a root resolves.
    * @param cwd - session working directory, when the session has one.
-   * @returns the visible records in stored order.
+   * @returns the visible records in a refreshed snapshot.
+   * @throws {@link MemoryError} with code `disposing` when disposal has begun.
    */
   async visible(cwd: string | undefined): Promise<MemoryVisible> {
-    const global = [...this.globalTable().entries()].map(([, record]) => record)
-    const root = await this.resolveProjectRoot(cwd)
-    if (root === undefined) return { global }
-    return { global, project: { root, records: this.projectRecords(root) } }
+    return this.serialized(() => this.visibleSnapshot(cwd))
   }
 
   /**
@@ -312,17 +316,18 @@ export class MemoryStore extends Service {
 
   /**
    * Insert or replace one record durably. Writes and forgets of one store run
-   * one at a time in call order, from the project-root lookup to the durable
+   * one at a time in call order, from refresh and project-root lookup to the durable
    * put, so overlapping calls never exceed the cap and a same-name overlap
    * reports `created` for the earlier call and keeps its `createdAt`. The cap
-   * counts the records this process has loaded or written.
+   * counts the refreshed snapshot; simultaneous writes by another process
+   * are outside this process's serialized capacity check.
    * @param request - the memory to store.
    * @returns whether the record was created or updated, and the stored record.
    * @throws {@link MemoryError} for an invalid name, description, or content,
    * blocked description or content, a project scope without a project root, a
    * project key occupied by another project's record, a cap reached in the
    * target scope, (`request.ifAbsent`) an existing record with that name
-   * and scope, or a write begun after the store's domain started closing.
+   * and scope, or a write begun after disposal starts.
    */
   async write(request: MemoryWriteRequest): Promise<MemoryWriteResult> {
     const name = validateName(request.name)
@@ -352,6 +357,9 @@ export class MemoryStore extends Service {
           const existing = table.get(name)
           if (request.ifAbsent === true && existing !== undefined) throw alreadyExists(name, 'global')
           this.assertCapacity(existing, table.size, 'global')
+          if (existing !== undefined && sameContent(existing, {
+            name, type: request.type, scope: 'global', description, content,
+          })) return { outcome: 'updated', record: existing }
           const now = new Date().toISOString()
           const record: MemoryRecord = {
             name, type: request.type, scope: 'global', description, content,
@@ -370,6 +378,9 @@ export class MemoryStore extends Service {
           this.assertProjectKeyOwner(existing, root, name, 'write')
           if (request.ifAbsent === true && existing !== undefined) throw alreadyExists(name, 'project')
           this.assertCapacity(existing, this.projectRecords(root).length, 'project')
+          if (existing !== undefined && sameContent(existing, {
+            name, type: request.type, scope: 'project', description, content, projectRoot: root,
+          })) return { outcome: 'updated', record: existing }
           const now = new Date().toISOString()
           const record: MemoryRecord = {
             name, type: request.type, scope: 'project', description, content, projectRoot: root,
@@ -411,23 +422,34 @@ export class MemoryStore extends Service {
   }
 
   /**
-   * Find visible records by substring, newest first, then by name, then with
-   * `global` before `project`. A request without a resolvable project root
-   * searches the global records only.
-   * @param request - query, result cap, and working directory.
+   * Find visible records by phrase or all query terms, ranked by name and text
+   * relevance before the existing newest/name/scope order. A request without a
+   * resolvable project root searches global records only.
+   * @param request - query, result cap, working directory, and optional scope filter.
    * @returns at most `limit` matching records.
+   * @throws {@link MemoryError} with code `disposing` when disposal has begun.
    */
   async recall(request: MemoryRecallRequest): Promise<MemoryRecord[]> {
-    const visible = await this.visible(request.cwd)
-    const query = (request.query ?? '').trim().toLowerCase()
-    const candidates = [...visible.global, ...visible.project?.records ?? []]
-    const matches = query.length === 0
-      ? candidates
-      : candidates.filter(record =>
-        record.name.includes(query)
-        || record.description.toLowerCase().includes(query)
-        || record.content.toLowerCase().includes(query))
-    return matches.sort(newestFirst).slice(0, Math.max(0, request.limit))
+    return this.serialized(async () => {
+      const visible = await this.visibleSnapshot(request.cwd)
+      const candidates = [...visible.global, ...visible.project?.records ?? []]
+        .filter(record => request.scope === undefined || record.scope === request.scope)
+      const query = (request.query ?? '').trim().toLowerCase()
+      const terms = [...new Set(query.split(/\s+/).filter(Boolean))]
+      if (query.length === 0) return candidates.sort(newestFirst).slice(0, Math.max(0, request.limit))
+      const ranked = candidates
+        .map(record => ({ record, score: relevance(record, query, terms) }))
+        .filter((entry): entry is { record: MemoryRecord; score: Relevance } => entry.score !== undefined)
+        .sort((left, right) => compareRelevance(left.score, right.score) || newestFirst(left.record, right.record))
+      return ranked.slice(0, Math.max(0, request.limit)).map(entry => entry.record)
+    })
+  }
+
+  private async visibleSnapshot(cwd: string | undefined): Promise<MemoryVisible> {
+    const root = await this.resolveProjectRoot(cwd)
+    const global = [...this.globalTable().entries()].map(([, record]) => record)
+    if (root === undefined) return { global }
+    return { global, project: { root, records: this.projectRecords(root) } }
   }
 
   /**
@@ -436,7 +458,7 @@ export class MemoryStore extends Service {
    * @throws {@link MemoryError} when the name is invalid, the project root is
    * unavailable, no such record exists in the scope, a project key is
    * occupied by another project's record, or the forget began after the
-   * store's domain started closing.
+   * disposal started.
    */
   async forget(request: MemoryForgetRequest): Promise<void> {
     const name = validateName(request.name)
@@ -461,6 +483,39 @@ export class MemoryStore extends Service {
         return assertNever(request.scope)
     }
   }
+}
+
+type Relevance = readonly [number, number, number, number, number, number, number]
+
+function relevance(record: MemoryRecord, query: string, terms: readonly string[]): Relevance | undefined {
+  const fields = [record.name.toLowerCase(), record.description.toLowerCase(), record.content.toLowerCase()] as const
+  const phrase = fields.map(field => field.includes(query))
+  const countTerms = (field: string) => terms.filter(term => field.includes(term)).length
+  if (!phrase.some(Boolean) && !terms.every(term => fields.some(field => field.includes(term)))) return undefined
+  return [
+    record.name.toLowerCase() === query ? 1 : 0,
+    phrase[0] ? 1 : 0,
+    phrase[1] ? 1 : 0,
+    phrase[2] ? 1 : 0,
+    countTerms(fields[0]), countTerms(fields[1]), countTerms(fields[2]),
+  ]
+}
+
+function compareRelevance(left: Relevance, right: Relevance): number {
+  for (const index of [0, 1, 2, 3, 4, 5, 6] as const) {
+    const difference = right[index] - left[index]
+    if (difference !== 0) return difference
+  }
+  return 0
+}
+
+function sameContent(existing: MemoryRecord, next: Pick<MemoryRecord, 'name' | 'type' | 'scope' | 'description' | 'content' | 'projectRoot'>): boolean {
+  return existing.name === next.name
+    && existing.scope === next.scope
+    && existing.type === next.type
+    && existing.description === next.description
+    && existing.content === next.content
+    && existing.projectRoot === next.projectRoot
 }
 
 function validateName(name: string): MemoryName {

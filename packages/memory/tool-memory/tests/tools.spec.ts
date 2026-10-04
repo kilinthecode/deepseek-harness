@@ -26,7 +26,7 @@ function agentAt(cwd?: string): Agent {
   return sessionAgent(sessionAt(cwd, 'agent'))
 }
 
-async function setup(config: Config = { injectMaxBytes: 2048, maxRecallResults: 2 }) {
+async function setup(config: Config = { injectMaxBytes: 2048, maxRecallResults: 2, maxRecallBytes: 8192 }) {
   const root = await freshRoot()
   const ctx = new Context()
   contexts.push(ctx)
@@ -67,6 +67,9 @@ describe('memory tools', () => {
     expect(props.properties.scope?.enum).toEqual(['global', 'project'])
     const recall = ctx.tools.schemas().find(schema => schema.name === 'memory_recall')!
     expect((recall.parameters as { required?: string[] }).required ?? []).toEqual([])
+    const recallParameters = recall.parameters as { properties: Record<string, { enum?: string[]; description?: string }> }
+    expect(recallParameters.properties.scope?.enum).toEqual(['global', 'project'])
+    expect(recallParameters.properties.query?.description).toBe('Case-insensitive phrase or whitespace-separated keywords in name, description, and content. Omit for newest memories.')
   })
 
   it('writes a global memory, reports created then updated, and stores one document', async () => {
@@ -112,17 +115,83 @@ describe('memory tools', () => {
 
     const capped = await call(ctx, 'memory_recall', {}, agentAt(repo.cwd))
     expect(capped.isError).toBe(false)
-    const value = capped.value as { memories: { name: string; type: string; scope: string; description: string; content: string }[] }
+    const value = capped.value as {
+      memories: { name: string; type: string; scope: string; description: string; content: string }[]
+      hasMore: boolean
+    }
     expect(value.memories).toHaveLength(2)
+    expect(value.hasMore).toBe(true)
     expect(Object.keys(value.memories[0]!)).toEqual(['name', 'type', 'scope', 'description', 'content'])
 
     const pnpm = await call(ctx, 'memory_recall', { query: 'PNPM' }, agentAt(repo.cwd))
     expect(text(pnpm)).toBe(
-      '## build [project, project]\nHow to build\n\npnpm run build\n\n'
-      + '## prefers-pnpm [user, global]\nUses pnpm\n\nAlways pnpm.',
+      '## prefers-pnpm [user, global]\nUses pnpm\n\nAlways pnpm.\n\n'
+      + '## build [project, project]\nHow to build\n\npnpm run build',
     )
     const outside = await call(ctx, 'memory_recall', { query: 'build' })
     expect(text(outside)).toBe('No saved memories match.')
+
+    const projectOnly = await call(ctx, 'memory_recall', { scope: 'project' }, agentAt(repo.cwd))
+    expect(projectOnly.value).toMatchObject({ memories: [{ name: 'build', scope: 'project' }] })
+    expect(projectOnly.value).not.toHaveProperty('hasMore')
+  })
+
+  it('keeps full UTF-8 bodies within maxRecallBytes and marks byte-omitted matches', async () => {
+    const { ctx } = await setup({ injectMaxBytes: 0, maxRecallResults: 2, maxRecallBytes: 8192 })
+    const body = `${'界'.repeat(1365)}x`
+    await call(ctx, 'memory_write', { ...WRITE, name: 'large-a', content: body })
+    await call(ctx, 'memory_write', { ...WRITE, name: 'large-b', content: 'y'.repeat(4096) })
+
+    const recalled = await call(ctx, 'memory_recall', {})
+    const value = recalled.value as { memories: { content: string }[]; hasMore: boolean }
+    expect(value.memories).toHaveLength(1)
+    expect(value.memories[0]?.content === body || value.memories[0]?.content === 'y'.repeat(4096)).toBe(true)
+    expect(value.hasMore).toBe(true)
+    expect(text(recalled)).toContain(value.memories[0]!.content)
+    expect(text(recalled).endsWith('More matches; narrow query or scope.')).toBe(true)
+    expect(Buffer.byteLength(text(recalled), 'utf8')).toBeLessThanOrEqual(8192)
+  })
+
+  it('fits a maximum-size record and the omission hint at the exact validated minimum budget', async () => {
+    const { ctx, root } = await setup({ injectMaxBytes: 0, maxRecallResults: 2, maxRecallBytes: 4993 })
+    const repo = await project(root, 'repo')
+    const content = 'x'.repeat(4096)
+    const description = '€'.repeat(256)
+    const name = 'a'.repeat(64)
+    await call(ctx, 'memory_write', {
+      name: 'small', type: 'reference', scope: 'project', description: 'small', content: name,
+    }, agentAt(repo.cwd))
+    await call(ctx, 'memory_write', {
+      name,
+      type: 'reference',
+      scope: 'project',
+      description,
+      content,
+    }, agentAt(repo.cwd))
+
+    const recalled = await call(ctx, 'memory_recall', { query: name }, agentAt(repo.cwd))
+    expect(recalled.value).toMatchObject({ memories: [{ name, description, content }], hasMore: true })
+    expect(text(recalled).endsWith('More matches; narrow query or scope.')).toBe(true)
+    expect(Buffer.byteLength(text(recalled), 'utf8')).toBe(4993)
+  })
+
+  it('keeps checking prefixes when the final small block replaces a larger omission hint', async () => {
+    const longBody = 'x'.repeat(2500)
+    const longBlock = (name: string) => `## ${name} [user, global]\nUses pnpm\n\n${longBody}`
+    const tinyBlock = '## tiny [user, global]\nSmall\n\nlarge'
+    const prefix = `${longBlock('large-a')}\n\n${longBlock('large-b')}`
+    const maxRecallBytes = Buffer.byteLength(prefix, 'utf8') + 2 + Buffer.byteLength(tinyBlock, 'utf8')
+    const { ctx } = await setup({ injectMaxBytes: 2048, maxRecallResults: 3, maxRecallBytes })
+    await call(ctx, 'memory_write', { ...WRITE, name: 'tiny', description: 'Small', content: 'large' })
+    await call(ctx, 'memory_write', { ...WRITE, name: 'large-a', content: longBody })
+    await call(ctx, 'memory_write', { ...WRITE, name: 'large-b', content: longBody })
+
+    const recalled = await call(ctx, 'memory_recall', { query: 'large' })
+    const recalledNames = (recalled.value as { memories: { name: string }[] }).memories.map(memory => memory.name)
+    expect(recalledNames).toHaveLength(3)
+    expect(recalledNames).toEqual(expect.arrayContaining(['large-a', 'large-b', 'tiny']))
+    expect(recalled.value).not.toHaveProperty('hasMore')
+    expect(Buffer.byteLength(text(recalled), 'utf8')).toBe(maxRecallBytes)
   })
 
   it('renders [blocked] for a recalled record whose content fails scan, alongside a clean record in the same result', async () => {
@@ -152,7 +221,7 @@ describe('memory tools', () => {
     await ctx.plugin(ToolRuntime)
     await ctx.plugin(SessionProjectionRegistry)
     await mountStore(ctx, root)
-    await ctx.plugin(tool, { injectMaxBytes: 2048, maxRecallResults: 4 })
+    await ctx.plugin(tool, { injectMaxBytes: 2048, maxRecallResults: 4, maxRecallBytes: 8192 })
 
     await call(ctx, 'memory_write', { name: 'clean-memory', type: 'user', scope: 'global', description: 'clean desc', content: 'clean content' })
     const result = await call(ctx, 'memory_recall', {})

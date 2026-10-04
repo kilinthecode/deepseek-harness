@@ -73,7 +73,7 @@ async function boot(options: {
       '- name: cordis:tool-memory',
       '  config:',
       '    injectMaxBytes: 2048',
-      '    maxRecallResults: 3',
+      '    maxRecallResults: 3', '    maxRecallBytes: 8192',
     ],
     '- name: cordis:memory-review',
     ...reviewLines !== undefined && reviewLines.length > 0 ? ['  config:', ...reviewLines] : [],

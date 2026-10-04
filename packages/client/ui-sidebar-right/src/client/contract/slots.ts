@@ -1,7 +1,7 @@
 /**
  * The right Sidebar's extension seats and its copy namespace.
  *
- * Four seats, each with a different reason to exist:
+ * Extension seats keep tab content, presentation, and layout actions separate:
  * - `sidebar.right.pane.tab` is how a tab type contributes a body. It is keyed by
  *   the type definition's `id`, so adding a type is a registration, never an
  *   edit here. The key domain stays the open string space because a tab type may
@@ -12,6 +12,8 @@
  * - `sidebar.right.tab.guide` lets a product replace the guide tab's contents
  *   without replacing the tab. It is a chain because the replacement decides for
  *   itself whether it applies, and the shipped guide is the owner's fallback.
+ * - `sidebar.right.tab.guide.section` hosts feature-owned facts and actions in
+ *   the guide's session overview; its owner opens resources from that tab.
  * - `sidebar.right.tab.menu.item` extends a tab's actions menu. The kit owns the
  *   actions that are gestures on the layout itself; this seat is for actions that
  *   mean something about the tab's content.
@@ -86,6 +88,12 @@ declare module '@deepseek-ai/dsh-client-ui-slots' {
       scope: 'session'
       hookContext: UseSidebarRightTabInfo
       inject: { hooks: { tabInfo: SlotHookFactory<'sidebar.right.tab.guide', UseSidebarRightTabInfo> } }
+    }
+    /** Feature-owned task facts and actions in the session overview, in registration order. */
+    'sidebar.right.tab.guide.section': {
+      kind: 'list'
+      scope: 'session'
+      owner: SidebarRightGuideSectionOwnerProps
     }
     /** One provider's guide card, with the standard card as the owner's fallback. */
     'sidebar.right.tab.guide.entry': {
@@ -214,4 +222,10 @@ export interface SidebarRightGuideEntryOwnerProps {
   readonly kind: string
   readonly title: string
   readonly description?: string
+}
+
+/** Resource navigation supplied to each feature-owned task-overview section. */
+export interface SidebarRightGuideSectionOwnerProps {
+  /** Open a resource from the overview's originating tab with the tab action's placement rules. */
+  readonly openResource: SidebarRightTabActions['openResource']
 }

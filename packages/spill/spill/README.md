@@ -39,7 +39,7 @@ Mount a backend and the policy together; with `maxInlineTokens` set, an oversize
 - name: '@deepseek-ai/dsh-spill-local'
 - name: '@deepseek-ai/dsh-spill-policy'
   config:
-    maxInlineTokens: 12500
+    maxInlineTokens: 6000
 ```
 
 ### Saving text

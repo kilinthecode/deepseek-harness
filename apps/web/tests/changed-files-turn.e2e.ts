@@ -9,8 +9,9 @@ import { afterAll, beforeAll, describe, expect, it, onTestFinished } from 'vites
 import type {} from '@deepseek-ai/dsh-workspace-changes'
 import type { ChangesSummary } from '@deepseek-ai/dsh-client-ui-deliverables/src/changes.ts'
 import { deriveReplayScript, parseSessionLog } from '@deepseek-ai/dsh-llm-replay'
+import { PartialArguments } from '@deepseek-ai/dsh-util-values'
 import {
-  assertFinalWorkspaceSnapshot, captureExpandedTurnProcessAria, compareOrRefreshGolden,
+  assertFinalWorkspaceSnapshot, captureExpandedTurnProcessAria, captureStableAria, compareOrRefreshGolden,
   fixtureUserPrompts, launchWebScaffold, recordFixture, watchConsole,
   webSnapshotMode, type WebScaffold,
 } from './scaffold.ts'
@@ -76,7 +77,7 @@ describe('web e2e: a git workspace turn ends with its changed files', () => {
     }
     scaffold = await launchWebScaffold({
       developerTools: false,
-      compareReplaySession: true,
+      compareReplaySession: 'read-only',
       extraOverlayPath: fileURLToPath(new URL('./changed-files-turn.overlay.yml', import.meta.url)),
       ...(replayOverride === undefined ? {} : { replayFixture: FIXTURE, replayOverride }),
     })
@@ -109,8 +110,11 @@ describe('web e2e: a git workspace turn ends with its changed files', () => {
     if (MODE !== 'record') expect(fixtureUserPrompts(await readFile(FIXTURE, 'utf8'))).toEqual([PROMPT])
     const settled = scaffold.whenTurnSettled()
     const preparations = ['edit', 'write'].map(name => ({
-      name, ready: Promise.withResolvers<{ callId: string; kilobytes: number }>(),
+      name, callId: '', args: new PartialArguments(), ready: Promise.withResolvers<{ callId: string }>(),
       release: Promise.withResolvers<undefined>(), held: false,
+      contentField: name === 'write' ? 'content' : 'old_string',
+      contentReady: Promise.withResolvers<undefined>(), contentRelease: Promise.withResolvers<undefined>(),
+      contentHeld: false,
     }))
     const names = new Map<string, string>()
     const dispose = scaffold.ctx.on('llm/stream', async function* (_options, next) {
@@ -119,32 +123,57 @@ describe('web e2e: a git workspace turn ends with its changed files', () => {
         if (chunk.type !== 'tool-call-delta') continue
         if (chunk.name !== undefined) names.set(chunk.id, chunk.name)
         const preparation = preparations.find(value => value.name === names.get(chunk.id))
-        if (preparation === undefined || preparation.held || chunk.argumentsDelta.length === 0) continue
-        preparation.held = true
-        preparation.ready.resolve({ callId: chunk.id, kilobytes: Math.ceil(chunk.argumentsDelta.length / 1024) })
-        await preparation.release.promise
+        if (preparation === undefined || preparation.contentHeld || chunk.argumentsDelta.length === 0) continue
+        if (preparation.callId === '') preparation.callId = chunk.id
+        if (preparation.callId !== chunk.id) continue
+        preparation.args.append(chunk.argumentsDelta)
+        if (!preparation.held) {
+          if (!preparation.args.complete('file_path')) continue
+          preparation.held = true
+          preparation.ready.resolve({ callId: chunk.id })
+          await preparation.release.promise
+        }
+        if (!preparation.args.has(preparation.contentField) || preparation.args.complete(preparation.contentField)) continue
+        const length = preparation.args.stringLength(preparation.contentField)
+        if (length === undefined || length === 0) continue
+        preparation.contentHeld = true
+        preparation.contentReady.resolve(undefined)
+        await preparation.contentRelease.promise
       }
     }, { prepend: true })
     releasePreparations = () => {
-      for (const preparation of preparations) preparation.release.resolve(undefined)
+      for (const preparation of preparations) {
+        preparation.release.resolve(undefined)
+        preparation.contentRelease.resolve(undefined)
+      }
       dispose()
     }
     const input = page.locator('[data-composer-input]').first()
     await input.fill(PROMPT)
     await input.press('Enter')
     const observations = preparations.map(async (preparation) => {
-      const { callId, kilobytes } = await Promise.race([
+      const { callId } = await Promise.race([
         preparation.ready.promise,
         settled.then(() => { throw new Error(`No ${preparation.name} argument prefix was streamed`) }),
       ])
       const row = page.locator(`[data-chat-call-id="${callId}"] [data-state="preparing"]`)
       await row.waitFor({ state: 'attached' })
       await expandOwningTurnProcess(page, row)
-      await row.getByText(`正在准备内容 ${kilobytes}KB`, { exact: true }).waitFor()
-      expect(await row.getByRole('button').count()).toBe(0)
+      await row.getByRole('button').waitFor()
+      expect(await row.locator('[aria-expanded]').count()).toBe(0)
       expect(await row.locator('pre').count()).toBe(0)
+      expect(await row.getByText(/正在准备内容 \d+KB/).count()).toBe(0)
       await compareOrRefreshGolden(join(DIR, `preparing-${preparation.name}.expected.md`), await row.ariaSnapshot(), MODE)
       preparation.release.resolve(undefined)
+      await Promise.race([
+        preparation.contentReady.promise,
+        settled.then(() => { throw new Error(`No open ${preparation.name} content prefix was streamed`) }),
+      ])
+      await row.getByText('正在准备内容 1KB', { exact: true }).waitFor()
+      expect(await row.locator('[aria-expanded]').count()).toBe(0)
+      expect(await row.locator('pre').count()).toBe(0)
+      await compareOrRefreshGolden(join(DIR, `preparing-${preparation.name}-content.expected.md`), await row.ariaSnapshot(), MODE)
+      preparation.contentRelease.resolve(undefined)
     })
     const [sessionId] = await Promise.all([settled, ...observations]).finally(() => { releasePreparations?.() })
     const session = scaffold.ctx.agents.get(sessionId)?.session
@@ -236,6 +265,59 @@ describe('web e2e: a git workspace turn ends with its changed files', () => {
     })
     expect(tripwire.pageErrors).toEqual([])
     expect(tripwire.warnings).toEqual([])
+  })
+
+  it('shows recorded changes in the task overview across both palettes and narrow presentation', async () => {
+    await page.locator('[data-sidebar-right-expand]').click()
+    const overview = page.locator('[data-task-overview]')
+    await overview.getByRole('heading', { name: 'workspace', exact: true }).waitFor()
+    await overview.getByText('不用先查看目录，直接做四件', { exact: true }).waitFor()
+    const changes = overview.locator('[data-task-changes]')
+    await changes.getByRole('button', { name: '查看 notes.txt 的改动' }).waitFor()
+    expect(await changes.getByRole('listitem').count()).toBe(4)
+    await compareOrRefreshGolden(join(DIR, 'overview.expected.md'),
+      await captureStableAria(page, '[data-task-overview]', scaffold.workspaceCwd), MODE)
+    const panel = page.locator('[data-sidebar-right-panel]')
+    const originalWidth = (await panel.boundingBox())!.width
+    for (const [palette, label] of [['dark', '深色'], ['light', '浅色']] as const) {
+      await openSettings(page, 'zh')
+      const settings = page.getByRole('dialog', { name: '设置' })
+      await settings.getByRole('button', { name: '通用设置', exact: true }).click()
+      await settings.getByRole('button', { name: label, exact: true }).click()
+      await settings.getByRole('button', { name: '关闭', exact: true }).click()
+      expect(await page.locator('body').evaluate(element => getComputedStyle(element).backgroundColor))
+        .toBe(palette === 'dark' ? 'rgb(0, 0, 0)' : 'rgb(255, 255, 255)')
+      await page.screenshot({ path: join(tmpdir(), `dsh-task-overview-${palette}-wide.png`) })
+      const handle = page.locator('[data-side="rightbar"]')
+      const grip = (await handle.boundingBox())!
+      await page.mouse.move(grip.x + grip.width / 2, grip.y + grip.height / 2)
+      await page.mouse.down()
+      await page.mouse.move(grip.x + grip.width / 2 + originalWidth - 300, grip.y + grip.height / 2, { steps: 8 })
+      await page.mouse.up()
+      await expect.poll(async () => Math.round((await panel.boundingBox())!.width)).toBe(300)
+      expect(await overview.evaluate(element => element.scrollWidth <= element.clientWidth)).toBe(true)
+      await page.screenshot({ path: join(tmpdir(), `dsh-task-overview-${palette}-300.png`) })
+      const narrowGrip = (await handle.boundingBox())!
+      await page.mouse.move(narrowGrip.x + narrowGrip.width / 2, narrowGrip.y + narrowGrip.height / 2)
+      await page.mouse.down()
+      await page.mouse.move(narrowGrip.x + narrowGrip.width / 2 - originalWidth + 300, narrowGrip.y + narrowGrip.height / 2, { steps: 8 })
+      await page.mouse.up()
+      await expect.poll(async () => Math.round((await panel.boundingBox())!.width)).toBe(Math.round(originalWidth))
+    }
+    await changes.getByRole('button', { name: '查看 notes.txt 的改动' }).focus()
+    await page.keyboard.press('Enter')
+    await page.locator('[data-changes-review]').waitFor()
+    await page.locator('[data-dockkit-tab]').filter({ hasText: '第 1 轮改动' }).locator('[data-dockkit-tab-close]').click()
+    await overview.waitFor()
+    await page.locator('[data-sidebar-right-toggle]').click()
+    await page.setViewportSize({ width: 390, height: 844 })
+    await page.locator('[data-sidebar-right-expand]').click()
+    await expect.poll(() => panel.getAttribute('data-sidebar-right-panel')).toBe('fullscreen')
+    expect(await overview.evaluate(element => element.scrollWidth <= element.clientWidth)).toBe(true)
+    await page.screenshot({ path: join(tmpdir(), 'dsh-task-overview-narrow.png') })
+    await page.locator('[data-sidebar-right-toggle]').click()
+    await page.setViewportSize({ width: 1680, height: 1000 })
+    expect(tripwire.pageErrors).toEqual([])
   })
 
   it('previews a single column with a scrollable path and no file notes or hunk headers', async () => {

@@ -1,0 +1,32 @@
+- heading "workspace" [level=2]
+- paragraph: 不用先查看目录，直接做四件
+- heading "改动" [level=3]
+- text: +6 -1
+- button "第 1 轮 已编辑 4 个文件"
+- list:
+  - listitem:
+    - button "查看 app.local 的改动": app.local +1 -0
+  - listitem:
+    - button "查看 intro.md 的改动": intro.md +1 -1
+  - listitem:
+    - button "查看 notes.txt 的改动": notes.txt +1 -0
+  - listitem:
+    - button "查看 src/util.ts 的改动": src/util.ts +3 -0
+- heading "输出" [level=3]
+- text: "4"
+- list:
+  - listitem:
+    - button "在侧边栏打开 intro.md": intro.md
+  - listitem:
+    - button "在侧边栏打开 src/util.ts": src/util.ts
+  - listitem:
+    - button "在侧边栏打开 app.local": app.local
+  - listitem:
+    - button "在侧边栏打开 notes.txt": notes.txt
+- heading "子智能体" [level=3]
+- paragraph: 还没有子智能体
+- heading "工具" [level=3]
+- button "工作区文件 浏览会话工作区的文件 ⌥ ⌘ P"
+- button "新建终端 在会话工作区运行命令"
+- button "选择 Shell"
+- text: "⌃ `"

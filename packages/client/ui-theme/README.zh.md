@@ -35,6 +35,8 @@ kind: "package-reference"
 
 组合可以通过 `ctx.theme` 注册带别名 token 覆盖的第三方主题 id；覆盖层按注册顺序折入活动快照的 token 中。移除其中一个绝不会覆盖最后一个持久化的内置偏好。第三方主题 id 仍是进程内扩展，不会跨越内置 settings schema。
 
+主画布在浅色模式下为白色，在深色模式下为黑色。面板、菜单、用户气泡、选中态、链接和主要操作使用中性色阶；错误、警告、成功、代码差异和语法高亮保留各自的语义配色。
+
 ### 插件前调色板
 
 当主机组合包含 HTTP 服务器时，宿主侧会把已注册的 `ui-theme` 设置或 schema 默认值嵌入每份 index 响应。head CSS 会在任何脚本运行前选择文档画布的配色方案，其中 `system` 偏好使用 `prefers-color-scheme` 查询；随后，body 脚本会在加载页面和应用脚本之前设置 `body[data-ds-dark-theme]` 与 `--dsh-content-font-size`，因此首帧绘制就采用所选调色板与字号。
@@ -57,11 +59,11 @@ kind: "package-reference"
 
 `src/styles/` 下有八张样式表，由 ui-theme 的动态客户端 entry 依次导入：`base.css`、`corner-shape.css`、`design-platform.css`、`focus.css`、`onboarding.css`、`scrollbar.css`、`gradient-shadow-text.css` 与 `shiki.css`。客户端 bundle 将其编译并注入为插件持有的全局样式，因此卸载与 HMR（热模块替换）会随 ui-theme 一同移除。`scrollbar.css` 消费 `--dsw-alias-scrollbar-*` token，必须排在声明这些 token 的 `design-platform.css` 之后。状态标记使用各自的语义状态 token。`design-platform.css` 还负责代码差异底色的别名及其静态透明度色阶，以及文件对比所用的 `--dsw-alias-file-diff-*` 代码区、行号区和标记配色；`shiki.css` 负责语法颜色。
 
-[`focus.css`](src/styles/focus.css) 提供 `:focus-visible` 兜底：通过 `var(--dsw-focus-ring-color, var(--dsw-alias-state-business-primary))` 声明焦点环颜色，并通过 `--dsw-focus-ring-width` 声明标准宽度，但不声明轮廓样式——因此禁用轮廓的控件仍然不绘制，而没有自有焦点环的控件保持标准几何，而不是落到 Chromium 的 `auto 1px`。主题将该蓝色解析为浅色模式的 `#4176E6` 和深色模式的 `#7AAAFF`。组件轮廓与焦点环阴影使用同一颜色表达式，包括后代和伪元素上的环。`--dsw-focus-ring-width`（2px）是标准宽度；密集表格与工具栏可以保留 1px，offset 仍由组件决定。
+[`focus.css`](src/styles/focus.css) 提供 `:focus-visible` 兜底：通过 `var(--dsw-focus-ring-color, var(--dsw-alias-state-business-primary))` 声明焦点环颜色，并通过 `--dsw-focus-ring-width` 声明标准宽度，但不声明轮廓样式——因此禁用轮廓的控件仍然不绘制，而没有自有焦点环的控件保持标准几何，而不是落到 Chromium 的 `auto 1px`。主题使用 `--dsw-alias-brand-primary` 的中性色来绘制焦点环。组件轮廓与焦点环阴影使用同一颜色表达式，包括后代和伪元素上的环。`--dsw-focus-ring-width`（2px）是标准宽度；密集表格与工具栏可以保留 1px，offset 仍由组件决定。
 
 指针模态下，`html[data-input-modality='pointer'] body :focus-visible:not(:read-write)` 将焦点环颜色设为透明。后代与伪元素继承该值；规则不清除 `box-shadow`，因此 elevation 阴影与选中态边框独立于焦点环可见性。匹配 `:read-write` 的可编辑文本控件在点击时保留自身焦点反馈。[输入模态](../ui-primitives/README.zh.md#input-modality)决定何时恢复键盘焦点样式；它不移动 DOM 焦点。
 
-菜单图标使用 `--dsw-alias-menu-icon`：浅色模式为 neutral-bluish 800，深色模式为 `label-primary-dimmed`。
+菜单图标使用 `--dsw-alias-menu-icon`：浅色模式为 neutral 800，深色模式为 `label-primary-dimmed`。
 
 `base.css` 仅抑制[基础控件焦点工具](../ui-primitives/README.zh.md)通过 `data-dsh-automatic-focus` 标记的聚焦元素外轮廓线；正常键盘焦点样式、边框、阴影及错误状态保持不变。
 

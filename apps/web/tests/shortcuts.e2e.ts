@@ -120,7 +120,7 @@ describe('web e2e: shortcut reference', () => {
       expect(await recorder.evaluate(element => ({
         color: getComputedStyle(element).color, border: getComputedStyle(element).borderColor,
       })))
-        .toEqual({ color: 'rgb(97, 102, 107)', border: 'rgba(0, 0, 0, 0.16)' })
+        .toEqual({ color: 'rgb(60, 60, 60)', border: 'rgba(0, 0, 0, 0.16)' })
       expect(await recorder.evaluate(element => ({
         focused: element === document.activeElement,
         outline: getComputedStyle(element).outlineStyle, shadow: getComputedStyle(element).boxShadow,
@@ -133,7 +133,7 @@ describe('web e2e: shortcut reference', () => {
       expect(await errorToast.evaluate(element => ({
         background: getComputedStyle(element).backgroundColor, color: getComputedStyle(element).color,
       })))
-        .toEqual({ background: 'rgb(53, 54, 56)', color: 'rgb(255, 255, 255)' })
+        .toEqual({ background: 'rgb(41, 41, 41)', color: 'rgb(255, 255, 255)' })
       expect(await errorToast.evaluate(element => element.closest('[role="dialog"]') === null)).toBe(true)
       expect(await recorder.evaluate(element => ({
         color: getComputedStyle(element).borderColor, width: getComputedStyle(element).borderWidth,
@@ -160,15 +160,15 @@ describe('web e2e: shortcut reference', () => {
       await page.emulateMedia({ colorScheme: 'dark' })
       await expect.poll(() => successToast.evaluate(element => ({
         background: getComputedStyle(element).backgroundColor, color: getComputedStyle(element).color,
-      }))).toEqual({ background: 'rgb(67, 69, 74)', color: 'rgb(255, 255, 255)' })
+      }))).toEqual({ background: 'rgb(60, 60, 60)', color: 'rgb(255, 255, 255)' })
       await page.emulateMedia({ colorScheme: 'light' })
-      await expect.poll(() => successToast.evaluate(element => getComputedStyle(element).backgroundColor)).toBe('rgb(53, 54, 56)')
+      await expect.poll(() => successToast.evaluate(element => getComputedStyle(element).backgroundColor)).toBe('rgb(41, 41, 41)')
       await editButton.click()
       await inline.getByRole('button', { name: locale === 'zh-CN' ? '移除' : 'Remove', exact: true }).click()
       await inline.waitFor({ state: 'hidden' })
       const unbound = row.getByText(locale === 'zh-CN' ? '暂无快捷键' : 'No shortcut', { exact: true })
       await unbound.waitFor()
-      expect(await unbound.evaluate(element => getComputedStyle(element).color)).toBe('rgb(129, 133, 140)')
+      expect(await unbound.evaluate(element => getComputedStyle(element).color)).toBe('rgb(84, 84, 84)')
       expect(await row.getByRole('button').count()).toBe(1)
       await editButton.click({ position: { x: 12, y: 12 } })
       await inline.waitFor()

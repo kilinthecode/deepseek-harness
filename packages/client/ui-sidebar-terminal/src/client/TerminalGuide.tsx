@@ -24,10 +24,10 @@ export type TerminalGuideProps = PropsRuntime<'sidebar.right.tab.guide.entry'> &
 type MenuState = { phase: 'loading' } | { phase: 'ready'; choices: TerminalLaunchShells } | { phase: 'failed'; message: string }
 
 /**
- * Open the remembered shell from the card or choose another shell from its menu.
- * The card displays its effective shortcut; the shell menu sits beside the title.
+ * Open the remembered shell from the overview row or choose another shell from its menu.
+ * The row displays its effective shortcut; the shell menu sits beside the title.
  * @param props - guide copy, enclosing tab actions and cancellable discovery.
- * @returns separate launch and menu buttons within one guide card.
+ * @returns separate launch and menu buttons within one overview row.
  */
 export function TerminalGuide({
   title, description, kind, useTabInfo, loadShells, selectShell, t, useShortcuts,

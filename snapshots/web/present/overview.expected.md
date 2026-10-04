@@ -1,0 +1,18 @@
+- heading "workspace" [level=2]
+- paragraph: Use one run_code program to
+- heading "Changes" [level=3]
+- paragraph: No recorded changes yet
+- heading "Outputs" [level=3]
+- text: "2"
+- list:
+  - listitem:
+    - button "Open report.txt in sidebar": report.txt
+  - listitem:
+    - button "Open 说明.txt in sidebar": 说明.txt
+- heading "Subagents" [level=3]
+- paragraph: No subagents yet
+- heading "Tools" [level=3]
+- button "Workspace files Browse files in this session's workspace ⌥ ⌘ P"
+- button "New terminal Run commands in the Session workspace"
+- button "Choose shell"
+- text: "⌃ `"

@@ -31,6 +31,12 @@
       config:
         root: []
 
+    - id: image-generation-http
+      name: '@deepseek-ai/dsh-image-generation-http'
+
+    - id: tool-image-generation
+      name: '@deepseek-ai/dsh-tool-image-generation'
+
     - id: llm
       name: '@deepseek-ai/dsh-llm'
 
@@ -416,7 +422,7 @@
     - id: spill-policy
       name: '@deepseek-ai/dsh-spill-policy'
       config:
-        maxInlineTokens: 12500
+        maxInlineTokens: 6000
 
     # Durability checkpoints before each model request and top-level dispatch.
     - id: session-checkpoint-policy
@@ -448,6 +454,7 @@
       config:
         injectMaxBytes: 8192
         maxRecallResults: 8
+        maxRecallBytes: 8192
 
     # Unattended add-only memory review: starts an in-process fork child from
     # the parent's idle notification, every 10 user-kind turns, capped at 8

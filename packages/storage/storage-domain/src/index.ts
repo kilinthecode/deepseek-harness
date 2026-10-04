@@ -15,6 +15,7 @@ import { descriptorOf } from './spec.ts'
 import type { DomainSpec } from './spec.ts'
 import { DomainImpl } from './domain.ts'
 import type { Domain } from './domain.ts'
+import { loadDomainSnapshot } from './load.ts'
 
 export { DomainError } from './error.ts'
 export type { DomainErrorCode, DomainErrorOptions, InvalidRecordDetail } from './error.ts'
@@ -116,47 +117,24 @@ export class DomainFacility {
       }
       const unit = await backend.kv.open(descriptorOf(spec))
       try {
-        const snapshot = await unit.loadAll()
-        const tables = new Map<string, Map<string, unknown>>()
-        for (const [table, tableSpec] of Object.entries(spec.tables)) {
-          const records = new Map<string, unknown>()
-          for (const [key, raw] of Object.entries(snapshot.tables[table] ?? {})) {
-            let parsed: unknown
-            try {
-              parsed = parseRecord(spec.name, table, key, () => tableSpec.valueSchema.parse(raw))
-            } catch (error) {
-              // Backup-and-skip policy (disposable derived data): move the record's
-              // document aside, log the concrete failure, and open without the
-              // record. Backends that cannot move a document keep the loud path.
-              if (spec.invalidRecords !== 'backup-and-skip' || unit.backupRecord === undefined) throw error
-              const moved = await unit.backupRecord(table, key)
-              // parseRecord always wraps the zod failure as the cause.
-              this.ctx.logger.error(
-                `domain '${spec.name}': stored record '${key}' in table '${table}' failed schema validation; `
-                + `moved to '${moved}' and treated as absent. Cause: ${String((error as DomainError).cause)}`,
-              )
-              continue
-            }
-            records.set(key, parsed)
-          }
-          tables.set(table, records)
-        }
-        // A null stored global means "never written": serve `initial` without
-        // materializing it — the first `set` writes.
-        const globalSpec = spec.global
-        const globalValue = globalSpec === undefined
-          ? undefined
-          : snapshot.global === null
-            ? globalSpec.initial
-            : parseRecord(spec.name, '', '', () => globalSpec.schema.parse(snapshot.global))
+        const loadSnapshot = () => loadDomainSnapshot(this.ctx, spec, unit)
+        const snapshot = await loadSnapshot()
         // The onClosed hook runs strictly after teardown completes: writes
         // landing during the drain still emit domain/changed, and the domain
         // stays resolvable (the package invariant cross-checks each event)
         // until fully closed — only then does the name free up for reopening.
-        const domain: DomainImpl = new DomainImpl(this.ctx, spec, unit, tables, globalValue, () => {
-          this.domains.delete(spec.name)
-          this.reserved.delete(spec.name)
-        })
+        const domain: DomainImpl = new DomainImpl(
+          this.ctx,
+          spec,
+          unit,
+          snapshot.tables,
+          snapshot.globalValue,
+          loadSnapshot,
+          () => {
+            this.domains.delete(spec.name)
+            this.reserved.delete(spec.name)
+          },
+        )
         this.domains.set(spec.name, domain)
         // The single type-erasure point: DomainImpl is the untyped runtime,
         // Domain<S> the spec-typed view; the unknown hop is required because
@@ -193,20 +171,6 @@ export class DomainFacility {
    */
   async closeAll(): Promise<void> {
     await Promise.all([...this.domains.values()].map(domain => domain.close()))
-  }
-}
-
-/** Run one zod parse, translating failure to `invalid-record` with its location. */
-function parseRecord<T>(domain: string, table: string, key: string, parse: () => T): T {
-  try {
-    return parse()
-  } catch (error) {
-    const slot = table === '' ? 'global' : `record '${key}' in table '${table}'`
-    throw new DomainError(
-      'invalid-record',
-      `domain '${domain}': stored ${slot} does not match its schema`,
-      { detail: { table, key }, cause: error },
-    )
   }
 }
 

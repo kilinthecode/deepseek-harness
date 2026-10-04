@@ -1,8 +1,18 @@
 - tablist:
-  - tab "Start" [selected]
+  - tab "Task overview" [selected]
   - button "Split"
   - button "Exit fullscreen"
   - button "Collapse right sidebar"
+- heading "workspace" [level=2]
+- paragraph: Prepare panel actions.
+- heading "Changes" [level=3]
+- paragraph: No recorded changes yet
+- heading "Outputs" [level=3]
+- paragraph: No declared outputs yet
+- heading "Subagents" [level=3]
+- button "Refresh subagents"
+- paragraph: No subagents yet
+- heading "Tools" [level=3]
 - button "Workspace files Browse files in this session's workspace"
 - button "New terminal Run commands in the Session workspace"
 - button "Choose shell"

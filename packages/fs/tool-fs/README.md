@@ -52,12 +52,12 @@ Field names are snake_case to match Claude Code and existing harness tool schema
 
 ### Configuration
 
-All keys are optional; the defaults are the shipped read caps.
+All keys are optional. The defaults apply in every composition and model route; explicit configuration overrides them.
 
 | Key | Default | Meaning |
 |---|---|---|
 | `readLimit` | `2000` | Maximum lines returned by one `read` call |
-| `readDefaultLimit` | `readLimit` | Lines returned when `limit` is omitted; must be a positive integer no greater than `readLimit` |
+| `readDefaultLimit` | `min(500, readLimit)` | Lines returned when `limit` is omitted; must be a positive integer no greater than `readLimit` |
 | `readMaxLineLength` | `2000` | Characters kept per line before truncation |
 | `readMaxBytes` | `51200` | Byte cap on one `read` call's selected lines; overflow ends the window with a capped footer |
 | `readStreamMinSize` | `10485760` | Files at or above this size (or of unknown size) stream instead of loading whole into memory |

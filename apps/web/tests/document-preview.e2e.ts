@@ -43,11 +43,16 @@ async function expectDocumentLoading(preview: Locator): Promise<void> {
   await expect.poll(() => loading.textContent()).toBe('Rendering document...')
   await expect.poll(() => loading.evaluate((node) => {
     const body = node.closest('[data-textpreview-body]')!.getBoundingClientRect()
-    const spinner = node.querySelector('svg')!.getBoundingClientRect()
+    const glyph = node.querySelector('svg')!
+    const spinner = glyph.getBoundingClientRect()
+    const style = getComputedStyle(glyph)
+    // Rotation changes the bounding rectangle, while the SVG's layout size remains fixed.
+    const width = Number.parseFloat(style.width), height = Number.parseFloat(style.height)
+    const top = spinner.y + (spinner.height - height) / 2
     const label = node.querySelector('span')!.getBoundingClientRect()
-    return Math.max(Math.abs(spinner.width - 28), Math.abs(spinner.height - 28),
+    return Math.max(Math.abs(width - 28), Math.abs(height - 28),
       Math.abs(spinner.x + spinner.width / 2 - body.x - body.width / 2),
-      Math.abs((spinner.top + label.bottom) / 2 - body.y - body.height / 2))
+      Math.abs((top + label.bottom) / 2 - body.y - body.height / 2))
   })).toBeLessThanOrEqual(1)
 }
 
@@ -1239,7 +1244,7 @@ else process.exit(1);
     ].join('\n'))
 
     const officeMenus: number[] = []
-    const configurationGuide = 'Read failed: Office previews are unavailable. Enable the document preview service on the computer running DeepSeek Harness.'
+    const configurationGuide = 'Read failed: Office previews are unavailable. Enable the document preview service on the computer running Portal Harness.'
     for (const extension of ['doc', 'docx', 'ppt', 'pptx']) {
       await openFile(`unavailable.${extension}`)
       expect(await preview.locator('[data-document-viewer-menu]').count()).toBe(0)
@@ -1267,7 +1272,13 @@ else process.exit(1);
     expect(await excel.locator('.fortune-toolbar').count()).toBe(0)
     const sheetOverlay = excel.locator('.fortune-sheet-overlay')
     const formulaInput = excel.locator('.fortune-fx-input')
-    await sheetOverlay.click({ position: { x: 500, y: 110 } })
+    const selectExecutionRate = async (): Promise<void> => {
+      await sheetOverlay.click({ position: { x: 70, y: 110 } })
+      await expect.poll(() => excel.locator('.fortune-name-box').innerText()).toBe('A3')
+      for (let column = 0; column < 3; column++) await page.keyboard.press('ArrowRight')
+      await expect.poll(() => excel.locator('.fortune-name-box').innerText()).toBe('D3')
+    }
+    await selectExecutionRate()
     await expect.poll(() => formulaInput.innerText()).toBe('=C3/B3')
     await page.keyboard.press('ControlOrMeta+C')
     await expect.poll(() => page.evaluate(() => navigator.clipboard.readText())).toBe('80.0%\n')
@@ -1291,7 +1302,7 @@ else process.exit(1);
     const unsupportedNotice = excel.locator('[data-excel-unsupported-notice]')
     const chartNotice = await unsupportedNotice.innerText()
     expect(chartNotice).toBe('This preview does not support charts, conditional formatting in this workbook. Open it in a system application for the full experience.')
-    await sheetOverlay.click({ position: { x: 500, y: 110 } })
+    await selectExecutionRate()
     await expect.poll(() => formulaInput.innerText()).toBe('=C3/B3')
     await page.keyboard.press('ControlOrMeta+C')
     await expect.poll(() => page.evaluate(() => navigator.clipboard.readText())).toBe('80.0%\n')
@@ -1582,7 +1593,7 @@ describe.skipIf(MODE === 'record')('web e2e: Host Office preview', () => {
       for (const colorScheme of ['dark', 'light'] as const) {
         await page.emulateMedia({ colorScheme })
         await expect.poll(() => preview.locator('[data-pdf-preview]').evaluate(node => getComputedStyle(node).backgroundColor))
-          .toBe(colorScheme === 'dark' ? 'rgb(0, 0, 0)' : 'rgb(235, 238, 242)')
+          .toBe(colorScheme === 'dark' ? 'rgb(0, 0, 0)' : 'rgb(245, 245, 245)')
         await expectPdfPageSpacing(preview)
         await successShot(page, `office-background-${colorScheme}`)
       }
