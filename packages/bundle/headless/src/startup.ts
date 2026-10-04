@@ -33,9 +33,10 @@ export interface HeadlessStartupValues {
   images: string[]
 }
 
-/** Commander accumulator collecting one repeatable `--image <path>` occurrence per invocation. */
+/** Append image paths to the accumulator owned by this Commander invocation. */
 function collectImage(value: string, previous: string[]): string[] {
-  return [...previous, value]
+  previous.push(value)
+  return previous
 }
 
 /**
