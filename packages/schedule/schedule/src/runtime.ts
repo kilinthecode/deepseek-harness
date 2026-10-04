@@ -85,17 +85,27 @@ export class ScheduleRuntime {
   private async drive(): Promise<void> {
     this.clearTimer()
     const failed = new Set<string>()
-    const handled = new Set<string>()
     const scanNow = Date.now()
     const due = this.tasks().filter(task => task.status === 'active' && Date.parse(task.record.scheduledAt) <= scanNow)
-    for (const task of due) {
+    // Retain the first due task's batch order and each Session's recurring order.
+    const batches: [ScheduleTask, ...ScheduleTask[]][] = []
+    const recurringBySession = new Map<ScheduleTask['sessionId'], [ScheduleTask, ...ScheduleTask[]]>()
+    for (const candidate of due) {
+      if (!isRecurringScheduleRecord(candidate.record)) {
+        batches.push([candidate])
+        continue
+      }
+      const group = recurringBySession.get(candidate.sessionId)
+      if (group === undefined) {
+        const batch: [ScheduleTask, ...ScheduleTask[]] = [candidate]
+        recurringBySession.set(candidate.sessionId, batch)
+        batches.push(batch)
+      } else group.push(candidate)
+    }
+    for (const group of batches) {
       if (this.stopping) return
-      if (handled.has(task.record.id)) continue
-      const group = isRecurringScheduleRecord(task.record)
-        ? due.filter(candidate => candidate.sessionId === task.sessionId && isRecurringScheduleRecord(candidate.record))
-        : [task]
-      for (const member of group) handled.add(member.record.id)
-      let admitted = group
+      const task = group[0]
+      let admitted: ScheduleTask[] = group
       const committed = new Set<ScheduleTask['record']['id']>()
       try {
         const resolved = await this.ctx.sessionController.resolveAgent(task.sessionId)
