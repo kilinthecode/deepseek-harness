@@ -92,7 +92,7 @@ describe('V4 fork results', () => {
       const original = child.snapshotEvents().find(event => event.type === 'tool/result')!
       child.append('turn/start', { turn: 2 })
       child.append('step/start', { turn: 2, step: 1 })
-      const pruned = pruner.pruneSession(child)
+      const pruned = pruner.pruneSession(child, 'all')
       expect(pruned.pruned).toHaveLength(1)
       child.append('step/end', { turn: 2, step: 1 })
       child.append('turn/end', { turn: 2, reason: { kind: 'completed' } })

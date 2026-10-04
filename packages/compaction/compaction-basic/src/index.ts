@@ -294,9 +294,14 @@ export class BasicCompactionEngine extends CompactionEngine {
     // capacity and checks its target-specific threshold.
     const prune = this.ctx.get('toolResultPruner')
 
+    // Pressure prunes only results the model has already received, so a fresh
+    // result's first appearance in a request is never its pruned form. A
+    // provider-rejected overflow request already carried every surface result,
+    // and the retry must fit, so overflow may also prune results the model has
+    // not received.
     if (trigger === 'context-overflow') {
       if (prune !== undefined) {
-        prune.pruneSession(agent.session)
+        prune.pruneSession(agent.session, 'all')
         measurement = meter.measure(agent.session)
       }
       const range = selectCompactableRange(agent.session, measurement, 0)
@@ -325,11 +330,11 @@ export class BasicCompactionEngine extends CompactionEngine {
     // route-priced, so a landed prune can still leave the surface at or above
     // threshold; compaction then proceeds on the pruned surface.
     if (prune !== undefined) {
-      const projectedSavings = prune.projectTokenSavings(agent.session)
+      const projectedSavings = prune.projectTokenSavings(agent.session, 'consumed')
       const projected = measurement.totalTokens - projectedSavings
       if (projected <= spec.thresholdTokens - spec.pruneHeadroomTokens
         && projected < spec.thresholdTokens) {
-        prune.pruneSession(agent.session)
+        prune.pruneSession(agent.session, 'consumed')
         measurement = meter.measure(agent.session)
         if (measurement.totalTokens < spec.thresholdTokens) return null
       }
@@ -343,7 +348,7 @@ export class BasicCompactionEngine extends CompactionEngine {
         if (result === null) {
           // No compactable range and nothing was compacted: a mounted pruner
           // is the only reduction still available before declining.
-          if (prune !== undefined) prune.pruneSession(agent.session)
+          if (prune !== undefined) prune.pruneSession(agent.session, 'consumed')
           return null
         }
         /* v8 ignore next -- paired with the defensive post-success branch above. */
@@ -352,7 +357,7 @@ export class BasicCompactionEngine extends CompactionEngine {
       result = await this.compactRegion(range.start, range.end, agent, signal)
       // The replacement above already broke the provider cache, so pruning
       // the remaining surface here costs no additional cache break.
-      if (prune !== undefined) prune.pruneSession(agent.session)
+      if (prune !== undefined) prune.pruneSession(agent.session, 'consumed')
       measurement = meter.measure(agent.session)
       if (measurement.totalTokens < spec.thresholdTokens) return result
     }

@@ -3369,16 +3369,16 @@ export const SERVICE_API: readonly ServiceApiEntry[] = [
         returns: 'pruned content, or `null` when the text is within budget.',
       },
       {
-        signature: 'pruneSession(session: Session): PruneResult',
-        description: 'Prune every over-budget tool result from one stable current-surface snapshot. Each replacement preserves the complete event data except for `content`, cites the shadowed node so replay can recover the replacement input, and is immediately preceded by a `compaction/prune` shadow-price event pricing the shadowed node through the injected token meter, so pure consumers can subtract it without per-node state.',
-        parameters: [{ name: 'session', description: 'session whose current surface is rewritten.' }],
+        signature: 'pruneSession(session: Session, scope: PruneScope): PruneResult',
+        description: 'Prune every over-budget in-scope tool result from one stable current-surface snapshot. Each replacement preserves the complete event data except for `content`, cites the shadowed node so replay can recover the replacement input, and is immediately preceded by a `compaction/prune` shadow-price event pricing the shadowed node through the injected token meter, so pure consumers can subtract it without per-node state.',
+        parameters: [{ name: 'session', description: 'session whose current surface is rewritten.' }, { name: 'scope', description: 'which surface tool results may be rewritten.' }],
         returns: 'landed replacements and aggregate Unicode-code-point savings.',
         throws: ['when the session rejects a replacement; replacements committed earlier in the pass remain durable.'],
       },
       {
-        signature: 'projectTokenSavings(session: Session): number',
-        description: 'Project the token savings `pruneSession` would land for the current surface, without appending anything. A caller compares the projection against a pressure margin to decide whether a prune-only reduction is worth landing on its own, before paying for a second cache break by also summarizing.',
-        parameters: [{ name: 'session', description: 'session whose current surface is inspected.' }],
+        signature: 'projectTokenSavings(session: Session, scope: PruneScope): number',
+        description: 'Project the token savings `pruneSession` would land for the current surface and scope, without appending anything. A caller compares the projection against a pressure margin to decide whether a prune-only reduction is worth landing on its own, before paying for a second cache break by also summarizing.',
+        parameters: [{ name: 'session', description: 'session whose current surface is inspected.' }, { name: 'scope', description: 'which surface tool results may be rewritten.' }],
         returns: 'aggregate estimated tokens `pruneSession` would currently remove, summed per candidate as `tokenMeter.estimateMessage(original) - tokenMeter.estimateMessage(replacement)`.',
       },
     ],
@@ -6264,6 +6264,10 @@ export const TYPE_API: readonly TypeApiEntry[] = [
   {
     name: 'PruneResult',
     declaration: 'export interface PruneResult {\n    readonly pruned: readonly PrunedEntry[];\n    readonly charsRemoved: number;\n}',
+  },
+  {
+    name: 'PruneScope',
+    declaration: 'export type PruneScope = \'consumed\' | \'all\';',
   },
   {
     name: 'PtcBindingErrorClass',

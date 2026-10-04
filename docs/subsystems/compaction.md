@@ -98,7 +98,7 @@ type ManualCompactionErrorCode =
 
 `changed` and `summary` close and persist the failed attempt without a summary replacement; image omissions recorded during recovery remain effective. `commit` may follow partial mutation; `persistence` means the in-memory bracket closed but its flush failed. Cancellation remains separate and throws the exact abort reason after required cleanup.
 
-Pressure compaction runs at the `agent/pre-step` waterfall before request derivation. Once pressure qualifies, compaction-basic previews the optional [`ctx.toolResultPruner`](../../packages/compaction/compaction-tool-result-pruner/README.md): when pruning alone would clear the threshold with at least `pruneHeadroomRatio` of it to spare, the prune lands as the sole reduction; otherwise range selection and summarization run on the unpruned surface first, and a prune of the surviving surface follows each compaction. A qualifying preview whose landed prune still leaves the surface at or above the threshold falls through to compaction on the pruned surface, and a session with no compactable range still gets pruned before compaction declines. Canonical overflow always prunes first, since the retried request itself must fit, then selects a range on the reduced surface. Failed-request recovery runs through `agent/request-error` after the failed step closes and returns a retry action only when the surface replacement generation advances, even if later summary work throws after pruning; cancellation still wins. Region boundaries preserve tool-call/result pairing but not whole turns, allowing early closed steps of one oversized turn to compact. `dsh-compaction-basic` owns thresholds, retained-tail policy, overflow caps, and failure handling.
+Pressure compaction runs at the `agent/pre-step` waterfall before request derivation. Once pressure qualifies, compaction-basic previews the optional [`ctx.toolResultPruner`](../../packages/compaction/compaction-tool-result-pruner/README.md): when pruning alone would clear the threshold with at least `pruneHeadroomRatio` of it to spare, the prune lands as the sole reduction; otherwise range selection and summarization run on the unpruned surface first, and a prune of the surviving surface follows each compaction. A qualifying preview whose landed prune still leaves the surface at or above the threshold falls through to compaction on the pruned surface, and a session with no compactable range still gets pruned before compaction declines. Pressure passes `PruneScope` `consumed`, so a result logged by the step that just finished reaches the model in full before it can be pruned. Canonical overflow always prunes first with scope `all`, since the retried request itself must fit, then selects a range on the reduced surface. Failed-request recovery runs through `agent/request-error` after the failed step closes and returns a retry action only when the surface replacement generation advances, even if later summary work throws after pruning; cancellation still wins. Region boundaries preserve tool-call/result pairing but not whole turns, allowing early closed steps of one oversized turn to compact. `dsh-compaction-basic` owns thresholds, retained-tail policy, overflow caps, and failure handling.
 
 The Service Definition exports `toolPairingBalancedBefore(session, seq)` and `toolPairingBalancedAfter(session, seq)` for the tool-call/result pairing checks before and after a seq. Both validate current surface membership and reject missing seqs and orphan results; the [package contract](../../packages/compaction/compaction/README.md#tool-pairing-boundaries) defines their cache behavior.
 
@@ -130,6 +130,20 @@ interface PruneResult {
   /** Total Unicode code points removed across replacements. */
   readonly charsRemoved: number
 }
+```
+
+```ts type-equiv
+/**
+ * Which surface tool results a pruning pass may rewrite.
+ *
+ * - `consumed`: only results positioned before the last surface
+ *   `assistant/message`, which a model request has already carried in full.
+ *   Results after it have not reached the model yet, so rewriting them would
+ *   make the model's first sight of that output a pruned one.
+ * - `all`: every surface tool result, for a caller that must shrink a request
+ *   which includes results the model has not received yet.
+ */
+type PruneScope = 'consumed' | 'all'
 ```
 
 `projectTokenSavings` reports the estimated token savings a `pruneSession` call would currently produce, without appending anything, so a caller can price a prune-only reduction before committing to it.
@@ -235,31 +249,34 @@ measureContent(blocks: readonly ContentBlock[]): number
 pruneContent(blocks: readonly ContentBlock[]): ContentBlock[] | null
 
 /**
- * Prune every over-budget tool result from one stable current-surface snapshot.
+ * Prune every over-budget in-scope tool result from one stable
+ * current-surface snapshot.
  * Each replacement preserves the complete event data except for `content`,
  * cites the shadowed node so replay can recover the replacement input, and is
  * immediately preceded by a `compaction/prune` shadow-price event pricing the
  * shadowed node through the injected token meter, so pure consumers can
  * subtract it without per-node state.
  * @param session - session whose current surface is rewritten.
+ * @param scope - which surface tool results may be rewritten.
  * @returns landed replacements and aggregate Unicode-code-point savings.
  * @throws when the session rejects a replacement; replacements committed
  * earlier in the pass remain durable.
  */
-pruneSession(session: Session): PruneResult
+pruneSession(session: Session, scope: PruneScope): PruneResult
 
 /**
  * Project the token savings `pruneSession` would land for the current
- * surface, without appending anything. A caller compares the projection
+ * surface and scope, without appending anything. A caller compares the projection
  * against a pressure margin to decide whether a prune-only reduction is
  * worth landing on its own, before paying for a second cache break by also
  * summarizing.
  * @param session - session whose current surface is inspected.
+ * @param scope - which surface tool results may be rewritten.
  * @returns aggregate estimated tokens `pruneSession` would currently
  *   remove, summed per candidate as
  *   `tokenMeter.estimateMessage(original) - tokenMeter.estimateMessage(replacement)`.
  */
-projectTokenSavings(session: Session): number
+projectTokenSavings(session: Session, scope: PruneScope): number
 ```
 
 Types: [ContentBlock](llm-streaming.md) · [Session](session.md)

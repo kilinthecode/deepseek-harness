@@ -17,6 +17,7 @@ import { codePointLength, DEFAULTS, PRUNE_MARKER, resolveConfig } from './config
 import type {
   PrunedEntry,
   PruneResult,
+  PruneScope,
   ResolvedConfig,
   ToolResultPruneConfig,
 } from './types.ts'
@@ -25,6 +26,7 @@ export { codePointLength, DEFAULTS, PRUNE_MARKER, resolveConfig } from './config
 export type {
   PrunedEntry,
   PruneResult,
+  PruneScope,
   ResolvedConfig,
   ToolResultPruneConfig,
 } from './types.ts'
@@ -137,20 +139,27 @@ export class ToolResultPruner extends Service {
    * `projectTokenSavings` share this routine so what counts as prunable cannot
    * diverge between the two.
    * @param session - session whose current surface is inspected.
-   * @returns one entry per surface tool result whose text exceeds the
-   *   configured threshold, each paired with its bounded replacement content.
+   * @param scope - which surface tool results may be rewritten.
+   * @returns one entry per in-scope surface tool result whose text exceeds
+   *   the configured threshold, each paired with its bounded replacement
+   *   content.
    */
-  private planPrune(session: Session): PruneCandidate[] {
+  private planPrune(session: Session, scope: PruneScope): PruneCandidate[] {
     const candidates: SnapshotCandidate[] = []
+    // Count of candidates positioned before the last surface assistant message.
+    let consumedCount = 0
     for (const seq of [...session.surface.nodes]) {
       // oxlint-disable-next-line typescript/no-deprecated -- Existing Session history read; migration deferred.
       const event = session.eventAt(seq)
       /* v8 ignore next -- surface seqs are validated contiguous log references. */
-      if (event?.type === 'tool/result') candidates.push({ seq, event })
+      if (event === undefined) continue
+      if (event.type === 'assistant/message') consumedCount = candidates.length
+      else if (event.type === 'tool/result') candidates.push({ seq, event })
     }
+    const inScope = scope === 'all' ? candidates : candidates.slice(0, consumedCount)
 
     const plan: PruneCandidate[] = []
-    for (const { seq, event } of candidates) {
+    for (const { seq, event } of inScope) {
       const original = session.deriveEventMessage(event) as ToolResultMessage
       const content = this.pruneContent(original.content)
       if (content === null) continue
@@ -160,21 +169,23 @@ export class ToolResultPruner extends Service {
   }
 
   /**
-   * Prune every over-budget tool result from one stable current-surface snapshot.
+   * Prune every over-budget in-scope tool result from one stable
+   * current-surface snapshot.
    * Each replacement preserves the complete event data except for `content`,
    * cites the shadowed node so replay can recover the replacement input, and is
    * immediately preceded by a `compaction/prune` shadow-price event pricing the
    * shadowed node through the injected token meter, so pure consumers can
    * subtract it without per-node state.
    * @param session - session whose current surface is rewritten.
+   * @param scope - which surface tool results may be rewritten.
    * @returns landed replacements and aggregate Unicode-code-point savings.
    * @throws when the session rejects a replacement; replacements committed
    * earlier in the pass remain durable.
    */
-  pruneSession(session: Session): PruneResult {
+  pruneSession(session: Session, scope: PruneScope): PruneResult {
     const pruned: PrunedEntry[] = []
     let charsRemoved = 0
-    for (const { seq, event, original, content } of this.planPrune(session)) {
+    for (const { seq, event, original, content } of this.planPrune(session, scope)) {
       const charsBefore = this.measureContent(original.content)
       const charsAfter = this.measureContent(content)
       const message = freezeMessage<ToolResultMessage>({
@@ -210,17 +221,18 @@ export class ToolResultPruner extends Service {
 
   /**
    * Project the token savings `pruneSession` would land for the current
-   * surface, without appending anything. A caller compares the projection
+   * surface and scope, without appending anything. A caller compares the projection
    * against a pressure margin to decide whether a prune-only reduction is
    * worth landing on its own, before paying for a second cache break by also
    * summarizing.
    * @param session - session whose current surface is inspected.
+   * @param scope - which surface tool results may be rewritten.
    * @returns aggregate estimated tokens `pruneSession` would currently
    *   remove, summed per candidate as
    *   `tokenMeter.estimateMessage(original) - tokenMeter.estimateMessage(replacement)`.
    */
-  projectTokenSavings(session: Session): number {
-    const plan = this.planPrune(session)
+  projectTokenSavings(session: Session, scope: PruneScope): number {
+    const plan = this.planPrune(session, scope)
     let tokensSaved = 0
     for (const { original, content } of plan) {
       const replacement = freezeMessage<ToolResultMessage>({ ...original, content })

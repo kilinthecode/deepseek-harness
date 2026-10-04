@@ -74,8 +74,8 @@ class CapturingAdapter extends LlmAdapter {
 }
 
 /**
- * Three closed turns, each a user message, an assistant tool call, and a tool
- * result, followed by an open turn. Turn 1's tool result exceeds the pruner's
+ * Three closed turns, each a user message, an assistant tool call, a tool
+ * result, and a model reply, followed by an open turn. Turn 1's tool result exceeds the pruner's
  * `thresholdChars`; the later turns' own oversized results accumulate enough
  * pressure that a prune-only preview cannot clear the default
  * `pruneHeadroomRatio` margin on its own (mirrors the equivalent fixture in
@@ -121,6 +121,18 @@ function toolConversation(): Session {
       }),
     }, { surfaceOp: 'append' })
     session.append('step/end', { turn, step: 1 })
+    session.append('step/start', { turn, step: 2 })
+    session.append('assistant/message', {
+      stream: [],
+      turn,
+      step: 2,
+      message: createMessage({
+        role: 'assistant',
+        content: [{ type: 'text', text: 'ok' }],
+        source: { kind: 'model', provider: MODEL, model: MODEL },
+      }),
+    }, { surfaceOp: 'append' })
+    session.append('step/end', { turn, step: 2 })
     session.append('turn/end', { turn, reason: { kind: 'completed' } })
   }
   session.append('turn/start', { turn: 4 })
