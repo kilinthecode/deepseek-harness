@@ -96,28 +96,54 @@ function stopReason(raw: unknown): FinishReason {
   }
 }
 
+function usageChunk(usage: TokenUsage): StreamChunk {
+  const totalTokens = usage.inputTokens + usage.outputTokens + (usage.cacheReadTokens ?? 0) + (usage.cacheWriteTokens ?? 0)
+  return { type: 'usage', usage: { ...usage, totalTokens } }
+}
+
+/** Usage accumulated by one translation, shared with its failure path. */
+interface UsageProgress {
+  readonly usage: TokenUsage
+  /** True once message_start reported billed usage. */
+  started: boolean
+  /** True once the single usage chunk was yielded. */
+  reported: boolean
+}
+
 /** Translate decoded SSE data into the Harness stream protocol.
+ * A failure after message_start first yields the last reported cumulative usage, so a billed partial attempt keeps its usage.
  * @param events - framed, decoded provider events in arrival order.
  * @param model - requested model id stored in durable replay state.
- * @returns blocks, one final usage value, and exactly one terminal finish.
+ * @returns blocks, at most one usage value, and exactly one terminal finish on success.
  */
 export async function* translate(events: AsyncIterable<Record<string, unknown>>, model: string): AsyncGenerator<StreamChunk> {
+  const progress: UsageProgress = { usage: { inputTokens: 0, outputTokens: 0 }, started: false, reported: false }
+  try {
+    yield* translateEvents(events, model, progress)
+  } catch (error) {
+    if (progress.started && !progress.reported) yield usageChunk(progress.usage)
+    throw error
+  }
+}
+
+async function* translateEvents(
+  events: AsyncIterable<Record<string, unknown>>, model: string, progress: UsageProgress,
+): AsyncGenerator<StreamChunk> {
   const blocks = new Map<number, Block>()
-  const usage: TokenUsage = { inputTokens: 0, outputTokens: 0 }
-  let started = false
+  const usage = progress.usage
   let reason: FinishReason | undefined
   for await (const event of events) {
     if (event.type === 'message_start') {
-      if (started) return malformed('duplicate message_start')
+      if (progress.started) return malformed('duplicate message_start')
       updateUsage(usage, object(event.message).usage)
-      started = true
+      progress.started = true
       continue
     }
     if (!['content_block_start', 'content_block_delta', 'content_block_stop', 'message_delta', 'message_stop'].includes(String(event.type))) {
       // Anthropic permits additional event types; content-bearing events remain validated below.
       continue
     }
-    if (!started) return malformed('event precedes message_start')
+    if (!progress.started) return malformed('event precedes message_start')
     if (event.type === 'content_block_start') {
       const wireIndex = indexOf(event)
       if (blocks.has(wireIndex) || reason !== undefined) return malformed('block starts after settlement or repeats an index')
@@ -156,8 +182,8 @@ export async function* translate(events: AsyncIterable<Record<string, unknown>>,
           object(parsed)
         }
       }
-      usage.totalTokens = usage.inputTokens + usage.outputTokens + (usage.cacheReadTokens ?? 0) + (usage.cacheWriteTokens ?? 0)
-      yield { type: 'usage', usage }
+      progress.reported = true
+      yield usageChunk(usage)
       yield { type: 'finish', reason, replayState: replayState(model, [...blocks.values()].map(block => block.replay)) }
       return
     }

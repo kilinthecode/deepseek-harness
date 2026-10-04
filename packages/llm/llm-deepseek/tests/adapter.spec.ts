@@ -267,9 +267,10 @@ describe('direct Messages HTTP', () => {
     const stream = adapter({ baseURL: http.url, streamIdleTimeoutMs: 30 }).stream(options())[Symbol.asyncIterator]()
     try {
       expect((await stream.next()).value).toMatchObject({ type: 'block-start' })
-      const rejected = expect(stream.next()).rejects.toMatchObject({ code: 'TIMEOUT' })
+      const usage = stream.next()
       await vi.advanceTimersByTimeAsync(30)
-      await rejected
+      expect((await usage).value).toEqual({ type: 'usage', usage: { inputTokens: 12, outputTokens: 1, totalTokens: 13 } })
+      await expect(stream.next()).rejects.toMatchObject({ code: 'TIMEOUT' })
       await stopped.promise
     } finally {
       vi.useRealTimers()

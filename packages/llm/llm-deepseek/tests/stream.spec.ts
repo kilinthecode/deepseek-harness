@@ -1,5 +1,6 @@
 /** Protocol invariants at JSON/SSE boundaries, including partial and failed responses. */
 import { describe, expect, it } from 'vitest'
+import type { StreamChunk } from '@deepseek-ai/dsh-llm'
 import { translate } from '../src/translate.ts'
 import { parseSse } from '../src/sse.ts'
 import { providerError } from '../src/transport.ts'
@@ -89,6 +90,68 @@ describe('Messages stream', () => {
     await expect(chunks(translate(events([start, { type: 'content_block_start', index: 0, content_block: { type: 'redacted_thinking', data: 'x' } }]), MODEL))).rejects.toMatchObject({ code: 'UNSUPPORTED_CONTENT' })
     await expect(chunks(translate(events([start, ...end()]), MODEL))).rejects.toMatchObject({ code: 'EMPTY_RESPONSE' })
     await expect(chunks(translate(events(textEvents.slice(0, -1)), MODEL))).rejects.toMatchObject({ code: 'STREAM_CLOSED' })
+  })
+})
+
+describe('usage on failed streams', () => {
+  async function collect(stream: AsyncIterable<StreamChunk>) {
+    const output: StreamChunk[] = []
+    try {
+      for await (const chunk of stream) output.push(chunk)
+    } catch (error) {
+      return { output, error }
+    }
+    throw new Error('expected the stream to fail')
+  }
+  const partial = [
+    { ...start, message: { usage: { input_tokens: 1000, output_tokens: 1, cache_read_input_tokens: 9000 } } },
+    textEvents[1]!,
+    { type: 'message_delta', delta: {}, usage: { output_tokens: 4 } },
+  ]
+
+  it('reports the last cumulative usage once before a mid-stream transport failure', async () => {
+    async function* failing() {
+      yield* partial
+      throw new Error('socket reset')
+    }
+    const { output, error } = await collect(translate(failing(), MODEL))
+    expect(error).toMatchObject({ message: 'socket reset' })
+    expect(output.filter(chunk => chunk.type === 'usage')).toEqual([
+      { type: 'usage', usage: { inputTokens: 1000, outputTokens: 4, cacheReadTokens: 9000, totalTokens: 10004 } },
+    ])
+    expect(output.at(-1)).toMatchObject({ type: 'usage' })
+  })
+
+  it('reports usage before premature EOF, malformed events and an in-band provider error', async () => {
+    const closed = await collect(translate(events(partial), MODEL))
+    expect(closed.error).toMatchObject({ code: 'STREAM_CLOSED' })
+    expect(closed.output.at(-1)).toMatchObject({ type: 'usage', usage: { totalTokens: 10004 } })
+    const malformed = await collect(translate(events([...partial, start]), MODEL))
+    expect(malformed.error).toMatchObject({ code: 'MALFORMED_RESPONSE' })
+    expect(malformed.output.at(-1)).toMatchObject({ type: 'usage' })
+    const body = new Response(sse([...partial, { type: 'error', error: { type: 'overloaded_error', message: 'busy' } }])).body!
+    const overloaded = await collect(translate(parseSse(body, () => {}), MODEL))
+    expect(overloaded.error).toMatchObject({ code: 'SERVER' })
+    expect(overloaded.output.filter(chunk => chunk.type === 'usage')).toHaveLength(1)
+  })
+
+  it('reports no usage when the stream fails before message_start', async () => {
+    const { output, error } = await collect(translate(events([textEvents[1]!]), MODEL))
+    expect(error).toMatchObject({ code: 'MALFORMED_RESPONSE' })
+    expect(output).toEqual([])
+  })
+
+  it('reports usage before rejecting an empty response', async () => {
+    const { output, error } = await collect(translate(events([start, ...end()]), MODEL))
+    expect(error).toMatchObject({ code: 'EMPTY_RESPONSE' })
+    expect(output).toEqual([{ type: 'usage', usage: { inputTokens: 12, outputTokens: 5, totalTokens: 17 } }])
+  })
+
+  it('does not repeat usage when a failure is thrown in after the usage chunk', async () => {
+    const stream = translate(events(textEvents), MODEL)
+    let next = await stream.next()
+    while (!next.done && next.value.type !== 'usage') next = await stream.next()
+    await expect(stream.throw(new Error('consumer failed'))).rejects.toThrow('consumer failed')
   })
 })
 
