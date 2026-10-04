@@ -144,7 +144,14 @@ export class DeepSeekAdapter<C extends Connection = Connection> extends LlmAdapt
         }
         await extensions.accept()
         if (response.body === null) throw new LlmError('DeepSeek Messages returned no response body', 'EMPTY_RESPONSE')
-        yield* translate(parseSse(response.body, activity), options.model)
+        const events = parseSse(response.body, activity)
+        try {
+          // A bare iterator keeps translate's exit at message_stop from cancelling the body.
+          yield* translate({ [Symbol.asyncIterator]: () => ({ next: () => events.next() }) }, options.model)
+          await drainResponse(events)
+        } finally {
+          await events.return(undefined)
+        }
         return
       }
     } catch (error) {
@@ -156,5 +163,20 @@ export class DeepSeekAdapter<C extends Connection = Connection> extends LlmAdapt
       }
       throw error
     }
+  }
+}
+
+/**
+ * Read a completed response to EOF so the connection returns to the keep-alive pool
+ * instead of being destroyed by the request abort. The idle watchdog bounds the wait.
+ * @param events - provider events remaining after the terminal message_stop.
+ */
+async function drainResponse(events: AsyncGenerator<Record<string, unknown>>): Promise<void> {
+  try {
+    while (!(await events.next()).done) {
+      // Events after message_stop carry nothing for the completed message.
+    }
+  } catch (_completedMessageTail) {
+    // The message already settled; a tail failure only costs connection reuse.
   }
 }
