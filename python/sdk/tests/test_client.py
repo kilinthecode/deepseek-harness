@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import inspect
+import queue
 import sys
 import threading
 import time
@@ -1005,6 +1006,134 @@ for line in sys.stdin:
     client.initialize(provider="deepseek-official", cwd="/workspace", model="dsagent")
     client.close()
     client.close()
+
+
+def test_client_restart_replaces_process_scoped_transport_queues(tmp_path: Path) -> None:
+    script = tmp_path / "restartable_runtime.py"
+    script.write_text(
+        """
+import json
+import sys
+
+print(json.dumps({"jsonrpc": "2.0", "method": "runtime/ready", "params": {"ready": True}}), flush=True)
+print(json.dumps({"jsonrpc": "2.0", "id": "probe", "method": "runtime/ping", "params": {}}), flush=True)
+for line in sys.stdin:
+    msg = json.loads(line)
+    if msg.get("method") == "shutdown":
+        print(json.dumps({"jsonrpc": "2.0", "id": msg["id"], "result": {}}), flush=True)
+        break
+""".strip()
+    )
+
+    client = HarnessClient(_launch_args=(sys.executable, str(script)))
+    for _generation in range(2):
+        with client:
+            assert client.next_notification() == Notification(
+                method="runtime/ready", payload={"ready": True}
+            )
+            request = client.next_request()
+            assert request.id == "probe"
+            assert request.method == "runtime/ping"
+            assert request.payload == {}
+
+
+def test_late_old_process_activity_cannot_reach_restarted_client(tmp_path: Path) -> None:
+    script = tmp_path / "barrier_runtime.py"
+    script.write_text(
+        """
+import json
+import sys
+
+print(json.dumps({"jsonrpc": "2.0", "method": "runtime/ready", "params": {"ready": True}}), flush=True)
+for line in sys.stdin:
+    msg = json.loads(line)
+    if msg.get("method") == "shutdown":
+        print(json.dumps({"jsonrpc": "2.0", "id": msg["id"], "result": {}}), flush=True)
+        break
+""".strip()
+    )
+
+    client = HarnessClient(_launch_args=(sys.executable, str(script)))
+    release_late_work = threading.Event()
+    late_work_started = threading.Event()
+    blocked_reader_started = threading.Event()
+    late_stderr_recorded: list[bool] = []
+    late_thread: threading.Thread | None = None
+    blocked_reader: threading.Thread | None = None
+    blocked_result: list[object] = []
+    try:
+        client.start()
+        assert client.next_notification() == Notification(
+            method="runtime/ready", payload={"ready": True}
+        )
+        old_proc = client._proc
+        assert old_proc is not None
+        old_notifications = client._notifications
+        old_requests = client._requests
+        old_stderr = client._stderr_lines
+
+        def late_old_activity() -> None:
+            late_work_started.set()
+            if not release_late_work.wait(5):
+                return
+            client._handle_message(
+                {"jsonrpc": "2.0", "method": "runtime/old", "params": {}},
+                old_proc,
+                old_notifications,
+                old_requests,
+            )
+            client._fail_waiters_from_reader(
+                old_proc, RuntimeError("old stdout EOF"), old_notifications, old_requests
+            )
+            late_stderr_recorded.append(client._record_stderr(old_proc, old_stderr, "old stderr"))
+
+        late_thread = threading.Thread(target=late_old_activity)
+        late_thread.start()
+        assert late_work_started.wait(2)
+
+        def wait_on_old_stream() -> None:
+            blocked_reader_started.set()
+            blocked_result.append(old_notifications.get(timeout=3))
+
+        blocked_reader = threading.Thread(target=wait_on_old_stream)
+        blocked_reader.start()
+        assert blocked_reader_started.wait(2)
+        client.close()
+        blocked_reader.join(timeout=2)
+        assert not blocked_reader.is_alive()
+        assert isinstance(blocked_result[0], BaseException)
+        assert isinstance(old_requests.get_nowait(), BaseException)
+        for old_queue in (old_notifications, old_requests):
+            while True:
+                try:
+                    old_queue.get_nowait()
+                except queue.Empty:
+                    break
+
+        client.start()
+        assert client.next_notification() == Notification(
+            method="runtime/ready", payload={"ready": True}
+        )
+        release_late_work.set()
+        late_thread.join(timeout=2)
+        assert not late_thread.is_alive()
+        assert late_stderr_recorded == [False]
+        assert "old stderr" not in client._stderr_lines
+        with pytest.raises(queue.Empty):
+            old_notifications.get_nowait()
+        with pytest.raises(queue.Empty):
+            old_requests.get_nowait()
+        with pytest.raises(queue.Empty):
+            client._notifications.get_nowait()
+        with pytest.raises(queue.Empty):
+            client._requests.get_nowait()
+    finally:
+        release_late_work.set()
+        client.close()
+        if late_thread is not None:
+            late_thread.join(timeout=2)
+        if blocked_reader is not None:
+            blocked_reader.join(timeout=2)
 
 
 def test_runtime_closed_error_includes_stderr_tail(tmp_path: Path) -> None:
