@@ -235,10 +235,10 @@ function jobOutcomeOf(result: WorkflowResult, name: string, maxChars: number): J
   }
 }
 
-/** Render the run's outcome text: the meta name, agent count, and the JSON value (capped). */
+/** Render the name and agent count with compact JSON capped in UTF-16 code units; the notice counts omitted units. */
 function renderResult(name: string, agentsStarted: number, value: JsonValue, maxChars: number): string {
   // The engine returns JSON data (null for a valueless script), so stringify never yields undefined.
-  const rendered = JSON.stringify(value, null, 2)
+  const rendered = JSON.stringify(value)
   const clipped = rendered.length > maxChars
     ? `${rendered.slice(0, maxChars)}\n… [truncated: ${rendered.length - maxChars} more characters]`
     : rendered

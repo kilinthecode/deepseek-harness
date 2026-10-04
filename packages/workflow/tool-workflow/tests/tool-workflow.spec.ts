@@ -147,6 +147,61 @@ describe('dsh-tool-workflow', () => {
     expect(engine.disposed).toBe(1)
   })
 
+  it.each([
+    null, 42, true, 'quoted "value"\n雪 😀', [], {},
+    { findings: [{ path: 'src/parser.ts', severity: 'warning', lines: [12, 18], detail: 'Check "input"\n雪 😀' }], summary: { scanned: 8, clean: false } },
+  ])('renders complete compact JSON without changing the returned value: %j', async (value) => {
+    const { ctx, engine, parent } = await setup()
+    onTestFinished(async () => { await ctx.fiber.dispose() })
+    const pending = execute(ctx, { script: SCRIPT, meta: META }, { agent: parent })
+    await vi.waitFor(() => { expect(engine.requests).toHaveLength(1) })
+    engine.settle({ value, stopReason: 'completed', agentsStarted: 1 })
+    const result = await pending
+    if (result.isError) throw new Error('expected workflow success')
+    const rendered = (result.content[0] as { text: string }).text
+    expect(rendered).toBe(`workflow "audit" completed (1 agent).\nReturn value:\n${JSON.stringify(value)}`)
+    expect(JSON.parse(rendered.split('Return value:\n')[1]!)).toEqual(value)
+  })
+
+  it('retains a realistic multi-agent audit return without formatting overhead', async () => {
+    const value = {
+      summary: { scanned: 12, reviewers: 3, findings: 12, status: 'needs-review' },
+      findings: Array.from({ length: 12 }, (_, index) => ({
+        path: `src/module-${index + 1}.ts`, severity: index % 3 === 0 ? 'warning' : 'info',
+        lines: [index + 10, index + 12],
+        analysis: { category: 'input-validation', detail: 'Validate parsed input before dispatch.', suggestion: 'Add a focused regression test.' },
+      })),
+    }
+    const { ctx, engine, parent } = await setup()
+    onTestFinished(async () => { await ctx.fiber.dispose() })
+    const pending = execute(ctx, { script: SCRIPT, meta: META }, { agent: parent })
+    await vi.waitFor(() => { expect(engine.requests).toHaveLength(1) })
+    engine.settle({ value, stopReason: 'completed', agentsStarted: 3 })
+    const result = await pending
+    if (result.isError) throw new Error('expected workflow success')
+    const rendered = (result.content[0] as { text: string }).text
+    expect(JSON.parse(rendered.split('Return value:\n')[1]!)).toEqual(value)
+    expect(rendered).toBe(`workflow "audit" completed (3 agents).\nReturn value:\n${JSON.stringify(value)}`)
+  })
+
+  it.each([1, 12, 13, 14])('caps serialized JSON at exactly %i characters', async (maxResultChars) => {
+    const value = { text: '雪😀' }
+    const json = JSON.stringify(value)
+    const { ctx, engine, parent } = await setup({ maxResultChars })
+    onTestFinished(async () => { await ctx.fiber.dispose() })
+    const pending = execute(ctx, { script: SCRIPT, meta: META }, { agent: parent })
+    await vi.waitFor(() => { expect(engine.requests).toHaveLength(1) })
+    engine.settle({ value, stopReason: 'completed', agentsStarted: 0 })
+    const result = await pending
+    if (result.isError) throw new Error('expected workflow success')
+    expect(result.value).toMatchObject({ result: value })
+    const clipped = json.length > maxResultChars
+      ? `${json.slice(0, maxResultChars)}\n… [truncated: ${json.length - maxResultChars} more characters]`
+      : json
+    expect((result.content[0] as { text: string }).text)
+      .toBe(`workflow "audit" completed (0 agents).\nReturn value:\n${clipped}`)
+  })
+
   it('records one top-level run and its members in the calling Session after cleanup', async () => {
     const { ctx, engine, parent, session } = await setup()
     const pending = execute(ctx, { script: SCRIPT, meta: META }, { agent: parent })
@@ -442,7 +497,7 @@ describe('dsh-tool-workflow', () => {
 
   describe('run_in_background', () => {
     /** The stub-engine bench plus a live job registry and a registered owner. */
-    async function setupBackground(config?: { enableRunInBackground?: boolean }) {
+    async function setupBackground(config?: { enableRunInBackground?: boolean; maxResultChars?: number }) {
       const ctx = new Context()
       onTestFinished(async () => { await ctx.fiber.dispose() })
       await ctx.plugin(SystemPrompt)
@@ -510,7 +565,7 @@ describe('dsh-tool-workflow', () => {
       expect(settled.progress).toBeUndefined()
       const read = jobs.read(job.id, parent.id)
       expect(read.result).toContain('workflow "audit" completed (4 agents)')
-      expect(read.result).toContain('"findings": 2')
+      expect(read.result).toContain('"findings":2')
       expect(engine.disposed).toBe(1)
       // The durable session record still brackets the background run.
       expect(session.snapshotEvents().map(event => event.type)).toEqual([
@@ -519,6 +574,25 @@ describe('dsh-tool-workflow', () => {
       // A straggling event after settlement finds no tracked run and is dropped.
       engine.phase(runId, 'Late')
       expect(retained(ctx, job.id, parent)).not.toContain('Late')
+    })
+
+    it.each([1, 12, 13, 14, 50_000])('uses the foreground formatting and cap for background completion at %i characters', async (maxResultChars) => {
+      const { ctx, engine, parent } = await setupBackground({ maxResultChars })
+      const value = { text: '雪😀' }
+      const foreground = execute(ctx, { script: SCRIPT, meta: META }, { agent: parent })
+      await vi.waitFor(() => { expect(engine.requests).toHaveLength(1) })
+      engine.settleRun(WorkflowRunId('run-1'), { value, stopReason: 'completed', agentsStarted: 1 })
+      const expected = (await foreground).content[0] as { text: string }
+      const result = await execute(ctx, { script: SCRIPT, meta: META, run_in_background: true }, { agent: parent })
+      if (result.isError) throw new Error('expected background acceptance')
+      const { jobId } = result.value as { jobId: JobId }
+      engine.settleRun(WorkflowRunId('run-2'), { value, stopReason: 'completed', agentsStarted: 1 })
+      await vi.waitFor(() => { expect(ctx.jobs.get(jobId, parent.id).status).toBe('completed') })
+      const read = await ctx.tools.execute({
+        signal: testToolSignal, callId: ToolCallId('read-completed'), name: 'job_output',
+        arguments: { job_id: jobId }, agent: parent,
+      })
+      expect((read.content[0] as { text: string }).text).toContain(expected.text)
     })
 
     it('a registry kill cancels the run and the reason lands in the killed detail', async () => {
@@ -688,7 +762,7 @@ describe('dsh-tool-workflow', () => {
       expect(jobs.get(jobId, parent.id).detail).toBe('0 agents')
       const ring = jobs.readAt(jobId, 0, parent.id).chunks.map(chunk => chunk.text).join('')
       expect(ring).toContain('halfway')
-      expect(jobs.read(jobId, parent.id).result).toContain('"ok": true')
+      expect(jobs.read(jobId, parent.id).result).toBe('workflow "scriptonly" completed (0 agents).\nReturn value:\n{"ok":true}')
     }, 15_000)
   })
 })
