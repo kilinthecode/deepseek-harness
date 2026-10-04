@@ -35,7 +35,7 @@ The plugin registers Appearance preference cubes and a font-size stepper in the 
 
 A composition can register a third-party theme id with alias-token overrides through `ctx.theme`; the override layer folds into the active snapshot's tokens in registration order. Removing one never overwrites the last durable built-in preference. Third-party theme ids remain an in-process extension and do not cross the built-in settings schema.
 
-The main canvas is white in light mode and black in dark mode. Panels, menus, user bubbles, selection, links, and primary actions use the neutral ramp; errors, warnings, success, code differences, and syntax retain their semantic colors.
+The `--dsw-alias-team-glass-*` aliases provide a dark translucent composer material and readable controls in both appearance modes. The main canvas is white in light mode and black in dark mode. Panels, menus, user bubbles, selection, links, and primary actions use the neutral ramp; errors, warnings, success, code differences, and syntax retain their semantic colors.
 
 ### Pre-plugin palette
 

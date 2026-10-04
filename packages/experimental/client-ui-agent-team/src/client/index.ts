@@ -6,6 +6,7 @@ import { mountAgentTeamUi } from './mount.ts'
 
 export { inject } from './mount.ts'
 export type { TeamActionInjected, TeamActionProps, TeamActionResult } from './TeamAction.tsx'
+export type { TeamPageProps, TeamOverviewOwnerProps } from './TeamPage.tsx'
 export type { TeamKey } from './locales.ts'
 
 /** Mount the generated Team Remote contribution and its browser UI. */

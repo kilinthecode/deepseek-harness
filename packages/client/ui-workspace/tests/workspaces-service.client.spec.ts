@@ -437,6 +437,19 @@ describe('UiWorkspaceService', () => {
     expect(b.selectPanel).not.toHaveBeenCalled()
   })
 
+  it('keeps an alternate composer panel when opening its selected Workspace', async () => {
+    const b = bench({ workspaces: workspaceState([workspace('a')]) })
+    b.layout.selectPanel('agent-teams' as MainPanelId)
+    b.selectPanel.mockClear()
+    const prepare = vi.fn()
+
+    await b.uiWorkspace.openWorkspace(wid('a'), prepare, 'preserve')
+
+    expect(prepare).toHaveBeenCalledOnce()
+    expect(b.sessions.retain).toHaveBeenCalledWith(prepare.mock.calls[0]![0], { source: 'mainView' })
+    expect(b.selectPanel).not.toHaveBeenCalled()
+  })
+
   it('releases a newly retained target when Workspace preparation throws', async () => {
     const b = bench({
       workspaces: workspaceState([workspace('a')]),

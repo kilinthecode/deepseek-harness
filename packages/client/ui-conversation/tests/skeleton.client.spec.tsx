@@ -142,6 +142,8 @@ function mount(
     acceptsImages?: boolean | null
     /** Mutable view ledger used by registration-order regressions. */
     viewTabs?: ViewTab[]
+    /** Let an alternate page request Session-derived composer placement. */
+    automaticPlacement?: boolean
   } = {},
 ) {
   const sessionId = 'sessionId' in options ? options.sessionId : SID
@@ -355,7 +357,8 @@ function mount(
     )) as ConversationContentProps['useFactorySlot']
     return (
       <FactoryViewsTestContext.Provider value={common}>
-        <ConversationContent {...({ ...common, ...runtimeProps, ...input, useFactorySlot })} />
+        <ConversationContent {...({ ...common, ...runtimeProps,
+          ...options.automaticPlacement === true ? { variant: input.variant } : input, useFactorySlot })} />
       </FactoryViewsTestContext.Provider>
     )
   }) as ConversationSlotProps['renderFactorySlot']
@@ -402,6 +405,16 @@ describe('Hero chrome', () => {
 })
 
 describe('ConversationRoot resident composer', () => {
+  it.each([
+    ['loading', false, 'settling'],
+    ['loading', true, 'hero'],
+    ['open', false, 'active'],
+  ] as const)('derives %s composer placement for an alternate page (blank summary %s)', (openState, summaryBlank, phase) => {
+    const b = mount(sessionSnapshotOf({ openState, blank: openState === 'loading' }), undefined, undefined, {
+      automaticPlacement: true, summaryBlank,
+    })
+    expect(b.view.container.querySelector('[data-conversation-content]')?.getAttribute('data-content-phase')).toBe(phase)
+  })
   it('keeps global header navigation without selecting a Session', () => {
     const b = mount(sessionSnapshotOf(), [], undefined, { sessionId: undefined })
     expect(b.view.container.querySelector('header')).not.toBeNull()

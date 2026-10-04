@@ -5,6 +5,8 @@ export const NS = 'agent-team'
 
 /** Simplified Chinese dictionary and key source. */
 export const zh = {
+  panel: '智能体团队',
+  details: '成员与任务',
   trigger: '智能体团队',
   loading: '正在加载团队…',
   unavailable: 'Team 暂不可用',
@@ -72,6 +74,8 @@ export type TeamKey = keyof typeof zh
 
 /** English dictionary checked against the Chinese key set. */
 export const en = {
+  panel: 'Agent Teams',
+  details: 'Members and tasks',
   trigger: 'Agent Team',
   loading: 'Loading Team…',
   unavailable: 'Team is unavailable',

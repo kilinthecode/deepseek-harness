@@ -156,6 +156,7 @@
     "apps/web/tests/turn-tail-actions.e2e.ts",
     "apps/web/tests/goal-multi-turn-actions.e2e.ts",
     "apps/web/tests/agent-team-panel.e2e.ts",
+    "apps/web/tests/agent-teams-navigation.e2e.ts",
     "apps/web/tests/agent-room-panel.e2e.ts",
     "apps/web/tests/sidebar-right.e2e.ts",
     "apps/web/tests/sidebar-terminal.e2e.ts",

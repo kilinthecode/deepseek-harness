@@ -472,19 +472,20 @@ export type ConversationSlotProps =
   & PropsRenderSlots<'conversation.header'>
   & PropsRenderFactories
 
-/** Inputs shared by main and embedded Conversation content occurrences. */
-export interface ConversationContentInputProps {
+/** Main and embedded content; omit both placement fields to derive them from the selected Session. */
+export type ConversationContentInputProps = {
   variant: 'main' | 'embedded'
+} & ({
   phase: 'settling' | 'hero' | 'active'
   hero: boolean
-}
+} | { phase?: never; hero?: never })
 
 /** Values passed from shared content to its occurrence-selected width controls. */
 export interface ConversationWidthControlsInputProps {
   /** Mounted Conversation body measured and styled by the selected controls. */
   container: HTMLDivElement | null
   /** Current body phase; handles render only for an active transcript. */
-  phase: ConversationContentInputProps['phase']
+  phase: NonNullable<ConversationContentInputProps['phase']>
 }
 
 /** Full props of the reusable Conversation Factory definition. */

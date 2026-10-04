@@ -81,6 +81,8 @@ The first-use directory name and its stored title are fixed, so neither follows 
 <details>
 <summary>Implementation internals — click to expand</summary>
 
+`openWorkspace()` reveals the Conversation by default; alternate conversation composers pass `preserve` to retain their main panel while selecting the new Session.
+
 The package is one composition: both target slots are declared by other plugins, so `apply` uses `slots.inject()` to register for each declaration lifetime and re-register after a declaring slot is restored.
 
 The browser entry also declares two root-scoped `list` child seats on each Session row: `sidebar.session.row.leading`, rendered only while that row's primary status is idle and left blank on an archived row, and `sidebar.session.row.hover`, mounted only while that row's hover card is open. Both take the row's Session identity and nothing else, so an occupant reads its own data by that id; a Session-scoped seat would force a Session binding, which would activate and retain every listed Session.

@@ -74,6 +74,9 @@ describe('web e2e: Agent Teams panel', () => {
     agent.session.append('turn/end', { turn: 1, reason: { kind: 'completed' } })
     await scaffold.ctx.sessions.flush(agent.session)
     await page.getByText('Ready.').waitFor({ timeout: 10_000 })
+    expect(await page.locator('[data-team-action]').count()).toBe(0)
+    await page.getByRole('button', { name: 'Agent Teams', exact: true }).click()
+    await page.locator('[data-agent-teams-page]').waitFor()
   }, 120_000)
 
   afterAll(async () => {
@@ -85,7 +88,7 @@ describe('web e2e: Agent Teams panel', () => {
     onTestFailed(() => saveFailureShot(page, 'web-e2e-agent-team-panel'))
     const projectionReads = vi.spyOn(scaffold.ctx.sessionController, 'projections')
     onTestFinished(() => { projectionReads.mockRestore() })
-    await page.locator('[data-team-action]').getByRole('button', { name: /Agent Team/iu }).click()
+    await page.locator('[data-team-action]').getByRole('button', { name: 'Members and tasks', exact: true }).click()
     const action = page.getByRole('dialog', { name: 'Agent Team', exact: true })
     await action.getByText('No shared tasks yet. Create them through the conversation.').waitFor()
     await action.getByText('lead').waitFor()
@@ -120,7 +123,7 @@ describe('web e2e: Agent Teams panel', () => {
   it('keeps the panel inside the viewport and closes on outside click or Escape', async () => {
     onTestFailed(() => saveFailureShot(page, 'web-e2e-agent-team-panel-keyboard'))
     const panel = page.getByRole('dialog', { name: 'Agent Team', exact: true })
-    const trigger = page.locator('[data-team-action]').getByRole('button', { name: /Agent Team/iu })
+    const trigger = page.locator('[data-team-action]').getByRole('button', { name: 'Members and tasks', exact: true })
     const viewport = page.viewportSize()!
     await trigger.click()
     await panel.getByText('lead', { exact: true }).waitFor()
@@ -162,7 +165,7 @@ describe('web e2e: Agent Teams panel', () => {
   })
 
   it('keeps the hovered panel open when the pointer returns directly to its trigger', async () => {
-    const trigger = page.locator('[data-team-action]').getByRole('button', { name: 'Agent Team', exact: true })
+    const trigger = page.locator('[data-team-action]').getByRole('button', { name: 'Members and tasks', exact: true })
     const panel = page.getByRole('dialog', { name: 'Agent Team', exact: true })
     await trigger.hover()
     await panel.waitFor()
@@ -182,7 +185,7 @@ describe('web e2e: Agent Teams panel', () => {
       writeScopes: [],
     })
     const viewport = page.viewportSize()!
-    const trigger = page.locator('[data-team-action]').getByRole('button', { name: 'Agent Team', exact: true })
+    const trigger = page.locator('[data-team-action]').getByRole('button', { name: 'Members and tasks', exact: true })
     const panel = page.getByRole('dialog', { name: 'Agent Team', exact: true })
     const card = panel.locator('article').filter({ hasText: 'Responsive task' })
     await trigger.click()

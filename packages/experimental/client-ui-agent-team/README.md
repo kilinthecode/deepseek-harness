@@ -9,7 +9,7 @@ English | [中文](README.zh.md)
 
 ## Summary
 
-This package adds an Agent Teams action to the Web conversation header, where a user can inspect the roster and shared task board, follow and steer the Team's room when one is enabled, and open teammate conversations. It reads the Lead Session's `agentTeam` projection from the Session store, which Host projection frames keep current, reads the room through the generated `agentTeams/room*` Remote methods, and keeps child-history navigation on the stable addressed-subagent path. Choose it through an experimental Agent Teams or room bundle. The panel does not extend the stable API Proxy, store Team state, or register model-facing input.
+This package adds an Agent Teams sidebar entry with a shared conversation composer in dark glass, where users inspect the roster and shared task board, follow and steer the Team's room when one is enabled, and open teammate conversations. It reads the Lead Session's `agentTeam` projection from the Session store, which Host projection frames keep current, reads the room through the generated `agentTeams/room*` Remote methods, and keeps child-history navigation on the stable addressed-subagent path. Choose it through an experimental Agent Teams or room bundle. The panel does not extend the stable API Proxy, store Team state, or register model-facing input.
 
 ## Table of Contents
 
@@ -28,6 +28,8 @@ This package adds an Agent Teams action to the Web conversation header, where a 
 Enable this package through [`@deepseek-ai/dsh-experimental-agent-team-profile`](../agent-team-profile/README.md), which supplies the Team service, tools, and Web UI together. The Web Client loader mounts the `/client` export; the root Host export is inert, and the package has no user configuration fields.
 
 ### Inspect and navigate the roster
+
+Select Agent Teams in the left navigation to start or continue the selected conversation. The page uses the ordinary composer, including workspace and model selection, attachments, draft preservation, and submission. Its glass material stays dark in both appearance modes. Members and tasks opens the roster, task board, and optional room; ordinary conversation headers contain no Team action.
 
 The panel shows the Lead Session's roster and task board from the shared Session store. Task and roster updates appear while the panel stays open. Opening the panel performs no projection requests. The panel shows a loading notice while the conversation or Session list is loading, and an unavailable notice when no Team value is present afterward.
 
@@ -51,13 +53,14 @@ The read-only task board shows task identity, owner, blockers, readiness, adviso
 <details>
 <summary>Implementation internals — click to expand</summary>
 
-The Client export mounts the generated `agentTeams` room Remote contribution, then registers its locale dictionaries and one conversation-header slot through Cordis effects. Disposing the plugin fiber removes both registrations and unmounts the Remote namespace; a registration failure unmounts it before the error propagates.
+The Client export mounts the generated `agentTeams` room Remote contribution, then registers its locale dictionaries, sidebar icon, main page, and Session-scoped overview slot through Cordis effects. Disposing the plugin fiber removes those registrations and unmounts the Remote namespace; a registration failure unmounts it before the error propagates.
 
-The panel renders outside the conversation container and stays within the viewport. Member cards use the shared elevation stroke for their outlines in resting, selected, and hover states. Hovering the trigger opens the panel after 150ms; leaving both trigger and panel closes it after a 120ms grace period. Clicking the trigger pins the panel and moves focus into it. Outside clicks and Escape dismiss the panel; Escape returns focus to the trigger only when focus was inside the panel. In a narrow header, the trigger becomes an icon and opens only on click. The component derives every roster and task row from the `useSessions`, `useSessionStatus`, and `useSession` seats: the Lead identity comes from the current Session's subagent address, the Team view from `projectionsBySession[lead].values.agentTeam`, member activity from Session status with the list summary as fallback, and the model from `projectionsBySession[member].values.modelSelection.next`. Each roster row selects its own running state. One injected callback opens a roster Session using the current and target Session ids; the room callbacks resolve the current conversation to its Lead before each `agentTeams/room*` call. The room section follows `agentTeams/roomStream` only while it is mounted and aborts the stream when the panel closes. Switching conversations closes the panel and clears a navigation failure.
+The panel renders outside the conversation container and stays within the viewport. Member cards use the shared elevation stroke for their outlines in resting, selected, and hover states. Hovering the trigger opens the panel after 150ms; leaving both trigger and panel closes it after a 120ms grace period. Clicking the trigger pins the panel and moves focus into it. Outside clicks and Escape dismiss the panel; Escape returns focus to the trigger only when focus was inside the panel. In a narrow page toolbar, the trigger becomes an icon and opens only on click. The component derives every roster and task row from the `useSessions`, `useSessionStatus`, and `useSession` seats: the Lead identity comes from the current Session's subagent address, the Team view from `projectionsBySession[lead].values.agentTeam`, member activity from Session status with the list summary as fallback, and the model from `projectionsBySession[member].values.modelSelection.next`. Each roster row selects its own running state. One injected callback opens a roster Session using the current and target Session ids; the room callbacks resolve the current conversation to its Lead before each `agentTeams/room*` call. The room section follows `agentTeams/roomStream` only while it is mounted and aborts the stream when the panel closes. Switching conversations closes the panel and clears a navigation failure.
 
 | File | Role |
 |---|---|
 | [`src/client/mount.ts`](src/client/mount.ts) | Room Remote mount, locale, navigation, and slot registrations |
+| [`src/client/TeamPage.tsx`](src/client/TeamPage.tsx) | Sidebar icon and shared Conversation content on the Team page |
 | [`src/client/TeamAction.tsx`](src/client/TeamAction.tsx) | Projection-derived roster and task board, Remote-backed room section, and panel interaction state |
 | [`src/client/locales.ts`](src/client/locales.ts) | English and Chinese panel copy |
 | [`src/index.ts`](src/index.ts) | Inert Host entry |
@@ -71,7 +74,7 @@ The panel renders outside the conversation container and stays within the viewpo
 
 - [Agent Teams bundle](../agent-team-profile/README.md) — the published opt-in bundle that mounts this Client plugin.
 - [Agent Teams service](../agent-team/README.md) — authoritative roster, task, room, and projection behavior.
-- [Conversation UI](../../client/ui-conversation/README.md) — the stable header slot and addressed-subagent navigation surface.
+- [Conversation UI](../../client/ui-conversation/README.md) — the shared composer and addressed-subagent navigation.
 - [Experimental packages](../README.md) — incubation status and publication policy.
 
 -----
@@ -110,4 +113,4 @@ None.
 
 </details>
 
-**Runtime invariant:** No companion is published. The Host projection and room service are authoritative, and the package owns only one disposable slot registration and one Remote mount.
+**Runtime invariant:** No companion is published. The Host projection and room service are authoritative, and the package owns disposable page and navigation registrations and one Remote mount.

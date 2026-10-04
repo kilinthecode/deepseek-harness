@@ -118,6 +118,7 @@ interface WorkspaceNavigation {
   openWorkspace(
     workspaceId: Parameters<ConversationInjected['selectWorkspace']>[0],
     beforeOpen: (sessionId: SessionId) => void,
+    panel: 'preserve',
   ): Promise<void>
 }
 
@@ -354,7 +355,7 @@ export function apply(ctx: Context, config: Config = Config({})): void {
             }
           }
         }
-      }),
+      }, 'preserve'),
     }),
   }, ConversationContent)
 

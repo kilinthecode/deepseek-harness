@@ -67,6 +67,12 @@ interface ChromeRow {
 
 const CHROME_ROWS: readonly ChromeRow[] = [
   {
+    file: 'experimental/client-ui-agent-team/src/client/TeamPage.module.css',
+    selector: '.header',
+    markup: 'experimental/client-ui-agent-team/src/client/TeamPage.tsx',
+    height: ['min-height', '48px'],
+  },
+  {
     file: 'client/ui-settings-account/src/client/OnboardingSurface.module.css',
     selector: '.dragBand',
     markup: 'client/ui-settings-account/src/client/OnboardingSurface.tsx',
@@ -82,7 +88,7 @@ const CHROME_ROWS: readonly ChromeRow[] = [
     file: SIDEBAR,
     selector: '.logoRow',
     markup: 'client/ui-sidebar/src/client/SidebarRoot.tsx',
-    height: ['height', '60px'],
+    height: ['height', '48px'],
   },
   {
     file: CONVERSATION,

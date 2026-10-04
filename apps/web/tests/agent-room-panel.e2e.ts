@@ -147,8 +147,9 @@ describe('web e2e: Agent room panel', () => {
 
   it('renders the room transcript and the settled decision', async () => {
     onTestFailed(() => saveFailureShot(page, 'web-e2e-agent-room-panel'))
-    await page.locator('[data-team-action]').getByRole('button', { name: /Agent Team/iu }).click()
-    // The panel renders in a portal dialog outside the header action.
+    await page.getByRole('button', { name: 'Agent Teams', exact: true }).click()
+    await page.locator('[data-team-action]').getByRole('button', { name: 'Members and tasks', exact: true }).click()
+    // The panel renders in a portal dialog outside the Team page.
     const action = page.getByRole('dialog', { name: 'Agent Team', exact: true })
     await action.getByText('an uninvalidated cache serves stale reads').waitFor()
     await action.getByText('Adopt a global mutable cache with no invalidation.').waitFor()

@@ -19,6 +19,7 @@ import {
 import type { PropsLocale, PropsRuntime } from '@deepseek-ai/dsh-client-ui-slots'
 import type { TranslateNS } from '@deepseek-ai/dsh-client-ui-slots'
 import type {} from '@deepseek-ai/dsh-client-ui-conversation/client'
+import type { TeamOverviewOwnerProps } from './TeamPage.tsx'
 import { NS, type TeamKey } from './locales.ts'
 import css from './TeamAction.module.css'
 
@@ -63,9 +64,10 @@ export interface TeamActionInjected {
 /** Durable lifecycle overlaid with the member Session's live turn activity. */
 type MemberStatus = 'running' | 'inactive' | 'provisioning' | 'failed'
 
-/** Full props of the Team conversation-header action. */
+/** Full props of the Team page's roster and room action. */
 export type TeamActionProps =
-  PropsRuntime<'conversation.session.header.actions'> & TeamActionInjected & PropsLocale<typeof NS>
+  Pick<PropsRuntime<'agent-team.overview'>, 'sessionId' | 'useSession' | 'useSessions' | 'useSessionStatus'>
+  & TeamOverviewOwnerProps & TeamActionInjected & PropsLocale<typeof NS>
 
 /**
  * Participants with more committed utterances in `next` than in `previous`.
@@ -562,7 +564,7 @@ function RoomSection({
 /** Render the Team roster, the room when the composition has one, and the read-only task board. */
 export function TeamAction({
   sessionId, useSession, useSessions, useSessionStatus, openTeammate,
-  loadRoom, followRoom, promptParticipant, proposeDecision, escalateDecision, t,
+  loadRoom, followRoom, promptParticipant, proposeDecision, escalateDecision, t, label,
 }: TeamActionProps) {
   const [open, setOpen] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -659,7 +661,7 @@ export function TeamAction({
         ref={triggerRef}
         onMouseEnter={scheduleHoverOpen}
         className={css.trigger}
-        aria-label={t('trigger')}
+        aria-label={label ?? t('trigger')}
         aria-haspopup="dialog"
         aria-expanded={open}
         onClick={() => {
@@ -670,7 +672,7 @@ export function TeamAction({
         }}
       >
         <IconUsersOutlineRegular size={14} />
-        <span ref={triggerLabelRef} className={css.triggerLabel}>{t('trigger')}</span>
+        <span ref={triggerLabelRef} className={css.triggerLabel}>{label ?? t('trigger')}</span>
       </button>
       {open && createPortal(
         <div

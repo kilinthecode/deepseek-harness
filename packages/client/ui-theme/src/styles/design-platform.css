@@ -391,3 +391,15 @@ html[data-platform='darwin'] body {
 html[data-platform='darwin'] body[data-ds-dark-theme] {
   --dsw-specific-menu: rgba(41, 41, 41, 0.94);
 }
+
+/* Agent Teams keeps a dark composer material in either page palette. */
+body {
+  --dsw-alias-team-glass-fill: linear-gradient(150deg, color-mix(in srgb, var(--dsw-static-neutral-800) 90%, transparent), color-mix(in srgb, var(--dsw-static-neutral-900) 94%, transparent));
+  --dsw-alias-team-glass-label: var(--dsw-static-neutral-50);
+  --dsw-alias-team-glass-secondary: var(--dsw-static-neutral-300);
+  --dsw-alias-team-glass-ink: var(--dsw-static-neutral-900);
+  --dsw-alias-team-glass-muted: var(--dsw-static-neutral-600);
+  --dsw-alias-team-glass-hover: color-mix(in srgb, var(--dsw-static-neutral-50) 12%, transparent);
+  --dsw-alias-team-glass-stroke: color-mix(in srgb, var(--dsw-static-neutral-50) 18%, transparent);
+  --dsw-alias-team-glass-stroke-focus: color-mix(in srgb, var(--dsw-static-neutral-50) 32%, transparent);
+}

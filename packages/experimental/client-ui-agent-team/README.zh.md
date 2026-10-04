@@ -9,7 +9,7 @@ kind: "package-reference"
 
 ## 概述
 
-本包向 Web 会话页头添加 Agent Teams action，让用户检查 roster 与共享任务板、在启用 room 时跟随并引导该 Team 的 room，并打开 teammate 会话。它从 Session store 读取 Lead Session 的 `agentTeam` 投影，Host 投影 frame 使其保持最新；它通过生成式 `agentTeams/room*` Remote method 读取 room，并让 child history 导航继续使用稳定的 addressed-subagent 路径。通过实验性的 Agent Teams 或 room bundle 选择本包。这个面板不扩展稳定 API Proxy、不存储 Team 状态，也不注册面向模型的输入。
+本包添加 Agent Teams 侧边栏入口及采用深色玻璃材质的共享会话 Composer，让用户检查 roster 与共享任务板、在启用 room 时跟随并引导该 Team 的 room，并打开 teammate 会话。它从 Session store 读取 Lead Session 的 `agentTeam` 投影，Host 投影 frame 使其保持最新；它通过生成式 `agentTeams/room*` Remote method 读取 room，并让 child history 导航继续使用稳定的 addressed-subagent 路径。通过实验性的 Agent Teams 或 room bundle 选择本包。这个面板不扩展稳定 API Proxy、不存储 Team 状态，也不注册面向模型的输入。
 
 ## 目录
 
@@ -28,6 +28,8 @@ kind: "package-reference"
 通过 [`@deepseek-ai/dsh-experimental-agent-team-profile`](../agent-team-profile/README.zh.md) 启用本包。这个组合包同时提供团队服务、工具与 Web 界面。Web Client loader 挂载 `/client` export；root Host export 不执行行为，本包也没有用户配置字段。
 
 ### 检查并导航 roster
+
+在左侧导航选择智能体团队，即可开始或继续当前选中的会话。页面使用普通 Composer，保留 Workspace 与模型选择、附件、草稿及提交行为。其玻璃材质在两种外观模式中都保持深色。“成员与任务”打开 roster、任务板及可选 room；普通会话页头不包含 Team action。
 
 面板从共享 Session store 展示 Lead Session 的 roster 与任务板。面板保持打开时，任务和成员更新会直接出现。打开面板不发起投影请求。会话或 Session 列表正在加载时，面板显示加载提示；加载结束后仍无 Team 值时，显示不可用提示。
 
@@ -51,13 +53,14 @@ Roster 行展示持久名称与阶段。provisioning 和 running 成员使用共
 <details>
 <summary>实现细节——点击展开</summary>
 
-Client export 先挂载生成式 `agentTeams` room Remote contribution，再通过 Cordis effect 注册 locale dictionary 与一个 conversation-header slot。Dispose plugin fiber 会移除这两项 registration 并卸载该 Remote namespace；registration 失败时，会先卸载该 namespace，再传播错误。
+Client export 先挂载生成式 `agentTeams` room Remote contribution，再通过 Cordis effect 注册 locale dictionary、侧边栏图标、主页面与 Session 作用域 overview slot。Dispose plugin fiber 会移除这些 registration 并卸载该 Remote namespace；registration 失败时，会先卸载该 namespace，再传播错误。
 
-面板渲染在会话容器外，并保持在视口范围内。成员卡片在静止、选中和悬停状态下均使用共享 elevation 描边绘制轮廓。悬停触发按钮 150ms 后打开面板；指针离开触发按钮和面板后，经过 120ms 宽限关闭。点击触发按钮会固定面板并将焦点移入其中。点击外部或按 Escape 可关闭面板；仅当焦点原本位于面板内时，Escape 才将焦点返回触发按钮。页头较窄时触发按钮折叠为图标，只响应点击打开。组件从 `useSessions`、`useSessionStatus` 与 `useSession` 座位派生每一个 roster 行与任务行：Lead 身份来自当前 Session 的 subagent address，Team 视图来自 `projectionsBySession[lead].values.agentTeam`，成员活动来自 Session 状态并以列表摘要为后备，model 来自 `projectionsBySession[member].values.modelSelection.next`。每个 roster 行只选择自己的运行状态。一个注入回调通过当前与目标 Session 的 id 打开 roster Session；room 回调在每次调用 `agentTeams/room*` 之前把当前会话解析为其 Lead。room 区块只在挂载期间跟随 `agentTeams/roomStream`，并在面板关闭时中止该 stream。切换会话会关闭面板并清除导航失败。
+面板渲染在会话容器外，并保持在视口范围内。成员卡片在静止、选中和悬停状态下均使用共享 elevation 描边绘制轮廓。悬停触发按钮 150ms 后打开面板；指针离开触发按钮和面板后，经过 120ms 宽限关闭。点击触发按钮会固定面板并将焦点移入其中。点击外部或按 Escape 可关闭面板；仅当焦点原本位于面板内时，Escape 才将焦点返回触发按钮。页面工具栏较窄时触发按钮折叠为图标，只响应点击打开。组件从 `useSessions`、`useSessionStatus` 与 `useSession` 座位派生每一个 roster 行与任务行：Lead 身份来自当前 Session 的 subagent address，Team 视图来自 `projectionsBySession[lead].values.agentTeam`，成员活动来自 Session 状态并以列表摘要为后备，model 来自 `projectionsBySession[member].values.modelSelection.next`。每个 roster 行只选择自己的运行状态。一个注入回调通过当前与目标 Session 的 id 打开 roster Session；room 回调在每次调用 `agentTeams/room*` 之前把当前会话解析为其 Lead。room 区块只在挂载期间跟随 `agentTeams/roomStream`，并在面板关闭时中止该 stream。切换会话会关闭面板并清除导航失败。
 
 | 文件 | 职责 |
 |---|---|
 | [`src/client/mount.ts`](src/client/mount.ts) | room Remote 挂载、locale、导航与 slot registration |
+| [`src/client/TeamPage.tsx`](src/client/TeamPage.tsx) | 侧边栏图标与 Team 页面中的共享 Conversation 内容 |
 | [`src/client/TeamAction.tsx`](src/client/TeamAction.tsx) | 由投影派生的 roster 与任务板、由 Remote 支撑的 room 区块及面板交互状态 |
 | [`src/client/locales.ts`](src/client/locales.ts) | 中英文 panel 文案 |
 | [`src/index.ts`](src/index.ts) | 不执行行为的 Host entry |
@@ -71,7 +74,7 @@ Client export 先挂载生成式 `agentTeams` room Remote contribution，再通�
 
 - [Agent Teams bundle](../agent-team-profile/README.zh.md)——挂载本 Client plugin 的公开 opt-in bundle。
 - [Agent Teams service](../agent-team/README.zh.md)——权威 roster、task、room 与投影行为。
-- [会话 UI](../../client/ui-conversation/README.zh.md)——稳定 header slot 与 addressed-subagent 导航表层。
+- [会话 UI](../../client/ui-conversation/README.zh.md)——共享 Composer 与 addressed-subagent 导航。
 - [实验性包](../README.zh.md)——孵化状态与发布规则。
 
 -----
@@ -110,4 +113,4 @@ Client export 先挂载生成式 `agentTeams` room Remote contribution，再通�
 
 </details>
 
-**运行时不变式：** 不发布伴生入口。Host 投影与 room service 是权威来源，本包只持有一个可释放的 slot 注册和一个 Remote 挂载。
+**运行时不变式：** 不发布伴生入口。Host 投影与 room service 是权威来源，本包只持有可释放的页面与导航注册和一个 Remote 挂载。

@@ -10,8 +10,10 @@ import type {} from '@deepseek-ai/dsh-client-ui-conversation/client'
 import type {} from '@deepseek-ai/dsh-client-locale/client'
 import type {} from '@deepseek-ai/dsh-client-ui-renderer/client'
 import type {} from '@deepseek-ai/dsh-client-ui-workspace/client'
+import type { MainPanelId } from '@deepseek-ai/dsh-client-ui-layout/client'
 import type { TypertRemoteContribution } from '@deepseek-ai/dsh-typert-protocol'
 import { TeamAction, type TeamActionInjected, type TeamActionResult } from './TeamAction.tsx'
+import { TeamPage, TeamPanel, TeamPanelIcon } from './TeamPage.tsx'
 import { en, NS, zh, type TeamKey } from './locales.ts'
 
 declare module '@deepseek-ai/dsh-client-ui-slots' {
@@ -22,10 +24,12 @@ declare module '@deepseek-ai/dsh-client-ui-slots' {
 }
 
 /** Required browser services for room RPC, navigation, slots, and localized copy. */
-export const inject = ['sessions', 'uiWorkspace', 'remote', 'slots', 'locale']
+export const inject = ['sessions', 'uiWorkspace', 'remote', 'slots', 'locale', 'layout']
+
+const PANEL_ID = 'agent-teams' as MainPanelId
 
 /**
- * Register the Team locale dictionaries and the conversation-header action.
+ * Register the Team locale dictionaries, navigation page, and roster action.
  * The panel reads the Lead Session's `agentTeam` projection from the shared
  * Session store; only its room section calls the mounted `agentTeams` Remote namespace.
  * @param ctx - Client Context carrying the injected navigation, locale, slot, Session, and room Remote services.
@@ -69,16 +73,21 @@ export function registerAgentTeamUi(ctx: ClientContext): void {
     },
   }
 
-  ctx.slots.inject(
-    'conversation.session.header.actions',
-    () => ctx.slots.register({
-      name: 'conversation.session.header.actions',
-      id: 'agent-team',
-      order: -20,
-      locale: NS,
-      inject: () => actions,
-    }, TeamAction),
-  )
+  const t = ctx.locale.bind(NS)
+  ctx.slots.inject('main', function* () {
+    yield ctx.slots.register({
+      name: 'main', key: PANEL_ID,
+      children: { 'agent-team.page': { kind: 'single', scope: 'session-maybe' } },
+    }, TeamPanel)
+    yield ctx.slots.register({
+      name: 'agent-team.page', locale: NS,
+      children: { 'agent-team.overview': { kind: 'single', scope: 'session' } },
+    }, TeamPage)
+    yield ctx.slots.register({ name: 'agent-team.overview', locale: NS, inject: () => actions }, TeamAction)
+  })
+  ctx.slots.inject('sidebar.panellist', () => ctx.slots.register({
+    name: 'sidebar.panellist', id: PANEL_ID, order: -100, label: () => t('panel'), locale: NS,
+  }, TeamPanelIcon))
 }
 
 /**
@@ -92,7 +101,7 @@ export async function mountAgentTeamUi(
   contribution: TypertRemoteContribution,
 ): Promise<() => Promise<void>> {
   const disposeRemote = await ctx.remote.$mount(contribution)
-  const ui = ctx.inject(['sessions', 'uiWorkspace', 'remote.agentTeams', 'slots', 'locale'], registerAgentTeamUi)
+  const ui = ctx.inject(['sessions', 'uiWorkspace', 'remote.agentTeams', 'slots', 'locale', 'layout'], registerAgentTeamUi)
   try {
     await ui
   } catch (error) {

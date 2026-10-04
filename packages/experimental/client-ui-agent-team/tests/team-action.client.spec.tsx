@@ -8,7 +8,7 @@ import type {
   RoomFollowFrame, RoomPromptResult, RoomProposalView, RoomRemoteView,
   TeamMemberProjection, TeamProjection, TeamTaskId, TeamTaskView as TeamTask,
 } from '@deepseek-ai/dsh-experimental-agent-team/client'
-import type { SessionListState, SessionSnapshot, SessionSummary, UseProjection } from '@deepseek-ai/dsh-api-session-controller/client'
+import type { SessionListState, SessionSnapshot, SessionSummary } from '@deepseek-ai/dsh-api-session-controller/client'
 import type { SessionStatusSnapshot } from '@deepseek-ai/dsh-client-ui-session/client'
 import { createSnapshotStore } from '@deepseek-ai/dsh-client-store'
 import { bindSnapshotSelector, makeTranslate, RemoteError } from '@deepseek-ai/dsh-client-test-runtime'
@@ -127,17 +127,11 @@ function bench(options: {
   const props: TeamActionProps = {
     sessionId,
     useSession: bindSnapshotSelector(session),
-    useProjection: ((key: string, select?: (value: unknown) => unknown) => {
-      const value = useSessions(state => state.projectionsBySession[sessionId]?.values[
-        key as keyof SessionListState['projectionsBySession'][SessionId]['values']
-      ])
-      return select === undefined ? value : select(value)
-    }) as UseProjection,
     useSessions,
     useSessionStatus: bindSnapshotSelector(statuses),
     ...injected,
     t: makeTranslate(zh, commonZh),
-  } as TeamActionProps
+  }
   return { props, injected, sessions, statuses, session }
 }
 

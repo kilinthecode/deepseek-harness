@@ -20,13 +20,13 @@ const REMOTE: TypertRemoteContribution = {
 }
 const ROOM = { enabled: true, participants: [], chair: 'lead', messages: [], proposals: [] }
 
-/** Read one injected callback from the registered header action. */
+/** Read one injected callback from the registered Team overview. */
 function injectedAction<K extends keyof TeamActionInjected>(
   injected: Record<string, unknown>,
   key: K,
 ): TeamActionInjected[K] {
   const action = injected[key]
-  if (typeof action !== 'function') throw new Error(`Team header action lacks its injected ${key} callback`)
+  if (typeof action !== 'function') throw new Error(`Team overview lacks its injected ${key} callback`)
   return action as TeamActionInjected[K]
 }
 
@@ -103,11 +103,16 @@ async function bench(options: {
     openSession: (target: unknown) => { navigation.push(['open', target]) },
   } as never)
   ctx.provide('conversation', {})
+  ctx.provide('layout', {})
   ctx.provide('locale', new LocaleRuntime(ctx))
   await ctx.plugin(SlotRegistry).await()
   const collapseHeader = ctx.slots.register({
     name: 'root',
-    children: { 'conversation.session.header.actions': { kind: 'list', scope: 'session' } },
+    children: {
+      'main': { kind: 'keyed', scope: 'root' },
+      'sidebar.panellist': { kind: 'list', scope: 'root' },
+      'conversation.session.header.actions': { kind: 'list', scope: 'session' },
+    },
   } as never, () => null)
   if (options.registrationFailure === true) {
     vi.spyOn(ctx.slots, 'inject').mockImplementationOnce(() => { throw new Error('slot registration failed') })
@@ -123,7 +128,7 @@ async function bench(options: {
   } else {
     await fiber.await()
   }
-  const entry = () => ctx.slots.entries('conversation.session.header.actions')
+  const entry = () => ctx.slots.entries('agent-team.overview')
     .find(candidate => candidate.component === TeamAction)
   const actions = (): TeamActionInjected => {
     const injected = entry()!.inject!()
@@ -151,13 +156,16 @@ async function bench(options: {
 }
 
 describe('ui-team browser plugin', () => {
-  it('registers one disposable header action and mounts the room Remote contribution', async () => {
+  it('registers disposable sidebar navigation and a Team page and mounts the room Remote contribution', async () => {
     const b = await bench()
-    expect(inject).toEqual(['sessions', 'uiWorkspace', 'remote', 'slots', 'locale'])
+    expect(inject).toEqual(['sessions', 'uiWorkspace', 'remote', 'slots', 'locale', 'layout'])
     expect(b.entry()).toMatchObject({
-      options: { id: 'agent-team', order: -20 },
+      options: {},
       locale: 'agent-team',
     })
+    expect(b.ctx.slots.entries('conversation.session.header.actions')).toEqual([])
+    expect(b.ctx.slots.entries('sidebar.panellist')[0]?.options).toMatchObject({ id: 'agent-teams', order: -100 })
+    expect(b.ctx.slots.entries('main')[0]?.options).toMatchObject({ key: 'agent-teams' })
     expect(b.remote.mount).toHaveBeenCalledOnce()
     expect(b.remote.mount).toHaveBeenCalledWith(REMOTE)
     const t = b.ctx.locale.bind('agent-team')
@@ -168,6 +176,8 @@ describe('ui-team browser plugin', () => {
 
     await b.fiber.dispose()
     expect(b.entry()).toBeUndefined()
+    expect(b.ctx.slots.entries('main')).toEqual([])
+    expect(b.ctx.slots.entries('sidebar.panellist')).toEqual([])
     expect(b.remote.disposeMount).toHaveBeenCalledOnce()
     expect(t('empty')).toBe('empty')
   })
@@ -236,14 +246,18 @@ describe('ui-team browser plugin', () => {
     expect(b.navigation).toEqual([])
   })
 
-  it('re-registers after the conversation header slot is collapsed and declared again', async () => {
+  it('re-registers after the main panel slots are collapsed and declared again', async () => {
     const b = await bench()
     expect(b.entry()).toBeDefined()
     b.collapseHeader()
     expect(b.entry()).toBeUndefined()
     b.ctx.slots.register({
       name: 'root',
-      children: { 'conversation.session.header.actions': { kind: 'list', scope: 'session' } },
+      children: {
+        'main': { kind: 'keyed', scope: 'root' },
+        'sidebar.panellist': { kind: 'list', scope: 'root' },
+        'conversation.session.header.actions': { kind: 'list', scope: 'session' },
+      },
     } as never, () => null)
     await Promise.resolve()
     expect(b.entry()).toBeDefined()

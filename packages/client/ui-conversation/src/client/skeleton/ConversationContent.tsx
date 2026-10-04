@@ -3,6 +3,7 @@ import clsx from 'clsx'
 import type { WorkspaceId } from '@deepseek-ai/dsh-workspace/types'
 import { workspaceDisplayTitle } from '@deepseek-ai/dsh-api-workspace-controller/default-workspace'
 import type { ConversationContentProps, ConversationViewsProps, InputZone } from '../contract/slots.ts'
+import { conversationPresentation } from '../contract/presentation.ts'
 import { HeroShell, WorkspaceChip, workspaceLabel } from './EmptyHero.tsx'
 import css from './ConversationRoot.module.css'
 
@@ -21,11 +22,16 @@ function NoConversationWidthControls() {
  */
 export function ConversationContent(props: ConversationContentProps) {
   const {
-    sessionId, phase, hero, useSession, useSessions, useSessionStatus,
+    sessionId, useConversation, useSession, useSessions, useSessionStatus,
     useWorkspaces, useInput, useComposerBlock, useRouteImage, renderSlot, renderSlotChain,
     selectWorkspace, t, useFactorySlot,
   } = props
   const session = useSession(snapshot => snapshot)
+  const conversation = useConversation(snapshot => snapshot)
+  const summaryBlank = useSessions(snapshot => sessionId === undefined ? undefined : snapshot.byId[sessionId]?.blank)
+  const { phase, hero } = props.phase === undefined
+    ? conversationPresentation(sessionId, session, conversation, summaryBlank)
+    : { phase: props.phase, hero: props.hero }
   const Views = useFactorySlot('views', ConversationSessionView)
   const WidthControls = useFactorySlot('widthControls', NoConversationWidthControls)
   const [body, setBody] = useState<HTMLDivElement | null>(null)
