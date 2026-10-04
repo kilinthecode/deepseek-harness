@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import { Context } from '@deepseek-ai/cordis'
 import AgentRegistry, { agentEvents } from '@deepseek-ai/dsh-agent'
 import type { Agent, PreStepDecision } from '@deepseek-ai/dsh-agent'
@@ -48,6 +48,58 @@ function record(
 }
 
 describe('renderSnapshot', () => {
+  it('accounts for a large snapshot without re-encoding accumulated prefixes', () => {
+    const records = Array.from({ length: 128 }, (_, index) =>
+      record(`memory-${String(index).padStart(3, '0')}`, 'user', 'global', 'Context 📚', 'Saved detail 中文'))
+    const byteLength = vi.spyOn(Buffer, 'byteLength')
+    let output: string | undefined
+    let measuredCharacters = 0
+    try {
+      output = renderSnapshot(records, 1_000_000, noScan)
+      measuredCharacters = byteLength.mock.calls.reduce((total, [text]) =>
+        total + (typeof text === 'string' ? text.length : 0), 0)
+    } finally {
+      byteLength.mockRestore()
+    }
+    expect(output).toContain('## memory-000 [user, global]')
+    expect(output).toContain('## memory-127 [user, global]')
+    expect(measuredCharacters).toBeLessThanOrEqual(2 * output!.length)
+  })
+
+  it('drops trailing index lines before blocks when the omission line needs space', () => {
+    const block = '## b [user, global]\nshort\n\nsmall body'
+    const firstIndex = '- [user, global] a — first description'
+    const secondIndex = '- [user, global] c — second description'
+    const records = [
+      record('a', 'user', 'global', 'first description', 'x'.repeat(5000)),
+      record('b', 'user', 'global', 'short', 'small body'),
+      record('c', 'user', 'global', 'second description', 'x'.repeat(5000)),
+      record('d', 'user', 'global', 'x'.repeat(5000), 'x'.repeat(5000)),
+    ]
+    const budget = Buffer.byteLength([SNAPSHOT_HEADER, block, '', firstIndex, secondIndex].join('\n'), 'utf8')
+    expect(renderSnapshot(records, budget, noScan)).toBe([
+      SNAPSHOT_HEADER, block, '', firstIndex, '… 2 more; use memory_recall',
+    ].join('\n'))
+    const onlyOneIndexBudget = Buffer.byteLength([SNAPSHOT_HEADER, block, '', firstIndex].join('\n'), 'utf8')
+    expect(renderSnapshot(records, onlyOneIndexBudget, noScan)).toBe([
+      SNAPSHOT_HEADER, block, '… 3 more; use memory_recall',
+    ].join('\n'))
+  })
+
+  it('retains earlier blocks after removing a trailing block for the omission line', () => {
+    const firstBlock = '## a [user, global]\nfirst\n\nfirst saved body'
+    const secondBlock = '## b [user, global]\nsecond\n\nsecond saved body'
+    const records = [
+      record('a', 'user', 'global', 'first', 'first saved body'),
+      record('b', 'user', 'global', 'second', 'second saved body'),
+      record('c', 'user', 'global', 'x'.repeat(5000), 'x'.repeat(5000)),
+    ]
+    const budget = Buffer.byteLength([SNAPSHOT_HEADER, firstBlock, '', secondBlock].join('\n'), 'utf8')
+    expect(renderSnapshot(records, budget, noScan)).toBe([
+      SNAPSHOT_HEADER, firstBlock, '… 2 more; use memory_recall',
+    ].join('\n'))
+  })
+
   it('returns undefined for an empty record list regardless of budget', () => {
     expect(renderSnapshot([], 2048, noScan)).toBeUndefined()
     expect(renderSnapshot([], 0, noScan)).toBeUndefined()
