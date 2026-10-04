@@ -958,6 +958,54 @@ describe('agent loop', () => {
     expect(JSON.stringify(adapter.requests[0]?.messages)).toContain('pending steering')
   })
 
+  it.each([0, 1, 2, 3])('runs a follow-up queued %i microtasks after a turn/end observer fires', async (depth) => {
+    const adapter = new MockAdapter([textResponse('first reply'), textResponse('second reply')])
+    const ctx = await harness(adapter)
+    const agent = await ctx.agentLoop.create(SessionId(`turn-end-followup-${depth}`), { provider: 'mock', model: 'mock' })
+    let queued = false
+    ctx.on('session/event', (session, event) => {
+      if (session !== agent.session || event.type !== 'turn/end' || queued) return
+      queued = true
+      let delay = Promise.resolve()
+      for (let i = 0; i < depth; i++) delay = delay.then(() => {})
+      void delay.then(() => { send(agent, 'second') })
+    })
+
+    send(agent, 'first')
+    await agent.whenIdle()
+    await new Promise(resolve => setTimeout(resolve, 0))
+    await agent.whenIdle()
+
+    expect(userTexts(agent)).toEqual(['first', 'second'])
+    expect(adapter.requests).toHaveLength(2)
+    expect(agent.inbox.nextTurn).toHaveLength(0)
+    expect(agent.status).toBe('idle')
+  })
+
+  it('parks a follow-up queued while turn/end settles when cancel keeps the inbox', async () => {
+    const adapter = new MockAdapter([textResponse('first reply'), textResponse('second reply')])
+    const ctx = await harness(adapter)
+    const agent = await ctx.agentLoop.create(SessionId('turn-end-followup-cancel'), { provider: 'mock', model: 'mock' })
+    let queued = false
+    ctx.on('session/event', (session, event) => {
+      if (session !== agent.session || event.type !== 'turn/end' || queued) return
+      queued = true
+      void Promise.resolve().then(() => {
+        send(agent, 'parked')
+        agent.cancel({ kind: 'user' }, { keepInbox: true })
+      })
+    })
+
+    send(agent, 'first')
+    await agent.whenIdle()
+    await new Promise(resolve => setTimeout(resolve, 0))
+    await agent.whenIdle()
+
+    expect(userTexts(agent)).toEqual(['first'])
+    expect(adapter.requests).toHaveLength(1)
+    expect(agent.inbox.nextTurn).toHaveLength(1)
+  })
+
   it('inject() while idle durably stages context without opening a turn', async () => {
     const adapter = new MockAdapter([textResponse('ok')])
     const ctx = await harness(adapter)

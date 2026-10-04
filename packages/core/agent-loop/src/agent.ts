@@ -251,7 +251,19 @@ export class ReactLoopAgent implements Agent {
 
   private async kick(): Promise<void> {
     try {
-      while (await this.turn()) {}
+      while (await this.turn()) {
+        /* v8 ignore next -- turn() keeps the running phase this driver owns */
+        if (this.phase.kind !== 'running') break
+        const phase = this.phase
+        // Checked after turn() settles, with no await before the idle
+        // transition: input queued while its promise resolved found a live
+        // phase, which does not latch, so this driver must claim it.
+        if (!this.inbox.hasPending || phase.abort.signal.aborted) break
+        phase.abort = new AbortController()
+        // A fresh controller makes a latch set on the old one stale: the live driver claims the queue itself.
+        phase.wakeRequested = false
+        phase.step = 0
+      }
     } catch (_error) {
       // Reported failures and cancellation are contained at the driver boundary.
     } finally {
@@ -292,7 +304,12 @@ export class ReactLoopAgent implements Agent {
     return !headerEquals(baseline, canonicalHeader({ ...baseline, tools: [...tools] }))
   }
 
-  /** Open one turn before claiming its first proposed step. */
+  /**
+   * Open one turn before claiming its first proposed step.
+   * @returns true when the turn ran to its normal end and the driver may
+   *   continue with queued input; false when it ended without spending a
+   *   model call or a pre-step listener rejected it.
+   */
   private async turn(): Promise<boolean> {
     if (this.phase.kind !== 'running') {
       this.throwError(new Error(`agent "${this.id}": turn without driver reservation`))
@@ -370,11 +387,6 @@ export class ReactLoopAgent implements Agent {
         this.throwError(error)
       }
     }
-    if (!this.inbox.hasPending) return false
-    phase.abort = new AbortController()
-    // A fresh controller makes a latch set on the old one stale: the live driver claims the queue itself.
-    phase.wakeRequested = false
-    phase.step = 0
     return true
   }
 
