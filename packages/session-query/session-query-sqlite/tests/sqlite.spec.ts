@@ -860,6 +860,54 @@ describe('SQLite reconciliation and source lifecycle', () => {
     await persistence.dispose()
   })
 
+  it('reuses a live observation until the session appends', async () => {
+    const ctx = await liveContext()
+    const session = ctx.sessions.create(SessionId('cached-live'), { seed: messageEvents('first needle') })
+    const snapshots = vi.spyOn(session, 'snapshotEvents')
+
+    await expect(ctx.sessionQuery.searchSessions({ query: 'first' }))
+      .resolves.toMatchObject({ items: [{ header: session.header }] })
+    await expect(ctx.sessionQuery.searchEvents({ sessionId: session.id, query: 'needle' }))
+      .resolves.toMatchObject({ items: [{ seq: SessionSeq(0) }] })
+    expect(snapshots).toHaveBeenCalledTimes(1)
+
+    session.append('user/message', createUserMessage({
+      content: [{ type: 'text', text: 'second needle' }], source: { kind: 'user' },
+    }), { surfaceOp: 'append' })
+    await expect(ctx.sessionQuery.searchEvents({ sessionId: session.id, query: 'needle' }))
+      .resolves.toMatchObject({ items: [{ seq: SessionSeq(0) }, { seq: SessionSeq(2) }] })
+    expect(snapshots).toHaveBeenCalledTimes(2)
+  })
+
+  it('reindexes a replacement live session whose log has the same length', async () => {
+    const ctx = await liveContext()
+    const id = SessionId('replaced-live')
+    const first = ctx.sessions.prepare(id, { seed: messageEvents('first needle') })
+    const detachFirst = ctx.sessions.enter(first)
+    ctx.sessions.announce(first)
+    await expect(ctx.sessionQuery.searchSessions({ query: 'first' }))
+      .resolves.toMatchObject({ items: [{ header: { id } }] })
+    detachFirst()
+
+    const second = ctx.sessions.create(id, { seed: messageEvents('second needle') })
+    expect(second.seq).toBe(first.seq)
+    await expect(ctx.sessionQuery.searchSessions({ query: 'first' })).resolves.toEqual({ items: [] })
+    await expect(ctx.sessionQuery.searchSessions({ query: 'second' }))
+      .resolves.toMatchObject({ items: [{ header: { id } }] })
+  })
+
+  it('lists persistence once when no persisted log needs a read', async () => {
+    TestPersistence.reset([{ meta: header('listed-once'), events: messageEvents('stored needle') }])
+    const ctx = await liveContext()
+    await ctx.plugin(TestPersistence)
+    await ctx.sessionQuery.searchSessions({ query: 'stored' })
+    expect(TestPersistence.listSignals).toHaveLength(2)
+
+    await expect(ctx.sessionQuery.searchSessions({ query: 'stored' }))
+      .resolves.toMatchObject({ items: [{ header: { id: SessionId('listed-once') } }] })
+    expect(TestPersistence.listSignals).toHaveLength(3)
+  })
+
   it('retries when a live owner attaches during persistence observation', async () => {
     TestPersistence.reset()
     const ctx = await liveContext()
@@ -1022,6 +1070,21 @@ describe('SQLite reconciliation and source lifecycle', () => {
 
     await expect(ctx.sessionQuery.searchSessions({ query: 'needle' })).resolves.toEqual({ items: [] })
     expect(lists).toBe(2)
+  })
+
+  it('retries when the source unmounts during a listing that needs no read', async () => {
+    const durable = header('indexed-unmount')
+    TestPersistence.reset([{ meta: durable, events: messageEvents('durable needle') }])
+    const ctx = await liveContext()
+    const persistence = await ctx.plugin(TestPersistence)
+    await expect(ctx.sessionQuery.searchSessions({ query: 'needle' }))
+      .resolves.toMatchObject({ items: [{ header: durable }] })
+    TestPersistence.listEffect = async () => {
+      TestPersistence.listEffect = undefined
+      await persistence.dispose()
+    }
+
+    await expect(ctx.sessionQuery.searchSessions({ query: 'needle' })).resolves.toEqual({ items: [] })
   })
 
   it('retries when the snapshot population changes during observation', async () => {
