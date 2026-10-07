@@ -261,6 +261,16 @@ describe('package payload constraints', () => {
     ])
   })
 
+  it.each(['lib/event-transport-*.js', 'lib/transport-*.js'])(
+    'publishes the deferred OTel transport chunks and rejects omission of %s', (missing) => {
+      const dir = 'packages/telemetry/otel'
+      const manifest = JSON.parse(readFileSync(new URL(`../${dir}/package.json`, import.meta.url), 'utf8')) as WorkspaceManifest['manifest']
+      expect(checkWorkspaceManifest({ dir, manifest })).toEqual([])
+      expect(checkWorkspaceManifest({ dir, manifest: { ...manifest, files: manifest.files!.filter(file => file !== missing) } }))
+        .toEqual([expect.stringContaining('package.json files must be')])
+    },
+  )
+
   it('accepts the Agent Team icon payload and rejects its omission', () => {
     const dir = 'packages/experimental/agent-team-profile'
     const manifest = JSON.parse(readFileSync(new URL(`../${dir}/package.json`, import.meta.url), 'utf8')) as WorkspaceManifest['manifest']

@@ -174,6 +174,8 @@ export function readWorkspaceManifests(repositoryRoot: string): WorkspaceManifes
 }
 
 const packageFileExtras: Readonly<Record<string, readonly string[]>> = {
+  // Deferred OTel HTTP transports keep the SDK and Got graph off the boot path.
+  '@deepseek-ai/dsh-otel': ['lib/event-transport-*.js', 'lib/transport-*.js'],
   // Owned Worker bundles import this public bootstrap before their business entry.
   '@deepseek-ai/dsh-app-boot': ['lib/worker/profile-resolution-bootstrap.js'],
   // Statically linked client libraries keep their stylesheets next to the emitted

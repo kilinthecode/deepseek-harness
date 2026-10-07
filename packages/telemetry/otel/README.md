@@ -38,6 +38,8 @@ Shutdown closes the channel to new records synchronously. Accepted records await
 
 `src/index.ts` registers the service; `event-log.ts` owns ordinary SDK batching; `session-log.ts` owns byte/count scheduling; `transport.ts` supplies the Session SDK JSON HTTP delegate; `event-transport.ts` uses Got for cancellable ordinary-event HTTP requests and retry waits with SDK serialization and export accounting. No global OTel provider is installed. The Session processor measures each record once, groups conservative sizes, and waits for the SDK concurrency queue to clear after every callback before sending another request.
 
+The published runtime includes `lib/index.js` and the hashed ordinary/Session transport chunks. Their SDK and Got imports stay deferred until reporting starts; the built-entry smoke runs in CI alongside the exact publication-closure check.
+
 No runtime invariant companion is published: channel creation registers no independent domain state, and collector delivery cannot be inferred from local queues. Composition tests exercise independent channels and service removal; adapter tests cover dependent-fiber cleanup and feedback authorization.
 
 <a id="further-exploration"></a>
