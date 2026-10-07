@@ -7,6 +7,7 @@ import { basename, dirname, isAbsolute, join, posix, relative, resolve } from 'n
 import { Readable } from 'node:stream'
 import { fileURLToPath } from 'node:url'
 import { parseArgs } from 'node:util'
+import { readPortalRefreshSource } from './portal-source-receipt.mjs'
 import { clientBuildProcessEnvironment, readClientBuildRecord, repositoryClientBuildEnvironment, resolveClientBuildEnvironment, writeClientBuildRecord } from '../../../scripts/client-build-environment.ts'
 
 const ROOT = resolve(fileURLToPath(new URL('../../..', import.meta.url)))
@@ -270,11 +271,13 @@ async function main() {
   }
   const build = readClientBuildRecord(ROOT)
   insist(build.environment.DSH_CLIENT_BUILD_PROFILE === 'portal', 'requires a recorded portal client build')
+  const source = readPortalRefreshSource(ROOT, build.environment)
   const archive = join(application, 'Contents/Resources/app.asar')
   const originalHash = digest(readFileSync(archive))
   const metadata = JSON.parse(asar.extractFile(archive, 'package.json'))
   insist(metadata.dshDesktopEdition === 'portal' && metadata.dshDesktopAppId === inspected.plist.CFBundleIdentifier, 'archive application identity differs')
   insist(metadata.version === inspected.plist.CFBundleShortVersionString, 'shell and runtime release versions differ')
+  insist(/^[a-f0-9]{40}$/u.test(metadata.dshBuildCommit ?? '') && typeof metadata.dshBuildDirty === 'boolean', 'requires runtime source commit metadata')
   let openingApplication
   let openingArchive
   if (values['opening-from'] !== undefined) {
@@ -307,15 +310,19 @@ async function main() {
   const plist = join(output, 'Info.json')
   writeFileSync(plist, JSON.stringify(inspected.plist))
   command('/usr/bin/plutil', ['-convert', 'xml1', '-o', join(candidate, 'Contents/Info.plist'), plist])
+  const receipt = { schemaVersion: 1, source, runtimeSource: { commit: metadata.dshBuildCommit, dirty: metadata.dshBuildDirty }, originalArchiveSha256: originalHash, candidateArchiveSha256: digest(readFileSync(stagedArchive)), build, changedPaths: report.map(entry => entry.path) }
+  writeFileSync(join(candidate, 'Contents/Resources/portal-source-receipt.json'), `${JSON.stringify(receipt, null, 2)}\n`)
   const entitlements = join(output, 'entitlements.plist')
   writeFileSync(entitlements, inspected.entitlements)
   command('/usr/bin/codesign', ['--force', '--sign', '-', '--preserve-metadata=identifier,flags,requirements', '--entitlements', entitlements, candidate])
   command('/usr/bin/codesign', ['--verify', '--deep', '--strict', candidate])
   insist(digest(readFileSync(archive)) === originalHash, 'source archive changed while staging')
+  insist(JSON.stringify(source) === JSON.stringify(readPortalRefreshSource(ROOT, build.environment)), 'source inputs changed while staging')
   writeFileSync(join(output, 'report.json'), `${JSON.stringify({ schemaVersion: 1, application, candidate,
     originalArchiveSha256: originalHash, candidateArchiveSha256: digest(readFileSync(stagedArchive)),
     sourceVersion: metadata.version, appId: metadata.dshDesktopAppId, installed: false,
     preservedPriorThemePatch: inspected.priorThemePatch, openingApplication,
+    source, runtimeSource: { commit: metadata.dshBuildCommit, dirty: metadata.dshBuildDirty },
     build, headerSha256: headerHash, changedPaths: report.map(entry => entry.path), changed: report,
   }, null, 2)}\n`)
   console.log(`Portal candidate staged: ${candidate}\nPresentation report: ${join(output, 'report.json')}`)
