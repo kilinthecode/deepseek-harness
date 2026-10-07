@@ -9,8 +9,11 @@
   en: 3ecedc74cceced3b
   zh: f4708f1887d42c61
 /agent-note-ci-failover-runbook-hosted-pools-in-house-pool/decision:
-  en: fbc8d8ef03350ac9
-  zh: 7fc81bf75eaab0b7
+  en: e9016a923ed85331
+  zh: b7405c982f3f600b
+/agent-note-ci-failover-runbook-hosted-pools-in-house-pool/decision/standard-github-hosted-runners:
+  en: a4da91e0cadfc9ce
+  zh: 7ff18d25e17d6d09
 /agent-note-ci-failover-runbook-hosted-pools-in-house-pool/decision/release-rehearsals-share-the-linux-switch:
   en: 01e74068e0a96375
   zh: aa811861ce30cb47

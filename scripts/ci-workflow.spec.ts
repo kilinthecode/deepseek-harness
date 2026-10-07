@@ -14,6 +14,32 @@ const runnerPrivatePnpmDestination = /^\$\{\{ runner\.temp \}\}\/setup-pnpm-\$\{
 const nativeWindowsPnpmDestination = '${{ runner.temp }}/setup-pnpm-js-${{ github.run_id }}-${{ github.run_attempt }}-${{ github.job }}'
 
 describe('CI workflow', () => {
+  it('routes standard hosted jobs with bounded resources and keeps required verdict inputs', () => {
+    const workflow = loadWorkflow('.github/workflows/ci.yml')
+    const context = { vars: { DSH_CI_FAILOVER_LINUX: 'github-hosted', DSH_CI_FAILOVER_WINDOWS: 'github-hosted' } }
+    for (const name of ['node-24', 'node-24-coverage', 'node-24-consumers', 'node-compat', 'all-checks-passed']) {
+      expect(evaluateRunsOn(workflowJob(workflow, name)['runs-on'], context)).toBe('ubuntu-24.04')
+    }
+    for (const name of ['windows-build', 'windows-coverage', 'windows-native-tests']) {
+      expect(evaluateRunsOn(workflowJob(workflow, name)['runs-on'], context)).toBe('windows-2025')
+    }
+    for (const name of ['node-24', 'node-24-coverage', 'node-24-consumers', 'windows-build', 'windows-coverage']) {
+      const job = workflowJob(workflow, name)
+      if (!isRecord(job.env)) throw new TypeError('Job must define worker limits')
+      expect(evaluateRunsOn(job.env.DSH_GATE_CONCURRENCY, context)).toBe('1')
+      for (const key of ['DSH_COVERAGE_MAX_WORKERS', 'DSH_COVERAGE_PARTITIONS']) {
+        if (job.env[key] !== undefined) expect(evaluateRunsOn(job.env[key], context)).toBe('2')
+      }
+    }
+    expect(workflowJob(workflow, 'all-checks-passed').needs).toEqual(expect.arrayContaining(['node-24', 'node-24-coverage', 'node-24-consumers']))
+    const master = loadWorkflow('.github/workflows/ci-master.yml')
+    for (const name of ['serial-linux-selfhosted', 'serial-windows']) {
+      const condition = workflowJob(master, name).if
+      if (typeof condition !== 'string') throw new TypeError('Standby must define eligibility')
+      expect(runInNewContext(condition, { ...context, github: { event_name: 'push', ref: 'refs/heads/master' } })).toBe(false)
+    }
+  })
+
   it('prepares confinement before Node compatibility smokes', () => {
     const job = workflowJob(loadWorkflow('.github/workflows/ci.yml'), 'node-compat')
     if (!Array.isArray(job.steps)) throw new TypeError('Node compatibility job must define steps')
@@ -231,7 +257,7 @@ describe('CI workflow', () => {
     }
 
     expect(windowsCoverage.name).toBe('windows node 24 / coverage')
-    expect(windowsCoverage.env).toMatchObject({ DSH_COVERAGE_PARTITIONS: "${{ vars.DSH_CI_FAILOVER_WINDOWS == 'selfhosted' && github.event.pull_request.user.login != 'dependabot[bot]' && '4' || '' }}" })
+    expect(windowsCoverage.env).toMatchObject({ DSH_COVERAGE_PARTITIONS: "${{ vars.DSH_CI_FAILOVER_WINDOWS == 'github-hosted' && '2' || vars.DSH_CI_FAILOVER_WINDOWS == 'selfhosted' && github.event.pull_request.user.login != 'dependabot[bot]' && '4' || '' }}" })
     const coverageSteps = windowsCoverage.steps as unknown[]
     const coverageCommands = coverageSteps.filter((step): step is Record<string, unknown> & { run: string } => (
       isRecord(step) && typeof step.run === 'string'
@@ -268,7 +294,7 @@ describe('CI workflow', () => {
       'timeout-minutes': 15,
       env: {
         DSH_GATE_FAIL_FAST: '',
-        DSH_PUBLINT_CONCURRENCY: "${{ vars.DSH_CI_FAILOVER_WINDOWS == 'selfhosted' && github.event.pull_request.user.login != 'dependabot[bot]' && '8' || '' }}",
+        DSH_PUBLINT_CONCURRENCY: "${{ vars.DSH_CI_FAILOVER_WINDOWS == 'github-hosted' && '2' || vars.DSH_CI_FAILOVER_WINDOWS == 'selfhosted' && github.event.pull_request.user.login != 'dependabot[bot]' && '8' || '' }}",
       },
     })
     expect(observational?.if).toBeUndefined()
@@ -284,7 +310,7 @@ describe('CI workflow', () => {
     expect(report?.run).toContain('Out-File -FilePath $env:GITHUB_STEP_SUMMARY -Encoding utf8 -Append')
 
     // serial-windows: master-only standby, self-hosted, non-blocking, lives in ci-master.
-    expect(serialWindows.if).toBe("github.event_name == 'push' && github.ref == 'refs/heads/master'")
+    expect(serialWindows.if).toBe("github.event_name == 'push' && github.ref == 'refs/heads/master' && vars.DSH_CI_FAILOVER_WINDOWS != 'github-hosted'")
     expect(serialWindows['runs-on']).toEqual(['self-hosted', 'dsh-win-ci', 'windows'])
     expect(serialWindows.name).toBe('serial / windows (self-hosted standby)')
     // Its store must share the ReFS workspace volume for clone; the install
@@ -533,7 +559,7 @@ describe('CI workflow', () => {
       if (!isRecord(job)) throw new TypeError(`${name} must be defined`)
       expect(job.concurrency).toBeUndefined()
       // Standby drills remain post-merge work, but share run cancellation.
-      expect(job.if).toBe("github.event_name == 'push' && github.ref == 'refs/heads/master'")
+      expect(job.if).toBe("github.event_name == 'push' && github.ref == 'refs/heads/master' && vars.DSH_CI_FAILOVER_" + (name === 'serial-linux-selfhosted' ? 'LINUX' : 'WINDOWS') + " != 'github-hosted'")
     }
 
     // Pin the post-merge runtime, Wine, and standby inventory.
