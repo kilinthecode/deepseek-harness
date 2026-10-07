@@ -693,9 +693,9 @@ export function equalTreeList(left: SessionListState, right: SessionListState): 
   for (let index = 0; index < leftKeys.length; index++) {
     const key = leftKeys[index] as string
     if (key !== rightKeys[index]) return false
-    const before = left.byId[key as SessionId]
-    const after = right.byId[key as SessionId]
-    if (before === undefined || after === undefined || !sameRowPresentation(before, after)) return false
+    const before = left.byId[key as SessionId] as SessionSummary
+    const after = right.byId[key as SessionId] as SessionSummary
+    if (!sameRowPresentation(before, after)) return false
     if (left.projectionsBySession[key as SessionId]?.values.subagentCatalog
       !== right.projectionsBySession[key as SessionId]?.values.subagentCatalog) return false
   }

@@ -926,3 +926,15 @@ describe('equalTreeList', () => {
     })).toBe(false)
   })
 })
+
+it('compares tree snapshot lifecycle, membership, and order before row presentation', () => {
+  const first = summary('first', 2)
+  const second = summary('second', 1)
+  const before = list(first, second)
+  expect(equalTreeList(before, before)).toBe(true)
+  expect(equalTreeList(before, { ...before, phase: 'pending' })).toBe(false)
+  expect(equalTreeList(before, list(first))).toBe(false)
+  expect(equalTreeList(before, { ...before, ids: [second.id, first.id] })).toBe(false)
+  expect(equalTreeList(before, { ...before, byId: { [first.id]: first } })).toBe(false)
+  expect(equalTreeList(before, { ...before, byId: { [second.id]: second, [first.id]: first } })).toBe(false)
+})

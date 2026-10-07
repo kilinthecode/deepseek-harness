@@ -1772,3 +1772,46 @@ describe('LocalPtySession bounds, signals, and teardown', () => {
   })
 
 })
+
+it.each(['prompt', 'stdin', 'silence'] as const)(
+  'keeps a successor send pending when an old %s adoption scan resumes after its deadline', async (readiness) => {
+    vi.useFakeTimers()
+    const terminal = new FakeTerminal()
+    const inspector = new FakeInspector()
+    const session = makeSession(terminal, inspector, config())
+    const release = Promise.withResolvers<undefined>()
+    const scanned = Promise.withResolvers<undefined>()
+    try {
+      await initialize(session, terminal)
+      const inspect = terminal.inspectForeground.bind(terminal)
+      let scans = 0
+      terminal.inspectForeground = async (forceAdoption?: boolean) => {
+        if (forceAdoption && ++scans === 1) {
+          scanned.resolve(undefined)
+          await release.promise
+        }
+        return await inspect()
+      }
+      const operation = session.startSend({ text: 'old send', submit: true })
+      await vi.advanceTimersByTimeAsync(0)
+      if (readiness === 'prompt') terminal.emitData('\x1b]133;D;0\x07dsh> ')
+      if (readiness === 'stdin') { inspector.pgid = 789; inspector.waiting = true }
+      await vi.advanceTimersByTimeAsync(readiness === 'prompt' ? 10 : readiness === 'stdin' ? 20 : 50)
+      await scanned.promise
+      await vi.advanceTimersByTimeAsync(100)
+      expect((await operation.done).waitReason).toBe('timeout')
+      const successor = session.startSend({ text: 'successor', submit: true })
+      let settled = false
+      void successor.done.then(() => { settled = true })
+      release.resolve(undefined)
+      await vi.advanceTimersByTimeAsync(0)
+      expect(settled).toBe(false)
+      await session.close('superseded adoption cleanup')
+      expect((await successor.done).waitReason).toBe('session_exit')
+    } finally {
+      release.resolve(undefined)
+      await session.close('adoption fixture cleanup')
+      await vi.advanceTimersByTimeAsync(0)
+    }
+  },
+)

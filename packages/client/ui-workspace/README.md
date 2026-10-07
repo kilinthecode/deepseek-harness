@@ -182,6 +182,8 @@ Workspace and Session hover cards copy the value their row clips: activating a W
 
 -----
 
+Tree snapshot equality reads the typed Session catalog and compares lifecycle, ordered membership, row fields, and subagent catalog identities before deriving another view.
+
 <a id="further-exploration"></a>
 ## Further Exploration
 

@@ -18,7 +18,7 @@ import { DockController } from '../src/engine/controller.ts'
 import { applyOp } from '../src/engine/operations.ts'
 import { FLOAT_DEFAULT_SIZE, FLOAT_MIN_SIZE } from '../src/engine/constraints.ts'
 import { floatRectAt } from '../src/engine/geometry.ts'
-import { DockSurface, type DockSurfaceProps } from '../src/components/DockSurface.tsx'
+import { DockLayout, DockSurface, type DockSurfaceProps } from '../src/components/DockSurface.tsx'
 import type { TabMenuExtras } from '../src/contract/adapter.ts'
 import { FloatLayer, type FloatLayerProps } from '../src/components/FloatLayer.tsx'
 import { dockPaneIds, getPane } from '../src/engine/tree.ts'
@@ -159,6 +159,28 @@ const FILE_CHIP: readonly [number, number] = [151, 18]
 function gestureIntents(intents: ReturnType<typeof spyIntents>): string[] {
   return (['placeTab', 'dropTab', 'floatTab', 'resizeSplit'] as const).filter(name => intents[name].mock.calls.length > 0)
 }
+
+describe('DockLayout', () => {
+  it('renders the selected tab in the horizontal layout', () => {
+    const controller = seededController()
+    controller.setExpanded(true)
+    controller.openContent({ contentId: 'dsh-resource://file/session/s/a.txt', title: 'a.txt', kind: 'file' })
+    const state = controller.getSnapshot().state
+    layOut(dockPaneIds(state), 420)
+    render(
+      <DockLayout
+        state={state}
+        canSplit
+        intents={spyIntents()}
+        labels={TEST_LABELS}
+        renderTab={tab => <p data-testid="layout-body">{tab.contentId}</p>}
+      />,
+    )
+
+    expect(screen.getAllByRole('tab').map(tab => tab.textContent)).toEqual(['Start', 'a.txt'])
+    expect(screen.getByTestId('layout-body').textContent).toBe('dsh-resource://file/session/s/a.txt')
+  })
+})
 
 describe('DockSurface', () => {
   it('renders each pane with its tabs and the active tab body', () => {
@@ -1670,4 +1692,16 @@ describe('fileTab', () => {
   it('builds a content tab the kit treats as opaque', () => {
     expect(fileTab(asTab('t1'), 'dsh-resource://file/session/s/x', 'x').kind).toBe('file')
   })
+})
+
+it('keeps a strip target stable and changes it when the pointer crosses its slot, pane, or kind', () => {
+  const { second, fileTabId, chip, intents } = twoPanes()
+  drag(chip(fileTabId), FILE_CHIP, [450, 18], false)
+  expect(document.querySelector(`[data-dockkit-pane="${second}"] [data-dockkit-caret="0"]`)).not.toBeNull()
+  for (const [x, y] of [[455, 18], [480, 18], [50, 18], [650, 300], [450, 18], [480, 18]]) {
+    fireEvent.pointerMove(window, { pointerId: 7, clientX: x, clientY: y })
+  }
+  expect(document.querySelector(`[data-dockkit-pane="${second}"] [data-dockkit-caret="1"]`)).not.toBeNull()
+  fireEvent.pointerUp(window, { pointerId: 7, clientX: 480, clientY: 18 })
+  expect(intents.placeTab).toHaveBeenCalledExactlyOnceWith(fileTabId, second, 1)
 })

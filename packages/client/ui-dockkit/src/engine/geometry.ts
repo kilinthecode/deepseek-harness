@@ -219,3 +219,16 @@ export function floatRectAt(x: number, y: number, size: Size): FloatRect {
 
 /** How far the new panel's origin sits above and left of the drop point. */
 const GRAB_OFFSET = { x: 60, y: 14 } as const
+
+/**
+ * Compare the pane and slot or zone that a drag preview targets.
+ * @param a - previous target; undefined when the pointer was outside a valid target.
+ * @param b - next target; undefined when the pointer is outside a valid target.
+ * @returns whether retaining the existing preview preserves the same drop intent.
+ */
+export function sameDropTarget(a: DropTarget | undefined, b: DropTarget | undefined): boolean {
+  if (a === b) return true
+  if (a === undefined || b === undefined) return false
+  if (a.kind === 'strip') return b.kind === 'strip' && a.paneId === b.paneId && a.index === b.index
+  return b.kind === 'zone' && a.paneId === b.paneId && a.zone === b.zone
+}

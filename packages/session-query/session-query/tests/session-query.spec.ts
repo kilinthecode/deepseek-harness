@@ -20,6 +20,7 @@ import type {
 } from '@deepseek-ai/dsh-session-persistence'
 import SessionQueryEngine, {
   SESSION_QUERY_DEFAULT_PERSISTED_INSPECT_CONCURRENCY,
+  sessionQuerySearchDisabled,
   type SessionEventSurface,
   type SessionQueryErrorCode,
 } from '@deepseek-ai/dsh-session-query'
@@ -191,7 +192,7 @@ function expectCode(code: SessionQueryErrorCode): Error {
 
 function rejectUnknown<T>(reason: unknown): Promise<T> {
   // Exercise containment for an implementation that violates the Error rejection convention.
-  return Promise.reject(reason) // oxlint-disable-line typescript/prefer-promise-reject-errors
+  return Promise.reject(reason)
 }
 
 const cancellableSessionListings = [
@@ -1292,4 +1293,10 @@ describe('session-query exact reads', () => {
     await disposing
     await persistence.dispose()
   })
+})
+
+it('advertises search support by default without observing the corpus', async () => {
+  const ctx = await liveContext()
+  try { expect(ctx.sessionQuery[sessionQuerySearchDisabled]()).toBe(false) }
+  finally { await ctx.fiber.dispose() }
 })

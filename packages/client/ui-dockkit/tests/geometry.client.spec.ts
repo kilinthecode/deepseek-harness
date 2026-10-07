@@ -5,11 +5,13 @@
 import { describe, expect, it } from 'vitest'
 import {
   containsPoint, dividerSizes, DRAG_THRESHOLD, floatRectAt, insertionIndex, movedRect,
-  passedThreshold, resizedRect, zoneInRect,
+  passedThreshold, resizedRect, sameDropTarget, zoneInRect,
 } from '../src/engine/geometry.ts'
-import type { PaneMeasure, Rect } from '../src/engine/geometry.ts'
+import type { DropTarget, PaneMeasure, Rect } from '../src/engine/geometry.ts'
 import { halvesFit, SPLIT_MINIMUMS } from '../src/engine/geometry.ts'
 import { FLOAT_DEFAULT_SIZE, FLOAT_MIN_SIZE } from '../src/index.ts'
+
+import { asPane } from './fixtures.client.ts'
 
 const PANE: Rect = { x: 100, y: 200, width: 400, height: 300 }
 
@@ -141,4 +143,21 @@ describe('halvesFit — the room rule', () => {
     expect(halvesFit(measure(208, 600, 104), { divider: 0, chip: 0, body: 0 }).row).toBe(false)
     expect(halvesFit(measure(220, 600, 104), { divider: 0, chip: 0, body: 0 }).row).toBe(true)
   })
+})
+
+it('compares drag target identity, kind, pane, and slot or zone', () => {
+  const strip: DropTarget = { kind: 'strip', paneId: asPane('first'), index: 0 }
+  const zone: DropTarget = { kind: 'zone', paneId: asPane('first'), zone: 'center' }
+  expect(sameDropTarget(undefined, undefined)).toBe(true)
+  expect(sameDropTarget(strip, strip)).toBe(true)
+  expect(sameDropTarget(undefined, strip)).toBe(false)
+  expect(sameDropTarget(strip, undefined)).toBe(false)
+  expect(sameDropTarget(strip, { ...strip })).toBe(true)
+  expect(sameDropTarget(strip, { ...strip, index: 1 })).toBe(false)
+  expect(sameDropTarget(strip, { ...strip, paneId: asPane('second') })).toBe(false)
+  expect(sameDropTarget(zone, { ...zone })).toBe(true)
+  expect(sameDropTarget(zone, { ...zone, zone: 'left' })).toBe(false)
+  expect(sameDropTarget(zone, { ...zone, paneId: asPane('second') })).toBe(false)
+  expect(sameDropTarget(strip, zone)).toBe(false)
+  expect(sameDropTarget(zone, strip)).toBe(false)
 })

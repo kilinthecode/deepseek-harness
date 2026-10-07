@@ -16,7 +16,7 @@ import { clampSizes, FLOAT_DEFAULT_SIZE, MIN_PANE_FRACTION } from '../engine/con
 import { getSplit, topRightPaneId } from '../engine/tree.ts'
 import type { DropTarget, HalvesFit } from '../engine/geometry.ts'
 import {
-  containsPoint, dividerSizes, floatRectAt, insertionIndex, passedThreshold, zoneInRect,
+  containsPoint, dividerSizes, floatRectAt, insertionIndex, passedThreshold, sameDropTarget, zoneInRect,
 } from '../engine/geometry.ts'
 import { fitOf, measurePaneFits, paneElements, sameFits } from './measure.ts'
 import { useGesture } from './pointer.ts'
@@ -152,15 +152,6 @@ function draggedSizes(drag: DividerDrag, x: number, y: number, minimum: number):
 
 /** Fractions closer than this are the same split: renormalizing recorded sizes moves them by no more. */
 const SIZE_TOLERANCE = 1e-9
-
-/** Whether two drop targets are the same one under the pointer. */
-function sameDropTarget(a: DropTarget | undefined, b: DropTarget | undefined): boolean {
-  if (a === b) return true
-  if (a === undefined || b === undefined || a.kind !== b.kind) return false
-  if (a.kind === 'strip' && b.kind === 'strip') return a.paneId === b.paneId && a.index === b.index
-  if (a.kind === 'zone' && b.kind === 'zone') return a.paneId === b.paneId && a.zone === b.zone
-  return false
-}
 
 /** Whether two fraction lists describe the same split. */
 function sameSizes(a: readonly number[], b: readonly number[]): boolean {
