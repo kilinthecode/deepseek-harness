@@ -1,7 +1,6 @@
 /** Bounded GitHub repository checks using the installer's Git configuration and environment. */
 import { mkdir, mkdtemp, open } from 'node:fs/promises'
 import { join } from 'node:path'
-import { execa } from 'execa'
 import { scrubbedParentEnv } from '@deepseek-ai/dsh-subprocess'
 import { classifyInstallFailure } from './install-failure.ts'
 import type { ParsedInstallSpec } from './install-spec.ts'
@@ -14,6 +13,14 @@ export interface GithubConnectionOptions {
   signal: AbortSignal
   /** The application-owned package manager's environment, also used by its Git children. */
   env?: Readonly<Record<string, string>>
+}
+
+/** The process helper, imported on the first GitHub check rather than with this module. */
+let execaLoader: Promise<typeof import('execa')> | undefined
+
+/** Load the process helper once; every later check reuses the module. */
+function loadExeca(): Promise<typeof import('execa')> {
+  return execaLoader ??= import('execa')
 }
 
 /**
@@ -41,6 +48,7 @@ export async function checkGithubConnection(
   const logPath = join(logDir, 'git.log')
   const log = await open(logPath, 'ax+', 0o600)
   try {
+    const { execa } = await loadExeca()
     const result = await execa('git', ['-c', 'credential.helper=', 'ls-remote', '--', repository, 'HEAD'], {
       cwd: dir,
       env: {

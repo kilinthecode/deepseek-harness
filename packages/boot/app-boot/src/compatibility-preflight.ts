@@ -11,7 +11,7 @@ import { resolvePluginResource } from './package-meta.ts'
 import { barePackageName } from './profile-resolution/resolver.ts'
 import type {} from './profile-resolution/service.ts'
 import type {} from './profile-context.ts'
-import { evaluatePluginCompatibility, pluginCompatibilityWarning } from './plugin-compatibility.ts'
+import { evaluatePluginCompatibility, getDshRuntimeVersion, pluginCompatibilityWarning } from './plugin-compatibility.ts'
 import { readProfileCompatibility } from './profile-compatibility.ts'
 
 function readManifest(filename: string): object {
@@ -93,6 +93,10 @@ function preflight(
   const profile = ctx.get('profileContext')
   if (profile === undefined) return { rows, blocked: false }
   if (parentURL === undefined) throw new Error('Profile compatibility preflight requires a resolution base')
+  // One runtime-version read per preflight: every row of this composition reuses a successful read,
+  // while a failed read is retried by the next row, so each row still reports its own denial.
+  let runtimeVersion: string | undefined
+  const runtimeVersionOnce = (): string => runtimeVersion ??= getDshRuntimeVersion()
   // A damaged permission file authorizes nothing, but it must not stop the profile from starting.
   const { exemptions, warnings } = readProfileCompatibility(profile.dir)
   for (const warning of warnings) process.stderr.write(`${warning}\n`)
@@ -102,7 +106,7 @@ function preflight(
     try {
       const manifest = manifestOf(ctx, row.name, base)
       if (manifest === undefined) return undefined
-      const issue = evaluatePluginCompatibility(manifest, exemptions)
+      const issue = evaluatePluginCompatibility(manifest, exemptions, runtimeVersionOnce())
       return issue === undefined || issue.exempted ? undefined : pluginCompatibilityWarning(issue)
     } catch (error) {
       // Peer metadata that cannot be read or validated is refused rather than silently admitted.

@@ -568,6 +568,8 @@ describe('JsonlSessionPersistence: default Zstandard encoding', () => {
       const header = meta(`cancel-${compression}-header-read`, '/work')
       await writeLog(ctx.sessionPersistence, header, oneTurnLog())
       await ctx.sessionPersistence.list()
+      // A fresh backend has no decoded-header memo, so its listing reads the header.
+      const cold = await mount(root, compression)
       const path = logPath(root, header.cwd, header.id, compression)
       const probe = await open(path, 'r')
       const prototype = Object.getPrototypeOf(probe) as { read: HeaderRead }
@@ -587,7 +589,7 @@ describe('JsonlSessionPersistence: default Zstandard encoding', () => {
         return result
       })
 
-      await expect(ctx.sessionPersistence.list({ signal: controller.signal })).rejects.toBe(reason)
+      await expect(cold.sessionPersistence.list({ signal: controller.signal })).rejects.toBe(reason)
       expect(read).toHaveBeenCalledTimes(1)
     },
   )

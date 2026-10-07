@@ -14,6 +14,7 @@ import SessionProjectionRegistry from '@deepseek-ai/dsh-session-projection'
 import {
   SessionQueryEngine,
   SessionQueryError,
+  sessionQuerySearchDisabled,
   type SessionSearchHit,
   type SessionSearchRequest,
 } from '@deepseek-ai/dsh-session-query'
@@ -69,8 +70,13 @@ class SearchSessionQuery extends SessionQueryEngine {
     private readonly search: (
       ...args: Parameters<SessionQueryEngine['searchSessions']>
     ) => Promise<unknown>,
+    private readonly disabled = false,
   ) {
     super(ctx)
+  }
+
+  override [sessionQuerySearchDisabled](): boolean {
+    return this.disabled
   }
 
   override searchSessions(
@@ -89,8 +95,9 @@ function installSearchQuery(
   searchSessions: (
     ...args: Parameters<SessionQueryEngine['searchSessions']>
   ) => Promise<unknown>,
+  disabled = false,
 ): void {
-  new SearchSessionQuery(ctx, searchSessions)
+  new SearchSessionQuery(ctx, searchSessions, disabled)
 }
 
 describe('session.search', () => {
@@ -102,6 +109,55 @@ describe('session.search', () => {
       code: 'gateway/internal',
     })
     await ctx.fiber.dispose()
+  })
+
+  it('rejects a disabled provider without listing the visible corpus', async () => {
+    const ctx = await baseContext()
+    const cold = header('cold', '/cold')
+    const list = vi.fn((_signal?: AbortSignal) => Promise.resolve([cold]))
+    ctx.provide('sessionPersistence', testSessionPersistence(ctx, { list }) as never)
+    const disabled = new SessionQueryError(
+      'session search is disabled: this deployment configures the session-query index with openAt "never"',
+      'SESSION_QUERY_SEARCH_DISABLED',
+    )
+    const searchSessions = vi.fn(() => Promise.reject(disabled))
+    installSearchQuery(ctx, searchSessions, true)
+
+    const response = await createSessionTestRemote(ctx, defaults).search(
+      request('disabled-search'),
+      new AbortController().signal,
+    )
+
+    expect(response).toMatchObject({
+      ok: false,
+      error: { code: 'gateway/internal' },
+    })
+    expect(response).not.toHaveProperty('value')
+    if (response.ok) throw new Error('unreachable')
+    expect(response.error.message).toContain('session search is disabled')
+    expect(list).not.toHaveBeenCalled()
+    expect(searchSessions).toHaveBeenCalledOnce()
+  })
+
+  it('reports disabled search even when no session is visible', async () => {
+    const ctx = await baseContext()
+    const list = vi.fn((_signal?: AbortSignal) => Promise.resolve([]))
+    ctx.provide('sessionPersistence', testSessionPersistence(ctx, { list }) as never)
+    const disabled = new SessionQueryError(
+      'session search is disabled: this deployment configures the session-query index with openAt "never"',
+      'SESSION_QUERY_SEARCH_DISABLED',
+    )
+    installSearchQuery(ctx, vi.fn(() => Promise.reject(disabled)), true)
+
+    const response = await createSessionTestRemote(ctx, defaults).search(
+      request('disabled-empty'),
+      new AbortController().signal,
+    )
+
+    // Without the visibility listing an empty corpus no longer short-circuits to an
+    // empty page; the disabled provider answers, and the sidebar renders both alike.
+    expect(response).toMatchObject({ ok: false, error: { code: 'gateway/internal' } })
+    expect(list).not.toHaveBeenCalled()
   })
 
   it('searches only list-visible ids and current conversation-message events', async () => {

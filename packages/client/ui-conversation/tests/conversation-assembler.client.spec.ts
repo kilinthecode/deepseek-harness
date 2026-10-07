@@ -171,6 +171,50 @@ function fallbackDefinition(start: () => string): ConversationNodeDefinition<str
   }
 }
 
+/**
+ * Turn-scoped probe whose fold never reads a Match Location: its Node reports
+ * the folded State beside the Step count its refreshed start Location carries.
+ * @param foldReadsLocation - Definition opt-in declaring the fold Location-independent.
+ * @returns Definition plus its fold and view spies.
+ */
+function turnFoldProbe(foldReadsLocation: false | undefined) {
+  const started = vi.fn(() => 0)
+  const updated = vi.fn((context: ConversationNodeContext<number> & { readonly state: number }) => (
+    context.state + 1
+  ))
+  const built = vi.fn((context: ConversationNodeContext<number>) => {
+    const location = context.start?.location
+    return node(context, {
+      steps: location?.kind === 'turn' ? location.turn.steps.length : -1,
+      state: context.state,
+    })
+  })
+  const match: ConversationNodeDefinition<number>['match'] = (event) => {
+    if (event.type === 'turn/start') return { id: String(event.data.turn), role: 'start' }
+    if (event.type === 'step/start') return { id: String(event.data.turn), role: 'update' }
+    return null
+  }
+  const definition: ConversationNodeDefinition<number> = foldReadsLocation === false
+    ? {
+      kind: 'turn-fold-probe',
+      foldReadsLocation: false,
+      match,
+      start: started,
+      update: updated,
+      target: 'test',
+      buildViewNode: built,
+    }
+    : {
+      kind: 'turn-fold-probe',
+      match,
+      start: started,
+      update: updated,
+      target: 'test',
+      buildViewNode: built,
+    }
+  return { definition, started, updated, built }
+}
+
 describe('ConversationNodeAssembler', () => {
   it('reports boundary changes only when the owning Turn location changes', () => {
     const index = new ConversationLocationIndex()
@@ -1614,5 +1658,153 @@ describe('ConversationNodeAssembler', () => {
     assembler.flush()
     expect(start).toHaveBeenCalledTimes(2)
     expect([...testSnapshot(assembler)?.nodes.values() ?? []][0]?.data).toEqual([0, 1, 2])
+  })
+
+  it('reports only the appended Step when a later Step starts in an open Turn', () => {
+    const index = new ConversationLocationIndex()
+    const firstStep = at(SessionSeq(1), 'step/start', { turn: 1, step: 1 })
+    index.rebuild([input(firstStep), input(at(SessionSeq(2), 'step/end', { turn: 1, step: 1 }))])
+    expect(index.takeChangedTurns()).toEqual([1])
+    const retained = index.locationOf(firstStep)
+
+    const changed = index.appendBoundary(at(SessionSeq(3), 'step/start', { turn: 1, step: 2 }))
+
+    expect([...changed]).toEqual([3])
+    expect(index.locationOf(firstStep)).toBe(retained)
+    expect(index.snapshot().turns.get(1)?.steps.map(step => step.step)).toEqual([1, 2])
+  })
+
+  it('keeps a step-located Context across a later Step start and refreshes it on its own Step end', () => {
+    const started = vi.fn((context: ConversationNodeContext<number>) => context.matches.length)
+    const updated = vi.fn((context: ConversationNodeContext<number> & { readonly state: number }) => (
+      context.matches.length
+    ))
+    const built = vi.fn((context: ConversationNodeContext<number>) => node(context, context.state))
+    const definition: ConversationNodeDefinition<number> = {
+      kind: 'step-location-probe',
+      match: (event) => {
+        if (event.type === 'step/start') return { id: `${event.data.turn}:${event.data.step}`, role: 'start' }
+        if ((event.type as string) === 'step-probe/update') return { id: '1:1', role: 'update' }
+        return null
+      },
+      start: started,
+      update: updated,
+      target: 'test',
+      buildViewNode: built,
+    }
+    const assembler = new ConversationNodeAssembler(
+      new TestEventDefinitions([definition]),
+      new TestViewDefinitions([testView()]),
+    )
+    const startedIds = (): string[] => started.mock.calls.map(([context]) => context.id).sort()
+    const builtIds = (): string[] => built.mock.calls.map(([context]) => context.id).sort()
+    assembler.replaceWindow([
+      input(at(SessionSeq(1), 'turn/start', { turn: 1 })),
+      input(at(SessionSeq(2), 'step/start', { turn: 1, step: 1 })),
+      input(at(SessionSeq(3), 'step-probe/update', { turn: 1, step: 1 })),
+    ], false)
+    assembler.flush()
+    started.mockClear()
+    updated.mockClear()
+    built.mockClear()
+
+    assembler.append(input(at(SessionSeq(4), 'step/start', { turn: 1, step: 2 })))
+    assembler.flush()
+
+    expect(startedIds()).toEqual(['1:2'])
+    expect(updated).not.toHaveBeenCalled()
+    expect(builtIds()).toEqual(['1:2'])
+
+    assembler.append(input(at(SessionSeq(5), 'step/end', { turn: 1, step: 1 })))
+    assembler.flush()
+
+    expect(startedIds()).toEqual(['1:1', '1:2'])
+    expect(updated).toHaveBeenCalledOnce()
+
+    assembler.append(input(at(SessionSeq(6), 'turn/end', { turn: 1, reason: { kind: 'completed' } })))
+    assembler.flush()
+
+    expect(startedIds()).toEqual(['1:1', '1:1', '1:2', '1:2'])
+  })
+
+  it('re-resolves step Locations when a prepend extends an older Turn', () => {
+    const definition: ConversationNodeDefinition<null> = {
+      kind: 'step-membership-probe',
+      match: event => event.type === 'step/start'
+        ? { id: String(event.data.step), role: 'start' }
+        : null,
+      start: () => null,
+      update: context => context.state,
+      target: 'test',
+      buildViewNode: (context) => {
+        const location = context.start?.location
+        return node(context, location?.kind === 'step' ? location.turn.steps.length : -1)
+      },
+    }
+    const assembler = new ConversationNodeAssembler(
+      new TestEventDefinitions([definition]),
+      new TestViewDefinitions([testView()]),
+    )
+    const secondStep = (): unknown => [...testSnapshot(assembler)?.nodes.values() ?? []]
+      .find(candidate => candidate.id === '2')?.data
+    assembler.replaceWindow([
+      input(at(SessionSeq(10), 'step/start', { turn: 1, step: 2 })),
+      input(at(SessionSeq(11), 'step/end', { turn: 1, step: 2 })),
+    ], true)
+    assembler.flush()
+    expect(secondStep()).toBe(1)
+
+    assembler.prepend([
+      input(at(SessionSeq(8), 'step/start', { turn: 1, step: 1 })),
+      input(at(SessionSeq(9), 'step/end', { turn: 1, step: 1 })),
+    ], false)
+    assembler.flush()
+
+    expect(secondStep()).toBe(2)
+  })
+
+  it('keeps a Location-independent fold across Turn and Step boundaries', () => {
+    const probe = turnFoldProbe(false)
+    const assembler = new ConversationNodeAssembler(
+      new TestEventDefinitions([probe.definition]),
+      new TestViewDefinitions([testView()]),
+    )
+    assembler.replaceWindow([input(at(SessionSeq(1), 'turn/start', { turn: 1 }))], false)
+    assembler.flush()
+    probe.started.mockClear()
+    probe.updated.mockClear()
+    probe.built.mockClear()
+
+    for (let step = 1; step <= 3; step += 1) {
+      assembler.append(input(at(SessionSeq(step + 1), 'step/start', { turn: 1, step })))
+      assembler.flush()
+    }
+
+    expect(probe.started).not.toHaveBeenCalled()
+    expect(probe.updated).toHaveBeenCalledTimes(3)
+    expect(probe.built).toHaveBeenCalledTimes(3)
+    expect([...testSnapshot(assembler)?.nodes.values() ?? []][0]?.data).toEqual({ steps: 3, state: 3 })
+  })
+
+  it('replays a Context whose Definition omits the fold opt-in on every Turn boundary', () => {
+    const probe = turnFoldProbe(undefined)
+    const assembler = new ConversationNodeAssembler(
+      new TestEventDefinitions([probe.definition]),
+      new TestViewDefinitions([testView()]),
+    )
+    assembler.replaceWindow([input(at(SessionSeq(1), 'turn/start', { turn: 1 }))], false)
+    assembler.flush()
+    probe.started.mockClear()
+    probe.updated.mockClear()
+    probe.built.mockClear()
+
+    for (let step = 1; step <= 3; step += 1) {
+      assembler.append(input(at(SessionSeq(step + 1), 'step/start', { turn: 1, step })))
+      assembler.flush()
+    }
+
+    expect(probe.started).toHaveBeenCalledTimes(3)
+    expect(probe.updated).toHaveBeenCalledTimes(6)
+    expect([...testSnapshot(assembler)?.nodes.values() ?? []][0]?.data).toEqual({ steps: 3, state: 3 })
   })
 })

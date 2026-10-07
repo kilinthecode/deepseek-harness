@@ -124,6 +124,7 @@ function createdTask(match: ConversationMatch, call: ScheduleCall): ToolResultNo
 /** Turn-local `schedule_create` accumulator; it publishes no view Node. */
 export const scheduleTurnDefinition: ConversationNodeDefinition<ScheduleTurnState> = {
   kind: 'schedule-created',
+  foldReadsLocation: false,
   match: (event) => {
     if (event.type === 'turn/start') return { id: String(event.data.turn), role: 'start' }
     if (event.type === 'tool/call') return { id: String(event.data.turn), role: 'update' }

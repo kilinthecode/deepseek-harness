@@ -61,6 +61,7 @@ function fallbackState(context: ConversationNodeContext<TurnErrorState>): TurnEr
 export const turnErrorDefinition: ConversationNodeDefinition<TurnErrorState> = {
   kind: 'turn-error',
   target: 'chat',
+  foldReadsLocation: false,
   match: (event) => {
     if (event.type === 'turn/start') return { id: String(event.data.turn), role: 'start' }
     if (event.type === 'turn/end' && (event.data.reason.kind === 'error'

@@ -45,7 +45,7 @@ function config(): ResolvedConfig {
     backendType: 'shell', shellDialect: 'bash', shellPath: '/bin/bash', shellArgs: [], rows: 24, cols: 80,
     scrollbackLines: 10, scrollbackMaxBytes: 100, maxReadBytes: 50,
     pollIntervalMs: 10, exactProbeAfterMs: 20, idleSilenceMs: 50, handoffGraceMs: 10, promptTailGraceMs: 0, timeoutMs: 100,
-    disposeGraceMs: 10,
+    disposeGraceMs: 10, descendantScanIntervalMs: 250,
   }
 }
 
@@ -278,6 +278,7 @@ describe('BashTerminalBackend startup rollback', () => {
       rows: 24,
       cwd: '/work',
       graceMs: 10,
+      descendantScanIntervalMs: 250,
       env: {
         TERM: 'dumb', PAGER: 'cat', GIT_PAGER: 'cat', PS1: 'dsh> ', BASH_SILENCE_DEPRECATION_WARNING: '1',
         PROMPT_COMMAND: 'printf "\\033]133;D;%s\\007" "$?"; PS1=\'dsh> \'',

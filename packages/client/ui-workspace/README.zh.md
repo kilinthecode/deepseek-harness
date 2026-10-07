@@ -182,6 +182,8 @@ Workspace 与 Session 悬浮卡片会复制对应行被截断的值：激活 Wor
 
 -----
 
+树快照相等性读取类型化的 Session 目录，在重新派生视图之前比较生命周期、有序成员、行字段和子代理目录标识。
+
 <a id="further-exploration"></a>
 ## 进一步探索
 

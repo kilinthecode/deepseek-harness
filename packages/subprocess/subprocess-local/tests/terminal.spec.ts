@@ -842,6 +842,53 @@ describe('signalling freshness and containment', () => {
   })
 })
 
+describe('descendant-adoption scan throttling', () => {
+  function throttledHandle(pty: FakePty, inspector: FakeInspector, intervalMs: number): LocalTerminalHandle {
+    return new LocalTerminalHandle(
+      pty.asPty(), inspector, 10, 'linux', undefined, undefined, undefined, undefined, false, intervalMs,
+    )
+  }
+
+  it('scans once across repeated readiness polls inside one interval', async () => {
+    const pty = new FakePty()
+    const inspector = new FakeInspector()
+    inspector.alive.add(pty.pid)
+    const handle = throttledHandle(pty, inspector, 60_000)
+    inspector.captures = 0
+
+    for (let poll = 0; poll < 20; poll += 1) await handle.inspectForeground()
+
+    // Twenty readiness polls take one process-table snapshot, while the
+    // foreground state they answer from is still read on every poll.
+    expect(inspector.captures).toBe(1)
+    expect(inspector.stdinChecks).toHaveLength(20)
+    await handle.terminate()
+  })
+
+  it('adopts a child spawned between scans when a forced scan concludes the send', async () => {
+    const pty = new FakePty()
+    const inspector = new FakeInspector()
+    const child = { pid: 124, started: 'spawned-between-scans' }
+    const handle = throttledHandle(pty, inspector, 60_000)
+    await handle.inspectForeground()
+
+    inspector.members = [child]
+    inspector.alive.add(child.pid)
+    // A poll inside the interval keeps the earlier observation ...
+    await handle.inspectForeground()
+    expect(inspector.processes).toEqual([])
+
+    // ... and the forced scan that ends the observation window adopts the child
+    // while the shell identity still verifies the tree, so the natural shell
+    // exit cannot strand it outside terminate()'s signalling set.
+    await handle.inspectForeground(true)
+    inspector.root = undefined
+    pty.emitExit()
+    await handle.terminate()
+    expect(inspector.processes).toEqual([[child.pid, 'SIGTERM']])
+  })
+})
+
 describe('process-table read amplification', () => {
   // The macOS inspector answers every question by forking `/bin/ps`, so a
   // readiness poll that asks per descendant scales its blocking cost with the

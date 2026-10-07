@@ -77,6 +77,8 @@ These are not stylistic; each one fixes a defect found in a real browser.
 - **A control nested inside a draggable chip stops its own press.** Otherwise the press starts a drag, captures the pointer, and the nested control's click never lands.
 - **Emphasis takes the platform's accent, never `--dsw-alias-brand-primary`.** This platform binds `brand-primary` to its near-black (light) or near-white (dark) foreground, so the drop caret and the drop-zone hint use `--dsw-alias-brand-primary-new-colorprimary-new-color`, as the trajectory views do; a hovered divider takes the caption label ink instead, reading as a handle rather than a highlight. A floating panel draws no border — the menu's shadow (`--dsw-elevation-prominent`) outlines it — and the active panel gets no heavier frame: it is already on top and casts the same shadow; a darker frame around it read as a defect.
 
+Drop previews compare the target kind, pane, and strip index or zone. Pointer movement within one target retains the preview; crossing any of those values updates it.
+
 <a id="build-shape"></a>
 ## Build shape
 

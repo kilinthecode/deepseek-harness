@@ -36,6 +36,10 @@ function isIntrinsicObjectPrototype(value: object): boolean {
 /** Whether an array uses one realm's intrinsic `Array.prototype`, not a subclass or forged prototype. */
 function hasPlainArrayPrototype(value: unknown[]): boolean {
   const prototype: unknown = Object.getPrototypeOf(value)
+  // Same-realm fast path. This realm's `Array.prototype` counts only while it
+  // still inherits this realm's `Object.prototype`; a tampered array prototype
+  // falls through to the slow path, which rejects it exactly as before.
+  if (prototype === Array.prototype && Object.getPrototypeOf(prototype) === Object.prototype) return true
   if (!Array.isArray(prototype) || !hasIntrinsicConstructor(prototype, 'Array')) return false
   const objectPrototype: unknown = Object.getPrototypeOf(prototype)
   return typeof objectPrototype === 'object'
@@ -43,9 +47,20 @@ function hasPlainArrayPrototype(value: unknown[]): boolean {
     && isIntrinsicObjectPrototype(objectPrototype)
 }
 
-/** Whether an object is a plain or null-prototype record from any JavaScript realm. */
+/**
+ * Whether an object is a plain or null-prototype record from any JavaScript realm.
+ *
+ * The current realm's `Object.prototype`, while it still ends the prototype
+ * chain, is accepted by identity instead of by
+ * re-reading its constructor source, so the verdict is constant per prototype
+ * object. The descriptor/source tripwire therefore no longer fires for a
+ * post-load `Object.prototype.constructor` or `Function.prototype.toString`
+ * tamper; foreign and forged prototypes still take the slow path and are
+ * rejected as before.
+ */
 function hasPlainObjectPrototype(value: object): boolean {
   const prototype: unknown = Object.getPrototypeOf(value)
+  if (prototype === Object.prototype && Object.getPrototypeOf(prototype) === null) return true
   return prototype === null
     || typeof prototype === 'object' && isIntrinsicObjectPrototype(prototype)
 }

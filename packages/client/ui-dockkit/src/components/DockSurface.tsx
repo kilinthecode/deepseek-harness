@@ -16,7 +16,7 @@ import { clampSizes, FLOAT_DEFAULT_SIZE, MIN_PANE_FRACTION } from '../engine/con
 import { getSplit, topRightPaneId } from '../engine/tree.ts'
 import type { DropTarget, HalvesFit } from '../engine/geometry.ts'
 import {
-  containsPoint, dividerSizes, floatRectAt, insertionIndex, passedThreshold, zoneInRect,
+  containsPoint, dividerSizes, floatRectAt, insertionIndex, passedThreshold, sameDropTarget, zoneInRect,
 } from '../engine/geometry.ts'
 import { fitOf, measurePaneFits, paneElements, sameFits } from './measure.ts'
 import { useGesture } from './pointer.ts'
@@ -226,11 +226,13 @@ function Surface({
               if (!passedThreshold(startX, startY, moved.clientX, moved.clientY)) return
               dragging = true
             }
-            setPreview({
-              ...NO_PREVIEW,
-              draggingTabId: tabId,
-              dropTarget: hitTest(root, moved.clientX, moved.clientY, canSplit, fits, dropZones),
-            })
+            const dropTarget = hitTest(root, moved.clientX, moved.clientY, canSplit, fits, dropZones)
+            // Moving inside one drop target is not a new preview: keeping the
+            // previous object leaves the tab bodies alone until the target, the
+            // dragged tab, or the divider fractions change.
+            setPreview(previous => previous.draggingTabId === tabId && sameDropTarget(previous.dropTarget, dropTarget)
+              ? previous
+              : { ...NO_PREVIEW, draggingTabId: tabId, dropTarget })
           },
           up: (released) => {
             if (!dragging) return

@@ -977,11 +977,30 @@ export class ClientModuleRegistry extends Service {
     }
   }
 
-  /** Reconcile one entry name against the live Loader sources. @returns whether the table changed. */
-  private processOne(entryName: string, onError: (err: Error) => void): boolean {
-    const nextSources = new Map<string, ClientPackageSource>()
+  /**
+   * Index the mounted Loader entries by name in one walk of the live tree, so a
+   * flush reconciles every dirty name from the same snapshot.
+   * @returns running entries grouped by their Loader specifier.
+   */
+  private indexEntries(): Map<string, Entry[]> {
+    const byName = new Map<string, Entry[]>()
     for (const entry of this.ctx.loader.entries()) {
-      if (entry.options.name !== entryName || entry.fiber === undefined || entry.disabled) continue
+      if (entry.fiber === undefined) continue
+      const bucket = byName.get(entry.options.name)
+      if (bucket === undefined) {
+        byName.set(entry.options.name, [entry])
+      } else {
+        bucket.push(entry)
+      }
+    }
+    return byName
+  }
+
+  /** Reconcile one entry name against the active Loader sources. @returns whether the table changed. */
+  private processOne(entryName: string, entries: readonly Entry[], onError: (err: Error) => void): boolean {
+    const nextSources = new Map<string, ClientPackageSource>()
+    for (const entry of entries) {
+      if (entry.disabled) continue
       const source = this.resolveSource(entry)
       if (source !== undefined) nextSources.set(source.sourceKey, source)
     }
@@ -1049,11 +1068,12 @@ export class ClientModuleRegistry extends Service {
   }
 
   private flush(onError: (err: Error) => void): void {
+    const entriesByName = this.indexEntries()
     let changed = false
     for (const entryName of [...this.dirty]) {
       this.dirty.delete(entryName)
       try {
-        if (this.processOne(entryName, onError)) changed = true
+        if (this.processOne(entryName, entriesByName.get(entryName) ?? [], onError)) changed = true
       } catch (error) {
         // Steady state: one broken package must not poison the others; the
         // activation pass aggregates these into a loud throw instead.

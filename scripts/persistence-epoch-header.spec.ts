@@ -15,7 +15,8 @@ function property(nodes: readonly SchemaNode[], index: number, name: string): nu
   return field.type
 }
 
-it('requires a version bump before request headers can carry retired system text', { timeout: 60_000 }, () => {
+// Match the schema owner's budget for extracting the repository TypeScript program.
+it('requires a version bump before request headers can carry retired system text', { timeout: 90_000 }, () => {
   const inventory = extractPersistenceSchema(resolve(import.meta.dirname, '..'))
   const before = inventory.roots.find(root => root.key === 'event:request/header')
   if (before === undefined) throw new Error('generated schema omits request/header')

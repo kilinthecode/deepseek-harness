@@ -97,7 +97,7 @@ No model request prefix changes.
 
 - Profile and recharge-wallet balances use the existing Platform Web endpoints through Host getProfile / getBalance. The page refreshes when opened and after login or reconnect, preserves server-masked contact data, and shows query failures independently without manufacturing a zero balance. Usage and top-up use Host-provided links derived from platformOrigin and the browser’s own login; the links never carry a DSH token.
 - Completed installations do not reapply defaults or overwrite later user preferences. Completion does not synchronize across devices or create a per-account history.
-- Onboarding follows the interface locale and theme, with four Figma PNG illustration sets covering Chinese and English in light and dark appearance. Export canvases include the full illustration geometry; Finder artwork uses the same vertical fade in both themes.
+- Onboarding follows the interface locale and theme, with four Figma PNG illustration sets covering Chinese and English in light and dark appearance. Export canvases include the full illustration geometry; Finder artwork uses the same vertical fade in both themes. The illustration sets ship in a separate client chunk that loads when an onboarding step first renders, so the always-loaded bundle carries none of them.
 
 - The notice copy is server-localized for the UI language in effect when the client reads it. Switching language does not itself re-read the unnotified bonus, so a notice already on screen keeps the copy the server sent for the earlier language until the user refreshes or the account lifecycle restarts.
 

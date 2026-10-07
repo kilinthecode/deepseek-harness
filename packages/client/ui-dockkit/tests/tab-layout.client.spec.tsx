@@ -4,7 +4,7 @@ import { act, cleanup, fireEvent, render } from '@testing-library/react'
 import type { ComponentProps } from 'react'
 import { TabLayout } from '../src/components/TabLayout.tsx'
 import { DockController } from '../src/engine/controller.ts'
-import { getNode, getPane } from '../src/engine/tree.ts'
+import { getNode, getPane, topRightPaneId } from '../src/engine/tree.ts'
 import type { PaneCallbacks } from '../src/components/render.ts'
 import type { TabId } from '../src/contract/types.ts'
 import { followPointer } from '../src/components/pointer.ts'
@@ -12,16 +12,20 @@ import { seededController, TEST_LABELS } from './fixtures.client.ts'
 
 afterEach(() => { cleanup(); vi.restoreAllMocks() })
 
-function mounted(controller = seededController(), options: Partial<ComponentProps<typeof TabLayout>> = {}) {
+function mounted(
+  controller = seededController(),
+  options: Partial<ComponentProps<typeof TabLayout>> = {},
+  renderTab: PaneCallbacks['renderTab'] = tab => <input data-body={tab.id} defaultValue={tab.title} />,
+) {
   const callbacks: PaneCallbacks = {
     onFocusTab: (id) => { controller.focusTab(id); redraw() },
     onFocusPane: (id) => { controller.focusPane(id); redraw() },
     onSplitPane: vi.fn(), onAddTab: vi.fn(), onCloseTab: vi.fn(), onTabPressed: vi.fn(), onDividerPressed: vi.fn(),
     splitBlock: () => undefined, canAddTab: () => true, canCloseTab: () => true,
     dropTarget: undefined, draggingTabId: undefined, labels: TEST_LABELS,
-    renderTab: tab => <input data-body={tab.id} defaultValue={tab.title} />,
+    renderTab,
     renderTabTitle: undefined, renderTabMenuItems: undefined,
-    chromePaneId: getPane(controller.getSnapshot().state, controller.getSnapshot().state.rootId).id,
+    chromePaneId: topRightPaneId(controller.getSnapshot().state),
     chrome: undefined,
   }
   const props = () => ({ state: controller.getSnapshot().state, callbacks, intents: controller, preview: undefined, ...options })
@@ -209,4 +213,24 @@ it('keeps a superseding gesture marker when an older follower detaches', () => {
   expect(element.dataset.dockkitPointer).toBe('2')
   second()
   expect(element.dataset.dockkitPointer).toBeUndefined()
+})
+
+it('reuses the tab bodies across a live split preview', () => {
+  const controller = seededController()
+  controller.setExpanded(true)
+  controller.splitPane()
+  const state = controller.getSnapshot().state
+  const split = getNode(state, state.rootId)
+  if (split.kind !== 'split') throw new Error('expected a split')
+  const bodies = vi.fn((tab: { id: TabId; contentId: string }) => <p data-body={tab.id}>{tab.contentId}</p>)
+  const h = mounted(controller, {}, bodies)
+  const drawn = bodies.mock.calls.length
+  expect(drawn).toBeGreaterThan(0)
+
+  // The surface commits fresh preview fractions per pointer frame; the grid
+  // moves and no tab body is rendered again.
+  h.redraw({ preview: { splitId: split.id, sizes: [0.4, 0.6] } })
+  h.redraw({ preview: { splitId: split.id, sizes: [0.45, 0.55] } })
+  expect(h.node('[data-dockkit-split]').style.gridTemplateColumns).toContain('0.45fr')
+  expect(bodies).toHaveBeenCalledTimes(drawn)
 })

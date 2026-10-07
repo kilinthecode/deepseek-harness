@@ -31,12 +31,16 @@ base bundle 挂载 `@deepseek-ai/dsh-otel`。独立组合必须在注入 `otel` 
 
 Header 显式提供。服务不会附加 channel header，也不继承环境中的授权 header 或 TLS 身份。Agent factory 配置返回的 agent，包括 keepAlive。普通事件通道在关闭时销毁自己的 agent；factory 必须为每个通道提供独立 agent。每个调用方提供 scope 名称和版本，因此共享传输不会改变事件归属。
 
+shutdown 会同步关闭通道的新记录入口。已接受的记录会等待正在进行的 SDK 加载，并在清理前排空；后续上报会被忽略。重复调用 shutdown 会共享同一次完成结果。
+
 <a id="understand-the-implementation"></a>
 ## 理解实现
 
 `src/index.ts` 注册服务；`event-log.ts` 负责普通事件的 SDK 聚合；`session-log.ts` 负责字节和条数调度；`transport.ts` 提供 Session 的 SDK JSON HTTP delegate；`event-transport.ts` 使用 Got 实现可取消的普通事件 HTTP 请求和重试等待，序列化与导出计数仍由 SDK 负责。不安装全局 OTel provider。Session processor 对每条记录只计量一次，按保守大小组包，并在每次回调后等待 SDK 并发队列清理完成才发送下一请求。
 
 不发布运行时不变式伴生入口：通道创建不注册独立领域状态，无法从本地队列推断 collector 是否收到记录。组合测试覆盖独立通道和服务移除；适配器测试覆盖依赖 fiber 清理与反馈授权。
+
+发布的运行时代码包含 `lib/index.js` 及带哈希的普通事件和 Session 传输分块。SDK 和 Got 仍在开始上报时才导入；CI 在精确的发布闭包检查之外运行构建入口冒烟测试。
 
 <a id="further-exploration"></a>
 ## 进一步探索

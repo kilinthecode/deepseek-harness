@@ -60,6 +60,7 @@ async function measure(capacityBytes: number, mode: string): Promise<TerminalIoR
     maxReadBytes: Math.min(256 * 1024, capacityBytes),
     pollIntervalMs: 1, exactProbeAfterMs: 150, idleSilenceMs: 1,
     handoffGraceMs: 1, promptTailGraceMs: 0, timeoutMs: 120_000, disposeGraceMs: 1,
+    descendantScanIntervalMs: 1,
   })
   try {
     if (prefillBytes > 0) {

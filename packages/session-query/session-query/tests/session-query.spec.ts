@@ -20,6 +20,7 @@ import type {
 } from '@deepseek-ai/dsh-session-persistence'
 import SessionQueryEngine, {
   SESSION_QUERY_DEFAULT_PERSISTED_INSPECT_CONCURRENCY,
+  sessionQuerySearchDisabled,
   type SessionEventSurface,
   type SessionQueryErrorCode,
 } from '@deepseek-ai/dsh-session-query'
@@ -1292,4 +1293,10 @@ describe('session-query exact reads', () => {
     await disposing
     await persistence.dispose()
   })
+})
+
+it('advertises search support by default without observing the corpus', async () => {
+  const ctx = await liveContext()
+  try { expect(ctx.sessionQuery[sessionQuerySearchDisabled]()).toBe(false) }
+  finally { await ctx.fiber.dispose() }
 })

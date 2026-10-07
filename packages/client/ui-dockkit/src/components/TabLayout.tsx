@@ -1,5 +1,5 @@
 /** Stable tab siblings in one horizontal Grid, including viewport-positioned floats. */
-import { useEffect, useLayoutEffect, useRef, useState } from 'react'
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import type { MutableRefObject, ReactNode } from 'react'
 import clsx from 'clsx'
 import type { DockIntents } from '../contract/adapter.ts'
@@ -45,6 +45,13 @@ function TabHost({ state, callbacks, intents, tab, pane, column, floats, focusRe
   if (visible && !visited) setVisited(true)
   const host = useRef<HTMLElement | null>(null)
   const body = useRef<HTMLDivElement | null>(null)
+  // The body depends on none of the gesture preview: a preview-only commit — a
+  // drag frame, or a divider drag moving the grid — hands React the same
+  // element, whose subtree then bails out instead of re-rendering the tab.
+  const rendered = useMemo(
+    () => visited && (retained || (active && selected)) ? callbacks.renderTab(tab) : null,
+    [visited, retained, active, selected, tab, callbacks.renderTab],
+  )
   useLayoutEffect(() => {
     // Both refs target unconditional descendants attached before these effects.
     const section = host.current as HTMLElement
@@ -99,7 +106,7 @@ function TabHost({ state, callbacks, intents, tab, pane, column, floats, focusRe
             : <TabStrip state={state} pane={pane} callbacks={callbacks} />)}
         </div>
         <div ref={body} className={clsx(css.tabHostBody, floating ? css.floatBody : css.paneBody)}>
-          {visited && (retained || (active && selected)) ? callbacks.renderTab(tab) : null}
+          {rendered}
           {!floating && <PaneDropHints pane={pane} callbacks={callbacks} />}
         </div>
         {floating && <div className={css.floatResize} data-dockkit-float-resize={pane.id}

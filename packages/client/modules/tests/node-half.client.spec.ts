@@ -113,6 +113,8 @@ function constructWithRoute(
     contextBaseUrl?: string
     entryBaseUrl?: string
     internal?: NonNullable<Context['loader']['internal']>
+    /** Called once per walk of the Loader entry tree. */
+    onEntriesWalk?: () => void
   } = {},
 ): { context: Context; service: ClientModuleRegistry; route: Promise<WebRoute> } {
   const ctx = new Context()
@@ -122,6 +124,7 @@ function constructWithRoute(
   ctx.provide('loader', {
     internal: options.internal,
     *entries() {
+      options.onEntriesWalk?.()
       for (const packageName of packageNames) {
         yield {
           options: { name: packageName },
@@ -1020,6 +1023,18 @@ describe('client bundle activation', () => {
       originalSource: `/plugins/${unmappedName}/client.js`,
     })
     expect(consumer.findEntry(2, 0)).toMatchObject({ originalSource: '/packages/demo/mapped.ts' })
+  })
+
+  it('scans the Loader entry tree once per flush instead of once per dirty name', () => {
+    const names = Array.from({ length: 12 }, (_, index) => `@fixture/flush-scan-${String(index)}`)
+    for (const name of names) writeBuiltPackage(name, {})
+    let scans = 0
+    // The helper registers the route promise that the teardown awaits, so the
+    // invariant companion finishes mounting before the context is disposed.
+    constructWithRoute(names, { onEntriesWalk: () => { scans += 1 } })
+    // The activation flush seeds from one walk and reconciles every dirty name
+    // from one indexed walk; a rescan per name would walk the tree once per row.
+    expect(scans).toBeLessThan(names.length / 2)
   })
 })
 

@@ -49,6 +49,8 @@ pnpm run typecheck
 
 `pnpm run typecheck` 成功退出即表示搭建完成。
 
+本地构建、类型与 lint 检查、文档同步、覆盖率和桌面打包通过 `scripts/with-heavy-build-lock.mjs` 在多个检出目录之间共享租约。同一时刻只运行一个包装命令，其嵌套命令继承租约。`DSH_HEAVY_BUILD_LOCK_PATH` 可以指定绝对租约文件路径；默认文件位于系统临时目录并按用户区分。CI 分配保留各自的并发配置。请使用包脚本参与协调；直接调用工具会绕过租约。
+
 ## 贡献者参考
 
 <a id="typescript-project-layout"></a>

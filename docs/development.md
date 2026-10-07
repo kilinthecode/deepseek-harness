@@ -47,6 +47,8 @@ pnpm run typecheck
 
 Setup is complete when `pnpm run typecheck` exits successfully.
 
+Local builds, type/lint checks, documentation synchronization, coverage, and desktop packaging share a lease across checkouts through `scripts/with-heavy-build-lock.mjs`. Only one wrapped command runs at a time; its nested commands inherit the lease. `DSH_HEAVY_BUILD_LOCK_PATH` selects an absolute lease file; the default is per user under the system temporary directory. CI allocations retain their own concurrency. Invoke the package scripts to participate; direct tool invocations bypass the lease.
+
 ## Contributor reference
 
 ### TypeScript project layout

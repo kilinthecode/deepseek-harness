@@ -250,10 +250,10 @@ describe('gate graph validation', () => {
       args: ['/private/pnpm.cjs', 'run', 'test:bench'],
     })
     expect(scripts['test:bench']).toBe('npm run build:bench && npm run build:web && npm run test:bench:built')
-    expect(scripts['build:bench']).toBe(
+    expect(scripts['heavy:build:bench']).toBe(
       'npm run build:native-system && npm run build:lib && tsdown --config benchmarks/tsdown.config.ts',
     )
-    expect(scripts['build:native-system']).toBe('tsx native/system/scripts/build.ts --host-addon-only')
+    expect(scripts['heavy:build:native-system']).toBe('tsx native/system/scripts/build.ts --host-addon-only')
     expect(scripts['test:bench:built']).toBe('vitest run --config vitest.bench.config.ts')
   })
 
@@ -600,7 +600,7 @@ describe('gate graph validation', () => {
     // so a step added to one cannot silently leave the other. The lane sets
     // DSH_COVERAGE_TEST_TIMEOUT_MS; vitest.config.ts reads it per inline
     // project (coverageTestTimeoutOptions), so the gate passes no budget flag.
-    const [nativeBuild, unitRun, ...rest] = (scripts.test ?? '').split(' && ')
+    const [nativeBuild, unitRun, ...rest] = (scripts['heavy:test'] ?? '').split(' && ')
     expect(rest).toEqual([])
     for (const budget of ['15000', undefined]) {
       const gates = withEnv('DSH_COVERAGE_TEST_TIMEOUT_MS', budget, () =>
@@ -845,6 +845,7 @@ describe('Node 24 lane ownership', () => {
         'packages/subagent/subagent-codex/tests/loader-composition.e2e.ts',
         'packages/subagent/subagent-claude-code/tests/loader-composition.e2e.ts',
         'packages/experimental/agent-team/tests/built-lib.e2e.ts',
+        'packages/telemetry/otel/tests/built-lib.e2e.ts',
       ]),
     )
     expect(subject.find(item => item.id === 'web-snapshot')).toMatchObject({

@@ -23,6 +23,8 @@
   },
   "files": [
     "lib/index.js",
+    "lib/event-transport-*.js",
+    "lib/transport-*.js",
     "lib/types/**/*.d.ts"
   ],
   "license": "MIT",

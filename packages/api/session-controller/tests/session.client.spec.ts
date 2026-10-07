@@ -7,6 +7,7 @@
 
 import { describe, expect, onTestFinished, vi } from 'vitest'
 import { SessionSeq, type SessionEvent } from '@deepseek-ai/dsh-session/types'
+import { LlmAttemptId } from '@deepseek-ai/dsh-llm'
 import { AttachmentId } from '@deepseek-ai/dsh-attachment'
 import type { SessionId } from '@deepseek-ai/dsh-api-remotes/client'
 import { RemoteStreamCarrierError } from '@deepseek-ai/dsh-api-gateway/client'
@@ -15,7 +16,9 @@ import { ok, type RemoteMock } from '@deepseek-ai/dsh-remote-mock'
 import { createClientTest, type TestClient, webApp } from '@deepseek-ai/dsh-client-test-runtime/src/assembly/index.ts'
 import { Session } from '../src/client/sessions/session.ts'
 import { SessionEventStream } from '../src/client/transport.ts'
-import type { SessionFollowRequest, SessionPage, SessionPageRequest } from '../src/types.ts'
+import type {
+  SessionAssistantStreamFrame, SessionFollowFrame, SessionFollowRequest, SessionPage, SessionPageRequest,
+} from '../src/types.ts'
 import { entries, ev, historyValue, plainTurn } from './event-script.client.ts'
 import { sessionBench } from './remote/bench.client.ts'
 import {
@@ -138,6 +141,45 @@ describe('Session open', () => {
     expect(eventSeqs(session)).toEqual([10, 11, 12, 13, 14, 15, 16])
   })
 })
+
+describe('Assistant stream chunks', () => {
+  it('publishes transient chunks through the event feed without a Session notification', async ({ mock, start }) => {
+    const session = await sessionBench(mock, start, SID)
+    const attemptId = LlmAttemptId('chunk-only-attempt')
+    mock.stream(FOLLOW, followScript(history([])))
+    await session.open()
+    await new Promise(resolve => setTimeout(resolve, 0))
+    let notified = 0
+    const unsubscribe = session.subscribe(() => { notified += 1 })
+    const openingRevision = session.eventSource.getSnapshot().revision
+
+    // Transient rows reach the event window only: the Session snapshot carries
+    // no field derived from them, so a subscribed listener stays silent while
+    // the feed advances once per chunk.
+    mock.streams.push(FOLLOW, assistantStreamFrame({
+      type: 'start', attemptId, revision: 1, startedAfterSeq: -1, turn: 1, step: 1,
+    }))
+    for (let index = 0; index < 5; index += 1) {
+      await mock.streams.drained(FOLLOW)
+      mock.streams.push(FOLLOW, assistantStreamFrame({
+        type: 'chunk', attemptId, revision: index + 2, index,
+        time: index, chunk: { type: 'text-delta', index: 0, text: `chunk ${String(index)}` },
+      }))
+    }
+    await mock.streams.drained(FOLLOW)
+    await new Promise(resolve => setTimeout(resolve, 0))
+
+    expect(session.eventSource.getSnapshot().entries).toHaveLength(5)
+    expect(session.eventSource.getSnapshot().revision).toBe(openingRevision + 5)
+    expect(notified).toBe(0)
+    unsubscribe()
+  })
+})
+
+/** One Assistant stream frame as the follow wire carries it. */
+function assistantStreamFrame(frame: SessionAssistantStreamFrame): SessionFollowFrame {
+  return { type: 'assistant-stream', frame }
+}
 
 describe('live event path', () => {
   async function opened(mock: RemoteMock, start: () => Promise<TestClient>, events: SessionEvent[] = plainTurn(SessionSeq(0), 0, 'a', 'b')) {

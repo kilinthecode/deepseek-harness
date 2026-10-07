@@ -236,6 +236,34 @@ describe('FilesBody', () => {
     expect(view.container.querySelector('[data-files-reload]')?.getAttribute('aria-label')).toBe(zh.reload)
   })
 
+  it('does not render the tree again when a relist returns the same entries', async () => {
+    const renders = vi.fn(() => null)
+    const { view, script } = mountBody(ROOT, undefined, renders)
+    const rootStream = await act(() => script.watches.ready(ROOT))
+    await act(() => script.settle({ ok: true, value: ROOT_LEVEL }))
+    const settled = renders.mock.calls.length
+
+    // A watcher event that changed nothing: the level keeps its identity, so the
+    // body is handed the same bucket it already drew and renders nothing.
+    await act(async () => {
+      await rootStream.deliver('change')
+      await script.waitForList(1)
+    })
+    await act(() => script.settle({ ok: true, value: ROOT_LEVEL }))
+    expect(renders).toHaveBeenCalledTimes(settled)
+
+    await act(async () => {
+      await rootStream.deliver('change')
+      await script.waitForList(2)
+    })
+    await act(() => script.settle({
+      ok: true,
+      value: { entries: [...ROOT_LEVEL.entries, { name: 'new.ts', type: 'file' }], truncated: false },
+    }))
+    expect(renders.mock.calls.length).toBeGreaterThan(settled)
+    expect(names(view.container)).toContain(`${ROOT}/new.ts`)
+  })
+
   it('keeps the automatic control hidden and enabled by default, with manual reload independent of its setting', async () => {
     const { view, script, instance } = mountBody()
     const stream = await act(() => script.watches.ready(ROOT))

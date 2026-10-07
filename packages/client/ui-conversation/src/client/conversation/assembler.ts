@@ -260,7 +260,7 @@ export class ConversationNodeAssembler implements ConversationViewSnapshotStore 
         this.timelineDirty = true
         publication = 'immediate'
       }
-      this.replayContexts(this.refreshMatchLocations(changed))
+      this.replayLocationChanges(this.refreshMatchLocations(changed))
       if (changed.size > 0) publication = 'immediate'
     } else {
       this.locationIndex.appendNonBoundary(event)
@@ -615,6 +615,27 @@ export class ConversationNodeAssembler implements ConversationViewSnapshotStore 
       }
       this.replayContext(context)
     }
+  }
+
+  /**
+   * Re-fold the Contexts whose Match Locations one Turn/Step boundary refreshed.
+   * A Definition that declares Location-independent folds keeps its State; the
+   * refreshed Locations still reach its Location data and view Node.
+   * @param contexts - Contexts owning a re-resolved Match.
+   */
+  private replayLocationChanges(contexts: ReadonlySet<InternalContext>): void {
+    const folding = new Set<InternalContext>()
+    for (const context of contexts) {
+      if (context.definition.foldReadsLocation === false && context.state !== undefined) {
+        const start = context.matches.find(match => match.role === 'start')
+        if (start === context.start) {
+          this.markDirty(context)
+          continue
+        }
+      }
+      folding.add(context)
+    }
+    this.replayContexts(folding)
   }
 
   private refreshStarts(contexts: ReadonlySet<InternalContext>): void {

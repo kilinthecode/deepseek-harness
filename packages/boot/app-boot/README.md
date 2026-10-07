@@ -118,6 +118,8 @@ When your app boots a model-backed agent, you can tell the agent where the DSH i
 
 -----
 
+The launcher compile cache skips help/version invocations and explicit Node cache settings. A runtime without the API skips the attempt; failed cache status or exceptions produce one diagnostic and allow launch to continue.
+
 <a id="understand-the-implementation"></a>
 ## Understand the implementation
 

@@ -7,7 +7,7 @@ function config(overrides: Partial<Config> = {}): Config {
     backendType: 'shell', shellDialect: 'bash', shellPath: '/bin/bash', shellArgs: [], rows: 40, cols: 160,
     scrollbackLines: 100, scrollbackMaxBytes: 1024, maxReadBytes: 512,
     pollIntervalMs: 10, exactProbeAfterMs: 20, idleSilenceMs: 100, handoffGraceMs: 50, promptTailGraceMs: 0, timeoutMs: 1000,
-    disposeGraceMs: 100,
+    disposeGraceMs: 100, descendantScanIntervalMs: 250,
     ...overrides,
   }
 }
@@ -23,6 +23,12 @@ describe('terminal-bash config', () => {
     expect(() => { validateConfig(config({ rows: 0 })) }).toThrow('rows')
     expect(() => { validateConfig(config({ rows: 1.5 })) }).toThrow('rows')
     expect(() => { validateConfig(config({ maxReadBytes: 2048 })) }).toThrow('must not exceed')
+  })
+
+  it('rejects a descendant scan interval that is not a positive safe integer', () => {
+    expect(() => { validateConfig(config({ descendantScanIntervalMs: 0 })) }).toThrow('descendantScanIntervalMs must be a positive safe integer')
+    expect(() => { validateConfig(config({ descendantScanIntervalMs: 1.5 })) }).toThrow('descendantScanIntervalMs must be a positive safe integer')
+    expect(() => { validateConfig(config({ descendantScanIntervalMs: 250 })) }).not.toThrow()
   })
 
   it('rejects a handoff grace shorter than one readiness poll', () => {

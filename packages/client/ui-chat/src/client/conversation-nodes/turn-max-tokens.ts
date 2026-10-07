@@ -47,6 +47,7 @@ function stateFrom(match: ConversationMatch): TurnMaxTokensState | undefined {
 export const turnMaxTokensDefinition: ConversationNodeDefinition<TurnMaxTokensState> = {
   kind: 'turn-max-tokens',
   target: 'chat',
+  foldReadsLocation: false,
   match: (event) => {
     if (event.type === 'turn/end' && event.data.reason.kind === 'max-tokens') {
       return { id: String(event.data.turn), role: 'start' }

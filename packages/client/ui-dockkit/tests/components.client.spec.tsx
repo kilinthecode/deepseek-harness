@@ -18,7 +18,7 @@ import { DockController } from '../src/engine/controller.ts'
 import { applyOp } from '../src/engine/operations.ts'
 import { FLOAT_DEFAULT_SIZE, FLOAT_MIN_SIZE } from '../src/engine/constraints.ts'
 import { floatRectAt } from '../src/engine/geometry.ts'
-import { DockSurface, type DockSurfaceProps } from '../src/components/DockSurface.tsx'
+import { DockLayout, DockSurface, type DockSurfaceProps } from '../src/components/DockSurface.tsx'
 import type { TabMenuExtras } from '../src/contract/adapter.ts'
 import { FloatLayer, type FloatLayerProps } from '../src/components/FloatLayer.tsx'
 import { dockPaneIds, getPane } from '../src/engine/tree.ts'
@@ -159,6 +159,28 @@ const FILE_CHIP: readonly [number, number] = [151, 18]
 function gestureIntents(intents: ReturnType<typeof spyIntents>): string[] {
   return (['placeTab', 'dropTab', 'floatTab', 'resizeSplit'] as const).filter(name => intents[name].mock.calls.length > 0)
 }
+
+describe('DockLayout', () => {
+  it('renders the selected tab in the horizontal layout', () => {
+    const controller = seededController()
+    controller.setExpanded(true)
+    controller.openContent({ contentId: 'dsh-resource://file/session/s/a.txt', title: 'a.txt', kind: 'file' })
+    const state = controller.getSnapshot().state
+    layOut(dockPaneIds(state), 420)
+    render(
+      <DockLayout
+        state={state}
+        canSplit
+        intents={spyIntents()}
+        labels={TEST_LABELS}
+        renderTab={tab => <p data-testid="layout-body">{tab.contentId}</p>}
+      />,
+    )
+
+    expect(screen.getAllByRole('tab').map(tab => tab.textContent)).toEqual(['Start', 'a.txt'])
+    expect(screen.getByTestId('layout-body').textContent).toBe('dsh-resource://file/session/s/a.txt')
+  })
+})
 
 describe('DockSurface', () => {
   it('renders each pane with its tabs and the active tab body', () => {
@@ -1104,6 +1126,46 @@ describe('tab drags', () => {
       Reflect.deleteProperty(HTMLElement.prototype, 'setPointerCapture')
     }
   })
+
+  it('keeps the tab bodies still while a drag preview stays inside one drop target', () => {
+    const controller = seededController()
+    controller.setExpanded(true)
+    controller.splitPane()
+    const [first, second] = dockPaneIds(controller.getSnapshot().state)
+    if (first === undefined || second === undefined) throw new Error('expected two docked panes')
+    const fileTabId = controller.openContent({ contentId: 'a.txt', title: 'a.txt', kind: 'file', paneId: first })
+    layOut([first, second], 520)
+    const bodies = vi.fn((tab: { contentId: string }) => <p data-testid="body">{tab.contentId}</p>)
+    render(
+      <DockSurface
+        state={controller.getSnapshot().state}
+        canSplit
+        intents={spyIntents()}
+        labels={TEST_LABELS}
+        renderTab={bodies}
+      />,
+    )
+    const chip = document.querySelector<HTMLElement>(`[data-dockkit-tab="${fileTabId}"]`)
+    if (chip === null) throw new Error('expected the dragged chip')
+    const drawn = bodies.mock.calls.length
+    expect(drawn).toBeGreaterThan(0)
+    drag(chip, FILE_CHIP, [520 + 260, 300], false)
+    expect(document.querySelector(`[data-dockkit-pane="${second}"] [data-dockkit-dock-zone]`)).not.toBeNull()
+    // The drag's first frame is a new preview — the zone hint and the caret
+    // appear — and the preview, the caret and the hints live in the same tree as
+    // the bodies, so that one commit redraws them. The baseline the frames below
+    // must hold is the count that commit left, not the count before the press.
+    const moved = bodies.mock.calls.length
+    expect(moved).toBeGreaterThan(drawn)
+
+    for (let step = 1; step <= 10; step += 1) {
+      fireEvent.pointerMove(window, { pointerId: 7, clientX: 520 + 260 + step, clientY: 300 })
+    }
+    // The pointer stayed inside one drop target, so the preview never changed
+    // again and no tab body was rendered again.
+    expect(bodies).toHaveBeenCalledTimes(moved)
+    fireEvent.pointerUp(window, { pointerId: 7, clientX: 520 + 260, clientY: 300 })
+  })
 })
 
 describe('horizontal workbench drops', () => {
@@ -1630,4 +1692,16 @@ describe('fileTab', () => {
   it('builds a content tab the kit treats as opaque', () => {
     expect(fileTab(asTab('t1'), 'dsh-resource://file/session/s/x', 'x').kind).toBe('file')
   })
+})
+
+it('keeps a strip target stable and changes it when the pointer crosses its slot, pane, or kind', () => {
+  const { second, fileTabId, chip, intents } = twoPanes()
+  drag(chip(fileTabId), FILE_CHIP, [450, 18], false)
+  expect(document.querySelector(`[data-dockkit-pane="${second}"] [data-dockkit-caret="0"]`)).not.toBeNull()
+  for (const [x, y] of [[455, 18], [480, 18], [50, 18], [650, 300], [450, 18], [480, 18]]) {
+    fireEvent.pointerMove(window, { pointerId: 7, clientX: x, clientY: y })
+  }
+  expect(document.querySelector(`[data-dockkit-pane="${second}"] [data-dockkit-caret="1"]`)).not.toBeNull()
+  fireEvent.pointerUp(window, { pointerId: 7, clientX: 480, clientY: 18 })
+  expect(intents.placeTab).toHaveBeenCalledExactlyOnceWith(fileTabId, second, 1)
 })

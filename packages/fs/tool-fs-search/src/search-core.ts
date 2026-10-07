@@ -330,11 +330,13 @@ export function previewLine(line: string, maxBytes: number): string {
 
 /**
  * Apply the shared inline cap to a canonical `grep` match list: preview each
- * retained line to `maxLineBytes` and keep the first `maxMatches`. The single
- * retention pass both the model-facing render ({@link module:@deepseek-ai/dsh-tool-fs-search/grep}
- * `formatGrepOutput`) and the search-card projection
+ * line the cap retains to `maxLineBytes` and keep the first `maxMatches`. The
+ * single retention pass both the model-facing render
+ * ({@link module:@deepseek-ai/dsh-tool-fs-search/grep} `formatGrepOutput`) and
+ * the search-card projection
  * ({@link module:@deepseek-ai/dsh-tool-fs-search/presentation} `grepSearchMeta`)
- * consume, so text and card never disagree about which matches survived.
+ * consume, so text and card never disagree about which matches survived; a
+ * match past the cap is counted but never previewed.
  *
  * @param matches - every match the search parsed (the canonical value's matches).
  * @param maxMatches - the inline match cap (the `grepMaxMatches` config).
@@ -343,7 +345,19 @@ export function previewLine(line: string, maxBytes: number): string {
  */
 export function retainGrepMatches(matches: GrepMatch[], maxMatches: number, maxLineBytes: number): RetainedItems<GrepMatch> {
   const retainer = new ItemRetainer<GrepMatch>({ kind: 'head', maxItems: maxMatches })
-  for (const match of matches) retainer.push({ ...match, line: previewLine(match.line, maxLineBytes) })
+  // The retainer drops every unit past `maxMatches`, so a preview there would be
+  // discarded work. Offer the raw match once the cap is reached: `seen` and
+  // `omitted` still count every observed match, and the retained items are the
+  // same previewed objects as before.
+  let remaining = maxMatches
+  for (const match of matches) {
+    if (remaining > 0) {
+      retainer.push({ ...match, line: previewLine(match.line, maxLineBytes) })
+      remaining -= 1
+    } else {
+      retainer.push(match)
+    }
+  }
   return retainer.finish()
 }
 

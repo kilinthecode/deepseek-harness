@@ -31,10 +31,14 @@ Ordinary channels use SDK count-based batching. Session channels preserve one co
 
 Headers are explicit. The service does not add a channel header or inherit ambient authorization headers or TLS identity. Agent factories configure their returned agents, including keepAlive. Ordinary-event channels destroy their agent on shutdown; factories must provide a dedicated agent for each channel. Scope names and versions are supplied by each consumer, so transport sharing does not change event attribution.
 
+Shutdown closes the channel to new records synchronously. Accepted records await an in-flight SDK load and drain before cleanup; later reports are ignored. Repeated shutdown calls share the same completion.
+
 <a id="understand-the-implementation"></a>
 ## Understand the implementation
 
 `src/index.ts` registers the service; `event-log.ts` owns ordinary SDK batching; `session-log.ts` owns byte/count scheduling; `transport.ts` supplies the Session SDK JSON HTTP delegate; `event-transport.ts` uses Got for cancellable ordinary-event HTTP requests and retry waits with SDK serialization and export accounting. No global OTel provider is installed. The Session processor measures each record once, groups conservative sizes, and waits for the SDK concurrency queue to clear after every callback before sending another request.
+
+The published runtime includes `lib/index.js` and the hashed ordinary/Session transport chunks. Their SDK and Got imports stay deferred until reporting starts; the built-entry smoke runs in CI alongside the exact publication-closure check.
 
 No runtime invariant companion is published: channel creation registers no independent domain state, and collector delivery cannot be inferred from local queues. Composition tests exercise independent channels and service removal; adapter tests cover dependent-fiber cleanup and feedback authorization.
 

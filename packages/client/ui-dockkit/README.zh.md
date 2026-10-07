@@ -77,6 +77,8 @@ Sidebar 使用的 `DockLayout` 在选中项变化、跨格移动与浮动期间�
 - **嵌套在可拖动 chip 里的控件要拦住自己的按下。** 否则按下会开始拖动、捕获指针，嵌套控件的 click 就永远落不下。
 - **强调色用平台的强调 token，绝不用 `--dsw-alias-brand-primary`。** 本平台把 `brand-primary` 绑定到近黑（浅色）或近白（深色）的前景色，因此落点光标与落区提示都用 `--dsw-alias-brand-primary-new-colorprimary-new-color`，与轨迹视图一致；悬停的分隔条改用 caption 文字色，读起来是把手而不是高亮。浮窗不画边框——菜单同款阴影（`--dsw-elevation-prominent`）已勾出它的轮廓——活动浮窗也不加重边框：它本就在最上层、投同样的阴影；围它一圈更深的边框读起来像缺陷。
 
+放置预览比较目标种类、面板，以及标签条索引或区域。指针在同一目标内移动时保留预览；跨越其中任一值时更新预览。
+
 <a id="build-shape"></a>
 ## 构建形态
 

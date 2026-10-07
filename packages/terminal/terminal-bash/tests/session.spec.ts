@@ -142,7 +142,7 @@ function config(overrides: Partial<ResolvedConfig> = {}): ResolvedConfig {
     backendType: 'shell', shellDialect: 'bash', shellPath: '/bin/bash', shellArgs: [], rows: 24, cols: 80,
     scrollbackLines: 10, scrollbackMaxBytes: 128, maxReadBytes: 64,
     pollIntervalMs: 10, exactProbeAfterMs: 20, idleSilenceMs: 50, handoffGraceMs: 10, promptTailGraceMs: 0, timeoutMs: 100,
-    disposeGraceMs: 20,
+    disposeGraceMs: 20, descendantScanIntervalMs: 250,
     ...overrides,
   }
 }
@@ -505,6 +505,54 @@ describe('LocalPtySession readiness and output', () => {
     terminal.emitData('\x1b]133;D;0\x07dsh> ')
     await vi.advanceTimersByTimeAsync(10)
     expect((await operation.done).waitReason).toBe('stdin_read')
+  })
+
+  it('forces one descendant-adoption scan when a readiness poll concludes its send', async () => {
+    vi.useFakeTimers()
+    const terminal = new FakeTerminal()
+    const inspector = new FakeInspector()
+    const session = makeSession(terminal, inspector, config({ descendantScanIntervalMs: 60_000 }))
+    await initialize(session, terminal)
+
+    const forces: Array<boolean | undefined> = []
+    const inspect = terminal.inspectForeground.bind(terminal)
+    terminal.inspectForeground = async (forceAdoption?: boolean) => {
+      forces.push(forceAdoption)
+      return await inspect()
+    }
+    const operation = session.startSend({ text: 'true', submit: true })
+    await Promise.resolve()
+    await Promise.resolve()
+    await vi.advanceTimersByTimeAsync(0)
+    expect(forces).toEqual([undefined])
+
+    terminal.emitData('\x1b]133;D;0\x07dsh> ')
+    await vi.advanceTimersByTimeAsync(10)
+    expect((await operation.done).waitReason).toBe('stdin_read')
+    // The throttled poll still reads foreground state, and the poll that
+    // concluded the send asked the provider for one fresh adoption scan.
+    expect(forces).toEqual([undefined, undefined, true])
+    await session.close('adoption scan cleanup')
+  })
+
+  it('forces one descendant-adoption scan when the send deadline settles it', async () => {
+    vi.useFakeTimers()
+    const terminal = new FakeTerminal()
+    const inspector = new FakeInspector()
+    const session = makeSession(terminal, inspector, config({ descendantScanIntervalMs: 60_000, timeoutMs: 100, idleSilenceMs: 10_000 }))
+    await initialize(session, terminal)
+
+    const forces: Array<boolean | undefined> = []
+    const inspect = terminal.inspectForeground.bind(terminal)
+    terminal.inspectForeground = async (forceAdoption?: boolean) => {
+      forces.push(forceAdoption)
+      return await inspect()
+    }
+    const operation = session.startSend({ text: 'sleep 60', submit: true })
+    await vi.advanceTimersByTimeAsync(150)
+    expect((await operation.done).waitReason).toBe('timeout')
+    expect(forces).toContain(true)
+    await session.close('deadline adoption cleanup')
   })
 
   it('discards prompt readiness observed during asynchronous pre-write inspection', async () => {
@@ -1724,3 +1772,46 @@ describe('LocalPtySession bounds, signals, and teardown', () => {
   })
 
 })
+
+it.each(['prompt', 'stdin', 'silence'] as const)(
+  'keeps a successor send pending when an old %s adoption scan resumes after its deadline', async (readiness) => {
+    vi.useFakeTimers()
+    const terminal = new FakeTerminal()
+    const inspector = new FakeInspector()
+    const session = makeSession(terminal, inspector, config())
+    const release = Promise.withResolvers<undefined>()
+    const scanned = Promise.withResolvers<undefined>()
+    try {
+      await initialize(session, terminal)
+      const inspect = terminal.inspectForeground.bind(terminal)
+      let scans = 0
+      terminal.inspectForeground = async (forceAdoption?: boolean) => {
+        if (forceAdoption && ++scans === 1) {
+          scanned.resolve(undefined)
+          await release.promise
+        }
+        return await inspect()
+      }
+      const operation = session.startSend({ text: 'old send', submit: true })
+      await vi.advanceTimersByTimeAsync(0)
+      if (readiness === 'prompt') terminal.emitData('\x1b]133;D;0\x07dsh> ')
+      if (readiness === 'stdin') { inspector.pgid = 789; inspector.waiting = true }
+      await vi.advanceTimersByTimeAsync(readiness === 'prompt' ? 10 : readiness === 'stdin' ? 20 : 50)
+      await scanned.promise
+      await vi.advanceTimersByTimeAsync(100)
+      expect((await operation.done).waitReason).toBe('timeout')
+      const successor = session.startSend({ text: 'successor', submit: true })
+      let settled = false
+      void successor.done.then(() => { settled = true })
+      release.resolve(undefined)
+      await vi.advanceTimersByTimeAsync(0)
+      expect(settled).toBe(false)
+      await session.close('superseded adoption cleanup')
+      expect((await successor.done).waitReason).toBe('session_exit')
+    } finally {
+      release.resolve(undefined)
+      await session.close('adoption fixture cleanup')
+      await vi.advanceTimersByTimeAsync(0)
+    }
+  },
+)

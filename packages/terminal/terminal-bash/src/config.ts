@@ -28,6 +28,12 @@ export interface Config {
   maxReadBytes?: number
   /** Readiness polling interval. */
   pollIntervalMs?: number
+  /**
+   * Minimum interval between descendant-adoption process-table scans inside readiness polling.
+   * Every poll still reads foreground state; the poll that concludes a send, teardown, and host
+   * exit always scan, so this only bounds how often a waiting send repeats the full scan.
+   */
+  descendantScanIntervalMs?: number
   /** Delay before Linux exact syscall probes. */
   exactProbeAfterMs?: number
   /** Silence duration that yields `inferred_idle`. */
@@ -101,6 +107,7 @@ export const Config: z<Config> = z.object({
   scrollbackMaxBytes: z.number().default(4 * 1024 * 1024),
   maxReadBytes: z.number().default(256 * 1024),
   pollIntervalMs: z.number().default(50),
+  descendantScanIntervalMs: z.number().default(250),
   exactProbeAfterMs: z.number().default(150),
   idleSilenceMs: z.number().default(3_000),
   handoffGraceMs: z.number().default(500),

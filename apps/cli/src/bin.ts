@@ -6,7 +6,7 @@
 
 /* v8 ignore file -- built-bin acceptance exercises this self-executing dispatch. */
 
-import { getDshRuntimeVersion, loadLayeredEnv, StartupError } from '@deepseek-ai/dsh-app-boot'
+import { enableDshCompileCache, getDshRuntimeVersion, loadLayeredEnv, StartupError } from '@deepseek-ai/dsh-app-boot'
 import { resolveDshHome } from '@deepseek-ai/dsh-home-paths'
 import { parseDshArgs } from './args.ts'
 import { reportStartupFailure } from './startup-diagnostics.ts'
@@ -74,5 +74,7 @@ export async function runCli(options: RunCliOptions = {}): Promise<void> {
 }
 
 if (import.meta.main) {
+  // The launcher, not any plugin, owns the process-level Node compile cache.
+  await enableDshCompileCache('dsh', process.argv.slice(2))
   await runCli()
 }

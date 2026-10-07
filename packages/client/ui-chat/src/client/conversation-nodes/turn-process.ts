@@ -209,6 +209,7 @@ function updateProcessState(state: TurnProcessState, event: ConversationEvent): 
 export const turnProcessDefinition: ConversationNodeDefinition<TurnProcessState> = {
   kind: 'turn-process',
   target: 'chat',
+  foldReadsLocation: false,
   match: (event) => {
     if (event.type === 'turn/start') return { id: String(event.data.turn), role: 'start' }
     const turn = eventTurn(event)

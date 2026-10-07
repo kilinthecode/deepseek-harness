@@ -1,10 +1,19 @@
 import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { afterEach, describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import { AttachmentId, ImageVariantId } from '@deepseek-ai/dsh-attachment'
 import { DeepSeekFileId } from '../src/file-id.ts'
 import { deepSeekFileScope, DeepSeekUploadIndex } from '../src/upload-index.ts'
+
+// Keep the real filesystem while counting the index file's reads: the cached
+// verdict must be observed as "one read for many lookups".
+vi.mock('node:fs/promises', { spy: true })
+
+/** Reads of exactly one path observed through the `node:fs/promises` spy. */
+function indexReads(path: string): number {
+  return vi.mocked(readFile).mock.calls.filter(([file]) => file === path).length
+}
 
 const ATTACHMENT = AttachmentId(`sha256:${'a'.repeat(64)}`)
 const VARIANT = ImageVariantId(`sha256:${'b'.repeat(64)}`)
@@ -41,6 +50,58 @@ describe('DeepSeekUploadIndex', () => {
     await expect(index.get(first, VARIANT, 1_000, 1_000)).resolves.toEqual(record)
     await expect(index.get(second, VARIANT, 1_000, 1_000)).resolves.toBeUndefined()
     await expect(index.get(first, VARIANT, 9_000, 1_000)).resolves.toBeUndefined()
+  })
+
+  it('reads the index file once for repeated lookups while its signature is unchanged', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'dsh-upload-index-'))
+    roots.push(dir)
+    const path = join(dir, 'index.json')
+    const index = new DeepSeekUploadIndex(path)
+    const scope = deepSeekFileScope('https://api.deepseek.com', 'key')
+    const record = {
+      scope, attachmentId: ATTACHMENT, variantId: VARIANT,
+      fileId: DeepSeekFileId('file-api-single-read'), bytes: 3, createdAt: 1, expiresAt: 10_000,
+    }
+    await index.commit(record, 1, 1)
+
+    vi.mocked(readFile).mockClear()
+    await expect(index.get(scope, VARIANT, 1, 1)).resolves.toEqual(record)
+    await expect(index.get(scope, VARIANT, 1, 1)).resolves.toEqual(record)
+    // The same cached parse still applies the per-lookup expiry and margin check.
+    await expect(index.get(scope, VARIANT, 9_999, 1)).resolves.toBeUndefined()
+    expect(indexReads(path)).toBe(1)
+  })
+
+  it('sees another instance’s commit, removal, and clear through the file signature', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'dsh-upload-index-'))
+    roots.push(dir)
+    const path = join(dir, 'index.json')
+    const reader = new DeepSeekUploadIndex(path)
+    const writer = new DeepSeekUploadIndex(path)
+    const scope = deepSeekFileScope('https://api.deepseek.com', 'key')
+    const record = {
+      scope, attachmentId: ATTACHMENT, variantId: VARIANT,
+      fileId: DeepSeekFileId('file-api-cross-process'), bytes: 3, createdAt: 1, expiresAt: 10_000,
+    }
+    await writer.commit(record, 1, 1)
+    await expect(reader.get(scope, VARIANT, 1, 1)).resolves.toEqual(record)
+
+    // Once the first record expires, an identical-length successor must not be
+    // mistaken for the cached parse.
+    const successor = {
+      ...record, fileId: DeepSeekFileId('file-api-cross-procesz'), createdAt: 20_000, expiresAt: 30_000,
+    }
+    await writer.commit(successor, 20_000, 1)
+    await expect(reader.get(scope, VARIANT, 20_000, 1)).resolves.toEqual(successor)
+
+    await writer.remove(scope, [{ variantId: VARIANT, fileId: successor.fileId }])
+    await expect(reader.get(scope, VARIANT, 20_000, 1)).resolves.toBeUndefined()
+
+    await writer.commit(successor, 2, 1)
+    await expect(reader.get(scope, VARIANT, 2, 1)).resolves.toEqual(successor)
+
+    await writer.clear(scope)
+    await expect(reader.get(scope, VARIANT, 2, 1)).resolves.toBeUndefined()
   })
 
   it('keeps a reusable cross-process winner and removes only an exact generation', async () => {
