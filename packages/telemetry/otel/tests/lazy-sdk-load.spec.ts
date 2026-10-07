@@ -105,6 +105,28 @@ it('mounts the service and creates a Session channel without importing the SDK g
   expect(loads.names).toEqual([])
 })
 
+it('keeps unused reporting channels closed after shutdown', async () => {
+  const target = await collector()
+  const ctx = new Context()
+  cleanup.push(() => ctx.fiber.dispose())
+  await ctx.plugin(OTel)
+  const { sender: session } = sessionChannel(ctx, target.url)
+  const ordinary = new EventLogReporter({
+    scope: { name: 'unused-channel' }, exporter: { url: target.url, timeoutMillis: 1000 },
+    resourceAttributes: {}, processor: {}, onFailure: vi.fn(),
+  })
+  cleanup.push(() => ordinary.shutdown())
+  const before = loads.names.length
+  await session.shutdown()
+  await ordinary.shutdown()
+  session.reportSessionLog(sessionRecord(9))
+  ordinary.emit({ eventName: 'late-unused', body: 'late-unused', timestamp: 1 })
+  await session.shutdown()
+  await ordinary.shutdown()
+  expect(loads.names.length).toBe(before)
+  expect(target.bodies).toEqual([])
+})
+
 it('imports the Session SDK graph on the first report and reuses it for later reports', async () => {
   const target = await collector()
   const ctx = new Context()
@@ -112,9 +134,24 @@ it('imports the Session SDK graph on the first report and reuses it for later re
   await ctx.plugin(OTel)
   const { sender, onFailure } = sessionChannel(ctx, target.url)
   const before = loads.names.length
+  const { sender: concurrent } = sessionChannel(ctx, target.url)
+  const { sender: stopped } = sessionChannel(ctx, target.url)
+  const rejecting = ctx.otel.createSessionLogReporter({
+    scope: { name: 'deadline-during-drain' }, exporter: { url: target.url }, resourceAttributes: {},
+    maxRequestBytes: 1, onFailure: () => { rejecting.stopPending() },
+  })
+  cleanup.push(() => rejecting.shutdown())
   sender.reportSessionLog(sessionRecord())
+  concurrent.reportSessionLog(sessionRecord(3))
+  stopped.reportSessionLog(sessionRecord(4))
+  stopped.stopPending()
+  rejecting.reportSessionLog(sessionRecord(5))
+  rejecting.reportSessionLog(sessionRecord(6))
+  await Promise.all([concurrent.shutdown(), stopped.shutdown(), rejecting.shutdown()])
   sender.reportSessionLog(sessionRecord(1))
-  await sender.shutdown()
+  const shutdown = sender.shutdown()
+  sender.reportSessionLog(sessionRecord(2))
+  await shutdown
   expect(loads.names.length).toBeGreaterThan(before)
   expect(loads.names).toContain('@opentelemetry/sdk-logs')
   expect(loads.names).toContain('@opentelemetry/otlp-transformer')
@@ -123,6 +160,9 @@ it('imports the Session SDK graph on the first report and reuses it for later re
   const body = target.bodies.join('')
   expect(body).toContain('lazy-sdk-0')
   expect(body.indexOf('lazy-sdk-0')).toBeLessThan(body.indexOf('lazy-sdk-1'))
+  expect(body).not.toContain('lazy-sdk-2')
+  expect(body).toContain('lazy-sdk-3')
+  expect(body).not.toContain('lazy-sdk-4')
 })
 
 it('imports got and the ordinary-event SDK graph on the first report', async () => {
@@ -134,13 +174,46 @@ it('imports got and the ordinary-event SDK graph on the first report', async () 
     processor: { scheduledDelayMillis: 60000 }, onFailure,
   })
   cleanup.push(() => sender.shutdown())
-  const before = loads.names.length
   const gotBefore = moduleLoads('got')
-  await sender.shutdown()
-  expect(loads.names.length).toBe(before)
-  sender.emit({ eventName: 'lazy-sdk-event', body: 'lazy-sdk-event', timestamp: 1_800_000_000_000 })
-  await sender.shutdown()
+  const concurrent = new EventLogReporter({
+    scope: { name: 'concurrent-event' }, exporter: { url: target.url }, resourceAttributes: {},
+    processor: { scheduledDelayMillis: 60000 }, onFailure,
+  })
+  cleanup.push(() => concurrent.shutdown())
+  sender.emit({ eventName: 'lazy-sdk-event' , body: 'lazy-sdk-event', timestamp: 1_800_000_000_000 })
+  concurrent.emit({ eventName: 'concurrent-event', body: 'concurrent-event', timestamp: 1 })
+  const shutdown = Promise.all([sender.shutdown(), concurrent.shutdown()])
+  sender.emit({ eventName: 'late-event', body: 'late-event', timestamp: 1 })
+  await shutdown
   expect(moduleLoads('got')).toBe(gotBefore + 1)
   expect(onFailure).not.toHaveBeenCalled()
   expect(target.bodies.join('')).toContain('lazy-sdk-event')
+  expect(target.bodies.join('')).not.toContain('late-event')
+})
+
+it('reports synchronously on a connected channel and releases its exporter once', async () => {
+  const target = await collector()
+  const transport = await import('../src/event-transport.ts')
+  const create = vi.spyOn(transport, 'createEventLogExporter')
+  const sender = new EventLogReporter({
+    scope: { name: 'connected-channel' }, exporter: { url: target.url, timeoutMillis: 1000 },
+    resourceAttributes: {}, processor: { scheduledDelayMillis: 60000 }, onFailure: vi.fn(),
+  })
+  cleanup.push(() => sender.shutdown())
+  sender.emit({ eventName: 'connected-first', body: 'connected-first', timestamp: 1 })
+  await vi.waitFor(() => { expect(create).toHaveBeenCalledTimes(1) })
+  const exporter = create.mock.results[0]!.value
+  const close = vi.spyOn(exporter, 'shutdown')
+  sender.emit({ eventName: 'connected-second', body: 'connected-second', timestamp: 2 })
+  expect(create).toHaveBeenCalledTimes(1)
+  await sender.shutdown()
+  const calls = close.mock.calls.length
+  expect(calls).toBe(1)
+  sender.emit({ eventName: 'connected-late', body: 'connected-late', timestamp: 3 })
+  await sender.shutdown()
+  expect(close).toHaveBeenCalledTimes(calls)
+  const body = target.bodies.join('')
+  expect(body).toContain('connected-first')
+  expect(body).toContain('connected-second')
+  expect(body).not.toContain('connected-late')
 })

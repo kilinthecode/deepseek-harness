@@ -30,7 +30,6 @@ let loaded: SessionLogSdk | undefined
  * @returns the shared SDK entry points.
  */
 function loadSdk(): Promise<SessionLogSdk> {
-  if (loaded !== undefined) return Promise.resolve(loaded)
   const pending = loading
   if (pending !== undefined) return pending
   const started = Promise.all([
@@ -232,6 +231,7 @@ export class SessionLogReporter {
   private readonly sdkLoad: SdkLoad<SessionLogSdk>
   /** Records reported before the pipeline existed; delivered in report order. */
   private readonly pending: SessionLogRecord[] = []
+  private shutdownPromise: Promise<void> | undefined
   private stopped = false
   private readonly options: SessionLogOptions
 
@@ -296,7 +296,6 @@ export class SessionLogReporter {
    * `onFailure` and leaves the queued records for the next report's retry.
    */
   private startLoading(): void {
-    if (this.logger !== undefined) return
     this.sdkLoad.start((sdk) => { this.flush(sdk) })
   }
 
@@ -304,10 +303,11 @@ export class SessionLogReporter {
    * Enqueue one complete event without acknowledging network delivery. The first
    * report imports the OTLP SDK graph; records reported while it loads are delivered
    * in report order. Once loaded, this call stays synchronous.
+   * Reports after shutdown begins are ignored.
    * @param record - event with redacted data and its original Session id.
    */
   reportSessionLog(record: SessionLogRecord): void {
-    if (this.stopped) return
+    if (this.stopped || this.shutdownPromise !== undefined) return
     const sdk = loaded
     // While this channel's load is outstanding, a report joins the queue behind the
     // earlier ones, even after the shared graph finished loading.
@@ -331,12 +331,14 @@ export class SessionLogReporter {
   }
 
   /**
-   * Drain queued requests and release the SDK transport. A load started by an
-   * earlier report is awaited first; a channel that never reported imports and
-   * shuts down no SDK state.
+   * Stop accepting records synchronously, then drain and release the SDK transport.
+   * Accepted records await an in-flight SDK load before cleanup. Repeated calls
+   * share the same completion; an unused channel creates no SDK state.
    * @returns completion after queued requests settle and the SDK transport shuts down.
    */
   shutdown(): Promise<void> {
-    return this.sdkLoad.settled().then(() => this.provider?.shutdown())
+    this.shutdownPromise ??= this.sdkLoad.settled().then(() => this.provider?.shutdown())
+      .finally(() => { this.pending.length = 0 })
+    return this.shutdownPromise
   }
 }

@@ -31,6 +31,8 @@ base bundle 挂载 `@deepseek-ai/dsh-otel`。独立组合必须在注入 `otel` 
 
 Header 显式提供。服务不会附加 channel header，也不继承环境中的授权 header 或 TLS 身份。Agent factory 配置返回的 agent，包括 keepAlive。普通事件通道在关闭时销毁自己的 agent；factory 必须为每个通道提供独立 agent。每个调用方提供 scope 名称和版本，因此共享传输不会改变事件归属。
 
+shutdown 会同步关闭通道的新记录入口。已接受的记录会等待正在进行的 SDK 加载，并在清理前排空；后续上报会被忽略。重复调用 shutdown 会共享同一次完成结果。
+
 <a id="understand-the-implementation"></a>
 ## 理解实现
 

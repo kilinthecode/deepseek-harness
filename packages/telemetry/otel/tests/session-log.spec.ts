@@ -300,3 +300,17 @@ it('keeps ordinary events and Session logs in independent channels through one C
   await ctx.fiber.dispose()
   expect(ctx.get('otel')).toBeUndefined()
 })
+
+
+it('exports a partial batch when its configured delay elapses', async () => {
+  vi.useFakeTimers()
+  const transport = await import('../src/transport.ts')
+  const send = vi.fn<import('@opentelemetry/sdk-logs').LogRecordExporter['export']>((_records, callback) => { callback({ code: 0 }) })
+  vi.spyOn(transport, 'createLogExporter').mockReturnValue({ export: send, forceFlush: async () => {}, shutdown: async () => {} })
+  const { sender } = reporter('http://collector.test/logs', { processor: { scheduledDelayMillis: 25 } })
+  sender.reportSessionLog(sessionRecord('scheduled'))
+  await vi.advanceTimersByTimeAsync(25)
+  expect(send).toHaveBeenCalledTimes(1)
+  await sender.shutdown()
+  expect(send).toHaveBeenCalledTimes(1)
+})

@@ -66,3 +66,17 @@ it('reports a failed event SDK load, retries it on the next report, and still sh
   expect(onFailure).toHaveBeenNthCalledWith(2, 'Product telemetry SDK failed to load', expect.any(Error))
   await expect(sender.shutdown()).resolves.toBeUndefined()
 })
+
+
+it('bounds ordinary records during a failed import with the SDK default queue limit', async () => {
+  const onFailure = vi.fn()
+  const sender = new EventLogReporter({
+    scope: { name: 'bounded-events' }, exporter: { url: 'http://collector.test/logs' },
+    resourceAttributes: {}, processor: {}, onFailure,
+  })
+  try {
+    for (let i = 0; i < 2049; i++) sender.emit({ eventName: 'bounded', body: String(i), timestamp: i })
+    await sender.shutdown()
+    expect(onFailure).toHaveBeenCalledTimes(1)
+  } finally { await sender.shutdown() }
+})

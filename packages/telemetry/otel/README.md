@@ -31,6 +31,8 @@ Ordinary channels use SDK count-based batching. Session channels preserve one co
 
 Headers are explicit. The service does not add a channel header or inherit ambient authorization headers or TLS identity. Agent factories configure their returned agents, including keepAlive. Ordinary-event channels destroy their agent on shutdown; factories must provide a dedicated agent for each channel. Scope names and versions are supplied by each consumer, so transport sharing does not change event attribution.
 
+Shutdown closes the channel to new records synchronously. Accepted records await an in-flight SDK load and drain before cleanup; later reports are ignored. Repeated shutdown calls share the same completion.
+
 <a id="understand-the-implementation"></a>
 ## Understand the implementation
 

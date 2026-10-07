@@ -2,7 +2,7 @@
 import { addAbortListener } from 'node:events'
 import type { Attributes } from '@opentelemetry/api'
 import type { Logger, SeverityNumber } from '@opentelemetry/api-logs'
-import type { BatchLogRecordProcessorOptions, LogRecordExporter, LoggerProvider } from '@opentelemetry/sdk-logs'
+import type { BatchLogRecordProcessorOptions, LoggerProvider } from '@opentelemetry/sdk-logs'
 import type { SessionLogOptions } from './session-log.ts'
 import { SdkLoad } from './sdk-load.ts'
 
@@ -27,7 +27,6 @@ let loaded: EventLogSdk | undefined
  * @returns the shared SDK entry points.
  */
 function loadSdk(): Promise<EventLogSdk> {
-  if (loaded !== undefined) return Promise.resolve(loaded)
   const pending = loading
   if (pending !== undefined) return pending
   const started = Promise.all([
@@ -87,7 +86,7 @@ export interface EventLogOptions {
  * built on the first report, or by a shutdown that follows one.
  */
 export class EventLogReporter {
-  private exporter: LogRecordExporter | undefined
+  private shutdownExporter: (() => Promise<void>) | undefined
   private provider: LoggerProvider | undefined
   private logger: Logger | undefined
   /** This reporter's SDK import, started by the first report and awaited by shutdown. */
@@ -95,6 +94,7 @@ export class EventLogReporter {
   /** Records reported before the pipeline existed; delivered in report order. */
   private readonly pending: EventLogEntry[] = []
   private readonly cancellation = new AbortController()
+  private shutdownPromise: Promise<void> | undefined
   private readonly options: EventLogOptions
 
   /** @param options - explicit transport, resource, scope, queue, and diagnostic settings. */
@@ -112,6 +112,8 @@ export class EventLogReporter {
     const connected = this.logger
     if (connected !== undefined) return connected
     const exporter = sdk.transport.createEventLogExporter(this.options.exporter, this.cancellation.signal)
+    let closing: Promise<void> | undefined
+    const shutdownExporter = (): Promise<void> => closing ??= exporter.shutdown()
     const provider = new sdk.sdkLogs.LoggerProvider({
       resource: sdk.resources.resourceFromAttributes(this.options.resourceAttributes),
       processors: [new sdk.sdkLogs.BatchLogRecordProcessor({
@@ -124,12 +126,12 @@ export class EventLogReporter {
             })
           },
           forceFlush: () => exporter.forceFlush(),
-          shutdown: () => exporter.shutdown(),
+          shutdown: shutdownExporter,
         },
       })],
     })
     const logger = provider.getLogger(this.options.scope.name, this.options.scope.version)
-    this.exporter = exporter
+    this.shutdownExporter = shutdownExporter
     this.provider = provider
     this.logger = logger
     return logger
@@ -154,7 +156,6 @@ export class EventLogReporter {
    * `onFailure` and leaves the queued records for the next report's retry.
    */
   private startLoading(): void {
-    if (this.logger !== undefined) return
     this.sdkLoad.start((sdk) => { this.flush(sdk) })
   }
 
@@ -162,9 +163,11 @@ export class EventLogReporter {
    * Enqueue caller-selected analytics fields without acknowledging delivery. The
    * first report imports the OTLP SDK and `got` graph; records reported while it
    * loads are delivered in report order. Once loaded, this call stays synchronous.
+   * Reports after shutdown begins are ignored.
    * @param record - the ordinary event to report.
    */
   emit(record: OTelEventRecord): void {
+    if (this.shutdownPromise !== undefined) return
     const entry: EventLogEntry = { record, observedTimestamp: Date.now() }
     const sdk = loaded
     // While this channel's load is outstanding, a report joins the queue behind the
@@ -178,31 +181,37 @@ export class EventLogReporter {
     this.flush(sdk, entry)
   }
 
+  /** Drain accepted records and release the SDK and exporter once. */
+  private async drain(): Promise<void> {
+    try {
+      await this.sdkLoad.settled()
+      const provider = this.provider
+      const shutdownExporter = this.shutdownExporter
+      if (provider === undefined || shutdownExporter === undefined) return
+      try { await provider.shutdown() }
+      finally { await shutdownExporter() }
+    } finally {
+      this.pending.length = 0
+    }
+  }
+
   /**
-   * Drain the queue and release its transport, cancelling remaining exports when the caller aborts.
-   * A load started by an earlier report is awaited first; a channel that never
-   * reported imports and shuts down no SDK state.
+   * Stop accepting records synchronously, then drain and release the transport.
+   * Accepted records await an in-flight SDK load before cleanup. Repeated calls
+   * share cleanup; each caller's signal can cancel requests and retry waits.
+   * A channel that never reported imports and shuts down no SDK state.
    * @param signal - optional shutdown deadline; abort discards pending exports and cancels retry waits.
    * @returns completion of SDK shutdown and transport cleanup.
    */
   async shutdown(signal?: AbortSignal): Promise<void> {
+    this.shutdownPromise ??= this.drain()
     const abort = (): void => { this.cancellation.abort(signal?.reason) }
     const listener = signal === undefined ? undefined : addAbortListener(signal, abort)
     if (signal?.aborted) abort()
     try {
-      await this.sdkLoad.settled()
-      const provider = this.provider
-      const exporter = this.exporter
-      if (provider === undefined || exporter === undefined) return
-      try { await provider.shutdown() }
-      finally {
-        // SDK batch shutdown can reject before it releases the exporter.
-        try { await exporter.shutdown() }
-        finally { listener?.[Symbol.dispose]() }
-      }
+      await this.shutdownPromise
     } finally {
-      // The listener is disposed on every path, including a channel that never loaded.
-      if (this.provider === undefined && listener !== undefined) listener[Symbol.dispose]()
+      listener?.[Symbol.dispose]()
     }
   }
 }
