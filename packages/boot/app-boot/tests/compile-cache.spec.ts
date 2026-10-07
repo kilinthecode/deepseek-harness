@@ -4,7 +4,7 @@ import { enableDshCompileCache } from '../src/compile-cache.ts'
 
 const cache = vi.hoisted(() => ({ enable: vi.fn(), available: true }))
 vi.mock('node:module', async original => ({
-  ...await original<typeof import('node:module')>(),
+  constants: (await original<typeof import('node:module')>()).constants,
   get enableCompileCache() { return cache.available ? cache.enable : undefined },
 }))
 vi.mock('@deepseek-ai/dsh-home-paths', () => ({ dshCachePath: (name: string) => `/cache/${name}` }))

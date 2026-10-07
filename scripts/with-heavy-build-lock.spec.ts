@@ -31,7 +31,7 @@ function launch(args: string[], env: NodeJS.ProcessEnv, raw = true, cwd?: string
   const finished = once(child, 'close')
   const observed: string[] = []
   const pending = new Map<string, () => void>()
-  for (const stream of [child.stdout!, child.stderr!]) {
+  for (const stream of [child.stdout, child.stderr]) {
     createInterface({ input: stream }).on('line', (line) => { observed.push(line); pending.get(line)?.() })
   }
   const line = (value: string) => observed.includes(value)
@@ -46,10 +46,10 @@ it('serializes separate local commands and releases the lease after child comple
   const b = launch([f.file], f.env)
   await b.line('Waiting for the other local build or gate to finish.')
   expect(b.observed).not.toContain('started')
-  a.child.stdin!.end('release')
+  a.child.stdin.end('release')
   expect((await a.finished)[0]).toBe(0)
   await b.line('started')
-  b.child.stdin!.end('release')
+  b.child.stdin.end('release')
   expect((await b.finished)[0]).toBe(0)
 })
 it('allows nested commands to inherit the owning lease', async () => {
@@ -76,7 +76,7 @@ it('cancels a waiting command without starting its child', async () => {
   // Windows terminates SIGTERM targets without executing their signal handlers.
   if (process.platform !== 'win32') expect(result[0]).toBe(143)
   expect(b.observed).not.toContain('started')
-  a.child.stdin!.end('release')
+  a.child.stdin.end('release')
   await a.finished
 })
 it('uses independent CI allocations without acquiring the local lease', async () => {
@@ -85,7 +85,7 @@ it('uses independent CI allocations without acquiring the local lease', async ()
   await a.line('started')
   const b = launch(['-e', 'process.exit(0)'], { ...f.env, CI: 'true' })
   expect((await b.finished)[0]).toBe(0)
-  a.child.stdin!.end('release')
+  a.child.stdin.end('release')
   await a.finished
 })
 it('rejects relative lease paths before spawning', async () => {

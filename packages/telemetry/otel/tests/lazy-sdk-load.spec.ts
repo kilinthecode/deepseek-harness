@@ -202,8 +202,9 @@ it('reports synchronously on a connected channel and releases its exporter once'
   cleanup.push(() => sender.shutdown())
   sender.emit({ eventName: 'connected-first', body: 'connected-first', timestamp: 1 })
   await vi.waitFor(() => { expect(create).toHaveBeenCalledTimes(1) })
-  const exporter = create.mock.results[0]!.value
-  const close = vi.spyOn(exporter, 'shutdown')
+  const result = create.mock.results.at(0)
+  if (result?.type !== 'return') throw new Error('Expected the connected exporter factory to return')
+  const close = vi.spyOn(result.value, 'shutdown')
   sender.emit({ eventName: 'connected-second', body: 'connected-second', timestamp: 2 })
   expect(create).toHaveBeenCalledTimes(1)
   await sender.shutdown()
