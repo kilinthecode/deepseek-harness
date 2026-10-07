@@ -118,6 +118,8 @@ Loader 结算后，app-boot 在仅 optional 条目未激活时输出警告。如
 
 -----
 
+启动器编译缓存跳过帮助和版本调用，并尊重显式的 Node 缓存设置。没有该 API 的运行时跳过尝试；缓存失败状态或异常会输出一条诊断，启动仍可继续。
+
 <a id="understand-the-implementation"></a>
 ## 理解实现
 

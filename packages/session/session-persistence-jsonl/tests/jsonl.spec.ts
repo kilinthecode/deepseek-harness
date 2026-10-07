@@ -35,6 +35,7 @@ const statFailure = vi.hoisted(() => ({
 }))
 
 const readdirFailure = vi.hoisted(() => ({
+  skip: 0,
   path: undefined as string | undefined,
   error: undefined as Error | undefined,
 }))
@@ -47,6 +48,8 @@ const readTally = vi.hoisted(() => ({
 
 /** Shifts the birth time one path reports, as a file recreated on a reused inode would. */
 const birthShift = vi.hoisted(() => ({ path: undefined as string | undefined, delta: 0n }))
+
+const openFailure = vi.hoisted(() => ({ path: undefined as string | undefined, error: undefined as Error | undefined }))
 
 const openTally = vi.hoisted(() => ({
   /** Physical open() calls per path; a header decode costs exactly one. */
@@ -100,6 +103,7 @@ vi.mock('node:fs/promises', async (importOriginal) => {
       if (openTally.enabled && path !== undefined) {
         openTally.byPath.set(path, (openTally.byPath.get(path) ?? 0) + 1)
       }
+      if (path === openFailure.path && openFailure.error !== undefined) throw openFailure.error
       return actual.open(...args)
     }),
     readFile: (async (...args: Parameters<typeof actual.readFile>) => {
@@ -125,7 +129,8 @@ vi.mock('node:fs/promises', async (importOriginal) => {
     }) as typeof actual.readFile,
     readdir: (async (...args: Parameters<typeof actual.readdir>) => {
       if (String(args[0]) === readdirFailure.path && readdirFailure.error !== undefined) {
-        throw readdirFailure.error
+        if (readdirFailure.skip > 0) readdirFailure.skip--
+        else throw readdirFailure.error
       }
       return actual.readdir(...args)
     }) as typeof actual.readdir,
@@ -332,8 +337,11 @@ afterEach(async () => {
   pausedRead.release = undefined
   pausedRead.done = undefined
   pausedRead.finished = undefined
+  openFailure.path = undefined
+  openFailure.error = undefined
   statFailure.path = undefined
   statFailure.error = undefined
+  readdirFailure.skip = 0
   readdirFailure.path = undefined
   readdirFailure.error = undefined
   vi.restoreAllMocks()
@@ -1245,6 +1253,18 @@ describe('JsonlSessionPersistence: immutable format generations', () => {
       .rejects.toThrow(/released v0 physical header lacks required member "type"/)
   })
 
+  it('returns absence when a project disappears during the historical corpus walk after discovery', async () => {
+    const parent = meta('corpus-project-race', '/work')
+    const path = historicalLogPath(root, parent.cwd, parent.id)
+    await mkdir(dirname(path), { recursive: true })
+    await writeFile(path, `${JSON.stringify(releasedV0Header(parent))}\n`)
+    readdirFailure.path = projectDir(root, parent.cwd)
+    readdirFailure.skip = 1
+    readdirFailure.error = Object.assign(new Error('project vanished after discovery'), { code: 'ENOENT' })
+    expect(await ctx.sessionPersistence.stat(parent.id)).toBeUndefined()
+    expect(readdirFailure.skip).toBe(0)
+  })
+
   it('tracks a disappearing corpus member and propagates its storage faults in historical revisions', async () => {
     const parent = meta('corpus-revision-parent', '/work')
     const child = meta('corpus-revision-child', '/work')
@@ -2115,7 +2135,30 @@ describe('JsonlSessionPersistence: stored-header memo', () => {
   })
   afterEach(async () => { await ctx.fiber.dispose() })
 
-  it('opens each stored header once across repeated listings', async () => {
+  it('checks the requested identity even when listing memoized a different header id', async () => {
+    const stored = meta('memo-physical-id', '/work')
+    await writeLog(ctx.sessionPersistence, stored, oneTurnLog())
+    const path = rawLogPath(root, stored.cwd, stored.id)
+    await rewriteHeader(path, (header) => { header.id = 'memo-logical-id' })
+    const alias = rawLogPath(root, stored.cwd, SessionId('memo-logical-id'))
+    await mkdir(dirname(alias), { recursive: true })
+    await symlink(path, alias)
+    await expect(ctx.sessionPersistence.list()).rejects.toThrow(/duplicate JSONL session id/)
+    const mismatch = /requested id "memo-physical-id" does not match header id "memo-logical-id"/
+    await expect(ctx.sessionPersistence.stat(stored.id)).rejects.toThrow(mismatch)
+  })
+
+  it('handles disappearance between the memo guard stat and header open without hiding access failures', async () => {
+    const stored = meta('header-open-race')
+    await writeLog(ctx.sessionPersistence, stored, oneTurnLog())
+    openFailure.path = rawLogPath(root, stored.cwd, stored.id)
+    openFailure.error = Object.assign(new Error('vanished after stat'), { code: 'ENOENT' })
+    expect(await ctx.sessionPersistence.stat(stored.id)).toBeUndefined()
+    openFailure.error = Object.assign(new Error('header denied'), { code: 'EACCES' })
+    await expect(ctx.sessionPersistence.stat(stored.id)).rejects.toBe(openFailure.error)
+  })
+
+  it('opens each stored header once across repeated listings' , async () => {
     const first = meta('memo-a', '/work')
     const second = meta('memo-b', '/work')
     await writeLog(ctx.sessionPersistence, first, oneTurnLog())

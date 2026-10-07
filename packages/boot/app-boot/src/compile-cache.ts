@@ -21,8 +21,8 @@ export const COMPILE_CACHE_DIR_NAME = 'node-compile-cache'
  * process-wide module caching. An explicit `NODE_COMPILE_CACHE` or
  * `NODE_DISABLE_COMPILE_CACHE` keeps Node's own precedence, so a deployment
  * choice always wins. Every failure — an unwritable home, a cache volume Node
- * refuses, or a runtime without the API — is reported as one diagnostic line
- * and leaves the launch working without a cache.
+ * refuses — is reported as one diagnostic line and leaves the launch working
+ * without a cache. A runtime without the API skips the attempt.
  * An invocation carrying a help or version flag answers without compiling a profile,
  * so it stays cache-free wherever the flag appears.
  * @param executableName - the calling executable's display name for that diagnostic.

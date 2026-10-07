@@ -11,6 +11,8 @@ import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { pathToFileURL } from 'node:url'
+import { IncomingMessage, ServerResponse } from 'node:http'
+import { Socket } from 'node:net'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { Context } from '@deepseek-ai/cordis'
 import Loader from '@deepseek-ai/cordis-plugin-loader'
@@ -278,4 +280,20 @@ describe('real Loader composition', () => {
     expect(index.headers.get('etag')).toBeNull()
     expect(index.headers.get('cache-control')).toBeNull()
   })
+})
+
+
+it('propagates an index renderer failure instead of disguising it as a missing asset', async () => {
+  const socket = new Socket()
+  const message = new IncomingMessage(socket)
+  message.method = 'GET'
+  message.url = '/'
+  const response = new ServerResponse(message)
+  const failure = new Error('index injection failed')
+  const dist = join(tmpdir(), 'unused-dist')
+  try {
+    const render = async () => { throw failure }
+    await expect(FrontendStatic.serveStatic('/', response, dist, join(dist, 'index.html'), {}, () => true, render)).rejects.toBe(failure)
+    expect(response.headersSent).toBe(false)
+  } finally { response.destroy(); message.destroy(); socket.destroy() }
 })
