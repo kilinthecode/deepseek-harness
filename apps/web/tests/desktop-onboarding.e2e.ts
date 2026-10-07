@@ -172,7 +172,10 @@ describe.skipIf(MODE === 'record')('web e2e: App-only desktop onboarding', () =>
         expect(action!.y - (card!.y + card!.height)).toBeCloseTo(40, 0)
       }
       if (name === 'welcome' || name === 'credit') {
-        const illustrations = await page.locator('[class*="illustration"] > img:visible').evaluateAll(elements => elements.map((element) => {
+        const artwork = page.locator('[class*="illustration"] > img:visible')
+        await artwork.waitFor({ state: 'visible' })
+        await artwork.evaluate(node => (node as HTMLImageElement).decode())
+        const illustrations = await artwork.evaluateAll(elements => elements.map((element) => {
           const image = element as HTMLImageElement
           const box = image.getBoundingClientRect()
           return {
