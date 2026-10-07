@@ -498,6 +498,21 @@
       "source": "packages/experimental/peer-sessions/src/types.ts"
     },
     {
+      "doc": "docs/subsystems/peer-sessions.md",
+      "symbol": "PeerCheckout",
+      "source": "packages/experimental/peer-sessions/src/repo.ts"
+    },
+    {
+      "doc": "docs/subsystems/peer-sessions.md",
+      "symbol": "PeerActivitySnapshot",
+      "source": "packages/experimental/peer-sessions/src/types.ts"
+    },
+    {
+      "doc": "docs/subsystems/peer-sessions.md",
+      "symbol": "PeerActivitySource",
+      "source": "packages/experimental/peer-sessions/src/types.ts"
+    },
+    {
       "doc": "docs/subsystems/commands.md",
       "symbol": "CommandInputDescriptor",
       "source": "packages/interaction/commands/src/types.ts"

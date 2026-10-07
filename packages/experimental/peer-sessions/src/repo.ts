@@ -94,9 +94,21 @@ async function markerKey(directory: string, marker: string, entry: Stats): Promi
   return gitfileKey(directory, marker)
 }
 
+/** One working directory's checkout: the repository key that groups its peers, and the directory the walk stopped at. */
+export interface PeerCheckout {
+  /** Repository key of the checkout; exactly what {@link peerRepoKey} returns for the same directory. */
+  readonly key: string
+  /**
+   * Directory holding the `.git` entry the walk found: the checkout the working
+   * directory belongs to, so a linked worktree reports its own top. Every `dir:`
+   * fallback reports `canonicalCwd` instead, because a directory whose marker is
+   * unusable is its own root.
+   */
+  readonly root: string
+}
+
 /**
- * Resolve the repository key that groups peer sessions for one working
- * directory.
+ * Resolve the checkout one working directory belongs to.
  *
  * The walk starts at `canonicalCwd` and stops at the first `.git` entry it
  * finds: a directory keyed by its canonical path, or a file keyed by the
@@ -113,15 +125,29 @@ async function markerKey(directory: string, marker: string, entry: Stats): Promi
  * produce one key.
  *
  * @param canonicalCwd - canonical working directory of the session.
- * @returns `git:` plus the canonical repository directory, or `dir:` plus `canonicalCwd` when no repository is found.
+ * @returns the repository key and the checkout root that key was derived from.
  */
-export async function peerRepoKey(canonicalCwd: string): Promise<string> {
+export async function peerCheckout(canonicalCwd: string): Promise<PeerCheckout> {
   for (let directory = canonicalCwd;;) {
     const marker = join(directory, '.git')
     const entry = await lstatOrUndefined(marker)
-    if (entry !== undefined) return await markerKey(directory, marker, entry) ?? `dir:${canonicalCwd}`
+    if (entry !== undefined) {
+      const key = await markerKey(directory, marker, entry)
+      return key === undefined ? { key: `dir:${canonicalCwd}`, root: canonicalCwd } : { key, root: directory }
+    }
     const parent = dirname(directory)
-    if (parent === directory) return `dir:${canonicalCwd}`
+    if (parent === directory) return { key: `dir:${canonicalCwd}`, root: canonicalCwd }
     directory = parent
   }
+}
+
+/**
+ * Repository key that groups peer sessions for one working directory: the `key`
+ * of the checkout {@link peerCheckout} resolves.
+ *
+ * @param canonicalCwd - canonical working directory of the session.
+ * @returns `git:` plus the canonical repository directory, or `dir:` plus `canonicalCwd` when no repository is found.
+ */
+export async function peerRepoKey(canonicalCwd: string): Promise<string> {
+  return (await peerCheckout(canonicalCwd)).key
 }

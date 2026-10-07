@@ -1,11 +1,12 @@
 /**
  * Deterministic keyless adapter for the two-process peer-session e2e.
  *
- * One plugin serves both roles; the profile patch selects the role and the
- * strings the two sessions exchange. Sender turns call the peer tools in a
+ * One plugin serves every role; the profile patch selects the role and the
+ * strings the sessions exchange. Sender turns call the peer tools in a
  * fixed order, and target turns delegate one continuable subagent before they
  * answer, so the target process owns a child session whose mailbox the drain
- * must reject.
+ * must reject. Activity turns write one file through the real `write` tool
+ * when their task asks for it, and otherwise only answer.
  */
 
 import { LlmAdapter, ToolCallId } from '@deepseek-ai/dsh-llm'
@@ -81,6 +82,41 @@ function targetTurn(config, messages) {
   return textChunks('B_DONE')
 }
 
+/** The messages of the turn in progress: everything after the last answer that called no tool. */
+function currentTurn(messages) {
+  const answered = messages.findLastIndex(message => message.role === 'assistant'
+    && !message.content.some(block => block.type === 'tool-call'))
+  return messages.slice(answered + 1)
+}
+
+/**
+ * Activity turns: a task equal to `config.write` writes `config.path` once,
+ * then answers. The peer-activity messages a step may append are user-role
+ * messages of the same turn, so equality with the whole task text keeps them
+ * from being read as a task.
+ */
+function activityTurn(config, messages) {
+  const turn = currentTurn(messages)
+  const asked = turn.some(message => message.role === 'user' && textOf(message) === config.write)
+  if (asked && !calls(turn).includes('write')) {
+    return toolChunks([{
+      name: 'write',
+      args: { file_path: config.path, content: `${config.author} wrote ${config.path}\n` },
+    }])
+  }
+  return textChunks(`${config.author}_ACTIVITY_DONE`)
+}
+
+/** Choose this turn's scripted chunks by the role the profile patch selected. */
+function turnFor(config, messages) {
+  switch (config.role) {
+    case 'a': return senderTurn(config, messages)
+    case 'b': return targetTurn(config, messages)
+    case 'activity': return activityTurn(config, messages)
+    default: throw new Error(`peer-session-fixture-llm: unknown role ${JSON.stringify(config.role)}`)
+  }
+}
+
 class PeerSessionFixtureAdapter extends LlmAdapter {
   constructor(config) {
     super()
@@ -88,9 +124,7 @@ class PeerSessionFixtureAdapter extends LlmAdapter {
   }
 
   async * stream(options) {
-    const chunks = this.config.role === 'a'
-      ? senderTurn(this.config, options.messages)
-      : targetTurn(this.config, options.messages)
+    const chunks = turnFor(this.config, options.messages)
     for (const chunk of chunks) {
       options.signal?.throwIfAborted()
       yield chunk

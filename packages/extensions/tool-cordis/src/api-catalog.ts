@@ -1628,6 +1628,12 @@ export const SERVICE_API: readonly ServiceApiEntry[] = [
         throws: ['{PeerError} for an unresolved, unauthorized, full, or idle-turn-limited watch.'],
       },
       {
+        signature: 'async activitySnapshot(agent: Agent, step: number): Promise<PeerActivitySnapshot | undefined>',
+        description: 'Render what the caller\'s peers published, when this step has something new to show.\n\nThe block is data about other agents: it is not a user request and grants no authority, which is what the header says in as many words. A session that owns no activity row — a subagent, or one without a working directory — publishes no row, has no dedupe state of its own, and so is shown nothing.',
+        parameters: [{ name: 'agent', description: 'calling agent, whose repository and checkout scope the listed peers.' }, { name: 'step', description: 'step number inside the open turn. Step 1 shows a block whose text changed since the last one this session logged; a later step shows a block only to warn about an overlap it has not warned about yet, or to list a peer the last logged block did not list.' }],
+        returns: 'the rendered block, its sections, and the ids of the peers it lists, or `undefined` when no peer qualifies, when nothing fits the byte cap, or when this step already saw what it would say.',
+      },
+      {
         signature: 'async whenSettled(): Promise<void>',
         description: 'Resolve once every listener-owned operation this service started before the call has settled: coalesced presence writes, drain passes, and status reactions.\n\nTest seam, not part of the peer-sessions contract. A test that removes or rewrites a presence row awaits this so its own write is the final writer instead of racing the coalesced publication queued behind it, and one that waits for a reaction the listeners own gets the completion signal the disposer itself awaits. Production callers never need it: publications coalesce, and any later state change heals the row again.',
         parameters: [],
@@ -4896,6 +4902,10 @@ export const TYPE_API: readonly TypeApiEntry[] = [
     declaration: 'export type ContentBlockType = keyof ContentBlockMap;',
   },
   {
+    name: 'ContextSnapshotSection',
+    declaration: 'export interface ContextSnapshotSection {\n    readonly name: string;\n    readonly text: string;\n}',
+  },
+  {
     name: 'ContinuableCreateRequest',
     declaration: 'export interface ContinuableCreateRequest {\n    readonly sessionId: SessionId;\n    readonly parent: Agent;\n    readonly signal: AbortSignal;\n}',
   },
@@ -5938,6 +5948,10 @@ export const TYPE_API: readonly TypeApiEntry[] = [
   {
     name: 'PanelRoomPromptRequest',
     declaration: 'export interface PanelRoomPromptRequest {\n    readonly target: string;\n    readonly instruction: string;\n}',
+  },
+  {
+    name: 'PeerActivitySnapshot',
+    declaration: 'export interface PeerActivitySnapshot {\n    readonly text: string;\n    readonly sections: readonly ContextSnapshotSection[];\n    readonly peerIds: readonly SessionId[];\n}',
   },
   {
     name: 'PeerAdmission',

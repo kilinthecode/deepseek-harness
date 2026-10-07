@@ -17,11 +17,16 @@
  * The restart follows `dsh --profile headless --session-id <id>`, the shipped
  * resume path, so the queued envelope is delivered by the receiver's own
  * `agent/created` drain.
+ *
+ * The activity test reuses that repository and those helpers. Each process's
+ * scripted model writes one file through the real `write` tool, and the
+ * assertions read the persisted session logs: what the other process
+ * published reaches the next turn as one logged `peer-activity` message.
  */
 
 import { mkdir, mkdtemp, readFile, readdir, realpath, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { basename, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { createInterface } from 'node:readline'
 import { execa } from 'execa'
@@ -37,7 +42,7 @@ import {
   type PeerMailEnvelope,
   type PeerMessageId,
 } from '../src/index.ts'
-import { mailShardDirectory } from '../src/paths.ts'
+import { activityPath, mailShardDirectory } from '../src/paths.ts'
 
 /** Loose shape of one persisted or streamed session record. */
 interface JsonObject {
@@ -76,6 +81,16 @@ const RESUME_MAIL_ID = 'peer-e2e-resume-1'
 const SUBAGENT_MAIL_ID = 'peer-e2e-subagent-1'
 /** Task text of the resume that adopts the receiver's persisted Session. */
 const RESUME_TASK = 'PEER_E2E_RESUME_TASK'
+/** Path, relative to its checkout, that both activity sessions write through the `write` tool. */
+const ACTIVITY_PATH = 'src/a.ts'
+/** Task text that makes process A write {@link ACTIVITY_PATH}; A's first task, so also its fallback session title. */
+const ACTIVITY_A_WRITE = 'PEER_ACTIVITY_A_WRITE'
+/** Task text of A's second turn, which writes nothing. */
+const ACTIVITY_A_LOOK = 'PEER_ACTIVITY_A_LOOK'
+/** Task text of B's first and second turns, which write nothing; B's first task, so also its fallback session title. */
+const ACTIVITY_B_LOOK = 'PEER_ACTIVITY_B_LOOK'
+/** Task text that makes process B write {@link ACTIVITY_PATH}. */
+const ACTIVITY_B_WRITE = 'PEER_ACTIVITY_B_WRITE'
 
 const repoRoot = fileURLToPath(new URL('../../../../', import.meta.url))
 const binScript = join(repoRoot, 'apps/cli/src/bin.ts')
@@ -144,9 +159,16 @@ const MAILBOX_LIMITS = { maxPendingPerTarget: 8, maxPendingPerSenderPerTarget: 4
  * @param profile - profile directory name.
  * @param role - which fixture adapter role the process runs.
  * @param bundles - ordered bundle layers, including the peer-sessions bundle.
+ * @param adapterConfig - extra fixture adapter settings the role reads, as plain strings.
  * @returns the profile directory path.
  */
-async function writeProfile(home: string, profile: string, role: 'a' | 'b', bundles: readonly string[]): Promise<string> {
+async function writeProfile(
+  home: string,
+  profile: string,
+  role: 'a' | 'b' | 'activity',
+  bundles: readonly string[],
+  adapterConfig: Readonly<Record<string, string>> = {},
+): Promise<string> {
   const directory = join(home, 'profiles', profile)
   await mkdir(directory, { recursive: true })
   await writeFile(join(directory, 'package.json'), `${JSON.stringify({
@@ -177,6 +199,7 @@ async function writeProfile(home: string, profile: string, role: 'a' | 'b', bund
     `        target: '${SESSION_B}'`,
     `        body: '${SEND_BODY}'`,
     `        childPrompt: '${CHILD_PROMPT}'`,
+    ...Object.entries(adapterConfig).map(([key, value]) => `        ${key}: '${value}'`),
     '',
   ].join('\n'))
   return directory
@@ -422,29 +445,176 @@ function envelope(messageId: string, targetId: string, repoKey: string, text: st
   }
 }
 
+/** Bundle layers of the long-lived SDK processes: the shared core, the SDK server, and peer coordination. */
+const SDK_BUNDLES = [
+  '@deepseek-ai/dsh-base',
+  '@deepseek-ai/dsh-sdk-app',
+  '@deepseek-ai/dsh-experimental-peer-sessions-profile',
+] as const
+
+/** The hand-written repository both tests use. */
+interface RepositoryFixture {
+  /** Main checkout, whose `.git` is a directory. */
+  readonly main: string
+  /** Linked worktree, whose `.git` is a gitfile naming the main checkout's administrative directory. */
+  readonly worktree: string
+  /** Repository key that both directories resolve to. */
+  readonly repoKey: string
+}
+
+/**
+ * Write the fixture repository under one scratch root.
+ * @param root - canonical scratch directory that receives `repo` and `repo-wt`.
+ * @returns both checkouts and the repository key they share.
+ */
+async function writeRepositoryFixture(root: string): Promise<RepositoryFixture> {
+  const main = join(root, 'repo')
+  const worktree = join(root, 'repo-wt')
+  await mkdir(join(main, '.git', 'worktrees', 'wt'), { recursive: true })
+  await writeFile(join(main, '.git', 'worktrees', 'wt', 'commondir'), '../..\n')
+  await writeFile(join(main, 'README.md'), 'peer e2e fixture checkout\n')
+  await mkdir(worktree, { recursive: true })
+  await writeFile(join(worktree, '.git'), `gitdir: ${join(main, '.git', 'worktrees', 'wt')}\n`)
+  const repoKey = await peerRepoKey(await realpathNormalize(worktree))
+  expect(await peerRepoKey(await realpathNormalize(main)), 'fixture worktrees share one repository').toBe(repoKey)
+  return { main, worktree, repoKey }
+}
+
+/** The fields of one published activity row that these tests read. */
+interface ActivityRowView {
+  readonly status: string
+  readonly files: readonly { readonly p: string }[]
+}
+
+/**
+ * Read one session's published activity row.
+ * @param home - the shared Harness home.
+ * @param sessionId - the session whose row to read.
+ * @returns the row, or `undefined` while none is published.
+ */
+async function readActivityRow(home: string, sessionId: string): Promise<ActivityRowView | undefined> {
+  try {
+    return JSON.parse(await readFile(activityPath(home, sessionId), 'utf8')) as ActivityRowView
+  } catch (error: unknown) {
+    if ((error as NodeJS.ErrnoException).code === 'ENOENT') return undefined
+    throw error
+  }
+}
+
+/**
+ * Wait until one session's published row is idle and lists a written path.
+ *
+ * The row is the channel the other process reads. Starting that process's next
+ * turn only after this holds keeps the turn from racing a publish that is
+ * still queued.
+ * @param home - the shared Harness home.
+ * @param sessionId - the session whose row to await.
+ * @param key - activity path key the row must list, such as `rel:src/a.ts`.
+ * @returns fulfillment once the row holds.
+ */
+async function awaitIdleRowWith(home: string, sessionId: string, key: string): Promise<void> {
+  await vi.waitFor(async () => {
+    const row = await readActivityRow(home, sessionId)
+    expect(row?.status, `${sessionId}: published status`).toBe('idle')
+    expect(row?.files.map(file => file.p), `${sessionId}: published files`).toContain(key)
+  }, { timeout: OBSERVE_TIMEOUT_MS, interval: 50 })
+}
+
+/**
+ * Wait until one session's persisted log holds a number of finished turns.
+ *
+ * A `turn/end` notification can arrive before the log file carries the turn,
+ * so every assertion that counts logged messages reads the file itself.
+ * @param home - the shared Harness home.
+ * @param sessionId - the session whose log to read.
+ * @param count - how many `turn/end` events the log must hold.
+ * @returns the log once it holds exactly that many.
+ */
+async function awaitLoggedTurns(home: string, sessionId: string, count: number): Promise<SessionLog> {
+  return await vi.waitFor(async () => {
+    const log = await findLog(home, sessionId)
+    expect(log, `${sessionId}: log exists`).toBeDefined()
+    expect((log as SessionLog).events.filter(event => event.type === 'turn/end'), `${sessionId}: logged turns`)
+      .toHaveLength(count)
+    return log as SessionLog
+  }, { timeout: OBSERVE_TIMEOUT_MS, interval: 100 })
+}
+
+/**
+ * Join the text blocks of one logged message.
+ * @param message - the `data` of a `user/message` event.
+ * @returns the message's model-facing text.
+ */
+function messageText(message: JsonObject): string {
+  return (message.content as JsonObject[])
+    .filter(block => block.type === 'text')
+    .map(block => block.text as string)
+    .join('')
+}
+
+/**
+ * List every logged `peer-activity` context message in one log.
+ * @param log - the parsed session log.
+ * @returns the `data` of each message, in log order.
+ */
+function peerActivityMessages(log: SessionLog): JsonObject[] {
+  return log.events
+    .filter(event => event.type === 'user/message')
+    .map(event => event.data as JsonObject)
+    .filter(data => (data.source as JsonObject).kind === 'peer-activity')
+}
+
+/**
+ * Name the sections one logged `peer-activity` message carries.
+ * @param message - the `data` of a `peer-activity` message.
+ * @returns the section names, in message order.
+ */
+function sectionNames(message: JsonObject): string[] {
+  return ((message.source as JsonObject).sections as JsonObject[]).map(section => section.name as string)
+}
+
+/**
+ * Decode the JSON block of one logged `peer-activity` message.
+ * @param message - the `data` of a `peer-activity` message.
+ * @returns the peers the block lists.
+ */
+function blockPeers(message: JsonObject): JsonObject[] {
+  const text = messageText(message)
+  const match = /<peer-activity-json>\n(.+)\n<\/peer-activity-json>/u.exec(text)
+  if (match === null) throw new Error(`the message carries no peer block:\n${text}`)
+  return (JSON.parse(match[1] as string) as { peers: JsonObject[] }).peers
+}
+
+/**
+ * The name a session's peers list it under: its logged title, else its id.
+ * @param log - the parsed log of that session.
+ * @returns the name.
+ */
+function peerName(log: SessionLog): string {
+  const title = log.events.filter(event => event.type === 'session/title').at(-1)?.data as JsonObject | undefined
+  return typeof title?.title === 'string' && title.title.length > 0 ? title.title : String(log.header.id)
+}
+
+/**
+ * The exact opening of one overlap warning.
+ * @param peer - the warned-about peer's name.
+ * @param path - the path the peer wrote and the warned session also wrote.
+ * @returns the text the warning starts with.
+ */
+function overlapOpening(peer: string, path: string): string {
+  return `Overlap with peer ${JSON.stringify(peer)}: it wrote ${JSON.stringify(path)}, which you also wrote or tried to write.`
+}
+
 describe('peer sessions across two dsh processes', () => {
   it('lists, steers, queues, and drops per target session', async () => {
     const root = await realpath(await mkdtemp(join(tmpdir(), 'dsh-peer-e2e-')))
     const home = join(root, 'home')
-    const main = join(root, 'repo')
-    const worktree = join(root, 'repo-wt')
     const processes: DshProcess[] = []
     try {
-      await mkdir(join(main, '.git', 'worktrees', 'wt'), { recursive: true })
-      await writeFile(join(main, '.git', 'worktrees', 'wt', 'commondir'), '../..\n')
-      await writeFile(join(main, 'README.md'), 'peer e2e fixture checkout\n')
-      await mkdir(worktree, { recursive: true })
-      await writeFile(join(worktree, '.git'), `gitdir: ${join(main, '.git', 'worktrees', 'wt')}\n`)
-      const repoKey = await peerRepoKey(await realpathNormalize(worktree))
-      expect(await peerRepoKey(await realpathNormalize(main)), 'fixture worktrees share one repository').toBe(repoKey)
+      const { main, worktree, repoKey } = await writeRepositoryFixture(root)
 
-      const sdkBundles = [
-        '@deepseek-ai/dsh-base',
-        '@deepseek-ai/dsh-sdk-app',
-        '@deepseek-ai/dsh-experimental-peer-sessions-profile',
-      ]
-      await writeProfile(home, 'peer-e2e-a', 'a', sdkBundles)
-      await writeProfile(home, 'peer-e2e-b', 'b', sdkBundles)
+      await writeProfile(home, 'peer-e2e-a', 'a', SDK_BUNDLES)
+      await writeProfile(home, 'peer-e2e-b', 'b', SDK_BUNDLES)
       await writeProfile(home, 'peer-e2e-resume', 'b', [
         '@deepseek-ai/dsh-base',
         '@deepseek-ai/dsh-headless',
@@ -579,6 +749,98 @@ describe('peer sessions across two dsh processes', () => {
       }, { timeout: OBSERVE_TIMEOUT_MS, interval: 100 })
 
       await stop(sender)
+    } finally {
+      for (const process of processes) {
+        if (process.running) process.kill()
+        await process.exit.catch(() => undefined)
+      }
+      await rm(root, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 })
+    }
+  }, TEST_TIMEOUT_MS)
+
+  it('shows each session what its peer wrote and warns both of a path they share', async () => {
+    const root = await realpath(await mkdtemp(join(tmpdir(), 'dsh-peer-activity-e2e-')))
+    const home = join(root, 'home')
+    const processes: DshProcess[] = []
+    try {
+      const { main, worktree } = await writeRepositoryFixture(root)
+      await writeProfile(home, 'peer-e2e-activity-a', 'activity', SDK_BUNDLES, {
+        author: 'A', write: ACTIVITY_A_WRITE, path: ACTIVITY_PATH,
+      })
+      await writeProfile(home, 'peer-e2e-activity-b', 'activity', SDK_BUNDLES, {
+        author: 'B', write: ACTIVITY_B_WRITE, path: ACTIVITY_PATH,
+      })
+      const prompt = (process: DshProcess, sessionId: string, text: string): void => {
+        process.send('session/prompt', { sessionId, contentBlocks: [{ type: 'text', text }] })
+      }
+
+      // B starts first and only looks, so it is an idle peer with nothing
+      // written when A's session begins.
+      const b = startDsh({ home, profile: 'peer-e2e-activity-b', cwd: root })
+      processes.push(b)
+      await awaitResponse(b, b.send('initialize', {
+        cwd: worktree, provider: 'deepseek-official', model: 'deepseek-flash',
+      }), 'B initialize')
+      prompt(b, SESSION_B, ACTIVITY_B_LOOK)
+      const bAlone = await awaitLoggedTurns(home, SESSION_B, 1)
+      expect(peerActivityMessages(bAlone), 'B ran alone, so it has no peer to be shown').toEqual([])
+
+      // A writes the path through the real file tool, in the main checkout.
+      const a = startDsh({ home, profile: 'peer-e2e-activity-a', cwd: root })
+      processes.push(a)
+      await awaitResponse(a, a.send('initialize', {
+        cwd: main, provider: 'deepseek-official', model: 'deepseek-flash',
+      }), 'A initialize')
+      prompt(a, SESSION_A, ACTIVITY_A_WRITE)
+      const aWrote = await awaitLoggedTurns(home, SESSION_A, 1)
+      expect(await readFile(join(main, ACTIVITY_PATH), 'utf8'), 'the write tool created the file in A\'s checkout')
+        .toBe(`A wrote ${ACTIVITY_PATH}\n`)
+      expect(peerActivityMessages(aWrote), 'B was idle and had written nothing, so A has nothing to be shown').toEqual([])
+      const nameA = peerName(aWrote)
+      await awaitIdleRowWith(home, SESSION_A, `rel:${ACTIVITY_PATH}`)
+
+      // B's next turn is shown what A published, once, before B writes anything.
+      prompt(b, SESSION_B, ACTIVITY_B_LOOK)
+      const bSawA = peerActivityMessages(await awaitLoggedTurns(home, SESSION_B, 2))
+      expect(bSawA, 'B logged one peer-activity message for its second turn').toHaveLength(1)
+      const [seen] = bSawA as [JsonObject]
+      expect(seen.source, 'the message is a snapshot from the peer-activity producer, and names A by session id')
+        .toMatchObject({ kind: 'peer-activity', form: 'snapshot', peerIds: [SESSION_A] })
+      expect(sectionNames(seen), 'A wrote nothing B wrote, so there is no overlap section').toEqual(['peer:activity'])
+      expect(blockPeers(seen), 'A is listed under its checkout directory with the file it wrote').toEqual([
+        { name: nameA, status: 'idle', checkout: basename(main), files: [ACTIVITY_PATH] },
+      ])
+
+      // B writes the same path in its own worktree.
+      prompt(b, SESSION_B, ACTIVITY_B_WRITE)
+      const bWrote = await awaitLoggedTurns(home, SESSION_B, 3)
+      expect(await readFile(join(worktree, ACTIVITY_PATH), 'utf8'), 'the write tool created the file in B\'s worktree')
+        .toBe(`B wrote ${ACTIVITY_PATH}\n`)
+      expect(await readFile(join(main, ACTIVITY_PATH), 'utf8'), 'B\'s write left A\'s checkout alone')
+        .toBe(`A wrote ${ACTIVITY_PATH}\n`)
+      const nameB = peerName(bWrote)
+      // The peer block did not change at B's next turn, so only the shared
+      // path reaches B, in the step that follows its own write.
+      const bWarned = peerActivityMessages(bWrote)
+      expect(bWarned, 'B logged the shared path once more').toHaveLength(2)
+      expect(sectionNames(bWarned[1] as JsonObject)).toEqual(['peer:activity', 'peer:overlap'])
+      expect(messageText(bWarned[1] as JsonObject), 'B is warned about A').toContain(overlapOpening(nameA, ACTIVITY_PATH))
+      await awaitIdleRowWith(home, SESSION_B, `rel:${ACTIVITY_PATH}`)
+
+      // A's next turn is shown B's write together with the overlap.
+      prompt(a, SESSION_A, ACTIVITY_A_LOOK)
+      const aWarned = peerActivityMessages(await awaitLoggedTurns(home, SESSION_A, 2))
+      expect(aWarned, 'A logged one peer-activity message for its second turn').toHaveLength(1)
+      const [warned] = aWarned as [JsonObject]
+      expect(sectionNames(warned)).toEqual(['peer:activity', 'peer:overlap'])
+      expect(warned.source, 'the message names B by session id').toMatchObject({ peerIds: [SESSION_B] })
+      expect(blockPeers(warned), 'B is listed under its worktree directory with the file it wrote').toEqual([
+        { name: nameB, status: 'idle', checkout: basename(worktree), files: [ACTIVITY_PATH] },
+      ])
+      expect(messageText(warned), 'A is warned about B').toContain(overlapOpening(nameB, ACTIVITY_PATH))
+
+      await stop(a)
+      await stop(b)
     } finally {
       for (const process of processes) {
         if (process.running) process.kill()

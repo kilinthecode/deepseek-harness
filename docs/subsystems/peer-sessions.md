@@ -2,7 +2,7 @@
 
 English | [中文](peer-sessions.zh.md)
 
-Types shared by the experimental peer-session service, its model tools, and the optional bundle that mounts them. The [peer sessions Agent Note](../../.agents/notes/implemented/feature/2026-09-29-peer-sessions.md) owns the mailbox, grouping, and safety decisions; this page records the durable and client-visible forms from [`packages/experimental/peer-sessions/src/types.ts`](../../packages/experimental/peer-sessions/src/types.ts).
+Types shared by the experimental peer-session service, its model tools, and the optional bundle that mounts them. The [peer sessions Agent Note](../../.agents/notes/implemented/feature/2026-09-29-peer-sessions.md) owns the mailbox, grouping, and safety decisions, and the [peer activity Agent Note](../../.agents/notes/implemented/feature/2026-09-30-peer-activity.md) owns the activity decisions; this page records the durable and client-visible forms from [`packages/experimental/peer-sessions/src/types.ts`](../../packages/experimental/peer-sessions/src/types.ts) and [`repo.ts`](../../packages/experimental/peer-sessions/src/repo.ts).
 
 ## Peer identity
 
@@ -94,6 +94,68 @@ interface NotifyPeerIdleResult {
 }
 ```
 
+<a id="activity"></a>
+## Activity
+
+Each top-level session with a usable working directory publishes one activity row, so peers working in one repository can avoid overwriting each other's files. The row is `$DSH_HOME/peers/activity/<sha256(sessionId)>.json`, beside the presence row. It holds the repository key, working directory, checkout `root`, title as `name`, `status`, `doing`, `files`, pid, and the time of the last publish. The service rewrites the row when the status, the title, an approval question, the todo list, or the file list changes, and removes it when the agent is disposed. A reader removes a row whose pid fails the `process.kill(pid, 0)` probe with `ESRCH`, and skips a row that fails validation, including a row of another `version`, without deleting it.
+
+`doing` is the first `in_progress` item of the session's own latest `todo_write` list, cut to 120 characters. A path enters `files` only when a `write`, `edit`, or mutating `str_replace_editor` call reports success, newest first, at most `maxActivityFiles`. A subagent's writes are recorded on its top-level ancestor when this process holds each parent up to that ancestor, within the `delegationDepth` of the subagent's header. Each path is keyed `rel:` against the checkout root, or `abs:` when it lies outside the root.
+
+`peerCheckout` supplies the root. It walks up as `peerRepoKey` does, and `root` is the directory that holds the `.git` entry the walk stopped at, so a linked worktree reports its own top; a `dir:` fallback reports the canonical working directory. Keying against the root, not the working directory, makes a session started in `packages/x` and a session started at the checkout top record one key for one file.
+
+```ts type-equiv
+/** One working directory's checkout: the repository key that groups its peers, and the directory the walk stopped at. */
+interface PeerCheckout {
+  /** Repository key of the checkout; exactly what {@link peerRepoKey} returns for the same directory. */
+  readonly key: string
+  /**
+   * Directory holding the `.git` entry the walk found: the checkout the working
+   * directory belongs to, so a linked worktree reports its own top. Every `dir:`
+   * fallback reports `canonicalCwd` instead, because a directory whose marker is
+   * unusable is its own root.
+   */
+  readonly root: string
+}
+```
+
+`activitySnapshot(agent, step)` renders the caller's peers for one step. It lists each other peer of the caller's repository that is `running` or `awaiting-user` or has a file written within `activityTtlMs`, ordered `running`, `awaiting-user`, then `idle`, newest publish first, at most `maxActivityPeers`. A peer whose checkout root equals the caller's is `shared`; a peer in another worktree is named by the last segment of its root. With `overlap: 'warn'`, one `peer:overlap` section follows the `peer:activity` block for each listed peer that wrote a path the caller also wrote or tried to write. The caller's paths come from lists that this process keeps as its tool calls and results arrive, so an attempted write counts even when the file tool rejected it, and a write whose row publish is still queued counts at once.
+
+A block over `maxActivityBytes` UTF-8 bytes loses peers from the end, then the last peer's files, then its `doing`, and carries `"truncated":true`; when even that does not fit, the snapshot is empty. Every peer-chosen string, meaning a name, a `doing` line, or a path, is JSON-encoded with `<` written as `\u003c` wherever it appears, so peer text cannot close the block.
+
+```ts type-equiv
+/** One rendered activity snapshot of the caller's peers, ready to become a `peer-activity` message. */
+interface PeerActivitySnapshot {
+  /** The section texts joined by a blank line — the complete text of the message that carries the snapshot. */
+  readonly text: string
+  /** The named sections {@link PeerActivitySnapshot.text} assembles, in order. */
+  readonly sections: readonly ContextSnapshotSection[]
+  /** Session ids of the peers the block lists, in block order; the message carries them as {@link PeerActivitySource.peerIds}. */
+  readonly peerIds: readonly SessionId[]
+}
+```
+
+The tool package appends the snapshot as a `user/message` whose source is `PeerActivitySource`, and the loop logs it. `peerIds` names the listed peers for the comparison at later steps, and the text never carries session ids. The kind is a qualified attribution kind: a build without this package keeps reading the log.
+
+```ts type-equiv
+/** Source of one activity snapshot this session was shown about its peers. */
+interface PeerActivitySource {
+  readonly kind: 'peer-activity'
+  readonly form: 'snapshot'
+  /** Named contributions in assembly order: the peer block, then one overlap warning per peer. */
+  readonly sections: readonly ContextSnapshotSection[]
+  /**
+   * Session ids of the peers the block lists, in block order. The rendered text
+   * never carries them: a later step compares them with the peers it would list
+   * to tell whether one appeared since this message.
+   */
+  readonly peerIds: readonly SessionId[]
+}
+```
+
+The host-only `peerActivity` projection folds the logged `peer-activity` messages into the last text, its overlap text, and the listed peer ids. At step 1 of a turn, a snapshot whose text differs from the last one is shown. At a later step, a snapshot is shown only for an overlap not yet warned about or for a listed peer that the last message did not list. A `compaction/end` event without `error` clears the projection, because the summary replaces the earlier message in the request; a failed compaction keeps it. The snapshot never begins a turn, and the tool package does not append it to a step that spends no model call. When `peers/activity` cannot be read, `activitySnapshot` logs one warning and returns nothing.
+
+Activity is advisory. No tool consults a row before it writes, and a write made through Bash, a formatter, or another process is not published. The generated [configuration catalog](../config-catalog.md#deepseek-aidsh-experimental-peer-sessions) lists `activityTtlMs`, `maxActivityFiles`, `maxActivityPeers`, `maxActivityBytes`, and `overlap`. The package [README](../../packages/experimental/peer-sessions/README.md#model-experience) owns the model-visible text and its cost.
+
 ## Relay limit and safety
 
 Relay depth records the deepest relay this session has received from each peer over the whole log; one send adds one hop, and a send that would exceed `PEER_RELAY_DEPTH_LIMIT`, four hops, is rejected with `PEER_RELAY_LIMIT` instead of enqueued. The budget restarts when the session logs a `user/message` whose source kind is `user`, which is a person re-engaging; a schedule, webhook, Team, or peer producer never restarts it.
@@ -108,7 +170,7 @@ Nothing here locks a file or a git ref. The mailbox lock serializes the cap chec
 
 ## Known limitations
 
-Repository grouping needs a usable `.git` marker, so a symlinked `.git`, a malformed gitfile, or an unreadable marker falls back to `dir:` plus the exact directory and that session groups with none of its checkout's worktrees. Presence has no heartbeat, so a crashed peer can stay listed until its session id is published again, and on Windows a recycled pid keeps a stale row while its mail stays `queued`. Mail for a session that no process holds live stays in its shard until some process holds that session, and the poll interval bounds that wait instead of losing the message. The package [README](../../packages/experimental/peer-sessions/README.md#known-limitations-and-deferred-work) owns the complete limit list.
+Repository grouping needs a usable `.git` marker, so a symlinked `.git`, a malformed gitfile, or an unreadable marker falls back to `dir:` plus the exact directory and that session groups with none of its checkout's worktrees. Presence has no heartbeat, so a crashed peer can stay listed until its session id is published again, and on Windows a recycled pid keeps a stale row while its mail stays `queued`. Mail for a session that no process holds live stays in its shard until some process holds that session, and the poll interval bounds that wait instead of losing the message. Activity covers file-tool writes only, and a peer's row can be one step out of date. The package [README](../../packages/experimental/peer-sessions/README.md#known-limitations-and-deferred-work) owns the complete limit list.
 
 <!-- BEGIN GENERATED cordis-surface (gen-cordis-catalog.ts) — do not edit between markers -->
 
@@ -154,6 +216,26 @@ async send(agent: Agent, request: SendPeerMessageRequest): Promise<SendPeerMessa
  * @throws {PeerError} for an unresolved, unauthorized, full, or idle-turn-limited watch.
  */
 async notifyIdle(agent: Agent, request: NotifyPeerIdleRequest): Promise<NotifyPeerIdleResult>
+
+/**
+ * Render what the caller's peers published, when this step has something new
+ * to show.
+ *
+ * The block is data about other agents: it is not a user request and grants
+ * no authority, which is what the header says in as many words. A session
+ * that owns no activity row — a subagent, or one without a working directory
+ * — publishes no row, has no dedupe state of its own, and so is shown
+ * nothing.
+ * @param agent - calling agent, whose repository and checkout scope the listed peers.
+ * @param step - step number inside the open turn. Step 1 shows a block whose
+ * text changed since the last one this session logged; a later step shows a
+ * block only to warn about an overlap it has not warned about yet, or to list
+ * a peer the last logged block did not list.
+ * @returns the rendered block, its sections, and the ids of the peers it
+ * lists, or `undefined` when no peer qualifies, when nothing fits the byte
+ * cap, or when this step already saw what it would say.
+ */
+async activitySnapshot(agent: Agent, step: number): Promise<PeerActivitySnapshot | undefined>
 
 /**
  * Resolve once every listener-owned operation this service started before the

@@ -2,7 +2,7 @@
 
 [English](peer-sessions.md) | 中文
 
-实验性对等会话服务、其模型工具与挂载二者的可选 bundle 共享的类型。[对等会话 Agent Note](../../.agents/notes/implemented/feature/2026-09-29-peer-sessions.zh.md)负责信箱、分组与安全决策；本页记录 [`packages/experimental/peer-sessions/src/types.ts`](../../packages/experimental/peer-sessions/src/types.ts) 中的持久与客户端可见形式。
+实验性对等会话服务、其模型工具与挂载二者的可选 bundle 共享的类型。[对等会话 Agent Note](../../.agents/notes/implemented/feature/2026-09-29-peer-sessions.zh.md)负责信箱、分组与安全决策，[对等活动 Agent Note](../../.agents/notes/implemented/feature/2026-09-30-peer-activity.zh.md)负责活动决策；本页记录 [`packages/experimental/peer-sessions/src/types.ts`](../../packages/experimental/peer-sessions/src/types.ts) 与 [`repo.ts`](../../packages/experimental/peer-sessions/src/repo.ts) 中的持久与客户端可见形式。
 
 ## 对等身份
 
@@ -94,6 +94,68 @@ interface NotifyPeerIdleResult {
 }
 ```
 
+<a id="activity"></a>
+## 活动
+
+每个有可用工作目录的顶层会话都发布一条活动记录，使在同一仓库中工作的对等会话可以避免互相覆盖对方的文件。该记录为 `$DSH_HOME/peers/activity/<sha256(sessionId)>.json`，与存在记录并列，包含仓库键、工作目录、检出根目录 `root`、作为 `name` 的标题、`status`、`doing`、`files`、pid，以及最近一次发布的时间。当状态、标题、审批询问、todo 列表或文件列表变化时，服务会重写该记录，并在 agent 被 dispose 时删除它。读取方会删除 pid 的 `process.kill(pid, 0)` 探测以 `ESRCH` 失败的记录，对校验失败的记录（包括另一个 `version` 写下的记录）则只跳过、不删除。
+
+`doing` 是该会话自己写下的最新一份 `todo_write` 列表中的第一个 `in_progress` 条目，截断为 120 个字符。只有当 `write`、`edit` 或有修改作用的 `str_replace_editor` 调用报告成功时，路径才会进入 `files`，最新的在前，最多 `maxActivityFiles` 条。当本进程持有从 subagent 到其顶层祖先的每一级父会话，且未超出 subagent 的 header 所记录的 `delegationDepth` 时，subagent 的写入记在该顶层祖先名下。每个路径的键相对于检出根目录，为 `rel:`；位于根目录之外则为 `abs:`。
+
+根目录由 `peerCheckout` 提供。它像 `peerRepoKey` 一样向上查找，`root` 是这次查找停下时所处、持有 `.git` 条目的目录，因此链接的 worktree 报告的是它自己的顶层；`dir:` 回退则报告规范化后的工作目录。以根目录而不是工作目录为基准生成键，使得在 `packages/x` 中启动的会话与在检出目录顶层启动的会话，为同一个文件记录同一个键。
+
+```ts type-equiv
+/** One working directory's checkout: the repository key that groups its peers, and the directory the walk stopped at. */
+interface PeerCheckout {
+  /** Repository key of the checkout; exactly what {@link peerRepoKey} returns for the same directory. */
+  readonly key: string
+  /**
+   * Directory holding the `.git` entry the walk found: the checkout the working
+   * directory belongs to, so a linked worktree reports its own top. Every `dir:`
+   * fallback reports `canonicalCwd` instead, because a directory whose marker is
+   * unusable is its own root.
+   */
+  readonly root: string
+}
+```
+
+`activitySnapshot(agent, step)` 为某一步骤渲染调用方的对等会话。它列出调用方所在仓库中每个其他对等会话，只要其状态为 `running` 或 `awaiting-user`，或在 `activityTtlMs` 之内写过文件；排序为 `running`、`awaiting-user`、`idle`，最近发布的在前，最多 `maxActivityPeers` 个。检出根目录与调用方相同的对等会话标为 `shared`；另一个 worktree 中的对等会话以其根目录的最后一段命名。当 `overlap: 'warn'` 时，每个被列出的对等会话，只要写过调用方也写过或尝试写过的路径，`peer:activity` 区块之后就跟随一个针对它的 `peer:overlap` 段落。调用方的路径来自本进程随工具调用与结果到达而维护的列表，因此被文件工具拒绝的尝试写入也算数，记录发布仍在排队的写入则立即算数。
+
+超过 `maxActivityBytes` 个 UTF-8 字节的区块会先从末尾丢弃对等会话，再丢弃最后一个对等会话的文件，最后丢弃其 `doing`，并带上 `"truncated":true`；若仍放不下，快照为空。每个由对等会话选定的字符串，即名称、`doing` 行或路径，无论出现在何处，都经过 JSON 编码，且 `<` 写作 `\u003c`，因此对等会话的文本无法关闭区块。
+
+```ts type-equiv
+/** One rendered activity snapshot of the caller's peers, ready to become a `peer-activity` message. */
+interface PeerActivitySnapshot {
+  /** The section texts joined by a blank line — the complete text of the message that carries the snapshot. */
+  readonly text: string
+  /** The named sections {@link PeerActivitySnapshot.text} assembles, in order. */
+  readonly sections: readonly ContextSnapshotSection[]
+  /** Session ids of the peers the block lists, in block order; the message carries them as {@link PeerActivitySource.peerIds}. */
+  readonly peerIds: readonly SessionId[]
+}
+```
+
+工具包把快照作为一条 `user/message` 追加到步骤中，其来源为 `PeerActivitySource`，循环随后将其写入日志。`peerIds` 指明所列出的对等会话，供之后步骤的比较使用，文本从不携带会话 id。该 kind 是限定为归属信息的 kind：未安装本包的构建仍可读取日志。
+
+```ts type-equiv
+/** Source of one activity snapshot this session was shown about its peers. */
+interface PeerActivitySource {
+  readonly kind: 'peer-activity'
+  readonly form: 'snapshot'
+  /** Named contributions in assembly order: the peer block, then one overlap warning per peer. */
+  readonly sections: readonly ContextSnapshotSection[]
+  /**
+   * Session ids of the peers the block lists, in block order. The rendered text
+   * never carries them: a later step compares them with the peers it would list
+   * to tell whether one appeared since this message.
+   */
+  readonly peerIds: readonly SessionId[]
+}
+```
+
+仅宿主侧使用的 `peerActivity` 投影把已记录的 `peer-activity` 消息折叠为最近一次的文本、其重叠文本，以及所列出的对等会话 id。在一个轮次的步骤 1，展示文本与上一条不同的快照。在之后的步骤，只有出现尚未警告过的重叠，或出现上一条消息没有列出的对等会话时，才展示快照。不带 `error` 的 `compaction/end` 事件会清除该投影，因为摘要在请求中取代了先前的消息；失败的压缩则保留它。快照从不开启轮次，工具包也不会把它追加到不产生模型调用的步骤。读不了 `peers/activity` 时，`activitySnapshot` 会记一条警告并不返回任何内容。
+
+活动只是建议性的。没有任何工具在写入前查询记录，通过 Bash、格式化工具或其他进程做出的写入也不会发布。生成的[配置目录](../config-catalog.zh.md#deepseek-aidsh-experimental-peer-sessions)列出 `activityTtlMs`、`maxActivityFiles`、`maxActivityPeers`、`maxActivityBytes` 与 `overlap`。模型可见的文本及其开销由本包 [README](../../packages/experimental/peer-sessions/README.zh.md#model-experience) 负责。
+
 ## 中继上限与安全
 
 中继深度记录本会话在整份日志中从每个对等会话收到过的最深中继层级；一次发送增加一跳，会超过 `PEER_RELAY_DEPTH_LIMIT`（四跳）的发送会被 `PEER_RELAY_LIMIT` 拒绝而不入队。当会话记录一条 source 类型为 `user` 的 `user/message` 时该预算重新开始，那是真人重新参与；调度、webhook、Team 或对等会话生产者都不会重置它。
@@ -108,7 +170,7 @@ interface NotifyPeerIdleResult {
 
 ## 已知限制
 
-仓库分组需要可用的 `.git` 标记，因此 `.git` 符号链接、格式错误的 gitfile 或不可读的标记都会回退为 `dir:` 加精确目录，该会话也就不会与其检出目录的任何 worktree 分组。存在记录没有心跳，因此崩溃的对等会话可能一直留在列表中，直到其会话 id 被再次发布；在 Windows 上被回收的 pid 会保留陈旧记录，而其信件一直处于 `queued`。没有任何进程作为实时 agent 持有的会话，其信件会留在分片里，直到某个进程持有该会话，而轮询间隔只限制这段等待，不会丢失消息。完整的限制清单由本包 [README](../../packages/experimental/peer-sessions/README.zh.md#known-limitations-and-deferred-work) 负责。
+仓库分组需要可用的 `.git` 标记，因此 `.git` 符号链接、格式错误的 gitfile 或不可读的标记都会回退为 `dir:` 加精确目录，该会话也就不会与其检出目录的任何 worktree 分组。存在记录没有心跳，因此崩溃的对等会话可能一直留在列表中，直到其会话 id 被再次发布；在 Windows 上被回收的 pid 会保留陈旧记录，而其信件一直处于 `queued`。没有任何进程作为实时 agent 持有的会话，其信件会留在分片里，直到某个进程持有该会话，而轮询间隔只限制这段等待，不会丢失消息。活动只覆盖文件工具的写入，对等会话的记录可能落后一步。完整的限制清单由本包 [README](../../packages/experimental/peer-sessions/README.zh.md#known-limitations-and-deferred-work) 负责。
 
 <!-- BEGIN GENERATED cordis-surface (gen-cordis-catalog.ts) — do not edit between markers -->
 
@@ -154,6 +216,26 @@ async send(agent: Agent, request: SendPeerMessageRequest): Promise<SendPeerMessa
  * @throws {PeerError} for an unresolved, unauthorized, full, or idle-turn-limited watch.
  */
 async notifyIdle(agent: Agent, request: NotifyPeerIdleRequest): Promise<NotifyPeerIdleResult>
+
+/**
+ * Render what the caller's peers published, when this step has something new
+ * to show.
+ *
+ * The block is data about other agents: it is not a user request and grants
+ * no authority, which is what the header says in as many words. A session
+ * that owns no activity row — a subagent, or one without a working directory
+ * — publishes no row, has no dedupe state of its own, and so is shown
+ * nothing.
+ * @param agent - calling agent, whose repository and checkout scope the listed peers.
+ * @param step - step number inside the open turn. Step 1 shows a block whose
+ * text changed since the last one this session logged; a later step shows a
+ * block only to warn about an overlap it has not warned about yet, or to list
+ * a peer the last logged block did not list.
+ * @returns the rendered block, its sections, and the ids of the peers it
+ * lists, or `undefined` when no peer qualifies, when nothing fits the byte
+ * cap, or when this step already saw what it would say.
+ */
+async activitySnapshot(agent: Agent, step: number): Promise<PeerActivitySnapshot | undefined>
 
 /**
  * Resolve once every listener-owned operation this service started before the

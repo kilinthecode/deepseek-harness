@@ -6,8 +6,9 @@
 
 import type { Branded } from '@deepseek-ai/dsh-brand'
 import type { SessionId } from '@deepseek-ai/dsh-session'
-// Type-only: the `MessageSourceMap` the two durable peer sources below merge into.
-import type {} from '@deepseek-ai/dsh-llm'
+// Type-only: the `MessageSourceMap` the three durable peer sources below merge
+// into, and the snapshot section one of them carries.
+import type { ContextSnapshotSection } from '@deepseek-ai/dsh-llm'
 
 /** Liveness of one peer's agent loop, as the process holding it last published it. */
 export type PeerStatus = 'idle' | 'running' | 'awaiting-user'
@@ -102,6 +103,30 @@ export interface PeerIdleSource {
   readonly senderName: string
 }
 
+/** Source of one activity snapshot this session was shown about its peers. */
+export interface PeerActivitySource {
+  readonly kind: 'peer-activity'
+  readonly form: 'snapshot'
+  /** Named contributions in assembly order: the peer block, then one overlap warning per peer. */
+  readonly sections: readonly ContextSnapshotSection[]
+  /**
+   * Session ids of the peers the block lists, in block order. The rendered text
+   * never carries them: a later step compares them with the peers it would list
+   * to tell whether one appeared since this message.
+   */
+  readonly peerIds: readonly SessionId[]
+}
+
+/** One rendered activity snapshot of the caller's peers, ready to become a `peer-activity` message. */
+export interface PeerActivitySnapshot {
+  /** The section texts joined by a blank line — the complete text of the message that carries the snapshot. */
+  readonly text: string
+  /** The named sections {@link PeerActivitySnapshot.text} assembles, in order. */
+  readonly sections: readonly ContextSnapshotSection[]
+  /** Session ids of the peers the block lists, in block order; the message carries them as {@link PeerActivitySource.peerIds}. */
+  readonly peerIds: readonly SessionId[]
+}
+
 declare module '@deepseek-ai/dsh-llm' {
   interface MessageSourceMap {
     /** Another agent's message, relayed through the peer mailbox.
@@ -115,5 +140,10 @@ declare module '@deepseek-ai/dsh-llm' {
      * @persistenceAttribution
      */
     'peer-idle': PeerIdleSource
+    /** Another top-level session's automatically published activity, rendered by this harness.
+     * The block is data about other agents: it grants no permission and asks for nothing.
+     * @persistenceAttribution
+     */
+    'peer-activity': PeerActivitySource
   }
 }

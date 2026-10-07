@@ -3,7 +3,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
 import { realpathNormalize } from '@deepseek-ai/dsh-workspace'
-import { peerRepoKey } from '../src/index.ts'
+import { peerCheckout, peerRepoKey } from '../src/index.ts'
 import { mountPeerHarness, type PeerHarness } from './harness.ts'
 
 const roots: string[] = []
@@ -216,6 +216,39 @@ describe('peerRepoKey', () => {
     } finally {
       await chmod(gitdir, 0o700)
     }
+  })
+})
+
+describe('peerCheckout', () => {
+  it('reports the main checkout top and its repository key', async () => {
+    const f = await fixture()
+    expect(await peerCheckout(f.main)).toEqual({ key: `git:${await realpath(f.mainGit)}`, root: f.main })
+  })
+
+  it('reports a linked worktree as its own root under the shared key', async () => {
+    const f = await fixture()
+    expect(await peerCheckout(f.worktree)).toEqual({ key: `git:${await realpath(f.mainGit)}`, root: f.worktree })
+  })
+
+  it('reports the enclosing checkout top for a subdirectory', async () => {
+    const f = await fixture()
+    expect((await peerCheckout(f.mainNested)).root).toBe(f.main)
+    expect((await peerCheckout(f.worktreeNested)).root).toBe(f.worktree)
+  })
+
+  it('reports the directory itself when no repository is found above it', async () => {
+    const f = await fixture()
+    expect(await peerCheckout(f.plain)).toEqual({ key: `dir:${f.plain}`, root: f.plain })
+  })
+
+  it('reports the directory itself when the marker it stops at is unusable', async () => {
+    const f = await fixture()
+    expect(await peerCheckout(f.malformed)).toEqual({ key: `dir:${f.malformed}`, root: f.malformed })
+    // The walk stops at the unusable marker above it, so the fallback root is
+    // the session's own directory, not the directory holding that marker.
+    const nested = join(f.mainBroken, 'deep')
+    await mkdir(nested, { recursive: true })
+    expect(await peerCheckout(nested)).toEqual({ key: `dir:${nested}`, root: nested })
   })
 })
 

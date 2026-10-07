@@ -1,0 +1,11 @@
+# Live patch for the peer-activity composition: the peer service, its tools, and
+# this scenario's seed plugin, which publishes one fake peer's activity row
+# before the session under test takes its first step.
+
+- insert:
+    - id: peers
+      name: '@deepseek-ai/dsh-experimental-peer-sessions'
+    - id: tool-peer-sessions
+      name: '@deepseek-ai/dsh-experimental-tool-peer-sessions'
+    - id: peer-seed-activity
+      name: ./seed-peer-activity.mjs

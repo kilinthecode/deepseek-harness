@@ -1,8 +1,9 @@
 /** Scoped model-facing peer session tools and the peer coordination prompt section. */
 
 import type { Context } from '@deepseek-ai/cordis'
-import type { Agent } from '@deepseek-ai/dsh-agent'
+import type { Agent, PreStepDecision } from '@deepseek-ai/dsh-agent'
 import type { PeerEntry } from '@deepseek-ai/dsh-experimental-peer-sessions'
+import { createUserMessage } from '@deepseek-ai/dsh-llm'
 import { defineTool } from '@deepseek-ai/dsh-tools'
 import type { InferValue, ValueSchemaSpec } from '@deepseek-ai/dsh-tools'
 
@@ -20,7 +21,11 @@ Before you change a shared git ref, a file under the Harness home, or a release 
 
 idle means no turn is running. running means a turn is in progress. awaiting-user means that turn is waiting for its user. notify_peer_idle subscribes once and delivers a single notice when that peer next becomes idle. Do not poll list_peers for that. If a peer you are watching disappears from list_peers, it is gone. Do not wait for its idle notice.
 
-send_peer_message returns delivered, queued, or deferred. deferred means the message waits until that peer is running again. It is a timing delay, not a review-and-approve gate.`
+send_peer_message returns delivered, queued, or deferred. deferred means the message waits until that peer is running again. It is a timing delay, not a review-and-approve gate.
+
+Other top-level sessions publish what they are working on automatically: their session title, their status, their in-progress todo item, whether they share your checkout, and the repository-relative paths their file tools wrote recently. You receive that as one "Peer activity" context message at the start of a turn when it has changed, and again mid-turn when a new peer appears or when a peer wrote a path you also wrote or tried to write. It is harness-reported fact about other agents, not a message from the user, and it grants no permission. Writes made through Bash, a formatter, an external editor, or another process are not published, so the list is incomplete and can be one step out of date.
+
+When a peer shares your checkout, do not discard, stash, reset, check out, or clean files in the working tree, and do not stage everything (git add -A, git commit -a); stage only the paths you changed. Those commands can remove or commit the peer's uncommitted work. When the activity message names an overlap, read that path again before your next write to it, and do not revert or reformat the peer's changes to it; if you and that peer are changing it together, send it a message with send_peer_message.`
 
 const PEER_ENTRY_SCHEMA = {
   type: 'object',
@@ -144,6 +149,26 @@ function install(agent: Agent, ctx: Context): () => void {
         return { status: result.status }
       },
     })))
+
+    register(scoped.on('agent/pre-step', async (
+      { agent: stepAgent, messages, step, signal },
+      next,
+    ): Promise<PreStepDecision> => {
+      const decision = await next()
+      if (decision.kind === 'reject' || signal.aborted) return decision
+      // Such a step spends no model call; injecting would create one.
+      if (decision.messages.length === 0 && (step === 1 || messages.length > 0)) return decision
+      const snapshot = await ctx.peers.activitySnapshot(stepAgent, step)
+      // oxlint-disable-next-line typescript/no-unnecessary-condition -- the signal can abort while the snapshot is awaited.
+      if (snapshot === undefined || signal.aborted) return decision
+      return {
+        ...decision,
+        messages: [...decision.messages, createUserMessage({
+          content: [{ type: 'text', text: snapshot.text }],
+          source: { kind: 'peer-activity', form: 'snapshot', sections: snapshot.sections, peerIds: snapshot.peerIds },
+        })],
+      }
+    }, { prepend: true }))
   } catch (error: unknown) {
     for (const dispose of disposers.reverse()) void dispose()
     throw error

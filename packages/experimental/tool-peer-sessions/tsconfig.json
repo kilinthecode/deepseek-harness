@@ -33,6 +33,9 @@
       "path": "../../core/tools"
     },
     {
+      "path": "../../llm/llm"
+    },
+    {
       "path": "../peer-sessions"
     }
   ]

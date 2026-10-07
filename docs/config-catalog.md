@@ -1041,7 +1041,7 @@ export interface InspectorOptions {
 ## `@deepseek-ai/dsh-experimental-peer-sessions`
 
 - `inject`: `agents` · `sessions` · `sessionProjections`
-- `source`: [`packages/experimental/peer-sessions/src/index.ts:111`](../packages/experimental/peer-sessions/src/index.ts)
+- `source`: [`packages/experimental/peer-sessions/src/index.ts:140`](../packages/experimental/peer-sessions/src/index.ts)
 
 ```ts config-catalog
 /** Peer-service deployment limits. Invalid values fail plugin load. */
@@ -1058,6 +1058,16 @@ export interface Config {
   readonly maxIdleWatches?: number
   /** Whether an idle target receives a message in a new turn (`steer`) or holds it until it runs again (`deferred`). */
   readonly peerInbound?: 'steer' | 'deferred'
+  /** Age at which a file write stops counting as current work, whether a peer published it or this session made or attempted it. */
+  readonly activityTtlMs?: number
+  /** Maximum files one session's activity row keeps, newest first. */
+  readonly maxActivityFiles?: number
+  /** Maximum peers one rendered activity snapshot covers. */
+  readonly maxActivityPeers?: number
+  /** Maximum UTF-8 bytes in one rendered activity snapshot. */
+  readonly maxActivityBytes?: number
+  /** Whether a rendered snapshot reports peers heading for the same file (`warn`) or stay silent (`off`). */
+  readonly overlap?: 'warn' | 'off'
 }
 ```
 <!-- END GENERATED config-catalog:@deepseek-ai/dsh-experimental-peer-sessions -->
@@ -4317,7 +4327,7 @@ export interface Config {
 ## `@deepseek-ai/dsh-workspace-changes`
 
 - `inject`: `subprocess`
-- `source`: [`packages/deliverables/workspace-changes/src/index.ts:33`](../packages/deliverables/workspace-changes/src/index.ts)
+- `source`: [`packages/deliverables/workspace-changes/src/index.ts:35`](../packages/deliverables/workspace-changes/src/index.ts)
 
 ```ts config-catalog
 /** Snapshot, capture, and comparison bounds. Invalid values fail plugin load. */

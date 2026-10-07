@@ -56,6 +56,25 @@ export function presencePath(home: string, sessionId: string): string {
 }
 
 /**
+ * Directory holding one activity row per live top-level peer.
+ * @param home - resolved Harness home directory.
+ * @returns the `peers/activity` directory path.
+ */
+export function activityDirectory(home: string): string {
+  return join(peersDirectory(home), 'activity')
+}
+
+/**
+ * Activity file of one session.
+ * @param home - resolved Harness home directory.
+ * @param sessionId - the session the row describes.
+ * @returns the activity file path for that session.
+ */
+export function activityPath(home: string, sessionId: string): string {
+  return join(activityDirectory(home), `${sha256Hex(sessionId)}.json`)
+}
+
+/**
  * Parent of every mailbox shard directory.
  * @param home - resolved Harness home directory.
  * @returns the `peers/mail` directory path.
