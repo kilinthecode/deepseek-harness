@@ -58,6 +58,8 @@ node --import tsx/esm apps/desktop/scripts/refresh-local-portal.mjs \
 
 To restore opening colors from a retained application, add `--opening-from /absolute/path/to/previous/Portal.app` while staging a fresh candidate. The source must have the same application identity and release; the helper rejects opening styles that differ beyond the logo foreground and background.
 
+Staging requires a clean committed checkout and client artifacts recorded for its current revision. The report records that source commit, the dependency-lock SHA-256, Node version, package-manager pin, and client profile separately from the installed runtime commit. Preserve the report with its candidate and original application; refreshed assets do not change the runtime source identity. Recreate the source from the recorded Git revision and use the frozen dependency lock before rebuilding.
+
 Inspect `report.json` and the candidate signature:
 
 ```sh

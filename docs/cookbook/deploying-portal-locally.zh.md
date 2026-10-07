@@ -60,6 +60,8 @@ node --import tsx/esm apps/desktop/scripts/refresh-local-portal.mjs \
 
 检查 `report.json` 和候选副本的签名：
 
+暂存要求干净且已提交的检出目录，以及为当前修订记录的客户端产物。报告分别记录界面源提交、依赖锁文件 SHA-256、Node 版本、包管理器固定版本、客户端配置，以及已安装运行时的提交。请将报告与候选和原应用一起保留；更新界面资源不会改变运行时源身份。重新构建前，应恢复报告中的 Git 修订并使用冻结的依赖锁文件。
+
 ```sh
 cat /private/tmp/portal-ui-candidate/report.json
 codesign --verify --deep --strict /private/tmp/portal-ui-candidate/Portal.app
