@@ -154,6 +154,9 @@ importers:
       pnpm:
         specifier: 11.7.0
         version: 11.7.0
+      proper-lockfile:
+        specifier: 4.1.2
+        version: 4.1.2
       publint:
         specifier: ^0.3.21
         version: 0.3.21
