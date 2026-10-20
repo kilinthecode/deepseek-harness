@@ -50,7 +50,7 @@ export interface Config {
   apiKeyEnv: Volatile<string>
   /** Anthropic-compatible endpoint base; `/messages` is appended. */
   baseURL: Volatile<string | undefined>
-  /** Anthropic-format model name. Defaults to `deepseek-v4-flash`. */
+  /** Anthropic-format model name. Defaults to `deepseek-flash`. */
   model: Volatile<string>
   /** `anthropic-version` header value. Defaults to `2023-06-01`. */
   apiVersion: Volatile<string>
