@@ -1,0 +1,52 @@
+# Bilingual-pair consistency record for README.md (docs/i18n/README.md): per heading
+# section, a hash of its English and Chinese blocks outside code blocks and generated regions.
+# After editing either side, bring the other along and re-record with:
+#   pnpm run verify-translation-pairing --write packages/bundle/agent-crew/README.md
+/:
+  en: 90af22ac41f3d680
+  zh: 5b1999b660032fa0
+/deepseek-ai-dsh-agent-crew:
+  en: ae31b825864a2bd7
+  zh: f7b59c3c907a525a
+/deepseek-ai-dsh-agent-crew/summary:
+  en: 4cc1800ca0fa0185
+  zh: 53851aa6c5396c00
+/deepseek-ai-dsh-agent-crew/table-of-contents:
+  en: d152484eb41ac6b4
+  zh: 364c80ee00a374ff
+/deepseek-ai-dsh-agent-crew/use-this-package:
+  en: 214427a47628793a
+  zh: e38ec8244bc57670
+/deepseek-ai-dsh-agent-crew/use-this-package/reviewer-route:
+  en: a45b0623f59202a8
+  zh: bddde65fc784be35
+/deepseek-ai-dsh-agent-crew/use-this-package/worker-routes:
+  en: 2473226c65bc9db5
+  zh: c91881cf1709e0b8
+/deepseek-ai-dsh-agent-crew/understand-the-implementation:
+  en: 1a6b40467d7ac7c8
+  zh: bb90c3e1fc4ecb77
+/deepseek-ai-dsh-agent-crew/further-exploration:
+  en: f9d30b19a930b4b1
+  zh: af0ee01da14119a5
+/deepseek-ai-dsh-agent-crew/model-experience:
+  en: 215e7ba838619b7b
+  zh: a311da3843709f90
+/deepseek-ai-dsh-agent-crew/model-experience/subagent-isolation-option-and-worktree-tools:
+  en: 366ae2d60dd99d7f
+  zh: 021012e9b667c362
+/deepseek-ai-dsh-agent-crew/model-experience/subagent-isolation-option-and-worktree-tools/what-the-model-sees:
+  en: 1ff2009a68dafc59
+  zh: 1cda014d47468882
+/deepseek-ai-dsh-agent-crew/model-experience/subagent-isolation-option-and-worktree-tools/token-effect:
+  en: 54ae431835f04174
+  zh: 6ce1e3f67014de19
+/deepseek-ai-dsh-agent-crew/model-experience/subagent-isolation-option-and-worktree-tools/kv-cache-effect:
+  en: 822e5480f256f36a
+  zh: 6e332c9cb3b3a0ea
+/deepseek-ai-dsh-agent-crew/known-limitations-and-deferred-work:
+  en: 0b23af8b8d168c54
+  zh: 17df54513e52c819
+/deepseek-ai-dsh-agent-crew/known-limitations-and-deferred-work/dev-note:
+  en: 0225ba087c5266f3
+  zh: 4e706f1b2b984e63

@@ -51,8 +51,11 @@ function normalizeSubagentDiagnostic(result: SubagentResult): SubagentResult {
 /**
  * The capability advertisement of an out-of-process backend: NONE. A child in
  * another process cannot honor parent-enforced start features
- * (`agentOptions`/`outputSchema`/`maxDepth`/`toolFilter`/`persona`), so the service rejects a
- * request needing any of them before `start` runs — never accepted-then-ignored.
+ * (`agentOptions`/`outputSchema`/`maxDepth`/`toolFilter`/`persona`/`cwd`), so the service rejects a
+ * request needing any of them before `start` runs — never accepted-then-ignored. An out-of-process
+ * backend still resolves a working directory for the child, from its own `cwd` configuration or the
+ * delegating parent session's workspace ({@link resolveChildCwd}); it just cannot honor a PER-REQUEST
+ * override yet.
  */
 export const NO_START_CAPABILITIES: SubagentCapabilities = Object.freeze({
   agentOptions: false,
@@ -60,6 +63,7 @@ export const NO_START_CAPABILITIES: SubagentCapabilities = Object.freeze({
   depthLimit: false,
   toolFilter: false,
   persona: false,
+  cwd: false,
 })
 
 /**
@@ -79,8 +83,10 @@ export function assertPositiveFinite(prefix: string, name: string, value: number
  * Whether `path` names an existing directory the harness can ENTER. The
  * search-permission probe matters: `statSync().isDirectory()` is true for a
  * mode-600 directory, but a subprocess cwd needs `X_OK` or spawn fails EACCES.
+ * @param path - the candidate directory.
+ * @returns whether `path` exists, is a directory, and is enterable.
  */
-function isEnterableDirectory(path: string): boolean {
+export function isEnterableDirectory(path: string): boolean {
   try {
     if (!statSync(path).isDirectory()) return false
     accessSync(path, constants.X_OK)

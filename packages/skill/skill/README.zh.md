@@ -51,6 +51,7 @@ kind: "package-reference"
 - **按需加载。** 按名称查询某个 skill，会从拥有胜出候选项的提供方返回完整指令正文；注册表会重新验证加载的定义，并拒绝在发现与加载之间名称发生变化的陈旧选择。
 - **嵌入式 skill。** 插件可用 `ctx.skills.register(...)` 注册内存中的 skill；注册表会补入默认调用策略与 `runtime` 提供方标签。同层同名运行时注册采用先到先得，并记录警告。
 - **提供方注册。** 提供方用 `ctx.skills.registerProvider(...)` 贡献目录；注册是同步的，返回的 disposer（资源释放）会移除该提供方。`runtime` 是保留的提供方名称。
+- **随包 skill。** `bundledSkillProvider({ name, description, body, resources })` 为某个包自带的一个 skill 构建提供方：一个 Markdown 正文文件及其资产目录。它以 `BUNDLED_SKILL_RANK` 列出一个候选项，模型与用户都可调用，因此同名的项目级或用户级 skill 仍会胜出，并且每次加载都会读取正文文件。`dsh-skill-badge` 与 `dsh-skill-agent-crew` 使用它。
 
 每个 skill 上的调用策略决定哪些接口可以展示并加载它：`modelInvocable` 用于面向模型的工具与目录，`userInvocable` 用于面向用户的命令。注册表保留全部四种组合，因此一次发现结果可以同时服务两个接口，而不会混淆各自的目录。
 
@@ -87,7 +88,7 @@ Skill 摘要保留胜出提供方可选的指令文件 `path`，供提供文件�
 
 | 文件 | 职责 |
 |---|---|
-| [`src/index.ts`](src/index.ts) | 插件入口、`SkillRegistry` 服务、候选项与定义验证、共享的面向模型渲染 |
+| [`src/index.ts`](src/index.ts) | 插件入口、`SkillRegistry` 服务、候选项与定义验证、共享的面向模型渲染、`bundledSkillProvider` |
 | — | 不发布运行时不变式伴生入口；提供方／运行时 map 与带 revision 的 cache 在注册表内原子变更，且没有独立变更事件或快照可供交叉核对。 |
 
 ### 目录收集

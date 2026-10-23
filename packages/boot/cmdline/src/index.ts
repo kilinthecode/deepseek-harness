@@ -109,6 +109,35 @@ export const internals: {
   stderr: process.stderr,
 }
 
+/** The process streams a one-shot app runner writes its output to and reads a `-` task from. */
+export interface RunnerStreams {
+  /** Where the runner prints its answer or machine-readable events. */
+  stdout: { write(chunk: string): unknown }
+  /** Where the runner prints diagnostics. */
+  stderr: { write(chunk: string): unknown }
+  /** Read stdin to its end as UTF-8 text. */
+  readStdin: () => Promise<string>
+}
+
+/**
+ * Bind a new {@link RunnerStreams} to the process. Each call returns its own
+ * object, so a runner's tests substitute its streams without touching another
+ * runner's or {@link internals}.
+ * @returns the process's stdout, stderr, and a stdin reader that joins the
+ * bytes before decoding, so a multibyte character split across chunks survives.
+ */
+export function processRunnerStreams(): RunnerStreams {
+  return {
+    stdout: process.stdout,
+    stderr: process.stderr,
+    readStdin: async () => {
+      const chunks: Buffer[] = []
+      for await (const chunk of process.stdin as AsyncIterable<Buffer>) chunks.push(chunk)
+      return Buffer.concat(chunks).toString('utf8')
+    },
+  }
+}
+
 /**
  * Make stdin EOF request the launcher's bounded successful shutdown after
  * {@link AppReady} commits. A startup rejection therefore remains the process

@@ -1,0 +1,6 @@
+{
+  "meta": {
+    "title": "Agent Crew",
+    "description": "Split work across worker agents in isolated git worktrees, each independently reviewed before it merges."
+  }
+}

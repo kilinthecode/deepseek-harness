@@ -22,9 +22,16 @@ Service Definition：[dsh-subagent](../../packages/subagent/subagent)（`ctx.sub
  * degradation" rule). These flags describe the ONE-SHOT
  * {@link SubagentProvider.start} path, where the provider composes the child;
  * continuable children are composed by the continuation manager itself and are
- * gated by {@link SubagentProvider.prepareContinuable} instead. Each flag
- * corresponds one-to-one to a {@link SubagentStartRequest} option: `depthLimit`
- * to `maxDepth`; the other names match.
+ * gated by {@link SubagentProvider.prepareContinuable} instead — except `cwd`,
+ * which the manager also checks against this same capability before composing
+ * a continuable child, because both paths hand the provider's advertised
+ * working-directory support to the same child-composition helper
+ * ({@link childSessionMeta}). Each flag corresponds one-to-one to a
+ * {@link SubagentStartRequest} option: `depthLimit` to `maxDepth`; the other
+ * names match. An out-of-process provider always advertises `cwd: false`: it
+ * still resolves a working directory for the child, from its own
+ * configuration or the parent session's cwd, but does not support a
+ * PER-REQUEST override yet.
  */
 interface SubagentCapabilities {
   readonly agentOptions: boolean
@@ -32,6 +39,7 @@ interface SubagentCapabilities {
   readonly depthLimit: boolean
   readonly toolFilter: boolean
   readonly persona: boolean
+  readonly cwd: boolean
 }
 ```
 
@@ -103,6 +111,14 @@ interface SubagentStartRequest {
    * persona (strict `{{…}}` interpolation against the registered variables).
    */
   readonly persona?: string
+  /**
+   * Optional absolute working directory for the child session, replacing the
+   * parent's. Requires {@link SubagentCapabilities.cwd} on the one-shot path;
+   * rejected at start otherwise. The directory must exist when the child is
+   * created; it becomes the child's durable `SessionHeader.cwd`, which scopes
+   * its filesystem tools, shell working directory, and sandbox write root.
+   */
+  readonly cwd?: string
 }
 ```
 
@@ -678,6 +694,85 @@ Types: [Agent](core.zh.md) · [ContentBlock](llm-streaming.zh.md) · [MessageId]
 
 Source: [`packages/subagent/subagent/src/index.ts`](../../packages/subagent/subagent/src/index.ts)
 
+<a id="ctxsubagentworktrees--subagentworktrees"></a>
+
+### `ctx.subagentWorktrees` — `SubagentWorktrees`
+
+The `ctx.subagentWorktrees` service. Git runs through `ctx.subprocess` with argv and an explicit cwd, in the host realm and outside any session sandbox; its commands and check argv come only from this configuration or operator input, never from model input.
+
+```ts cordis-catalog
+/**
+ * Offer worktree isolation on delegation tools until the returned disposer runs. Offers are counted: the
+ * offer stands while at least one registration is live, so two consumers can offer independently.
+ * `subagent-worktree/offer-changed` fires when this registration is the first live offer, and when
+ * withdrawing it leaves none.
+ * @returns a disposer that withdraws this offer; calling it again has no effect.
+ */
+offerIsolation(): () => void
+
+/**
+ * Create one linked worktree on a new branch from the base checkout's `HEAD`.
+ * @param request - owner, base directory, label, task, worker route, and cancellation.
+ * @returns the committed `open` record, the worker directory, and any uncommitted base changes left out.
+ */
+create(request: CreateWorktreeRequest): Promise<ProvisionedWorktree>
+
+/**
+ * Record one worker Session on an open worktree.
+ * @param request - worktree id, owner, worker Session id, and route.
+ * @returns the updated record.
+ * @throws when the id is malformed, no such worktree exists, the owner does not own it, or it is not `open`.
+ */
+async attach(request: AttachWorkerRequest): Promise<WorktreeRecord>
+
+/**
+ * Resolve the reviewer route (operator override, then configuration, then the
+ * accepting Agent's route) and enforce independence from the worker. Routes
+ * are equal when provider and model match; reasoning effort is ignored.
+ * @param request - worker route, caller route, and optional override.
+ * @returns the reviewer route.
+ * @throws when `requireDistinctReviewer` is set and the resolved route equals the worker's.
+ */
+resolveReviewer(request: ResolveReviewerRequest): WorktreeRoute
+
+/**
+ * Commit the worktree's changes, run the check command, have an independent
+ * reviewer check the exact commit, and merge a passing change.
+ * @param request - worktree id, owner, reviewer parent Agent, operator overrides, and cancellation.
+ * @returns the accept outcome.
+ * @throws when the id is malformed, or a non-operator owner sets `testCommand` or `reviewer`; see {@link acceptWorktree}.
+ */
+async accept(request: AcceptWorktreeRequest): Promise<AcceptOutcome>
+
+/**
+ * Delete one worktree and its branch without merging. The record is claimed
+ * under its lock before any git change, so a concurrent `accept` cannot act on
+ * a worktree this call is deleting. A `merged` or `discarded` record is not
+ * changed: `discard` only removes a worktree directory or branch that a crash
+ * between the merge and its cleanup, or a failed earlier `discard`, left behind,
+ * so a retry after a failure finishes the cleanup.
+ *
+ * A stale `reviewing` record whose reviewed commit already landed is recorded
+ * `merged` first, as `accept` does. A recovery check that fails is logged and
+ * does not stop the removal: `discard` is how a worktree that no probe can
+ * read gets removed, and a merge that did land stays in the base checkout.
+ * @param request - worktree id, owner, and cancellation.
+ * @returns the `discarded` record, or the unchanged `merged` or `discarded` record after cleaning up its leftovers.
+ * @throws when the id is malformed, no such worktree exists, the owner does not own it, an attached worker is
+ *   still running, the record is being accepted, or a git cleanup command fails.
+ */
+async discard(request: DiscardWorktreeRequest): Promise<WorktreeRecord>
+
+/**
+ * List one repository's worktrees.
+ * @param request - base directory, optional owner filter, and whether to include closed records.
+ * @returns records ordered by creation time.
+ */
+async list(request: ListWorktreesRequest): Promise<WorktreeRecord[]>
+```
+
+Source: [`packages/subagent/subagent-worktree/src/index.ts`](../../packages/subagent/subagent-worktree/src/index.ts)
+
 <a id="subagent-events"></a>
 
 ### `subagent/*` events
@@ -761,4 +856,28 @@ A provider established a published child. For in-process providers, `ctx.agents.
 Types: [Scoped](scope.zh.md)
 
 Source: [`packages/subagent/subagent/src/index.ts`](../../packages/subagent/subagent/src/index.ts)
+
+<a id="subagent-worktree-events"></a>
+
+### `subagent-worktree/*` events
+
+<a id="subagent-worktreeoffer-changed--emit"></a>
+
+#### `subagent-worktree/offer-changed` — emit
+
+Whether worktree isolation is offered on delegation tools changed: the first live offer was registered, or the last one was withdrawn. It does not fire while offers are added or withdrawn with at least one other still live. Delegation tools listen and mount again; a listener failure is logged and does not stop the other listeners or the offer that triggered it.
+
+```ts cordis-catalog
+/**
+ * Whether worktree isolation is offered on delegation tools changed: the first live offer was
+ * registered, or the last one was withdrawn. It does not fire while offers are added or withdrawn
+ * with at least one other still live. Delegation tools listen and mount again; a listener failure is
+ * logged and does not stop the other listeners or the offer that triggered it.
+ * @param offered - the new value of {@link SubagentWorktrees.offersIsolation}.
+ * @mode emit
+ */
+'subagent-worktree/offer-changed'(offered: boolean): void
+```
+
+Source: [`packages/subagent/subagent-worktree/src/index.ts`](../../packages/subagent/subagent-worktree/src/index.ts)
 <!-- END GENERATED cordis-surface -->

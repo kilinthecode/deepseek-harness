@@ -39,6 +39,7 @@ This table connects model-visible tool names to the plugin package and service s
 | `@deepseek-ai/dsh-tool-session-query` | `session_event_read`, `session_event_search`, `session_event_trace`, `session_search`, `session_trace` | `ctx.tools`, `ctx.systemPrompt`, `ctx.sessionQuery`, `a calling Agent for workspace authority` | `tool/call`, `tool/result` | - | The five read-only tools hide provider cursors and authorize every result from the immutable calling agent session. The package is opt-in; compositions that need enforced deadlines or bounded inline output also mount the generic timeout or spill policies. |
 | `@deepseek-ai/dsh-tool-subagent` | `list_subagent_models`, `subagent` | `ctx.tools`, `ctx.subagents`, `ctx.systemPrompt`, `ctx.llm for model discovery and selected-route validation` | `tool/call`, `tool/result`, `child session events through the chosen provider` | `subagent`, `subagent_fork` | The registered delegation name is the load-time `toolName` config (default `subagent`); the default schema above has model selection off, while the discovery schema is shown as the fixed companion available in an enabled Session. Web presets sample the Plugins preference for each new top-level Session and preserve that decision for its child Sessions; `subagent_fork` remains fixed-route. Each instance independently controls whether it reads model-selection settings and its background behavior through `modelSelectionSettings`, `backgroundMode`, and `enableRunInBackground`. |
 | `@deepseek-ai/dsh-tool-subagent-control` | `interrupt_agent`, `list_agents`, `send_message` | `ctx.tools`, `ctx.subagents`, `ctx.agents and ctx.sessionProjections (list_agents only)` | `tool/call`, `tool/result`, `child session events through ctx.subagents` | - | The globally named control tools over continuable background subagents: provider-bound `tool-subagent` instances register distinct delegation tools, while this package registers `send_message` and `interrupt_agent` once, plus `list_agents` from its separately loaded `/list-agents` plugin (whose catalog rows use the sessionProjections and live Agent registries). |
+| `@deepseek-ai/dsh-tool-subagent-worktree` | `accept_worktree`, `discard_worktree`, `list_worktrees` | `ctx.tools`, `ctx.subagentWorktrees` | `tool/call`, `tool/result` | - | `accept_worktree`, `discard_worktree`, and `list_worktrees` land, discard, and list the isolated git worktrees `ctx.subagentWorktrees` provisions for `subagent` calls made with `isolation: "worktree"`; every call scopes its request to the calling Session as owner. While this row is mounted with its default `offerIsolation: true`, every `subagent` delegation tool whose provider has the `cwd` capability offers that parameter. |
 | `@deepseek-ai/dsh-tool-jobs` | `job_kill`, `job_list`, `job_output` | `ctx.tools`, `ctx.jobs`, `ctx.systemPrompt` | `tool/call`, `tool/result`, `user/message via agent.inject() for background completion notices` | - | The kind-agnostic background-job controller: background bash commands, PTY sends, and subagents are read, listed, and killed through the same three tools. Loading the plugin attaches the controller that arms producers' `ctx.jobs.start()`. |
 | `@deepseek-ai/dsh-experimental-tool-agent-team` | `interrupt_agent`, `list_agents`, `send_message`, `spawn_teammate`, `team_task_create`, `team_task_get`, `team_task_list`, `team_task_update`, `wait_agent` | `ctx.tools`, `ctx.systemPrompt`, `ctx.agentTeams`, `an exact live Team member Agent` | `tool/call`, `team/member`, `team/message/queued`, `team/message/delivered`, `team/task`, `tool/result` | - | All nine tools are scoped to implicit Team Leads and durable teammates. The shipped dsh-base bundle keeps the package disabled; the documented Agent Teams profile patch enables it while disabling the legacy continuable-child control names. |
 | `@deepseek-ai/dsh-tool-todo` | `todo_write` | `ctx.tools`, `owning Agent session` | `tool/call`, `todo/write`, `tool/result` | - | todo_write is session-owned state; UIs render the latest todo/write event as a checklist. `allowParallelInProgress` is required with no default, so the catalog states its choice: `true`, whose description invites several `in_progress` items. A deployment choosing `false` receives the same tool with a description asking for exactly one active task. |
@@ -2141,6 +2142,67 @@ Send a message to an agent. A working agent receives it at its next step; an idl
 Source: [`packages/subagent/tool-subagent-control/src/index.ts`](../packages/subagent/tool-subagent-control/src/index.ts)
 
 The globally named control tools over continuable background subagents: provider-bound `tool-subagent` instances register distinct delegation tools, while this package registers `send_message` and `interrupt_agent` once, plus `list_agents` from its separately loaded `/list-agents` plugin (whose catalog rows use the sessionProjections and live Agent registries).
+
+<a id="deepseek-aidsh-tool-subagent-worktree"></a>
+
+## `@deepseek-ai/dsh-tool-subagent-worktree`
+
+### `accept_worktree`
+
+Land an isolated child's work. The harness commits the worktree's changes, runs any configured checks, and has an independent reviewer check that exact commit; only a passing change is merged into your checkout. A failing review returns its findings: send them to a background child with send_message, wait for it to finish, and accept again; a foreground child cannot receive messages, so discard the worktree and start a new background worker with the task and the findings. Call it only after the child has finished.
+
+```json
+{
+  "type": "object",
+  "properties": {
+    "worktree_id": {
+      "type": "string",
+      "description": "The worktree id reported when the child started."
+    }
+  },
+  "required": [
+    "worktree_id"
+  ]
+}
+```
+
+Source: [`packages/subagent/tool-subagent-worktree/src/index.ts`](../packages/subagent/tool-subagent-worktree/src/index.ts)
+
+### `discard_worktree`
+
+Delete an isolated child's worktree and its branch without merging. Its unmerged changes are lost.
+
+```json
+{
+  "type": "object",
+  "properties": {
+    "worktree_id": {
+      "type": "string",
+      "description": "The worktree id reported when the child started."
+    }
+  },
+  "required": [
+    "worktree_id"
+  ]
+}
+```
+
+Source: [`packages/subagent/tool-subagent-worktree/src/index.ts`](../packages/subagent/tool-subagent-worktree/src/index.ts)
+
+### `list_worktrees`
+
+List the isolated worktrees you started that are still open, with each one's branch, path, state, latest worker agent id, and latest review verdict.
+
+```json
+{
+  "type": "object",
+  "properties": {}
+}
+```
+
+Source: [`packages/subagent/tool-subagent-worktree/src/index.ts`](../packages/subagent/tool-subagent-worktree/src/index.ts)
+
+`accept_worktree`, `discard_worktree`, and `list_worktrees` land, discard, and list the isolated git worktrees `ctx.subagentWorktrees` provisions for `subagent` calls made with `isolation: "worktree"`; every call scopes its request to the calling Session as owner. While this row is mounted with its default `offerIsolation: true`, every `subagent` delegation tool whose provider has the `cwd` capability offers that parameter.
 
 <a id="deepseek-aidsh-tool-jobs"></a>
 

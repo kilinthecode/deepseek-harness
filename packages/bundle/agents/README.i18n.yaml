@@ -1,0 +1,64 @@
+# Bilingual-pair consistency record for README.md (docs/i18n/README.md): per heading
+# section, a hash of its English and Chinese blocks outside code blocks and generated regions.
+# After editing either side, bring the other along and re-record with:
+#   pnpm run verify-translation-pairing --write packages/bundle/agents/README.md
+/:
+  en: f7e1c1dde2ff521e
+  zh: 4ec28f4803fb5a67
+/deepseek-ai-dsh-agents:
+  en: 67f083b8ab97b2c5
+  zh: e790e855a9f98bfd
+/deepseek-ai-dsh-agents/summary:
+  en: 83dea6b2a8251d81
+  zh: f90b7b9ad078f239
+/deepseek-ai-dsh-agents/table-of-contents:
+  en: d152484eb41ac6b4
+  zh: 09388d293f9be9cb
+/deepseek-ai-dsh-agents/use-this-package:
+  en: bbff250eba0f1b89
+  zh: 0a618f05cc88ee2b
+/deepseek-ai-dsh-agents/use-this-package/running-a-task-in-a-worker-s-worktree:
+  en: a4c24b2d9f95d267
+  zh: 6dbf6e60e5c65349
+/deepseek-ai-dsh-agents/use-this-package/managing-worktrees:
+  en: 203e322f6f0a0381
+  zh: ba62ce9a2570f9f9
+/deepseek-ai-dsh-agents/use-this-package/machine-readable-output:
+  en: 838cbca917a613a4
+  zh: 9ac25ed65c1442cb
+/deepseek-ai-dsh-agents/understand-the-implementation:
+  en: 42b15ac6321706aa
+  zh: 4ed0861911abaf5d
+/deepseek-ai-dsh-agents/understand-the-implementation/run-flow:
+  en: 42a89e226820e51d
+  zh: 23c69a5dff6b7c8d
+/deepseek-ai-dsh-agents/understand-the-implementation/patch-surface-over-base:
+  en: 8791c9ff31194216
+  zh: f21a65cd89d5d1eb
+/deepseek-ai-dsh-agents/understand-the-implementation/source-map:
+  en: 924d607d2878f523
+  zh: 0e6e3d3a8357e9af
+/deepseek-ai-dsh-agents/further-exploration:
+  en: e4154f728b8d1976
+  zh: 6d2b83b8d6acc204
+/deepseek-ai-dsh-agents/model-experience:
+  en: 215e7ba838619b7b
+  zh: a311da3843709f90
+/deepseek-ai-dsh-agents/model-experience/fixer-prompt-template:
+  en: b1808b835d90f650
+  zh: b44a506a5b78c96a
+/deepseek-ai-dsh-agents/model-experience/fixer-prompt-template/what-the-model-sees:
+  en: a0ea7598d63af31d
+  zh: f6b8d79d48943799
+/deepseek-ai-dsh-agents/model-experience/fixer-prompt-template/token-effect:
+  en: c5074640fc3a7f43
+  zh: 120af6a16eb7427c
+/deepseek-ai-dsh-agents/model-experience/fixer-prompt-template/kv-cache-effect:
+  en: 7774698cc748249e
+  zh: 8aa9c3f2725cc846
+/deepseek-ai-dsh-agents/known-limitations-and-deferred-work:
+  en: eba667cd3e665fe4
+  zh: 9de913a8eb9c179a
+/deepseek-ai-dsh-agents/known-limitations-and-deferred-work/dev-note:
+  en: e67f633dc6fe7773
+  zh: 3bb0c20c93f16f98

@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { Context } from '@deepseek-ai/cordis'
 import Loader from '@deepseek-ai/cordis-plugin-loader'
-import { ToolCallId, ReasoningEffortId } from '@deepseek-ai/dsh-llm'
+import LlmRuntime, { ToolCallId, ReasoningEffortId } from '@deepseek-ai/dsh-llm'
 import SystemPrompt from '@deepseek-ai/dsh-system-prompt'
 import ToolRuntime, { TOOL_ABORTED_BEFORE_DISPATCH } from '@deepseek-ai/dsh-tools'
 import { assembleContextFor, type Agent } from '@deepseek-ai/dsh-agent'
@@ -14,7 +14,15 @@ import { mountAgentLoopTestDependencies } from '@deepseek-ai/dsh-agent-loop-test
 import JsonlSessionPersistence from '@deepseek-ai/dsh-session-persistence-jsonl'
 import SessionProjectionRegistry from '@deepseek-ai/dsh-session-projection'
 import SubagentRuntime from '@deepseek-ai/dsh-subagent'
-import type { SubagentStartRequest } from '@deepseek-ai/dsh-subagent'
+import type { SubagentProvider, SubagentStartRequest } from '@deepseek-ai/dsh-subagent'
+import { brandString } from '@deepseek-ai/dsh-brand'
+import { renderWorkerBrief, SubagentWorktrees } from '@deepseek-ai/dsh-subagent-worktree'
+import type {
+  ProvisionedWorktree,
+  WorktreeId,
+  WorktreeRecord,
+  WorktreeRoute,
+} from '@deepseek-ai/dsh-subagent-worktree'
 import LocalJobRegistry from '@deepseek-ai/dsh-jobs-local'
 import * as SubagentSpawn from '@deepseek-ai/dsh-subagent-spawn-in-process'
 import * as ToolJobs from '@deepseek-ai/dsh-tool-jobs'
@@ -22,7 +30,9 @@ import { MockAdapter, textResponse } from '../../../core/agent-loop/tests/mock-a
 import { loadStoredSession } from '../../subagent/tests/persistence-helpers.ts'
 import * as mock from './scripted-provider.ts'
 import * as tool from '../src/index.ts'
-import { Session, SessionId } from '@deepseek-ai/dsh-session'
+import SubagentModelSelectionConfig from '../src/model-selection-settings.ts'
+import { SESSION_FORMAT_VERSION, Session, SessionId } from '@deepseek-ai/dsh-session'
+import type { SessionHeader } from '@deepseek-ai/dsh-session'
 import {
   callSubagent,
   disposeSetupProvider,
@@ -221,7 +231,7 @@ describe('dsh-tool-subagent', () => {
     await ctx.plugin(SubagentRuntime)
     ctx.subagents.registerProvider({
       name: 'weird',
-      capabilities: { agentOptions: false, outputSchema: false, depthLimit: false, toolFilter: false, persona: false },
+      capabilities: { agentOptions: false, outputSchema: false, depthLimit: false, toolFilter: false, persona: false, cwd: false },
       inheritsParentContext: false,
       start: async () => ({
         id: SessionId('weird-child'),
@@ -310,7 +320,7 @@ describe('dsh-tool-subagent', () => {
     await ctx.plugin(SubagentRuntime)
     ctx.subagents.registerProvider({
       name: 'bare',
-      capabilities: { agentOptions: false, outputSchema: false, depthLimit: false, toolFilter: false, persona: false },
+      capabilities: { agentOptions: false, outputSchema: false, depthLimit: false, toolFilter: false, persona: false, cwd: false },
       inheritsParentContext: false,
       start: async (request) => {
         seen = request
@@ -400,7 +410,7 @@ describe('dsh-tool-subagent', () => {
     // the provider survives.
     ctx.subagents.registerProvider({
       name: 'continuable',
-      capabilities: { agentOptions: false, outputSchema: false, depthLimit: false, toolFilter: false, persona: false },
+      capabilities: { agentOptions: false, outputSchema: false, depthLimit: false, toolFilter: false, persona: false, cwd: false },
       inheritsParentContext: false,
       start: async () => { throw new Error('lifecycle test does not start a child') },
       prepareContinuable: async () => ({}),
@@ -473,7 +483,7 @@ describe('dsh-tool-subagent', () => {
     await ctx.plugin(SubagentRuntime)
     ctx.subagents.registerProvider({
       name: 'spy',
-      capabilities: { agentOptions: false, outputSchema: false, depthLimit: false, toolFilter: false, persona: false },
+      capabilities: { agentOptions: false, outputSchema: false, depthLimit: false, toolFilter: false, persona: false, cwd: false },
       inheritsParentContext: false,
       start: async () => ({
         id: SessionId('spy-child'),
@@ -496,7 +506,7 @@ describe('dsh-tool-subagent', () => {
     await ctx.plugin(SubagentRuntime)
     ctx.subagents.registerProvider({
       name: 'spy',
-      capabilities: { agentOptions: false, outputSchema: false, depthLimit: false, toolFilter: false, persona: false },
+      capabilities: { agentOptions: false, outputSchema: false, depthLimit: false, toolFilter: false, persona: false, cwd: false },
       inheritsParentContext: false,
       start: async () => ({
         id: SessionId('spy-child'),
@@ -520,7 +530,7 @@ describe('dsh-tool-subagent', () => {
     await ctx.plugin(SubagentRuntime)
     ctx.subagents.registerProvider({
       name: 'spy',
-      capabilities: { agentOptions: false, outputSchema: false, depthLimit: false, toolFilter: false, persona: false },
+      capabilities: { agentOptions: false, outputSchema: false, depthLimit: false, toolFilter: false, persona: false, cwd: false },
       inheritsParentContext: false,
       start: async () => ({
         id: SessionId('spy-child'),
@@ -548,7 +558,7 @@ describe('dsh-tool-subagent', () => {
     await ctx.plugin(SubagentRuntime)
     ctx.subagents.registerProvider({
       name: 'spy',
-      capabilities: { agentOptions: false, outputSchema: false, depthLimit: false, toolFilter: false, persona: false },
+      capabilities: { agentOptions: false, outputSchema: false, depthLimit: false, toolFilter: false, persona: false, cwd: false },
       inheritsParentContext: false,
       start: async () => ({
         id: SessionId('spy-child'),
@@ -575,7 +585,7 @@ describe('dsh-tool-subagent', () => {
     await ctx.plugin(SubagentRuntime)
     ctx.subagents.registerProvider({
       name: 'spy',
-      capabilities: { agentOptions: false, outputSchema: false, depthLimit: false, toolFilter: false, persona: false },
+      capabilities: { agentOptions: false, outputSchema: false, depthLimit: false, toolFilter: false, persona: false, cwd: false },
       inheritsParentContext: false,
       start: async (request) => {
         if (request.signal.aborted) throw new Error('start aborted')
@@ -614,7 +624,7 @@ describe('dsh-tool-subagent', () => {
     await ctx.plugin(SubagentRuntime)
     ctx.subagents.registerProvider({
       name: 'spy',
-      capabilities: { agentOptions: false, outputSchema: false, depthLimit: false, toolFilter: false, persona: false },
+      capabilities: { agentOptions: false, outputSchema: false, depthLimit: false, toolFilter: false, persona: false, cwd: false },
       inheritsParentContext: false,
       start: async (request) => {
         if (request.signal.aborted) sawAborted()
@@ -678,7 +688,7 @@ describe('dsh-tool-subagent', () => {
     await ctx.plugin(SubagentRuntime)
     ctx.subagents.registerProvider({
       name: 'capture2',
-      capabilities: { agentOptions: false, outputSchema: false, depthLimit: true, toolFilter: true, persona: true },
+      capabilities: { agentOptions: false, outputSchema: false, depthLimit: true, toolFilter: true, persona: true, cwd: true },
       inheritsParentContext: false,
       start: async (request) => {
         seen = request
@@ -735,7 +745,7 @@ describe('dsh-tool-subagent', () => {
     await ctx.plugin(SubagentRuntime)
     ctx.subagents.registerProvider({
       name: 'capture3',
-      capabilities: { agentOptions: false, outputSchema: false, depthLimit: false, toolFilter: true, persona: false },
+      capabilities: { agentOptions: false, outputSchema: false, depthLimit: false, toolFilter: true, persona: false, cwd: false },
       inheritsParentContext: false,
       start: async (request) => {
         seen = request
@@ -765,7 +775,7 @@ describe('dsh-tool-subagent', () => {
     await ctx.plugin(SubagentRuntime)
     ctx.subagents.registerProvider({
       name: 'capture4',
-      capabilities: { agentOptions: false, outputSchema: false, depthLimit: false, toolFilter: false, persona: false },
+      capabilities: { agentOptions: false, outputSchema: false, depthLimit: false, toolFilter: false, persona: false, cwd: false },
       inheritsParentContext: false,
       start: async (request) => {
         seen = request
@@ -790,7 +800,7 @@ describe('dsh-tool-subagent', () => {
     await ctx.plugin(SubagentRuntime)
     ctx.subagents.registerProvider({
       name: 'p',
-      capabilities: { agentOptions: false, outputSchema: false, depthLimit: false, toolFilter: true, persona: false },
+      capabilities: { agentOptions: false, outputSchema: false, depthLimit: false, toolFilter: true, persona: false, cwd: false },
       inheritsParentContext: false,
       start: () => { throw new Error('unreachable') },
     })
@@ -829,7 +839,7 @@ describe('dsh-tool-subagent background mode', () => {
     let prepareCalls = 0
     ctx.subagents.registerProvider({
       name: 'resumable',
-      capabilities: { agentOptions: false, outputSchema: false, depthLimit: false, toolFilter: false, persona: false },
+      capabilities: { agentOptions: false, outputSchema: false, depthLimit: false, toolFilter: false, persona: false, cwd: false },
       inheritsParentContext: false,
       start: async request => ({
         id: SessionId('one-shot-child'),
@@ -1005,7 +1015,7 @@ describe('dsh-tool-subagent background mode', () => {
     await disposeSetupProvider(ctx)
     ctx.subagents.registerProvider({
       name: 'mock',
-      capabilities: { agentOptions: true, outputSchema: false, depthLimit: false, toolFilter: false, persona: false },
+      capabilities: { agentOptions: true, outputSchema: false, depthLimit: false, toolFilter: false, persona: false, cwd: false },
       inheritsParentContext: false,
       agentRouteDefaults: { provider: 'beta', model: 'replacement-model' },
       start: replacementStart,
@@ -1024,7 +1034,7 @@ describe('dsh-tool-subagent background mode', () => {
     const parent = await ownerAgent(ctx, 'sess-parent')
     ctx.subagents.registerProvider({
       name: 'broken-start',
-      capabilities: { agentOptions: false, outputSchema: false, depthLimit: false, toolFilter: false, persona: false },
+      capabilities: { agentOptions: false, outputSchema: false, depthLimit: false, toolFilter: false, persona: false, cwd: false },
       inheritsParentContext: false,
       start: async () => { throw new Error('setup failed') },
     })
@@ -1053,7 +1063,7 @@ describe('dsh-tool-subagent background mode', () => {
     const parent = await ownerAgent(ctx, 'sess-parent')
     ctx.subagents.registerProvider({
       name: 'pending-start',
-      capabilities: { agentOptions: false, outputSchema: false, depthLimit: false, toolFilter: false, persona: false },
+      capabilities: { agentOptions: false, outputSchema: false, depthLimit: false, toolFilter: false, persona: false, cwd: false },
       inheritsParentContext: false,
       start: request => new Promise((_resolve, reject) => {
         request.signal.addEventListener('abort', () => { reject(new Error('startup aborted')) }, { once: true })
@@ -1091,7 +1101,7 @@ describe('dsh-tool-subagent background mode', () => {
     const parent = await ownerAgent(ctx, 'sess-parent')
     ctx.subagents.registerProvider({
       name: 'broken-start-rollback',
-      capabilities: { agentOptions: false, outputSchema: false, depthLimit: false, toolFilter: false, persona: false },
+      capabilities: { agentOptions: false, outputSchema: false, depthLimit: false, toolFilter: false, persona: false, cwd: false },
       inheritsParentContext: false,
       start: request => new Promise((_resolve, reject) => {
         request.signal.addEventListener('abort', () => {
@@ -1136,7 +1146,7 @@ describe('dsh-tool-subagent background mode', () => {
     let starts = 0
     ctx.subagents.registerProvider({
       name: 'hanging',
-      capabilities: { agentOptions: false, outputSchema: false, depthLimit: false, toolFilter: false, persona: false },
+      capabilities: { agentOptions: false, outputSchema: false, depthLimit: false, toolFilter: false, persona: false, cwd: false },
       inheritsParentContext: false,
       start: async (request) => {
         let settle!: (value: { output: { type: 'text'; text: string }[]; stopReason: 'aborted' }) => void
@@ -1284,7 +1294,7 @@ describe('dsh-tool-subagent continuable background mode', () => {
     let survivingChildId: ReturnType<typeof SessionId> | undefined
     ctx.subagents.registerProvider({
       name: 'gated',
-      capabilities: { agentOptions: false, outputSchema: true, depthLimit: true, toolFilter: true, persona: true },
+      capabilities: { agentOptions: false, outputSchema: true, depthLimit: true, toolFilter: true, persona: true, cwd: true },
       inheritsParentContext: false,
       start: async () => { throw new Error('continuable policy must not start a one-shot child') },
       prepareContinuable: async (request) => {
@@ -1359,7 +1369,7 @@ describe('background preflight failure (no orphaned child, by construction)', ()
     let starts = 0
     ctx.subagents.registerProvider({
       name: 'probe',
-      capabilities: { agentOptions: false, outputSchema: false, depthLimit: false, toolFilter: false, persona: false },
+      capabilities: { agentOptions: false, outputSchema: false, depthLimit: false, toolFilter: false, persona: false, cwd: false },
       inheritsParentContext: false,
       start: async () => {
         starts += 1
@@ -1397,7 +1407,7 @@ describe('depth budget configuration', () => {
     await ctx.plugin(SubagentRuntime)
     ctx.subagents.registerProvider({
       name: 'capture',
-      capabilities: { agentOptions: false, outputSchema: true, depthLimit: true, toolFilter: true, persona: true },
+      capabilities: { agentOptions: false, outputSchema: true, depthLimit: true, toolFilter: true, persona: true, cwd: true },
       inheritsParentContext: false,
       start: async (request) => {
         requests.push(request)
@@ -1435,7 +1445,7 @@ describe('depth budget configuration', () => {
     await ctx.plugin(SubagentRuntime)
     ctx.subagents.registerProvider({
       name: 'no-depth',
-      capabilities: { agentOptions: false, outputSchema: false, depthLimit: false, toolFilter: false, persona: false },
+      capabilities: { agentOptions: false, outputSchema: false, depthLimit: false, toolFilter: false, persona: false, cwd: false },
       inheritsParentContext: false,
       start: async () => { throw new Error('unreachable') },
     })
@@ -1451,7 +1461,7 @@ describe('depth budget configuration', () => {
     await ctx.plugin(SubagentRuntime)
     ctx.subagents.registerProvider({
       name: 'external',
-      capabilities: { agentOptions: false, outputSchema: false, depthLimit: false, toolFilter: false, persona: false },
+      capabilities: { agentOptions: false, outputSchema: false, depthLimit: false, toolFilter: false, persona: false, cwd: false },
       inheritsParentContext: false,
       start: async (request) => {
         requests.push(request)
@@ -1467,5 +1477,875 @@ describe('depth budget configuration', () => {
     await callSubagent(ctx, { description: 'd', prompt: 'p' })
     expect(requests[0]?.maxDepth).toBeUndefined()
     expect(requests[0]?.toolFilter).toBeUndefined()
+  })
+})
+
+describe('subagent tool worktree isolation', () => {
+  const workerRoute: WorktreeRoute = { provider: 'parent-provider', model: 'parent-model' }
+  const reviewerRoute: WorktreeRoute = { provider: 'reviewer-provider', model: 'reviewer-model' }
+
+  /** A parent Agent with the effective route and cwd the isolation executor requires. */
+  function isolationParent(
+    cwd: string,
+    options: Agent['options'] = { provider: workerRoute.provider, model: workerRoute.model },
+  ): Agent {
+    const base = fakeAgent('isolation-parent')
+    const header: SessionHeader = {
+      version: SESSION_FORMAT_VERSION,
+      id: base.id,
+      createdAt: 1_700_000_000_000,
+      isSeeded: false,
+      cwd,
+    }
+    return { ...base, options, session: Session.create(base.id, undefined, header) }
+  }
+
+  function fakeWorktreeRecord(overrides: Partial<WorktreeRecord> = {}): WorktreeRecord {
+    return {
+      id: brandString<WorktreeId>('wt-aaaaaaaa'),
+      repoRoot: '/repo',
+      path: '/repo-worktrees/wt-aaaaaaaa',
+      branch: 'dsh/worktree/wt-aaaaaaaa',
+      baseCommit: 'deadbeefdeadbeefdeadbeefdeadbeefdeadbeef',
+      owner: { kind: 'session', sessionId: SessionId('isolation-parent') },
+      label: 'd',
+      task: 'the task',
+      state: 'open',
+      createdAt: 1_700_000_000_000,
+      workerSessionIds: [],
+      workerRoute,
+      ...overrides,
+    }
+  }
+
+  function fakeProvisioned(overrides: Partial<ProvisionedWorktree> = {}): ProvisionedWorktree {
+    return {
+      record: fakeWorktreeRecord(),
+      // A real, always-present directory: the continuable path validates `cwd`
+      // against the filesystem (`assertUsableCwd`), unlike the synthetic
+      // foreground "capture" provider, which never inspects it.
+      workDir: tmpdir(),
+      ...overrides,
+    }
+  }
+
+  const workerBriefFor = (provisioned: ProvisionedWorktree): string => renderWorkerBrief({
+    workDir: provisioned.workDir,
+    branch: provisioned.record.branch,
+    baseCommit: provisioned.record.baseCommit,
+    repoRoot: provisioned.record.repoRoot,
+  })
+
+  /**
+   * A worktree-service shell with every method the executor calls stubbed, because the
+   * real `@deepseek-ai/dsh-subagent-worktree` git implementation is developed in parallel.
+   * `SubagentWorktrees.create/attach/resolveReviewer/discard` throw `not implemented`
+   * bodies; constructing the real class and spying over its methods keeps `ctx.get`
+   * resolution, injection typing, and the public contract real while faking only the
+   * unimplemented behavior.
+   */
+  function installFakeWorktrees(ctx: Context): SubagentWorktrees {
+    const worktrees = new SubagentWorktrees(ctx, {
+      branchPrefix: 'test/',
+      maxWorktrees: 4,
+      requireDistinctReviewer: false,
+      testCommand: [],
+      checkTimeoutMs: 900_000,
+      reviewDiffMaxBytes: 4096,
+      removeOnMerge: true,
+    })
+    vi.spyOn(worktrees, 'resolveReviewer').mockReturnValue(reviewerRoute)
+    vi.spyOn(worktrees, 'create').mockResolvedValue(fakeProvisioned())
+    vi.spyOn(worktrees, 'attach').mockImplementation(async request => fakeWorktreeRecord({
+      workerSessionIds: [request.workerSessionId],
+    }))
+    vi.spyOn(worktrees, 'discard').mockResolvedValue(fakeWorktreeRecord({ state: 'discarded' }))
+    return worktrees
+  }
+
+  /**
+   * A context with a request-capturing one-shot provider named `capture` (cwd capability unless
+   * `cwdCapability` is false) and no delegation tool yet, so a test controls the order in which the worktree
+   * service, an isolation offer, and the tool appear.
+   */
+  async function captureContext(options: { cwdCapability?: boolean } = {}) {
+    const requests: SubagentStartRequest[] = []
+    const disposedRunIds: string[] = []
+    const ctx = await projectedContext()
+    await ctx.plugin(SystemPrompt)
+    await ctx.plugin(ToolRuntime)
+    await ctx.plugin(SubagentRuntime)
+    let startCount = 0
+    const provider: SubagentProvider = {
+      name: 'capture',
+      capabilities: {
+        agentOptions: true, outputSchema: false, depthLimit: false, toolFilter: false, persona: false,
+        cwd: options.cwdCapability ?? true,
+      },
+      inheritsParentContext: false,
+      start: async (request) => {
+        requests.push(request)
+        startCount += 1
+        const id = SessionId(`capture-child-${startCount}`)
+        return {
+          id,
+          localAgent: undefined,
+          result: Promise.resolve({ output: [{ type: 'text', text: 'ok' }], stopReason: 'completed' as const }),
+          dispose: async () => { disposedRunIds.push(id) },
+        }
+      },
+    }
+    const removeProvider = ctx.subagents.registerProvider(provider)
+    return { ctx, requests, disposedRunIds, provider, removeProvider }
+  }
+
+  /** Mount the tool over {@link captureContext}'s provider; the row enables isolation unless `rowIsolation` is false. */
+  async function foregroundCaptureSetup(
+    config: Omit<tool.Config, 'provider' | 'worktreeIsolation'> = {},
+    options: { rowIsolation?: boolean; cwdCapability?: boolean } = {},
+  ) {
+    const { ctx, requests, disposedRunIds } = await captureContext(options)
+    await ctx.plugin(tool, {
+      provider: 'capture', worktreeIsolation: options.rowIsolation ?? true, maxDepth: 'provider-managed', ...config,
+    })
+    return { ctx, requests, disposedRunIds }
+  }
+
+  const parent = isolationParent('/repo/packages/foo')
+
+  it('omits the isolation parameter by default', async () => {
+    const ctx = await setup({ provider: 'mock' })
+    const schema = ctx.tools.schemas().find(s => s.name === 'subagent')!
+    const properties = (schema.parameters as { properties: Record<string, unknown> }).properties
+    expect('isolation' in properties).toBe(false)
+    await disposeSetupProvider(ctx)
+  })
+
+  it('exposes the isolation parameter, verbatim, when worktreeIsolation is enabled', async () => {
+    const ctx = await setup({ provider: 'mock', worktreeIsolation: true })
+    const schema = ctx.tools.schemas().find(s => s.name === 'subagent')!
+    const properties = (schema.parameters as {
+      properties: Record<string, { type: string; enum?: string[]; description?: string }>
+    }).properties
+    expect(properties.isolation).toEqual({
+      type: 'string',
+      enum: ['worktree'],
+      description: 'Set to "worktree" to give the child its own git worktree, branched from your current commit, '
+        + 'so parallel children cannot overwrite your files or each other\'s. Nothing it changes reaches your '
+        + 'checkout until you call accept_worktree, which has an independent reviewer check the change before '
+        + 'merging it. Omit to let the child work in your checkout.',
+    })
+    await disposeSetupProvider(ctx)
+  })
+
+  it('declares the worktree result fields only on a tool that offers isolation', async () => {
+    // PTC prompts declare this result type, so a composition without the offer must not pay for the fields.
+    const resultArms = (ctx: Context): string[][] => {
+      const schema = ctx.tools.get('subagent', parent)!.output.schema as { oneOf: Array<{ properties: Record<string, unknown> }> }
+      return schema.oneOf.map(arm => Object.keys(arm.properties))
+    }
+    const plain = await setup({ provider: 'mock' })
+    expect(resultArms(plain).flat().filter(field => field === 'worktree' || field === 'baseDirty')).toEqual([])
+    await disposeSetupProvider(plain)
+    const isolated = await setup({ provider: 'mock', worktreeIsolation: true })
+    expect(resultArms(isolated)).toEqual([
+      ['kind', 'jobId'],
+      ['kind', 'subagentId', 'worktree', 'baseDirty'],
+      ['kind', 'runId', 'output', 'worktree'],
+    ])
+    await disposeSetupProvider(isolated)
+  })
+
+  it('rejects the isolation argument at execute time when worktreeIsolation is disabled', async () => {
+    const ctx = await setup({ provider: 'mock' })
+    const result = await callSubagent(ctx, { description: 'd', prompt: 'p', isolation: 'worktree' })
+    expect(result.isError).toBe(true)
+    expect(text(result)).toContain('subagent: isolation is not offered on this tool')
+    await disposeSetupProvider(ctx)
+  })
+
+  describe('isolation offer', () => {
+    const isolationParameter = (ctx: Context): unknown => {
+      const schema = ctx.tools.schemas().find(candidate => candidate.name === 'subagent')
+      return (schema?.parameters as { properties: Record<string, unknown> } | undefined)?.properties.isolation
+    }
+    const isolatedCall = { description: 'd', prompt: 'p', isolation: 'worktree' }
+    const offered = { type: 'string', enum: ['worktree'] }
+    const notOffered = 'subagent: isolation is not offered on this tool'
+
+    /** The capture provider and a fake worktree service, with the delegation tool not mounted yet. */
+    async function beforeTool(options: { cwdCapability?: boolean } = {}) {
+      const captured = await captureContext(options)
+      const worktrees = installFakeWorktrees(captured.ctx)
+      return { ...captured, worktrees, created: vi.spyOn(worktrees, 'create') }
+    }
+
+    const mountTool = (ctx: Context, rowIsolation = false) => ctx.plugin(tool, {
+      provider: 'capture', worktreeIsolation: rowIsolation, maxDepth: 'provider-managed',
+    })
+
+    const subagentRegistrations = (register: { mock: { calls: unknown[][] } }): number =>
+      register.mock.calls.filter(([definition]) => (definition as { name: string }).name === 'subagent').length
+
+    it('offers the isolation parameter when an offer is live as the tool mounts, and honors it at execute time', async () => {
+      const { ctx, worktrees, created } = await beforeTool()
+      worktrees.offerIsolation()
+      await mountTool(ctx)
+
+      expect(isolationParameter(ctx)).toMatchObject(offered)
+      const result = await callSubagent(ctx, isolatedCall, { agent: parent })
+      expect(result.isError).toBe(false)
+      expect(created).toHaveBeenCalledTimes(1)
+    })
+
+    it('omits the isolation parameter and rejects the argument, naming the ways to offer it, when nothing offers it', async () => {
+      const { ctx, created } = await beforeTool()
+      await mountTool(ctx)
+
+      expect(isolationParameter(ctx)).toBeUndefined()
+      const result = await callSubagent(ctx, isolatedCall, { agent: parent })
+      expect(result.isError).toBe(true)
+      const message = text(result)
+      expect(message).toContain(notOffered)
+      expect(message).toContain('omit the isolation argument')
+      expect(message).toContain('provider with the cwd capability')
+      expect(message).toContain('Agent Crew bundle')
+      expect(message).toContain('tool-subagent-worktree row')
+      expect(message).toContain('worktreeIsolation: true')
+      expect(created).not.toHaveBeenCalled()
+    })
+
+    it('offers isolation from the row alone, with no offer on the service', async () => {
+      const { ctx } = await beforeTool()
+      await mountTool(ctx, true)
+
+      expect(isolationParameter(ctx)).toMatchObject(offered)
+    })
+
+    it('does not offer isolation from an offer on a provider without the cwd capability', async () => {
+      const { ctx, worktrees, created } = await beforeTool({ cwdCapability: false })
+      worktrees.offerIsolation()
+      await mountTool(ctx)
+
+      expect(isolationParameter(ctx)).toBeUndefined()
+      const result = await callSubagent(ctx, isolatedCall, { agent: parent })
+      expect(result.isError).toBe(true)
+      expect(text(result)).toContain(notOffered)
+      expect(created).not.toHaveBeenCalled()
+    })
+
+    it('mounts again with the parameter when an offer registers after the tool mounted', async () => {
+      const { ctx, worktrees, created } = await beforeTool()
+      await mountTool(ctx)
+      expect(isolationParameter(ctx)).toBeUndefined()
+
+      worktrees.offerIsolation()
+
+      expect(isolationParameter(ctx)).toMatchObject(offered)
+      const result = await callSubagent(ctx, isolatedCall, { agent: parent })
+      expect(result.isError).toBe(false)
+      expect(created).toHaveBeenCalledTimes(1)
+    })
+
+    it('offers isolation when the tool mounted before the worktree service existed and the offer comes later', async () => {
+      const { ctx } = await captureContext()
+      await mountTool(ctx)
+      expect(isolationParameter(ctx)).toBeUndefined()
+
+      const worktrees = installFakeWorktrees(ctx)
+      expect(isolationParameter(ctx)).toBeUndefined()
+      worktrees.offerIsolation()
+
+      expect(isolationParameter(ctx)).toMatchObject(offered)
+      const result = await callSubagent(ctx, isolatedCall, { agent: parent })
+      expect(result.isError).toBe(false)
+    })
+
+    it('mounts again without the parameter when the last offer is withdrawn, and rejects the argument', async () => {
+      const { ctx, worktrees, created } = await beforeTool()
+      const withdraw = worktrees.offerIsolation()
+      await mountTool(ctx)
+      expect(isolationParameter(ctx)).toMatchObject(offered)
+
+      withdraw()
+
+      expect(isolationParameter(ctx)).toBeUndefined()
+      const result = await callSubagent(ctx, isolatedCall, { agent: parent })
+      expect(result.isError).toBe(true)
+      expect(text(result)).toContain(notOffered)
+      expect(created).not.toHaveBeenCalled()
+    })
+
+    it('keeps offering isolation while another offer stands, mounting again only when the offer flips', async () => {
+      const { ctx, worktrees } = await beforeTool()
+      const first = worktrees.offerIsolation()
+      await mountTool(ctx)
+      const register = vi.spyOn(ctx.tools, 'register')
+
+      const second = worktrees.offerIsolation()
+      first()
+      expect(isolationParameter(ctx)).toMatchObject(offered)
+      expect(subagentRegistrations(register)).toBe(0)
+
+      second()
+      expect(isolationParameter(ctx)).toBeUndefined()
+      expect(subagentRegistrations(register)).toBe(1)
+    })
+
+    it.each([
+      { name: 'a row that offers isolation itself', rowIsolation: true, cwdCapability: true, parameter: offered },
+      { name: 'a provider without the cwd capability', rowIsolation: false, cwdCapability: false, parameter: undefined },
+    ])('does not mount again for an offer change that leaves the answer as it was: $name', async (scenario) => {
+      const { ctx, worktrees } = await beforeTool({ cwdCapability: scenario.cwdCapability })
+      await mountTool(ctx, scenario.rowIsolation)
+      const register = vi.spyOn(ctx.tools, 'register')
+
+      worktrees.offerIsolation()()
+
+      expect(subagentRegistrations(register)).toBe(0)
+      if (scenario.parameter === undefined) expect(isolationParameter(ctx)).toBeUndefined()
+      else expect(isolationParameter(ctx)).toMatchObject(scenario.parameter)
+    })
+
+    it('gives the schema and the executor one answer for the life of a mount, whatever the service reads later', async () => {
+      const offering = await beforeTool()
+      offering.worktrees.offerIsolation()
+      await mountTool(offering.ctx)
+      // The getter changes without an offer-changed event, as a hand-written service double could.
+      vi.spyOn(offering.worktrees, 'offersIsolation', 'get').mockReturnValue(false)
+      expect(isolationParameter(offering.ctx)).toMatchObject(offered)
+      expect((await callSubagent(offering.ctx, isolatedCall, { agent: parent })).isError).toBe(false)
+
+      const withholding = await beforeTool()
+      await mountTool(withholding.ctx)
+      vi.spyOn(withholding.worktrees, 'offersIsolation', 'get').mockReturnValue(true)
+      expect(isolationParameter(withholding.ctx)).toBeUndefined()
+      const rejected = await callSubagent(withholding.ctx, isolatedCall, { agent: parent })
+      expect(rejected.isError).toBe(true)
+      expect(text(rejected)).toContain(notOffered)
+    })
+
+    it('picks up an offer change made while its provider was absent when the provider returns', async () => {
+      const { ctx, worktrees, provider, removeProvider } = await beforeTool()
+      await mountTool(ctx)
+      const warn = vi.spyOn(ctx.logger, 'warn')
+      removeProvider()
+      expect(ctx.tools.schemas().some(schema => schema.name === 'subagent')).toBe(false)
+
+      worktrees.offerIsolation()
+      expect(ctx.tools.schemas().some(schema => schema.name === 'subagent')).toBe(false)
+      ctx.subagents.registerProvider(provider)
+
+      expect(isolationParameter(ctx)).toMatchObject(offered)
+      expect(warn).not.toHaveBeenCalled()
+    })
+  })
+
+  it('throws when the subagent-worktree service is not loaded', async () => {
+    const { ctx } = await foregroundCaptureSetup()
+    const result = await callSubagent(ctx, { description: 'd', prompt: 'p', isolation: 'worktree' }, { agent: parent })
+    expect(result.isError).toBe(true)
+    expect(text(result)).toContain('subagent: worktree isolation requires the subagent-worktree service')
+  })
+
+  it("rejects isolation for a background job under backgroundMode: 'one-shot'", async () => {
+    const { ctx } = await foregroundCaptureSetup()
+    installFakeWorktrees(ctx)
+    const result = await callSubagent(
+      ctx,
+      { description: 'd', prompt: 'p', isolation: 'worktree', run_in_background: true },
+      { agent: parent },
+    )
+    expect(result.isError).toBe(true)
+    expect(text(result)).toContain(
+      "subagent: worktree isolation does not support a background job under backgroundMode: 'one-shot'",
+    )
+  })
+
+  it('requires the parent session to have a working directory', async () => {
+    const { ctx } = await foregroundCaptureSetup()
+    installFakeWorktrees(ctx)
+    const result = await callSubagent(
+      ctx,
+      { description: 'd', prompt: 'p', isolation: 'worktree' },
+      { agent: fakeAgent('no-cwd-parent') },
+    )
+    expect(result.isError).toBe(true)
+    expect(text(result)).toContain('subagent: worktree isolation requires the parent session to have a working directory')
+  })
+
+  it('requires an effective provider and model to resolve a worktree route', async () => {
+    const { ctx } = await foregroundCaptureSetup()
+    installFakeWorktrees(ctx)
+    const routeless = isolationParent('/repo/packages/foo', {})
+    const result = await callSubagent(ctx, { description: 'd', prompt: 'p', isolation: 'worktree' }, { agent: routeless })
+    expect(result.isError).toBe(true)
+    expect(text(result)).toContain('subagent: worktree isolation requires an effective provider and model')
+  })
+
+  it('calls resolveReviewer before create, and its throw prevents create', async () => {
+    const { ctx } = await foregroundCaptureSetup()
+    const worktrees = installFakeWorktrees(ctx)
+    vi.spyOn(worktrees, 'resolveReviewer').mockImplementation(() => {
+      throw new Error("the reviewer would run on the worker's route")
+    })
+    const createSpy = vi.spyOn(worktrees, 'create')
+
+    const result = await callSubagent(ctx, { description: 'd', prompt: 'p', isolation: 'worktree' }, { agent: parent })
+    expect(result.isError).toBe(true)
+    expect(text(result)).toContain("the reviewer would run on the worker's route")
+    expect(createSpy).not.toHaveBeenCalled()
+  })
+
+  it('resolves the worker route from configured child agentOptions, including its reasoning effort, over the parent route', async () => {
+    // The scripted 'mock' provider (harness.ts) supports agentOptions and cwd,
+    // and configuring a route requires the `llm` service to preflight it.
+    const ctx = await setup({
+      provider: 'mock',
+      worktreeIsolation: true,
+      agentOptions: { provider: 'configured-provider', model: 'configured-model', reasoningEffort: ReasoningEffortId('high') },
+    })
+    ctx.llm.registerAdapter(['configured-provider'], new MockAdapter([], {
+      efforts: [{ id: ReasoningEffortId('high'), name: 'High' }],
+    }))
+    const worktrees = installFakeWorktrees(ctx)
+    const resolveReviewerSpy = vi.spyOn(worktrees, 'resolveReviewer')
+    const attachSpy = vi.spyOn(worktrees, 'attach')
+
+    const result = await callSubagent(ctx, { description: 'd', prompt: 'the task', isolation: 'worktree' }, { agent: parent })
+
+    const configuredRoute: WorktreeRoute = {
+      provider: 'configured-provider',
+      model: 'configured-model',
+      reasoningEffort: ReasoningEffortId('high'),
+    }
+    expect(result.isError).toBe(false)
+    expect(resolveReviewerSpy).toHaveBeenCalledWith({ workerRoute: configuredRoute, callerRoute: workerRoute })
+    expect(attachSpy).toHaveBeenCalledWith(expect.objectContaining({ workerRoute: configuredRoute }))
+    await disposeSetupProvider(ctx)
+  })
+
+  it("resolves the worker route from config agentOptions naming only model, inheriting the parent's provider", async () => {
+    // A partial config override: no provider, so the child (and the recorded
+    // workerRoute) must still inherit the parent's provider, not fall back to
+    // the caller's route wholesale the way an all-or-nothing check would.
+    const ctx = await setup({
+      provider: 'mock',
+      worktreeIsolation: true,
+      agentOptions: { model: 'configured-model' },
+    })
+    ctx.llm.registerAdapter(['parent-provider'], new MockAdapter([]))
+    const worktrees = installFakeWorktrees(ctx)
+    const resolveReviewerSpy = vi.spyOn(worktrees, 'resolveReviewer')
+
+    const result = await callSubagent(ctx, { description: 'd', prompt: 'the task', isolation: 'worktree' }, { agent: parent })
+
+    const expectedRoute: WorktreeRoute = { provider: 'parent-provider', model: 'configured-model' }
+    expect(result.isError).toBe(false)
+    expect(resolveReviewerSpy).toHaveBeenCalledWith({ workerRoute: expectedRoute, callerRoute: workerRoute })
+    await disposeSetupProvider(ctx)
+  })
+
+  it("resolves the worker route from a model-supplied reasoning_effort alone, inheriting the parent's route", async () => {
+    // A model-selection call that names only reasoning_effort: provider and
+    // model still come from the parent, but the recorded workerRoute must
+    // carry the selected effort, which an all-or-nothing provider+model check
+    // would have dropped entirely.
+    const allowedModels = [{ provider: 'parent-provider', model: 'parent-model' }]
+    const ctx = await projectedContext()
+    await ctx.plugin(LlmRuntime)
+    await ctx.plugin(SystemPrompt)
+    await ctx.plugin(ToolRuntime)
+    await ctx.plugin(SubagentRuntime)
+    await ctx.plugin(SubagentModelSelectionConfig, { enabled: true, allowedModels })
+    ctx.subagents.registerProvider({
+      name: 'capture-model-selection',
+      capabilities: { agentOptions: true, outputSchema: false, depthLimit: false, toolFilter: false, persona: false, cwd: true },
+      inheritsParentContext: false,
+      start: async () => ({
+        id: SessionId('capture-model-selection-child'),
+        localAgent: undefined,
+        result: Promise.resolve({ output: [{ type: 'text', text: 'ok' }], stopReason: 'completed' as const }),
+        dispose: async () => {},
+      }),
+    })
+    ctx.llm.registerAdapter(['parent-provider'], new MockAdapter([], {
+      efforts: [{ id: ReasoningEffortId('high'), name: 'High' }],
+    }))
+    // apply() needs only Session-shaped facts (firstLiveSeq, eventAt, header);
+    // no real Agent is required to exercise the model-selection policy path.
+    const modelSelectionSession = Session.create(SessionId('model-selection-session'))
+    tool.apply(ctx, {
+      provider: 'capture-model-selection',
+      worktreeIsolation: true,
+      maxDepth: 'provider-managed',
+      modelSelectionSettings: true,
+    }, modelSelectionSession)
+    const worktrees = installFakeWorktrees(ctx)
+    const resolveReviewerSpy = vi.spyOn(worktrees, 'resolveReviewer')
+
+    const result = await callSubagent(ctx, {
+      description: 'd',
+      prompt: 'the task',
+      isolation: 'worktree',
+      reasoning_effort: 'high',
+    }, { agent: parent })
+
+    const expectedRoute: WorktreeRoute = {
+      provider: 'parent-provider',
+      model: 'parent-model',
+      reasoningEffort: ReasoningEffortId('high'),
+    }
+    expect(result.isError).toBe(false)
+    expect(resolveReviewerSpy).toHaveBeenCalledWith({ workerRoute: expectedRoute, callerRoute: workerRoute })
+  })
+
+  it("does not use a provider's route defaults as the worker route when nothing selects a route", async () => {
+    // agentRouteDefaults is a baseline ONLY consulted during preflight; when
+    // nothing is configured or requested, the child (and workerRoute) must
+    // inherit the parent's actual route, never the provider's defaults.
+    const ctx = await projectedContext()
+    await ctx.plugin(SystemPrompt)
+    await ctx.plugin(ToolRuntime)
+    await ctx.plugin(SubagentRuntime)
+    ctx.subagents.registerProvider({
+      name: 'capture-route-defaults',
+      capabilities: { agentOptions: true, outputSchema: false, depthLimit: false, toolFilter: false, persona: false, cwd: true },
+      inheritsParentContext: false,
+      agentRouteDefaults: { provider: 'route-default-provider', model: 'route-default-model' },
+      start: async () => ({
+        id: SessionId('capture-route-defaults-child'),
+        localAgent: undefined,
+        result: Promise.resolve({ output: [{ type: 'text', text: 'ok' }], stopReason: 'completed' as const }),
+        dispose: async () => {},
+      }),
+    })
+    await ctx.plugin(tool, {
+      provider: 'capture-route-defaults',
+      worktreeIsolation: true,
+      maxDepth: 'provider-managed',
+    })
+    const worktrees = installFakeWorktrees(ctx)
+    const resolveReviewerSpy = vi.spyOn(worktrees, 'resolveReviewer')
+
+    const result = await callSubagent(ctx, { description: 'd', prompt: 'the task', isolation: 'worktree' }, { agent: parent })
+
+    expect(result.isError).toBe(false)
+    expect(resolveReviewerSpy).toHaveBeenCalledWith({ workerRoute, callerRoute: workerRoute })
+  })
+
+  it('propagates a non-isolated foreground start failure without attempting a discard', async () => {
+    const { ctx } = await foregroundCaptureSetup()
+    const worktrees = installFakeWorktrees(ctx)
+    const discardSpy = vi.spyOn(worktrees, 'discard')
+    ctx.subagents.registerProvider({
+      name: 'failing3',
+      capabilities: { agentOptions: false, outputSchema: false, depthLimit: false, toolFilter: false, persona: false, cwd: true },
+      inheritsParentContext: false,
+      start: async () => { throw new Error('plain start failure') },
+    })
+    await ctx.plugin(tool, { provider: 'failing3', toolName: 'subagent_failing3', maxDepth: 'provider-managed' })
+
+    // No `isolation` argument and no `worktreeIsolation` on this mount: the
+    // ordinary non-isolated path must not touch the worktree service at all.
+    const result = await ctx.tools.execute({
+      signal: testToolSignal,
+      callId: ToolCallId('failing3-1'),
+      name: 'subagent_failing3',
+      arguments: { description: 'd', prompt: 'p' },
+      agent: parent,
+    })
+
+    expect(result.isError).toBe(true)
+    expect(text(result)).toContain('plain start failure')
+    expect(discardSpy).not.toHaveBeenCalled()
+  })
+
+  it('passes the worktree cwd and brief-prefixed prompt to the foreground request, attaches the worker, and renders the worktree line', async () => {
+    const { ctx, requests } = await foregroundCaptureSetup()
+    const worktrees = installFakeWorktrees(ctx)
+    const attachSpy = vi.spyOn(worktrees, 'attach')
+    const resolveReviewerSpy = vi.spyOn(worktrees, 'resolveReviewer')
+
+    const result = await callSubagent(ctx, { description: 'd', prompt: 'the task', isolation: 'worktree' }, { agent: parent })
+
+    expect(resolveReviewerSpy).toHaveBeenCalledWith({ workerRoute, callerRoute: workerRoute })
+    const provisioned = fakeProvisioned()
+    expect(requests).toHaveLength(1)
+    expect(requests[0]?.cwd).toBe(provisioned.workDir)
+    expect(requests[0]?.prompt).toEqual([{ type: 'text', text: `${workerBriefFor(provisioned)}the task` }])
+
+    expect(attachSpy).toHaveBeenCalledWith({
+      id: provisioned.record.id,
+      owner: { kind: 'session', sessionId: parent.id },
+      workerSessionId: SessionId('capture-child-1'),
+      workerRoute,
+    })
+
+    expect(result.isError).toBe(false)
+    expect(result.isError ? undefined : result.value).toMatchObject({
+      kind: 'foreground',
+      worktree: {
+        id: provisioned.record.id,
+        path: provisioned.record.path,
+        branch: provisioned.record.branch,
+        baseCommit: provisioned.record.baseCommit,
+      },
+    })
+    expect(text(result)).toBe(
+      `ok\nWorktree ${provisioned.record.id} (branch ${provisioned.record.branch}) holds this child's changes; `
+      + 'call accept_worktree to review and merge them.',
+    )
+  })
+
+  it('logs a warning, but still settles and disposes the published run, when the foreground attach fails', async () => {
+    const { ctx, disposedRunIds } = await foregroundCaptureSetup()
+    const worktrees = installFakeWorktrees(ctx)
+    vi.spyOn(worktrees, 'attach').mockRejectedValue(new Error('attach failed'))
+    const warnSpy = vi.spyOn(ctx.logger, 'warn').mockImplementation(() => {})
+
+    const result = await callSubagent(ctx, { description: 'd', prompt: 'the task', isolation: 'worktree' }, { agent: parent })
+
+    // The published run is not abandoned: it settles and disposes normally,
+    // and the attach failure is only logged, never surfaced as the call's error.
+    expect(result.isError).toBe(false)
+    expect(text(result)).toContain('ok')
+    expect(disposedRunIds).toEqual(['capture-child-1'])
+    expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining('attach failed'))
+  })
+
+  it('mentions the worktree in the failure text when an isolated foreground run does not complete', async () => {
+    const ctx = await projectedContext()
+    await ctx.plugin(SystemPrompt)
+    await ctx.plugin(ToolRuntime)
+    await ctx.plugin(SubagentRuntime)
+    ctx.subagents.registerProvider({
+      name: 'incomplete-run',
+      capabilities: { agentOptions: false, outputSchema: false, depthLimit: false, toolFilter: false, persona: false, cwd: true },
+      inheritsParentContext: false,
+      start: async () => ({
+        id: SessionId('incomplete-run-child'),
+        localAgent: undefined,
+        result: Promise.resolve({ output: [], stopReason: 'error' as const }),
+        dispose: async () => {},
+      }),
+    })
+    await ctx.plugin(tool, { provider: 'incomplete-run', worktreeIsolation: true, maxDepth: 'provider-managed' })
+    installFakeWorktrees(ctx)
+
+    const result = await callSubagent(ctx, { description: 'd', prompt: 'p', isolation: 'worktree' }, { agent: parent })
+
+    expect(result.isError).toBe(true)
+    const provisioned = fakeProvisioned()
+    expect(text(result)).toContain(
+      `Worktree ${provisioned.record.id} (branch ${provisioned.record.branch}) holds this child's changes; `
+      + 'call accept_worktree or discard_worktree.',
+    )
+  })
+
+  it('keeps the foreground render byte-identical when isolation is configured but not requested', async () => {
+    const { ctx, requests } = await foregroundCaptureSetup()
+    installFakeWorktrees(ctx)
+
+    const result = await callSubagent(ctx, { description: 'd', prompt: 'the task' }, { agent: parent })
+
+    expect(requests[0]?.cwd).toBeUndefined()
+    expect(requests[0]?.prompt).toEqual([{ type: 'text', text: 'the task' }])
+    expect(result.isError).toBe(false)
+    expect(result.isError ? undefined : result.value).toEqual({ kind: 'foreground', runId: SessionId('capture-child-1'), output: [{ type: 'text', text: 'ok' }] })
+    expect(text(result)).toBe('ok')
+  })
+
+  it('discards the fresh worktree, best effort, when the foreground start fails, and rethrows the original error', async () => {
+    const { ctx } = await foregroundCaptureSetup()
+    const worktrees = installFakeWorktrees(ctx)
+    const discardSpy = vi.spyOn(worktrees, 'discard')
+    const attachSpy = vi.spyOn(worktrees, 'attach')
+    ctx.subagents.registerProvider({
+      name: 'failing',
+      capabilities: { agentOptions: false, outputSchema: false, depthLimit: false, toolFilter: false, persona: false, cwd: true },
+      inheritsParentContext: false,
+      start: async () => { throw new Error('provider start failed') },
+    })
+    await ctx.plugin(tool, { provider: 'failing', toolName: 'subagent_failing', worktreeIsolation: true, maxDepth: 'provider-managed' })
+
+    const result = await ctx.tools.execute({
+      signal: testToolSignal,
+      callId: ToolCallId('failing-1'),
+      name: 'subagent_failing',
+      arguments: { description: 'd', prompt: 'p', isolation: 'worktree' },
+      agent: parent,
+    })
+
+    expect(result.isError).toBe(true)
+    expect(text(result)).toContain('provider start failed')
+    const provisioned = fakeProvisioned()
+    expect(discardSpy).toHaveBeenCalledWith(expect.objectContaining({
+      id: provisioned.record.id,
+      owner: { kind: 'session', sessionId: parent.id },
+    }))
+    expect(discardSpy.mock.calls[0]?.[0].signal).toBeInstanceOf(AbortSignal)
+    expect(attachSpy).not.toHaveBeenCalled()
+  })
+
+  it('logs a warning, but still rethrows the original start failure, when the best-effort discard itself fails', async () => {
+    const { ctx } = await foregroundCaptureSetup()
+    const worktrees = installFakeWorktrees(ctx)
+    vi.spyOn(worktrees, 'discard').mockRejectedValue(new Error('discard failed too'))
+    const warnSpy = vi.spyOn(ctx.logger, 'warn').mockImplementation(() => {})
+    ctx.subagents.registerProvider({
+      name: 'failing2',
+      capabilities: { agentOptions: false, outputSchema: false, depthLimit: false, toolFilter: false, persona: false, cwd: true },
+      inheritsParentContext: false,
+      start: async () => { throw new Error('provider start failed') },
+    })
+    await ctx.plugin(tool, { provider: 'failing2', toolName: 'subagent_failing2', worktreeIsolation: true, maxDepth: 'provider-managed' })
+
+    const result = await ctx.tools.execute({
+      signal: testToolSignal,
+      callId: ToolCallId('failing2-1'),
+      name: 'subagent_failing2',
+      arguments: { description: 'd', prompt: 'p', isolation: 'worktree' },
+      agent: parent,
+    })
+
+    expect(result.isError).toBe(true)
+    // The ORIGINAL failure reaches the caller; the discard failure is only logged.
+    expect(text(result)).toContain('provider start failed')
+    expect(text(result)).not.toContain('discard failed too')
+    expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining('discard failed too'))
+  })
+
+  describe('continuable background isolation', () => {
+    const roots: string[] = []
+    afterEach(() => {
+      for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true })
+    })
+
+    /** Boot the real continuable stack (spawn provider, which has the cwd capability) with isolation enabled. */
+    async function continuableIsolationSetup() {
+      const ctx = new Context()
+      await mountAgentLoopTestDependencies(ctx)
+      const root = mkdtempSync(path.join(tmpdir(), 'dsh-tool-subagent-worktree-'))
+      roots.push(root)
+      await ctx.plugin(JsonlSessionPersistence, { root })
+      await ctx.plugin(AgentLoop, { agents: [] })
+      await ctx.plugin(SubagentRuntime)
+      await ctx.plugin(SubagentSpawn, { providerName: 'spawn' })
+      await ctx.plugin(tool, { provider: 'spawn', backgroundMode: 'continuable', worktreeIsolation: true })
+      ctx.llm.registerAdapter(['mock'], new MockAdapter([textResponse('continuable answer')]))
+      const worktrees = installFakeWorktrees(ctx)
+      const routedParent = await ctx.agentLoop.create(
+        SessionId('worktree-parent'),
+        { provider: 'mock', model: 'mock' },
+        { cwd: '/repo/packages/foo' },
+      )
+      return { ctx, parent: routedParent, worktrees }
+    }
+
+    it('passes the worktree cwd and brief-prefixed prompt to the continuable request, attaches the worker, and renders the worktree line', async () => {
+      const { ctx, parent: routedParent, worktrees } = await continuableIsolationSetup()
+      const attachSpy = vi.spyOn(worktrees, 'attach')
+
+      const result = await callSubagent(
+        ctx,
+        { description: 'd', prompt: 'the task', isolation: 'worktree' },
+        { agent: routedParent },
+      )
+
+      expect(result.isError).toBe(false)
+      const provisioned = fakeProvisioned()
+      expect(attachSpy).toHaveBeenCalledTimes(1)
+      const attachCall = attachSpy.mock.calls[0]?.[0]
+      expect(attachCall).toMatchObject({
+        id: provisioned.record.id,
+        owner: { kind: 'session', sessionId: routedParent.id },
+        workerRoute: { provider: 'mock', model: 'mock' },
+      })
+      expect(result.isError ? undefined : result.value).toMatchObject({
+        kind: 'continuable',
+        worktree: {
+          id: provisioned.record.id,
+          path: provisioned.record.path,
+          branch: provisioned.record.branch,
+          baseCommit: provisioned.record.baseCommit,
+        },
+      })
+      expect(attachCall?.workerSessionId).toBe(result.isError ? undefined : (result.value as { subagentId: unknown }).subagentId)
+      expect(text(result)).toBe(
+        `started subagent ${attachCall?.workerSessionId} in worktree ${provisioned.record.id} `
+        + `(branch ${provisioned.record.branch}, base ${provisioned.record.baseCommit})`,
+      )
+    })
+
+    it('appends the uncommitted-changes note when the worktree left base-checkout changes behind', async () => {
+      const { ctx, parent: routedParent, worktrees } = await continuableIsolationSetup()
+      vi.spyOn(worktrees, 'create').mockResolvedValue(fakeProvisioned({ baseDirty: { entries: ['M file.ts'], total: 1 } }))
+
+      const result = await callSubagent(
+        ctx,
+        { description: 'd', prompt: 'the task', isolation: 'worktree' },
+        { agent: routedParent },
+      )
+
+      expect(result.isError).toBe(false)
+      expect(text(result)).toContain('Your checkout has 1 uncommitted change(s) that the worktree does not contain.')
+    })
+
+    it('attaches the reserved worker id before starting, then discards the fresh worktree, best effort, when the continuable start fails', async () => {
+      const { ctx, parent: routedParent, worktrees } = await continuableIsolationSetup()
+      const discardSpy = vi.spyOn(worktrees, 'discard')
+      const attachSpy = vi.spyOn(worktrees, 'attach')
+      // A relative cwd fails the seam's own validation inside startContinuable,
+      // after this tool has already attached the reserved worker id.
+      vi.spyOn(worktrees, 'create').mockResolvedValue(fakeProvisioned({ workDir: 'relative/dir' }))
+
+      const result = await callSubagent(
+        ctx,
+        { description: 'd', prompt: 'the task', isolation: 'worktree' },
+        { agent: routedParent },
+      )
+
+      expect(result.isError).toBe(true)
+      expect(text(result)).toContain('must be an absolute path')
+      // attach happened before the failed start: the reserved id never
+      // actually started a child, but the worktree already named a worker.
+      expect(attachSpy).toHaveBeenCalledTimes(1)
+      expect(attachSpy).toHaveBeenCalledWith({
+        id: fakeWorktreeRecord().id,
+        owner: { kind: 'session', sessionId: routedParent.id },
+        workerSessionId: expect.any(String) as string,
+        workerRoute: { provider: 'mock', model: 'mock' },
+      })
+      expect(discardSpy).toHaveBeenCalledWith(expect.objectContaining({
+        id: fakeWorktreeRecord().id,
+        owner: { kind: 'session', sessionId: routedParent.id },
+      }))
+      expect(discardSpy.mock.calls[0]?.[0].signal).toBeInstanceOf(AbortSignal)
+      // The reserved id never became a live child.
+      expect(ctx.agents.list().map(agent => agent.id)).toEqual([routedParent.id])
+    })
+
+    it('discards the fresh worktree, best effort, and starts no child, when attach itself fails', async () => {
+      const { ctx, parent: routedParent, worktrees } = await continuableIsolationSetup()
+      const discardSpy = vi.spyOn(worktrees, 'discard')
+      vi.spyOn(worktrees, 'attach').mockRejectedValue(new Error('attach failed'))
+
+      const result = await callSubagent(
+        ctx,
+        { description: 'd', prompt: 'the task', isolation: 'worktree' },
+        { agent: routedParent },
+      )
+
+      expect(result.isError).toBe(true)
+      expect(text(result)).toContain('attach failed')
+      expect(discardSpy).toHaveBeenCalledWith(expect.objectContaining({
+        id: fakeWorktreeRecord().id,
+        owner: { kind: 'session', sessionId: routedParent.id },
+      }))
+      // No step ran after a live child: since attach failed before start was
+      // ever called, no child exists at all.
+      expect(ctx.agents.list().map(agent => agent.id)).toEqual([routedParent.id])
+    })
   })
 })

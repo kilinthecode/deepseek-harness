@@ -2961,6 +2961,59 @@ export const SERVICE_API: readonly ServiceApiEntry[] = [
     ],
   },
   {
+    key: 'subagentWorktrees',
+    summary: 'The `ctx.subagentWorktrees` service.',
+    description: 'The `ctx.subagentWorktrees` service. Git runs through `ctx.subprocess` with argv and an explicit cwd, in the host realm and outside any session sandbox; its commands and check argv come only from this configuration or operator input, never from model input.',
+    methods: [
+      {
+        signature: 'offerIsolation(): () => void',
+        description: 'Offer worktree isolation on delegation tools until the returned disposer runs. Offers are counted: the offer stands while at least one registration is live, so two consumers can offer independently. `subagent-worktree/offer-changed` fires when this registration is the first live offer, and when withdrawing it leaves none.',
+        parameters: [],
+        returns: 'a disposer that withdraws this offer; calling it again has no effect.',
+      },
+      {
+        signature: 'create(request: CreateWorktreeRequest): Promise<ProvisionedWorktree>',
+        description: 'Create one linked worktree on a new branch from the base checkout\'s `HEAD`.',
+        parameters: [{ name: 'request', description: 'owner, base directory, label, task, worker route, and cancellation.' }],
+        returns: 'the committed `open` record, the worker directory, and any uncommitted base changes left out.',
+      },
+      {
+        signature: 'async attach(request: AttachWorkerRequest): Promise<WorktreeRecord>',
+        description: 'Record one worker Session on an open worktree.',
+        parameters: [{ name: 'request', description: 'worktree id, owner, worker Session id, and route.' }],
+        returns: 'the updated record.',
+        throws: ['when the id is malformed, no such worktree exists, the owner does not own it, or it is not `open`.'],
+      },
+      {
+        signature: 'resolveReviewer(request: ResolveReviewerRequest): WorktreeRoute',
+        description: 'Resolve the reviewer route (operator override, then configuration, then the accepting Agent\'s route) and enforce independence from the worker. Routes are equal when provider and model match; reasoning effort is ignored.',
+        parameters: [{ name: 'request', description: 'worker route, caller route, and optional override.' }],
+        returns: 'the reviewer route.',
+        throws: ['when `requireDistinctReviewer` is set and the resolved route equals the worker\'s.'],
+      },
+      {
+        signature: 'async accept(request: AcceptWorktreeRequest): Promise<AcceptOutcome>',
+        description: 'Commit the worktree\'s changes, run the check command, have an independent reviewer check the exact commit, and merge a passing change.',
+        parameters: [{ name: 'request', description: 'worktree id, owner, reviewer parent Agent, operator overrides, and cancellation.' }],
+        returns: 'the accept outcome.',
+        throws: ['when the id is malformed, or a non-operator owner sets `testCommand` or `reviewer`; see {@link acceptWorktree}.'],
+      },
+      {
+        signature: 'async discard(request: DiscardWorktreeRequest): Promise<WorktreeRecord>',
+        description: 'Delete one worktree and its branch without merging. The record is claimed under its lock before any git change, so a concurrent `accept` cannot act on a worktree this call is deleting. A `merged` or `discarded` record is not changed: `discard` only removes a worktree directory or branch that a crash between the merge and its cleanup, or a failed earlier `discard`, left behind, so a retry after a failure finishes the cleanup.\n\nA stale `reviewing` record whose reviewed commit already landed is recorded `merged` first, as `accept` does. A recovery check that fails is logged and does not stop the removal: `discard` is how a worktree that no probe can read gets removed, and a merge that did land stays in the base checkout.',
+        parameters: [{ name: 'request', description: 'worktree id, owner, and cancellation.' }],
+        returns: 'the `discarded` record, or the unchanged `merged` or `discarded` record after cleaning up its leftovers.',
+        throws: ['when the id is malformed, no such worktree exists, the owner does not own it, an attached worker is still running, the record is being accepted, or a git cleanup command fails.'],
+      },
+      {
+        signature: 'async list(request: ListWorktreesRequest): Promise<WorktreeRecord[]>',
+        description: 'List one repository\'s worktrees.',
+        parameters: [{ name: 'request', description: 'base directory, optional owner filter, and whether to include closed records.' }],
+        returns: 'records ordered by creation time.',
+      },
+    ],
+  },
+  {
     key: 'subprocess',
     summary: 'Abstract subprocess service.',
     description: 'Abstract subprocess service. Subclass, implement spawn, and load the subclass as a plugin — it registers as `ctx.subprocess` (one implementation per context; loading a second throws, which is cordis\' standard duplicate-service behavior).\n\nImplementations must honor these semantics:\n\n- Executable paths belong to one execution world shared with the mounted filesystem provider.\n- spawn returns a live handle synchronously. Target identity remains provider-private; `done` resolves with the spawned command\'s exit facts and may reject for spawn or provider failures.\n- Collect-mode readers are offset-based and non-consuming, so independent readers never consume one another\'s output; lossy reads report truncation and the spill file holding the complete stream when one exists. Piped streams are handed to the caller raw and never buffered here.\n- SubprocessHandle.terminate (and the spec\'s abort signal) starts the provider\'s documented procedure against its managed range. SubprocessHandle.waitForExit observes that same range so a consumer-owned teardown ladder can hold each tier on real quiescence; each provider documents its signalling and observability limits.\n- Disposal of the service terminates all still-running managed processes and awaits their exit.\n- spawnTerminal owns terminal allocation, text transport, foreground groups, signalling, and whole-session quiescence behind one awaited termination method; readiness and persistent-shell policy stay in the PTY consumer. Its output stream ends after queued terminal output when the top-level process exits.',
@@ -4204,6 +4257,14 @@ export const EVENT_API: readonly EventApiEntry[] = [
     parameters: [],
   },
   {
+    name: 'subagent-worktree/offer-changed',
+    mode: 'emit',
+    signature: '\'subagent-worktree/offer-changed\'(offered: boolean): void',
+    summary: 'Whether worktree isolation is offered on delegation tools changed: the first live offer was registered, or the last one was withdrawn.',
+    description: 'Whether worktree isolation is offered on delegation tools changed: the first live offer was registered, or the last one was withdrawn. It does not fire while offers are added or withdrawn with at least one other still live. Delegation tools listen and mount again; a listener failure is logged and does not stop the other listeners or the offer that triggered it.',
+    parameters: [{ name: 'offered', description: 'the new value of {@link SubagentWorktrees.offersIsolation}.' }],
+  },
+  {
     name: 'subagent/end',
     mode: 'emit',
     signature: '\'subagent/end\'(this: Scoped<SubagentRuntime>, info: SubagentRunEndInfo): void',
@@ -4383,6 +4444,14 @@ export const EVENT_API: readonly EventApiEntry[] = [
 
 /** Shapes of every exported type the Service and Event signatures reference (transitively), sorted by name. */
 export const TYPE_API: readonly TypeApiEntry[] = [
+  {
+    name: 'AcceptOutcome',
+    declaration: 'export type AcceptOutcome = {\n    readonly kind: \'merged\';\n    readonly record: WorktreeRecord;\n    readonly commit: string;\n    readonly mergeCommit: string;\n    readonly verdict: WorktreeVerdict;\n    readonly removed: boolean;\n} | {\n    readonly kind: \'rejected\';\n    readonly record: WorktreeRecord;\n    readonly commit: string;\n    readonly verdict: WorktreeVerdict;\n} | {\n    readonly kind: \'checks-failed\';\n    readonly record: WorktreeRecord;\n    readonly commit: string;\n    readonly argv: readonly string[];\n    readonly exitCode: number | null;\n    readonly output: string;\n} | {\n    readonly kind: \'conflict\';\n    readonly record: WorktreeRecord;\n    readonly commit: string;\n    readonly verdict: WorktreeVerdict;\n    readonly files: readonly string[];\n} | {\n    readonly kind: \'blocked\';\n    readonly record: WorktreeRecord;\n    readonly commit: string;\n    readonly verdict: WorktreeVerdict;\n    readonly reason: string;\n} | {\n    readonly kind: \'empty\';\n    readonly record: WorktreeRecord;\n};',
+  },
+  {
+    name: 'AcceptWorktreeRequest',
+    declaration: 'export interface AcceptWorktreeRequest {\n    readonly id: WorktreeId;\n    readonly owner: WorktreeOwner;\n    readonly parent: Agent;\n    readonly reviewer?: WorktreeRoute;\n    readonly testCommand?: readonly string[];\n    readonly signal: AbortSignal;\n}',
+  },
   {
     name: 'AccountBonusBatch',
     declaration: 'export interface AccountBonusBatch {\n    readonly accountId: AccountUserId;\n    readonly bonuses: readonly AccountBonusNotification[];\n}',
@@ -4602,6 +4671,10 @@ export const TYPE_API: readonly TypeApiEntry[] = [
   {
     name: 'AttachmentId',
     declaration: 'export type AttachmentId = Branded<\'AttachmentId\'>;',
+  },
+  {
+    name: 'AttachWorkerRequest',
+    declaration: 'export interface AttachWorkerRequest {\n    readonly id: WorktreeId;\n    readonly owner: WorktreeOwner;\n    readonly workerSessionId: SessionId;\n    readonly workerRoute: WorktreeRoute;\n}',
   },
   {
     name: 'AuthorizationEntry',
@@ -4944,6 +5017,10 @@ export const TYPE_API: readonly TypeApiEntry[] = [
     declaration: 'export interface CreateTeamTaskRequest {\n    readonly subject: string;\n    readonly description: string;\n    readonly blockedBy?: readonly TeamTaskId[];\n    readonly writeScopes?: readonly string[];\n}',
   },
   {
+    name: 'CreateWorktreeRequest',
+    declaration: 'export interface CreateWorktreeRequest {\n    readonly owner: WorktreeOwner;\n    readonly baseDir: string;\n    readonly label: string;\n    readonly task: string;\n    readonly workerRoute: WorktreeRoute;\n    readonly signal: AbortSignal;\n}',
+  },
+  {
     name: 'CredentialInfo',
     declaration: 'export interface CredentialInfo {\n    configured: boolean;\n    source?: string;\n    writable: boolean;\n}',
   },
@@ -5042,6 +5119,14 @@ export const TYPE_API: readonly TypeApiEntry[] = [
   {
     name: 'DirectoryRegistrationHandle',
     declaration: 'export interface DirectoryRegistrationHandle {\n    (): void;\n    replace(entries: readonly LlmConfigurableProvider[]): void;\n}',
+  },
+  {
+    name: 'DirtySummary',
+    declaration: 'export interface DirtySummary {\n    readonly entries: readonly string[];\n    readonly total: number;\n}',
+  },
+  {
+    name: 'DiscardWorktreeRequest',
+    declaration: 'export interface DiscardWorktreeRequest {\n    readonly id: WorktreeId;\n    readonly owner: WorktreeOwner;\n    readonly signal: AbortSignal;\n}',
   },
   {
     name: 'Domain',
@@ -5546,6 +5631,10 @@ export const TYPE_API: readonly TypeApiEntry[] = [
   {
     name: 'KvUnitDescriptor',
     declaration: 'export interface KvUnitDescriptor {\n    readonly name: string;\n    readonly version: number;\n    readonly tables: readonly string[];\n    readonly hasGlobal: boolean;\n    readonly layout?: \'single\' | \'per-record\';\n    readonly compatibleVersions?: readonly number[];\n}',
+  },
+  {
+    name: 'ListWorktreesRequest',
+    declaration: 'export interface ListWorktreesRequest {\n    readonly baseDir: string;\n    readonly owner?: WorktreeOwner;\n    readonly includeClosed?: boolean;\n}',
   },
   {
     name: 'LlmAdapter',
@@ -6064,6 +6153,10 @@ export const TYPE_API: readonly TypeApiEntry[] = [
     declaration: 'export type ProviderRequestId = Branded<\'ProviderRequestId\'>;',
   },
   {
+    name: 'ProvisionedWorktree',
+    declaration: 'export interface ProvisionedWorktree {\n    readonly record: WorktreeRecord;\n    readonly workDir: string;\n    readonly baseDirty?: DirtySummary;\n}',
+  },
+  {
     name: 'PrunedEntry',
     declaration: 'export interface PrunedEntry {\n    readonly originalSeq: SessionSeq;\n    readonly replacementSeq: SessionSeq;\n    readonly callId: ToolCallId;\n    readonly charsBefore: number;\n    readonly charsAfter: number;\n}',
   },
@@ -6226,6 +6319,10 @@ export const TYPE_API: readonly TypeApiEntry[] = [
   {
     name: 'ResolvedSubagentStartRequest',
     declaration: 'export interface ResolvedSubagentStartRequest extends SubagentStartRequest {\n    readonly descriptor: SubagentDescriptorData;\n}',
+  },
+  {
+    name: 'ResolveReviewerRequest',
+    declaration: 'export interface ResolveReviewerRequest {\n    readonly workerRoute: WorktreeRoute;\n    readonly callerRoute: WorktreeRoute;\n    readonly override?: WorktreeRoute;\n}',
   },
   {
     name: 'RestoredSessionOptions',
@@ -7197,7 +7294,7 @@ export const TYPE_API: readonly TypeApiEntry[] = [
   },
   {
     name: 'SubagentCapabilities',
-    declaration: 'export interface SubagentCapabilities {\n    readonly agentOptions: boolean;\n    readonly outputSchema: boolean;\n    readonly depthLimit: boolean;\n    readonly toolFilter: boolean;\n    readonly persona: boolean;\n}',
+    declaration: 'export interface SubagentCapabilities {\n    readonly agentOptions: boolean;\n    readonly outputSchema: boolean;\n    readonly depthLimit: boolean;\n    readonly toolFilter: boolean;\n    readonly persona: boolean;\n    readonly cwd: boolean;\n}',
   },
   {
     name: 'SubagentCatalogEntry',
@@ -7273,7 +7370,7 @@ export const TYPE_API: readonly TypeApiEntry[] = [
   },
   {
     name: 'SubagentStartRequest',
-    declaration: 'export interface SubagentStartRequest {\n    readonly label?: string;\n    readonly prompt: ContentBlock[];\n    readonly parent: Agent;\n    readonly signal: AbortSignal;\n    readonly agentOptions?: AgentOptions;\n    readonly outputSchema?: ObjectJsonSchema;\n    readonly maxDepth?: number;\n    readonly toolFilter?: ToolRestriction;\n    readonly persona?: string;\n}',
+    declaration: 'export interface SubagentStartRequest {\n    readonly label?: string;\n    readonly prompt: ContentBlock[];\n    readonly parent: Agent;\n    readonly signal: AbortSignal;\n    readonly agentOptions?: AgentOptions;\n    readonly outputSchema?: ObjectJsonSchema;\n    readonly maxDepth?: number;\n    readonly toolFilter?: ToolRestriction;\n    readonly persona?: string;\n    readonly cwd?: string;\n}',
   },
   {
     name: 'SubagentStopReason',
@@ -8122,6 +8219,30 @@ export const TYPE_API: readonly TypeApiEntry[] = [
   {
     name: 'WorkspaceView',
     declaration: 'export interface WorkspaceView {\n    readonly workspaceId: WorkspaceId;\n    readonly path: string;\n    readonly title: string;\n    readonly sessionIds: readonly SessionId[];\n    readonly createdAt: string;\n    readonly updatedAt: string;\n}',
+  },
+  {
+    name: 'WorktreeId',
+    declaration: 'export type WorktreeId = Branded<\'WorktreeId\'>;',
+  },
+  {
+    name: 'WorktreeOwner',
+    declaration: 'export type WorktreeOwner = {\n    readonly kind: \'session\';\n    readonly sessionId: SessionId;\n} | {\n    readonly kind: \'operator\';\n};',
+  },
+  {
+    name: 'WorktreeRecord',
+    declaration: 'export interface WorktreeRecord {\n    readonly id: WorktreeId;\n    readonly repoRoot: string;\n    readonly path: string;\n    readonly branch: string;\n    readonly baseCommit: string;\n    readonly owner: WorktreeOwner;\n    readonly label: string;\n    readonly task: string;\n    readonly state: WorktreeState;\n    readonly createdAt: number;\n    readonly workerSessionIds: readonly SessionId[];\n    readonly workerRoute: WorktreeRoute;\n    readonly lastVerdict?: WorktreeVerdict;\n    readonly mergedCommit?: string;\n}',
+  },
+  {
+    name: 'WorktreeRoute',
+    declaration: 'export interface WorktreeRoute {\n    readonly provider: string;\n    readonly model: string;\n    readonly reasoningEffort?: ReasoningEffortId;\n}',
+  },
+  {
+    name: 'WorktreeState',
+    declaration: 'export type WorktreeState = \'open\' | \'reviewing\' | \'merged\' | \'discarded\';',
+  },
+  {
+    name: 'WorktreeVerdict',
+    declaration: 'export interface WorktreeVerdict {\n    readonly verdict: \'pass\' | \'fail\';\n    readonly summary: string;\n    readonly checks: readonly string[];\n    readonly findings: readonly string[];\n    readonly commit: string;\n    readonly reviewerSessionId: SessionId;\n    readonly reviewerRoute: WorktreeRoute;\n    readonly at: number;\n}',
   },
 ]
 

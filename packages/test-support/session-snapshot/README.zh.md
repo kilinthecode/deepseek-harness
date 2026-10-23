@@ -88,7 +88,7 @@ Headless/ACP 与 SDK 适配器在规范化之前，将原始目录中的子创�
 
 ### 平台与组合变体
 
-需要非 Windows 主机的场景声明 `posixOnly`，在 Windows 上跳过运行测试，但 fixture 保护仍在所有平台覆盖其已提交文件；组合需要可用 `pwsh` 的场景声明 `pwshOnly`。当临时目录授权自身待测时，`workspaceParent` 将生成子级 cwd 移出平台临时区域；场景签入的 `workspace/` 会先复制到该子级，随后 `prepareWorkspace` 在 agent 启动前针对生成 cwd 运行。默认生成的 workspace 在会话 fixture 中存储为 `{{cwd}}`，使平台临时根目录与随机 basename 不影响录制。headless manifest 在测试 Session workspace 授权本身时使用 `workspace.parent: outside-temp`。适配器在父目录可写且位于系统临时授权之外时，于平台临时根目录旁分配目录，否则使用 home，并拒绝已被自动临时写授权覆盖的生成 cwd。
+需要非 Windows 主机的场景声明 `posixOnly`，在 Windows 上跳过运行测试，但 fixture 保护仍在所有平台覆盖其已提交文件；组合需要可用 `pwsh` 的场景声明 `pwshOnly`。当临时目录授权自身待测时，`workspaceParent` 将生成子级 cwd 移出平台临时区域；场景签入的 `workspace/` 会先复制到该子级，随后 `prepareWorkspace` 在 agent 启动前针对生成 cwd 运行。默认生成的 workspace 在会话 fixture 中存储为 `{{cwd}}`，使平台临时根目录与随机 basename 不影响录制。`{{cwd}}` 在每个角色中都表示 workspace 根目录，因此在 linked git worktree 中工作的子 Session 会把自身 cwd 存为该 token 之下的路径。类型化身份 token 覆盖 worktree 服务每次运行创建的名称：`{{worktree:N}}` 表示 worktree id，`{{commit:N}}` 表示完整 commit id（`digest` 字段保留其字面内容哈希），`{{repoKey:N}}` 表示按仓库划分的目录，`{{reviewCheckout:N}}` 表示 review checkout 目录。headless 的 `git-repo` workspace setup 把场景文件提交为一次使用固定身份与日期的种子提交，把 Harness 在 checkout 内创建的运行时目录排除在仓库之外，并设置 worker 提交与合并所用的仓库本地身份。headless manifest 在测试 Session workspace 授权本身时使用 `workspace.parent: outside-temp`。适配器在父目录可写且位于系统临时授权之外时，于平台临时根目录旁分配目录，否则使用 home，并拒绝已被自动临时写授权覆盖的生成 cwd。
 
 ### 可能出什么问题
 

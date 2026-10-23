@@ -39,6 +39,8 @@ kind: "package-library"
 
 `exitOnStdinEnd(ctx, label)` 把已成功启动的 stdio 应用 EOF 绑定到 `ctx.appExit(0)`。它绝不读取或恢复 stdin，因此协议传输会收到挂载前已缓冲的字节；启动拒绝优先于竞态 EOF，所属 fiber 会移除两个待处理的监听器。
 
+`processRunnerStreams()` 为一次性应用运行器提供其专属的 `stdout`、`stderr` 与 `readStdin`，均绑定到进程。每次调用返回一个独立对象，因此某个运行器的测试可以替换它的流，而不影响其他运行器。`readStdin` 先拼接字节再解码，因此被拆分到多个分块中的多字节字符也能被完整解码。
+
 ### 解析你的 flag
 
 你自带自己的 commander program：声明你的 flag 与 action，本包会针对内层参数运行它。校验只发生在你的 action 中，并由它发布你的行所需的任何值。插件的 Loader 行不携带特殊标记：
@@ -87,6 +89,7 @@ kind: "package-library"
 - **按位置切分。** 启动器不认识任何应用行：自身 flag 之后的第一个 token 就是应用参数的起点，因此 flag 家族、`--help` 文本与解析错误都由应用自己持有。
 - **结构化错误识别。** `isCommanderError` 读取 commander 的错误码前缀，而不是用 `instanceof`，因为树外插件会带来自己的一份 commander 副本，其 `CommanderError` 身份不同；`configureExitAndOutput` 会遍历每个子命令，因为 commander 只在注册时复制退出与输出设置。
 - **可注入的输出流。** `internals` 持有输出流，使测试无需触碰进程即可捕获 commander 的文本。
+- **运行器共用一个 stdin 读取器。** `headless` 与 `agents` 运行器共用 `processRunnerStreams`，而不是各自保留一份副本；每个运行器保留自己的实例，因此测试可以把一个运行器的输出与另一个运行器以及 `internals` 的输出分开捕获。
 
 ### 解析约定
 
@@ -96,7 +99,7 @@ kind: "package-library"
 
 | 文件 | 职责 |
 |---|---|
-| [`src/index.ts`](src/index.ts) | `CmdlineArgs`/`AppExit` 类型、`provideCmdline`、`parseCmdline`、commander 退出／输出路由 |
+| [`src/index.ts`](src/index.ts) | `CmdlineArgs`/`AppExit` 类型、`provideCmdline`、`parseCmdline`、`processRunnerStreams`、commander 退出／输出路由 |
 | — | 不发布运行时不变式配套条目；`cmdlineArgs` 是不可变的启动器事实，任意数量的普通插件都可以读取它。应用自有提供方与消费方使用普通 Cordis 服务注入；Loader 结算已会报告缺失的依赖。 |
 
 </details>

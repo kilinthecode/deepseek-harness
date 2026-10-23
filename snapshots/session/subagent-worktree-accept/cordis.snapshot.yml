@@ -1,0 +1,56 @@
+# Keyless replay for the `subagent-worktree-accept` composition. The shared replay
+# patch in `text-turn/cordis.snapshot.yml` applies only to the `default`
+# composition, so a sibling composition restates those swaps and adds its own rows.
+# The lead's script comes from `replay.override.json`, and each child's from its
+# own committed session JSONL.
+- id: llm-deepseek
+  name: '@deepseek-ai/dsh-llm-deepseek-api-key'
+  disabled: true
+
+- id: plugin-package-inventory-deepseek
+  disabled: true
+
+- id: session-title-llm
+  disabled: true
+
+- id: session-persistence-jsonl
+  name: '@deepseek-ai/dsh-session-persistence-jsonl'
+  config:
+    root: !!js dshHomePath('sessions')
+    compression: none
+
+- id: sandbox
+  name: '@deepseek-ai/dsh-sandbox-local'
+  config:
+    runnerCommand:
+      - bash
+      - -c
+      - while [ "$1" != "--" ]; do shift; done; shift; exec "$@"
+      - passthrough-runner
+    runnerFailureSignatures:
+      - 'passthrough-runner: profile rejected'
+
+- insert:
+    - id: llm-replay
+      name: '@deepseek-ai/dsh-llm-replay'
+      config:
+        providers:
+          - id: deepseek-official
+            name: DeepSeek
+            models:
+              - id: deepseek-v4-flash
+              - id: deepseek-v4-pro
+
+    # The optional agent-crew bundle's rows (packages/bundle/agent-crew/cordis.patch.yml).
+    # The worktree tools' row registers the isolation offer, so the composition's own
+    # tool-subagent row needs no patch.
+    - id: tool-subagent-worktree
+      name: '@deepseek-ai/dsh-tool-subagent-worktree'
+
+    - id: skill-agent-crew
+      name: '@deepseek-ai/dsh-skill-agent-crew'
+
+    # Holds the lead's post-spawn step until the worker's completion notice enters
+    # its inbox, which keeps the transcript independent of scheduling.
+    - id: settlement-fence
+      name: '../../../apps/cli/tests/profiles/headless/tests/fixtures/subagent-settlement-fence.ts'

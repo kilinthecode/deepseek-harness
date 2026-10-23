@@ -1,0 +1,55 @@
+# Bilingual-pair consistency record for README.md (docs/i18n/README.md): per heading
+# section, a hash of its English and Chinese blocks outside code blocks and generated regions.
+# After editing either side, bring the other along and re-record with:
+#   pnpm run verify-translation-pairing --write packages/skill/skill-agent-crew/README.md
+/:
+  en: 98b839dc5e19fc29
+  zh: 450419de2ec72ad6
+/deepseek-ai-dsh-skill-agent-crew:
+  en: b60caa1d92cdb5ef
+  zh: 3df6d346daccd9fa
+/deepseek-ai-dsh-skill-agent-crew/summary:
+  en: 763d7f8537ff602d
+  zh: a37dfcdaa6abad4d
+/deepseek-ai-dsh-skill-agent-crew/table-of-contents:
+  en: d152484eb41ac6b4
+  zh: 09388d293f9be9cb
+/deepseek-ai-dsh-skill-agent-crew/use-this-package:
+  en: 36aa5f40a661cfe3
+  zh: 6f63b57ebaac52bc
+/deepseek-ai-dsh-skill-agent-crew/use-this-package/when-to-choose-it:
+  en: 80495b865d0b3c12
+  zh: 8c9f0389ec559d38
+/deepseek-ai-dsh-skill-agent-crew/use-this-package/enable-the-plugin:
+  en: bfe90b2b9b37af89
+  zh: 65cbb2ed912076cf
+/deepseek-ai-dsh-skill-agent-crew/use-this-package/what-the-skill-provides:
+  en: c911e9dda9162fff
+  zh: 7bdf912c45719746
+/deepseek-ai-dsh-skill-agent-crew/use-this-package/observable-success-and-failures:
+  en: 20c0009a049b8e1d
+  zh: 7d4535cca58422b6
+/deepseek-ai-dsh-skill-agent-crew/understand-the-implementation:
+  en: 63465b0133f30e85
+  zh: 84bebb7c1fe0ceba
+/deepseek-ai-dsh-skill-agent-crew/understand-the-implementation/design-concept:
+  en: 8f1d38fb660d426d
+  zh: 7c6e93593b11fb8e
+/deepseek-ai-dsh-skill-agent-crew/understand-the-implementation/source-map:
+  en: 4f75cd73999e3af5
+  zh: 85c75c696c2fd87a
+/deepseek-ai-dsh-skill-agent-crew/further-exploration:
+  en: 4bc26ad9143f6e7f
+  zh: 68b58eef6e8bd2a7
+/deepseek-ai-dsh-skill-agent-crew/model-experience:
+  en: b9912bc3f1ba0680
+  zh: e288cc67b6d079f6
+/deepseek-ai-dsh-skill-agent-crew/model-experience/kv-cache-effect:
+  en: cbba6715f28bdeec
+  zh: 77d691451fd409a7
+/deepseek-ai-dsh-skill-agent-crew/known-limitations-and-deferred-work:
+  en: 5b46d693e02d33fc
+  zh: 5a31567b88e4bde6
+/deepseek-ai-dsh-skill-agent-crew/known-limitations-and-deferred-work/dev-note:
+  en: e67f633dc6fe7773
+  zh: 3bb0c20c93f16f98

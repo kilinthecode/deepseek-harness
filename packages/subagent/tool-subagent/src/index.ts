@@ -8,8 +8,10 @@
  * @module @deepseek-ai/dsh-tool-subagent
  */
 
+import { randomUUID } from 'node:crypto'
 import type { Context } from '@deepseek-ai/cordis'
 import z from '@deepseek-ai/schemastery'
+import { brandString } from '@deepseek-ai/dsh-brand'
 import { scopeChainOf, scopeOf } from '@deepseek-ai/dsh-scope'
 import { defineTool } from '@deepseek-ai/dsh-tools'
 import type { Agent, AgentOptions } from '@deepseek-ai/dsh-agent'
@@ -17,13 +19,23 @@ import { ReasoningEffortId } from '@deepseek-ai/dsh-llm'
 import type { ContentBlock } from '@deepseek-ai/dsh-llm'
 import type { JsonValue } from '@deepseek-ai/dsh-util-values'
 import { SessionSeq } from '@deepseek-ai/dsh-session'
-import type { Session } from '@deepseek-ai/dsh-session'
+import type { Session, SessionId } from '@deepseek-ai/dsh-session'
 import {
   assertSubagentMaxDepth,
   parentAgentOptionsForDelegation,
+  resolveChildAgentOptions,
+  resolveChildDepth,
   settleRun,
 } from '@deepseek-ai/dsh-subagent'
-import type { SubagentProvider, SubagentResult, SubagentRun } from '@deepseek-ai/dsh-subagent'
+import type { ContinuableStart, SubagentProvider, SubagentResult, SubagentRun } from '@deepseek-ai/dsh-subagent'
+import { renderWorkerBrief } from '@deepseek-ai/dsh-subagent-worktree'
+import type {
+  ProvisionedWorktree,
+  SubagentWorktrees,
+  WorktreeOwner,
+  WorktreeRecord,
+  WorktreeRoute,
+} from '@deepseek-ai/dsh-subagent-worktree'
 import type { JobOutcome } from '@deepseek-ai/dsh-jobs'
 import {
   assertAllowedModelSelection,
@@ -101,6 +113,19 @@ export interface Config {
    * the current Host subagent depth setting (default `1`) at each delegation.
    */
   maxDepth?: number | 'provider-managed'
+  /**
+   * Give each delegation its own git worktree when the model sets
+   * `isolation: "worktree"`. Requires `ctx.subagentWorktrees`
+   * (`@deepseek-ai/dsh-subagent-worktree`) and a provider with the `cwd`
+   * capability — the seam's own capability check rejects a provider without
+   * it. Defaults to `false`: unless the worktree service holds a live
+   * isolation offer (`ctx.subagentWorktrees.offersIsolation`, registered by a
+   * mounted `@deepseek-ai/dsh-tool-subagent-worktree` row, and only for a
+   * provider with the `cwd` capability), the schema omits the `isolation`
+   * parameter and the executor rejects it. The tool mounts again when that
+   * offer appears or lapses.
+   */
+  worktreeIsolation?: boolean
 }
 
 export const Config: z<Config> = z.object({
@@ -128,6 +153,12 @@ export const Config: z<Config> = z.object({
     deny: z.array(z.string()).default(undefined as unknown as string[]),
   }).default(undefined as unknown as { allow: string[]; deny: string[] }),
   maxDepth: z.union([z.natural().max(Number.MAX_SAFE_INTEGER), z.const('provider-managed' as const)]),
+  worktreeIsolation: z.boolean().default(false).description(
+    'Give each delegation its own git worktree, isolated until an independent reviewer approves merging it. '
+    + 'Requires the subagent-worktree service and a provider with the cwd capability. '
+    + 'Without this setting the tool still offers isolation while a tool-subagent-worktree row is mounted '
+    + '(the Agent Crew bundle mounts one) and the provider has the cwd capability.',
+  ),
 })
 
 /** Render text blocks from the canonical JSON block array without trusting arbitrary values. */
@@ -174,14 +205,16 @@ function stopReasonError(result: SubagentResult): string | undefined {
 }
 
 /**
- * Append provider-authored failure detail and the child's preserved partial
- * answer to a stop-reason error, keeping diagnostic text separate from the
- * child's assistant output.
+ * Append provider-authored failure detail, the child's preserved partial
+ * answer, and (when isolated) the worktree holding the child's changes to a
+ * stop-reason error, keeping diagnostic text separate from the child's
+ * assistant output.
  * @param error - the stop-reason headline.
  * @param result - the child's terminal result.
- * @returns the headline, diagnostic, and partial text that are present.
+ * @param worktree - the isolation worktree the failed run's child worked in, when isolated.
+ * @returns the headline, diagnostic, partial text, and worktree pointer that are present.
  */
-function withDiagnosticAndPartialText(error: string, result: SubagentResult): string {
+function withDiagnosticAndPartialText(error: string, result: SubagentResult, worktree?: WorktreeResultInfo): string {
   const diagnostic = result.diagnostic === undefined
     ? ''
     : `\nDiagnostic: ${result.diagnostic}`
@@ -192,27 +225,55 @@ function withDiagnosticAndPartialText(error: string, result: SubagentResult): st
   const partial = text.length === 0
     ? ''
     : `\nPartial output before the run ended:\n${text}`
-  return `${error}${diagnostic}${partial}`
+  // A failed run still leaves the child's changes in its worktree; without
+  // this, a failure gives the caller no way back to them.
+  const worktreeNote = worktree === undefined
+    ? ''
+    : `\nWorktree ${worktree.id} (branch ${worktree.branch}) holds this child's changes; call accept_worktree or discard_worktree.`
+  return `${error}${diagnostic}${partial}${worktreeNote}`
+}
+
+/** The worktree fields a delegation result carries, verbatim from the durable record. */
+type WorktreeResultInfo = Pick<WorktreeRecord, 'id' | 'path' | 'branch' | 'baseCommit'>
+
+/** Declared result schema of {@link WorktreeResultInfo}, shared by the continuable and foreground result arms. */
+const WORKTREE_RESULT_SCHEMA = {
+  type: 'object',
+  additionalProperties: false,
+  properties: {
+    id: { type: 'string', required: true },
+    path: { type: 'string', required: true },
+    branch: { type: 'string', required: true },
+    baseCommit: { type: 'string', required: true },
+  },
+} as const
+
+/** Project the durable record onto the small subset a delegation result carries. */
+function worktreeResultInfo(record: WorktreeRecord): WorktreeResultInfo {
+  return { id: record.id, path: record.path, branch: record.branch, baseCommit: record.baseCommit }
 }
 
 type ForegroundToolResult = {
   readonly kind: 'foreground'
   readonly runId: SubagentRun['id']
   readonly output: JsonValue[]
+  readonly worktree?: WorktreeResultInfo
 }
 
 /**
  * Collect and release one foreground run without letting disposal replace an
  * independent result failure.
+ * @param run - the published foreground run to await and dispose.
+ * @param worktree - the isolation worktree the run's child works in, when isolated.
  */
-async function settleForegroundRun(run: SubagentRun): Promise<ForegroundToolResult> {
+async function settleForegroundRun(run: SubagentRun, worktree?: WorktreeResultInfo): Promise<ForegroundToolResult> {
   const [execution] = await Promise.allSettled([
     run.result.then((result): ForegroundToolResult => {
       const error = stopReasonError(result)
       if (error !== undefined) {
         // The registry converts this throw to isError; partial output is not
         // success, but the preserved partial answer still reaches the parent.
-        throw new Error(withDiagnosticAndPartialText(error, result))
+        throw new Error(withDiagnosticAndPartialText(error, result, worktree))
       }
       return {
         kind: 'foreground',
@@ -220,6 +281,7 @@ async function settleForegroundRun(run: SubagentRun): Promise<ForegroundToolResu
         // Content blocks already cross durable JSON boundaries elsewhere;
         // the registry performs the authoritative lossless snapshot here.
         output: result.output as unknown as JsonValue[],
+        ...worktree !== undefined ? { worktree } : {},
       }
     }),
   ])
@@ -304,6 +366,79 @@ function resolveDelegationRun(
   }
 }
 
+interface DelegationIsolationRequest {
+  readonly isolation?: 'worktree'
+}
+
+/**
+ * The failure for an `isolation` argument sent to a tool whose schema did not offer it. The model cannot
+ * change the offer, so the text names the operator-side ways to make it.
+ */
+const ISOLATION_NOT_OFFERED = 'subagent: isolation is not offered on this tool; omit the isolation argument. '
+  + 'Isolation needs a provider with the cwd capability, and an operator offers it by enabling the Agent Crew '
+  + 'bundle (or mounting a tool-subagent-worktree row) or by setting worktreeIsolation: true on this tool\'s row.'
+
+/** Resolve the model's optional isolation request, enforcing the offer the schema made at mount. */
+function resolveDelegationIsolation(
+  request: DelegationIsolationRequest,
+  isolationOffered: boolean,
+): 'worktree' | undefined {
+  if (!isolationOffered) {
+    // The validator permits undeclared keys, so schema omission also needs
+    // execution-time enforcement.
+    if (request.isolation !== undefined) {
+      throw new Error(ISOLATION_NOT_OFFERED)
+    }
+    return undefined
+  }
+  return request.isolation
+}
+
+/** Project effective Agent options onto a worktree route, or fail loud without an effective route. */
+function toWorktreeRoute(options: AgentOptions): WorktreeRoute {
+  if (options.provider === undefined || options.model === undefined) {
+    throw new Error('subagent: worktree isolation requires an effective provider and model')
+  }
+  return {
+    provider: options.provider,
+    model: options.model,
+    ...options.reasoningEffort !== undefined ? { reasoningEffort: options.reasoningEffort } : {},
+  }
+}
+
+/** Context an isolated delegation carries from worktree creation through attach and result rendering. */
+interface WorktreeIsolationContext {
+  readonly worktrees: SubagentWorktrees
+  readonly provisioned: ProvisionedWorktree
+  readonly workerRoute: WorktreeRoute
+  readonly owner: WorktreeOwner
+}
+
+/**
+ * Discard a freshly created worktree after a start failure. Best effort: a
+ * discard failure is logged, never thrown, so the original start failure
+ * reaches the caller.
+ * @param ctx - context supplying the logger.
+ * @param worktrees - the worktree service that created the worktree.
+ * @param id - the worktree to discard.
+ * @param owner - authority recorded on the worktree.
+ */
+async function discardWorktreeBestEffort(
+  ctx: Context,
+  worktrees: SubagentWorktrees,
+  id: WorktreeRecord['id'],
+  owner: WorktreeOwner,
+): Promise<void> {
+  try {
+    // A fresh signal: the start failure that triggers this discard may itself
+    // be the caller's abort, and best-effort cleanup must not be defeated by
+    // the very signal that already fired.
+    await worktrees.discard({ id, owner, signal: new AbortController().signal })
+  } catch (error: unknown) {
+    ctx.logger.warn(`tool-subagent: failed to discard worktree "${id}" after a start failure: ${String(error)}`)
+  }
+}
+
 /**
  * Install one delegation-tool composition.
  * @param ctx - Context that owns the registrations.
@@ -360,13 +495,27 @@ export function apply(ctx: Context, config: Config, session?: Session): void {
   const install = (runtimeCtx: Context, modelSelectionPolicy: ModelSelectionPolicy | undefined): void => {
     const modelSelectionEnabled = modelSelectionPolicy !== undefined
     if (modelSelectionPolicy !== undefined) registerListSubagentModels(runtimeCtx, modelSelectionPolicy)
+    // Whether this tool offers `isolation: "worktree"` on a provider: the row's own switch, or a live offer on the
+    // worktree service, which the worktree tools' row registers. The offer reaches a tool mounted inside an agent
+    // preset, whose row a bundle patch cannot change, and never counts for a provider without the `cwd`
+    // capability, which cannot place a child in a worktree.
+    const isolationOffered = (subagentProvider: SubagentProvider): boolean =>
+      config.worktreeIsolation === true
+      || (subagentProvider.capabilities.cwd && runtimeCtx.get('subagentWorktrees')?.offersIsolation === true)
     // Load order and HMR replacement can change provider availability while
     // this fiber remains active.
-    let mounted: { subagentProvider: SubagentProvider; disposeTool: () => void } | undefined
+    let mounted: {
+      subagentProvider: SubagentProvider
+      disposeTool: () => void
+      /** What the mounted schema and executor decided, to compare with a later answer. */
+      isolationOffered: boolean
+    } | undefined
     const mount = (subagentProvider: SubagentProvider): void => {
       assertSubagentProviderConfiguration(subagentProvider)
       const wording = providerWording(subagentProvider.inheritsParentContext)
       const providerRouteDefaults = subagentProvider.agentRouteDefaults
+      // One answer per mount: the schema and the executor below share it, so a call the schema hid is rejected.
+      const worktreeIsolationOffered = isolationOffered(subagentProvider)
       const selectionDescription = providerRouteDefaults !== undefined
         ? ' Child LLM selection is optional. Omit `provider`, `model`, and `reasoning_effort` to use configured child defaults and this provider\'s route defaults. Supply `provider` and `model` together after using `list_subagent_models` to inspect advertised routes and efforts. Changing the effective route without naming an effort uses the selected model\'s default effort.'
         : ' Child LLM selection is optional. Omit `provider`, `model`, and `reasoning_effort` to use configured child defaults and inherit compatible missing values from the parent Agent. Supply `provider` and `model` together after using `list_subagent_models` to inspect advertised routes and efforts. Changing the effective route without naming an effort uses the selected model\'s default effort.'
@@ -397,6 +546,16 @@ export function apply(ctx: Context, config: Config, session?: Session): void {
             required: true,
             description: wording.promptDescription,
           },
+          ...worktreeIsolationOffered ? {
+            isolation: {
+              type: 'string' as const,
+              enum: ['worktree'] as const,
+              description: 'Set to "worktree" to give the child its own git worktree, branched from your current '
+                + 'commit, so parallel children cannot overwrite your files or each other\'s. Nothing it changes '
+                + 'reaches your checkout until you call accept_worktree, which has an independent reviewer check '
+                + 'the change before merging it. Omit to let the child work in your checkout.',
+            },
+          } : {},
           ...modelSelectionEnabled ? {
             provider: {
               type: 'string' as const,
@@ -443,6 +602,18 @@ export function apply(ctx: Context, config: Config, session?: Session): void {
                 properties: {
                   kind: { type: 'string', required: true, const: 'continuable' },
                   subagentId: { type: 'string', required: true },
+                  // Declared only where a call can create a worktree, so a composition without the offer keeps the
+                  // result type, and every prompt that declares it, unchanged.
+                  ...worktreeIsolationOffered ? {
+                    worktree: WORKTREE_RESULT_SCHEMA,
+                    baseDirty: {
+                      type: 'object',
+                      additionalProperties: false,
+                      properties: {
+                        total: { type: 'number', required: true },
+                      },
+                    },
+                  } as const : {},
                 },
               },
               {
@@ -452,6 +623,7 @@ export function apply(ctx: Context, config: Config, session?: Session): void {
                   kind: { type: 'string', required: true, const: 'foreground' },
                   runId: { type: 'string', required: true },
                   output: { type: 'array', required: true, items: { type: 'json' } },
+                  ...worktreeIsolationOffered ? { worktree: WORKTREE_RESULT_SCHEMA } as const : {},
                 },
               },
             ],
@@ -462,7 +634,18 @@ export function apply(ctx: Context, config: Config, session?: Session): void {
               ? `started background subagent job ${value.jobId}`
               : value.kind === 'continuable'
                 ? `started subagent ${value.subagentId}`
-                : outputValueText(value.output),
+                  + (value.worktree === undefined
+                    ? ''
+                    : ` in worktree ${value.worktree.id} (branch ${value.worktree.branch}, `
+                      + `base ${value.worktree.baseCommit})`)
+                  + (value.baseDirty === undefined
+                    ? ''
+                    : ` Your checkout has ${value.baseDirty.total} uncommitted change(s) that the worktree does not contain.`)
+                : outputValueText(value.output)
+                  + (value.worktree === undefined
+                    ? ''
+                    : `\nWorktree ${value.worktree.id} (branch ${value.worktree.branch}) holds this child's changes; `
+                      + 'call accept_worktree to review and merge them.'),
           }],
         },
         // Children never mutate the parent session; the one parent-owned write
@@ -512,28 +695,124 @@ export function apply(ctx: Context, config: Config, session?: Session): void {
           }
           exec.signal.throwIfAborted()
           const maxDepth = runtimeCtx.subagents.resolveMaxDepth(config.maxDepth)
+          const runSpec = resolveDelegationRun(args, { backgroundEnabled, continuable })
+          const isolation = resolveDelegationIsolation(args, worktreeIsolationOffered)
+
+          let isolationContext: WorktreeIsolationContext | undefined
+          let promptText = args.prompt
+          let childCwd: string | undefined
+          if (isolation === 'worktree') {
+            if (runSpec.runInBackground && !continuable) {
+              throw new Error(
+                'subagent: worktree isolation does not support a background job under backgroundMode: \'one-shot\'; '
+                + 'call it in the foreground or configure backgroundMode: \'continuable\'',
+              )
+            }
+            const worktrees = runtimeCtx.get('subagentWorktrees')
+            if (worktrees === undefined) {
+              throw new Error('subagent: worktree isolation requires the subagent-worktree service')
+            }
+            const baseDir = parent.session.header.cwd
+            if (baseDir === undefined) {
+              throw new Error('subagent: worktree isolation requires the parent session to have a working directory')
+            }
+            const callerRoute = toWorktreeRoute(parentOptions)
+            // The same merge the child actually receives (parent inheritance,
+            // requested/model-selected overrides, and the route-changed effort
+            // reset), not just the requested fields — a requested override that
+            // names only one of provider/model, or only an effort, still
+            // resolves to the child's real effective route.
+            const childDepth = resolveChildDepth(parent, maxDepth)
+            const workerRoute = toWorktreeRoute(resolveChildAgentOptions(parent, requestedChildAgentOptions, childDepth))
+            // Fail fast, before provisioning a worktree no worker will ever use.
+            worktrees.resolveReviewer({ workerRoute, callerRoute })
+            const owner: WorktreeOwner = { kind: 'session', sessionId: parent.id }
+            const provisioned = await worktrees.create({
+              owner,
+              baseDir,
+              label: args.description,
+              task: args.prompt,
+              workerRoute,
+              signal: exec.signal,
+            })
+            promptText = renderWorkerBrief({
+              workDir: provisioned.workDir,
+              branch: provisioned.record.branch,
+              baseCommit: provisioned.record.baseCommit,
+              repoRoot: provisioned.record.repoRoot,
+            }) + args.prompt
+            childCwd = provisioned.workDir
+            isolationContext = { worktrees, provisioned, workerRoute, owner }
+          }
+
           const request = {
             label: args.description,
-            prompt: [{ type: 'text', text: args.prompt }] as ContentBlock[],
+            prompt: [{ type: 'text', text: promptText }] as ContentBlock[],
             parent,
             ...requestedChildAgentOptions !== undefined ? { agentOptions: requestedChildAgentOptions } : {},
             ...config.persona !== undefined ? { persona: config.persona } : {},
             ...config.toolFilter !== undefined ? { toolFilter: config.toolFilter } : {},
             ...maxDepth !== undefined ? { maxDepth } : {},
+            ...childCwd !== undefined ? { cwd: childCwd } : {},
           }
 
-          const runSpec = resolveDelegationRun(args, { backgroundEnabled, continuable })
           if (runSpec.runInBackground) {
             if (continuable) {
+              // Isolated: reserve the child id and attach it BEFORE the child can
+              // become live, so no window exists where a running worker is
+              // unrecorded and accept's running-worker check could miss it. An
+              // attach failure here means no child was ever started.
+              let reservedChildId: SessionId | undefined
+              if (isolationContext !== undefined) {
+                reservedChildId = brandString<SessionId>(randomUUID())
+                try {
+                  await isolationContext.worktrees.attach({
+                    id: isolationContext.provisioned.record.id,
+                    owner: isolationContext.owner,
+                    workerSessionId: reservedChildId,
+                    workerRoute: isolationContext.workerRoute,
+                  })
+                } catch (error: unknown) {
+                  await discardWorktreeBestEffort(
+                    runtimeCtx,
+                    isolationContext.worktrees,
+                    isolationContext.provisioned.record.id,
+                    isolationContext.owner,
+                  )
+                  throw error
+                }
+              }
               // Resolves at inbox acceptance: the child owns its own turns from
               // there, so this call neither waits for nor collects a result.
-              const started = await runtimeCtx.subagents.startContinuable({
-                provider: config.provider,
-                label: args.description,
-                request,
-                signal: exec.signal,
-              })
-              return { kind: 'continuable' as const, subagentId: started.childId }
+              let started: ContinuableStart
+              try {
+                started = await runtimeCtx.subagents.startContinuable({
+                  provider: config.provider,
+                  label: args.description,
+                  request,
+                  signal: exec.signal,
+                  ...reservedChildId !== undefined ? { childId: reservedChildId } : {},
+                })
+              } catch (error: unknown) {
+                if (isolationContext !== undefined) {
+                  await discardWorktreeBestEffort(
+                    runtimeCtx,
+                    isolationContext.worktrees,
+                    isolationContext.provisioned.record.id,
+                    isolationContext.owner,
+                  )
+                }
+                throw error
+              }
+              const baseDirty = isolationContext?.provisioned.baseDirty
+              return {
+                kind: 'continuable' as const,
+                subagentId: started.childId,
+                ...isolationContext !== undefined
+                  ? { worktree: worktreeResultInfo(isolationContext.provisioned.record) }
+                  : {},
+                ...baseDirty !== undefined ? { baseDirty: { total: baseDirty.total } } : {},
+              }
             }
             const jobs = runtimeCtx.get('jobs')
             if (jobs === undefined) {
@@ -560,14 +839,49 @@ export function apply(ctx: Context, config: Config, session?: Session): void {
             return { kind: 'background' as const, jobId: id }
           }
 
-          const run: SubagentRun = await runtimeCtx.subagents.start(config.provider, {
-            ...request,
-            signal: exec.signal,
-          })
-          return settleForegroundRun(run)
+          let run: SubagentRun
+          try {
+            run = await runtimeCtx.subagents.start(config.provider, {
+              ...request,
+              signal: exec.signal,
+            })
+          } catch (error: unknown) {
+            if (isolationContext !== undefined) {
+              await discardWorktreeBestEffort(
+                runtimeCtx,
+                isolationContext.worktrees,
+                isolationContext.provisioned.record.id,
+                isolationContext.owner,
+              )
+            }
+            throw error
+          }
+          if (isolationContext !== undefined) {
+            try {
+              await isolationContext.worktrees.attach({
+                id: isolationContext.provisioned.record.id,
+                owner: isolationContext.owner,
+                workerSessionId: run.id,
+                workerRoute: isolationContext.workerRoute,
+              })
+            } catch (error: unknown) {
+              // The run already published: losing this attach means accept's
+              // running-worker check may miss this session (create() already
+              // recorded workerRoute on the worktree), not that the published
+              // run should be abandoned undisposed.
+              runtimeCtx.logger.warn(
+                `tool-subagent: failed to attach worker "${run.id}" to worktree `
+                + `"${isolationContext.provisioned.record.id}": ${String(error)}`,
+              )
+            }
+          }
+          return settleForegroundRun(
+            run,
+            isolationContext !== undefined ? worktreeResultInfo(isolationContext.provisioned.record) : undefined,
+          )
         },
       }))
-      mounted = { subagentProvider, disposeTool }
+      mounted = { subagentProvider, disposeTool, isolationOffered: worktreeIsolationOffered }
     }
 
     // Register listeners before checking presence so no synchronous change is missed.
@@ -583,6 +897,16 @@ export function apply(ctx: Context, config: Config, session?: Session): void {
       if (name !== config.provider || mounted === undefined) return
       mounted.disposeTool()
       mounted = undefined
+    })
+    // The offer belongs to the worktree tools' row, which can mount before or after this tool and comes and goes
+    // with a bundle toggle or an HMR restart: replace the mounted definition whenever the answer for its
+    // provider changes.
+    runtimeCtx.on('subagent-worktree/offer-changed', () => {
+      if (mounted === undefined || isolationOffered(mounted.subagentProvider) === mounted.isolationOffered) return
+      const { subagentProvider, disposeTool } = mounted
+      disposeTool()
+      mounted = undefined
+      mount(subagentProvider)
     })
     const present = runtimeCtx.subagents.getProvider(config.provider)
     if (present !== undefined) {

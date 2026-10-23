@@ -178,6 +178,47 @@ export interface Config {
 ```
 <!-- END GENERATED config-catalog:@deepseek-ai/dsh-agent-tool-presentation -->
 
+<!-- BEGIN GENERATED config-catalog:@deepseek-ai/dsh-agents -->
+<a id="deepseek-aidsh-agents"></a>
+
+## `@deepseek-ai/dsh-agents`
+
+- `inject`: `agentDefaultModel` · `agents` · `sessions` · `subagents` · `subagentWorktrees`
+- `source`: [`packages/bundle/agents/src/index.ts:36`](../packages/bundle/agents/src/index.ts)
+
+```ts config-catalog
+/** Plugin config: one verb and its options, resolved from this app's injected startup provider. */
+export interface Config {
+  /** The requested verb. */
+  verb: 'run' | 'list' | 'accept' | 'discard'
+  /** `run`: the task text. */
+  task?: string
+  /** `run`: `--name`. */
+  name?: string
+  /** `run`: `--model`. */
+  model?: string
+  /** `run`: `--effort`. */
+  effort?: string
+  /** `run`/`accept`: `--reviewer`. */
+  reviewer?: string
+  /** `run`/`accept`: `--reviewer-effort`. */
+  reviewerEffort?: string
+  /** `run`/`accept`: `--test`. */
+  test?: string
+  /** `run`: `--worktree`. */
+  worktree?: string
+  /** `run`: `--fix-rounds`. */
+  fixRounds?: number
+  /** `list`: `--all`. */
+  all?: boolean
+  /** `accept`/`discard`: the worktree id. */
+  id?: string
+  /** Whether stdout carries the machine-readable event stream instead of human-readable text. */
+  json: boolean
+}
+```
+<!-- END GENERATED config-catalog:@deepseek-ai/dsh-agents -->
+
 <!-- BEGIN GENERATED config-catalog:@deepseek-ai/dsh-api-gateway -->
 <a id="deepseek-aidsh-api-gateway"></a>
 
@@ -2834,7 +2875,7 @@ export interface Config {
 
 ## `@deepseek-ai/dsh-skill`
 
-- `source`: [`packages/skill/skill/src/index.ts:278`](../packages/skill/skill/src/index.ts)
+- `source`: [`packages/skill/skill/src/index.ts:327`](../packages/skill/skill/src/index.ts)
 
 ```ts config-catalog
 /** Skill registry configuration. */
@@ -3309,6 +3350,58 @@ export interface Config {
 }
 ```
 <!-- END GENERATED config-catalog:@deepseek-ai/dsh-subagent-spawn-in-process -->
+
+<!-- BEGIN GENERATED config-catalog:@deepseek-ai/dsh-subagent-worktree -->
+<a id="deepseek-aidsh-subagent-worktree"></a>
+
+## `@deepseek-ai/dsh-subagent-worktree`
+
+- `inject`: `subprocess` · `subagents` · `agents`
+- `source`: [`packages/subagent/subagent-worktree/src/index.ts:78`](../packages/subagent/subagent-worktree/src/index.ts)
+
+```ts config-catalog
+/**
+ * Deployment configuration for worktree placement, review, and merge. The
+ * reviewer route and commit author are flat scalar fields, not nested
+ * objects, because Schemastery materializes an omitted `z.object({...})`
+ * field as `{}` before validating its own `required()` sub-fields — see
+ * {@link resolveConfiguredReviewer} and {@link resolveConfiguredCommitAuthor}
+ * in `./config.ts`, which resolve and validate these flat fields once at load.
+ */
+export interface Config {
+  /** Absolute directory holding worktrees, records, and review checkouts; omitted resolves `<DSH_HOME>/worktrees` at load. */
+  root?: string
+  /** Prefix of every worktree branch name. */
+  branchPrefix: string
+  /** Maximum `open` or `reviewing` worktrees per repository. */
+  maxWorktrees: number
+  /** Reviewer provider route; set together with {@link reviewerModel}. Omitted uses the route of the Agent that accepts. */
+  reviewerProvider?: string
+  /** Reviewer model id; set together with {@link reviewerProvider}. */
+  reviewerModel?: string
+  /** Reviewer reasoning effort; requires {@link reviewerProvider} and {@link reviewerModel}. */
+  reviewerReasoningEffort?: string
+  /**
+   * Reject a reviewer route equal to the worker's route (provider and model). Off by default, so a worker
+   * that inherits the accepting Agent's route is reviewed on that same route; turn it on together with
+   * {@link reviewerProvider} and {@link reviewerModel} to enforce a reviewer on another model.
+   */
+  requireDistinctReviewer: boolean
+  /** Check command (argv) run in the review checkout before the reviewer; empty runs none. A nonzero exit rejects the change. */
+  testCommand: string[]
+  /** Milliseconds the check command may run before it is terminated and the accept reports `checks-failed`. */
+  checkTimeoutMs: number
+  /** Byte bound on the diff embedded in the reviewer prompt. */
+  reviewDiffMaxBytes: number
+  /** Remove the worktree directory and branch after a successful merge. */
+  removeOnMerge: boolean
+  /** Author name for harness commits; set together with {@link commitAuthorEmail}. Omitted uses git's configured identity. */
+  commitAuthorName?: string
+  /** Author email for harness commits; set together with {@link commitAuthorName}. */
+  commitAuthorEmail?: string
+}
+```
+<!-- END GENERATED config-catalog:@deepseek-ai/dsh-subagent-worktree -->
 
 <!-- BEGIN GENERATED config-catalog:@deepseek-ai/dsh-system-prompt -->
 <a id="deepseek-aidsh-system-prompt"></a>
@@ -3796,7 +3889,7 @@ export interface Config {
 
 - `inject`: `tools` · `subagents` · `systemPrompt` · `sessionProjections`
 - `refs`: [`AgentOptions`](subsystems/core.md)
-- `source`: [`packages/subagent/tool-subagent/src/index.ts:48`](../packages/subagent/tool-subagent/src/index.ts)
+- `source`: [`packages/subagent/tool-subagent/src/index.ts:60`](../packages/subagent/tool-subagent/src/index.ts)
 
 ```ts config-catalog
 /** Config: which registered provider this tool delegates to, plus child defaults. */
@@ -3856,9 +3949,43 @@ export interface Config {
    * the current Host subagent depth setting (default `1`) at each delegation.
    */
   maxDepth?: number | 'provider-managed'
+  /**
+   * Give each delegation its own git worktree when the model sets
+   * `isolation: "worktree"`. Requires `ctx.subagentWorktrees`
+   * (`@deepseek-ai/dsh-subagent-worktree`) and a provider with the `cwd`
+   * capability — the seam's own capability check rejects a provider without
+   * it. Defaults to `false`: unless the worktree service holds a live
+   * isolation offer (`ctx.subagentWorktrees.offersIsolation`, registered by a
+   * mounted `@deepseek-ai/dsh-tool-subagent-worktree` row, and only for a
+   * provider with the `cwd` capability), the schema omits the `isolation`
+   * parameter and the executor rejects it. The tool mounts again when that
+   * offer appears or lapses.
+   */
+  worktreeIsolation?: boolean
 }
 ```
 <!-- END GENERATED config-catalog:@deepseek-ai/dsh-tool-subagent -->
+
+<!-- BEGIN GENERATED config-catalog:@deepseek-ai/dsh-tool-subagent-worktree -->
+<a id="deepseek-aidsh-tool-subagent-worktree"></a>
+
+## `@deepseek-ai/dsh-tool-subagent-worktree`
+
+- `inject`: `tools` · `subagentWorktrees`
+- `source`: [`packages/subagent/tool-subagent-worktree/src/index.ts:34`](../packages/subagent/tool-subagent-worktree/src/index.ts)
+
+```ts config-catalog
+/** Configuration of the worktree tools. */
+export interface Config {
+  /**
+   * Offer the `isolation: "worktree"` parameter on every delegation tool whose provider has the `cwd`
+   * capability while these tools are mounted, including tools that agent presets mount. `false` leaves
+   * isolation to each `tool-subagent` row's own `worktreeIsolation` setting.
+   */
+  offerIsolation: boolean
+}
+```
+<!-- END GENERATED config-catalog:@deepseek-ai/dsh-tool-subagent-worktree -->
 
 <!-- BEGIN GENERATED config-catalog:@deepseek-ai/dsh-tool-terminal -->
 <a id="deepseek-aidsh-tool-terminal"></a>
@@ -4392,6 +4519,7 @@ These load from a `cordis.yml` entry with no `config:` block; they declare no co
 | `@deepseek-ai/dsh-session-stats` | `sessionProjections` | [`packages/session/session-stats/src/index.ts`](../packages/session/session-stats/src/index.ts) |
 | `@deepseek-ai/dsh-session-turn-outline` | `sessionProjections` | [`packages/session/session-turn-outline/src/index.ts`](../packages/session/session-turn-outline/src/index.ts) |
 | `@deepseek-ai/dsh-settings` | `configEditor` · `profileContext` | [`packages/settings/settings/src/index.ts`](../packages/settings/settings/src/index.ts) |
+| `@deepseek-ai/dsh-skill-agent-crew` | `skills` | [`packages/skill/skill-agent-crew/src/index.ts`](../packages/skill/skill-agent-crew/src/index.ts) |
 | `@deepseek-ai/dsh-skill-badge` | `skills` | [`packages/skill/skill-badge/src/index.ts`](../packages/skill/skill-badge/src/index.ts) |
 | `@deepseek-ai/dsh-storage` | — | [`packages/storage/storage/src/index.ts`](../packages/storage/storage/src/index.ts) |
 | `@deepseek-ai/dsh-subprocess-local` | — | [`packages/subprocess/subprocess-local/src/index.ts`](../packages/subprocess/subprocess-local/src/index.ts) |
@@ -4438,6 +4566,7 @@ Imported as libraries by other packages; a `cordis.yml` cannot load them.
 <!-- BEGIN GENERATED config-catalog:library -->
 | `package` | `inject` | `source` |
 | --- | --- | --- |
+| `@deepseek-ai/dsh-agent-crew` | — | [`packages/bundle/agent-crew/src/index.ts`](../packages/bundle/agent-crew/src/index.ts) |
 | `@deepseek-ai/dsh-agent-loop-testkit` | — | [`packages/test-support/agent-loop-testkit/src/index.ts`](../packages/test-support/agent-loop-testkit/src/index.ts) |
 | `@deepseek-ai/dsh-anonymous-user-id` | — | [`packages/identity/anonymous-user-id/src/index.ts`](../packages/identity/anonymous-user-id/src/index.ts) |
 | `@deepseek-ai/dsh-app-boot` | — | [`packages/boot/app-boot/src/index.ts`](../packages/boot/app-boot/src/index.ts) |

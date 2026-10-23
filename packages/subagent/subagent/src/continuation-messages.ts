@@ -76,11 +76,18 @@ export function createAgentMessage(
  * Append adjacent-Agent return guidance to a continuable child's initial task.
  * @param parentId - durable parent session id named in the guidance.
  * @param prompt - initial model-visible task blocks.
+ * @param sharesWorkspace - whether the child's resolved cwd equals the
+ *   parent's. A distinct cwd (worktree isolation) replaces the "shares your
+ *   workspace" sentence with one naming the separate, unreadable directory
+ *   and directing the child's report into the `send_message` body, since the
+ *   parent cannot read it from the child's own worktree. The shared-workspace
+ *   text is unaffected.
  * @returns task blocks followed by the continuable return guidance.
  */
 export function withContinuableReturnGuidance(
   parentId: SessionId,
   prompt: ContentBlock[],
+  sharesWorkspace: boolean,
 ): ContentBlock[] {
   const encodedParentId = JSON.stringify(parentId)
   return [
@@ -88,9 +95,13 @@ export function withContinuableReturnGuidance(
     {
       type: 'text',
       text: `Your parent agent id is ${encodedParentId}. Before you finish, send your result to that agent with `
-        + `send_message({ agent_id: ${encodedParentId}, message: "<self-contained result>" }). The parent shares `
-        + 'your workspace but does not automatically receive your transcript, tool output, or reasoning. Send '
-        + 'earlier messages as well when a finding changes what the parent should do next; sending a message '
+        + `send_message({ agent_id: ${encodedParentId}, message: "<self-contained result>" }). `
+        + (sharesWorkspace
+          ? 'The parent shares your workspace but does not automatically receive your transcript, tool output, or reasoning. '
+          : 'Your parent works in a different directory and cannot read your files; it does not automatically '
+            + 'receive your transcript, tool output, or reasoning. Put your report — the commands you ran, their '
+            + 'results, and anything you did not verify — in the send_message body. ')
+        + 'Send earlier messages as well when a finding changes what the parent should do next; sending a message '
         + 'does not end your turn.',
     },
   ]

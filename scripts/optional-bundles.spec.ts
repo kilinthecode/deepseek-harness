@@ -64,6 +64,52 @@ describe('optional bundles', () => {
     }
   })
 
+  it('adds the Agent crew worktree tools, which offer isolation, to every shipped profile shape and leaves the service and tool rows alone', () => {
+    const { patches } = bundle('@deepseek-ai/dsh-agent-crew')
+    const profiles = {
+      web: ['@deepseek-ai/dsh-base', '@deepseek-ai/dsh-web-app'],
+      headless: ['@deepseek-ai/dsh-base', '@deepseek-ai/dsh-headless'],
+      sdk: ['@deepseek-ai/dsh-base', '@deepseek-ai/dsh-sdk-app'],
+      acp: ['@deepseek-ai/dsh-base', '@deepseek-ai/dsh-acp-app'],
+    }
+    for (const [profile, names] of Object.entries(profiles)) {
+      const layers = names.map(name => bundle(name).patches)
+      const without = composeEntries(layers)
+      const withCrew = composeEntries([...layers, patches])
+      const rowOf = (entries: typeof withCrew, id: string) => entries.find(entry => entry.id === id)
+
+      // The worktree tools' row registers the offer, so the bundle patches neither the service row nor a
+      // delegation tool row: Host-level rows (headless, sdk, acp) and the preset-owned rows on Web are as shipped.
+      for (const id of ['subagent-worktree', 'tool-subagent', 'tool-subagent-fork']) {
+        expect(rowOf(withCrew, id), `${profile} ${id}`).toEqual(rowOf(without, id))
+      }
+      expect(rowOf(without, 'subagent-worktree')?.config, profile).toBeUndefined()
+      expect(rowOf(without, 'tool-subagent-worktree'), profile).toBeUndefined()
+      expect(rowOf(withCrew, 'tool-subagent-worktree'), profile).toEqual({
+        id: 'tool-subagent-worktree', name: '@deepseek-ai/dsh-tool-subagent-worktree',
+      })
+    }
+    // A base-backed profile mounts the Host-level `subagent` row, which the offer reaches.
+    const headless = composeEntries([...profiles.headless.map(name => bundle(name).patches), patches])
+    expect(headless.find(entry => entry.id === 'tool-subagent')?.disabled).toBeUndefined()
+  })
+
+  it('keeps the Agent crew worktree tools when a profile patch replaces the service row config to pin a reviewer route', () => {
+    const { patches } = bundle('@deepseek-ai/dsh-agent-crew')
+    const layers = ['@deepseek-ai/dsh-base', '@deepseek-ai/dsh-headless'].map(name => bundle(name).patches)
+    // The documented way to pin the reviewer is a patch on the service row, which replaces that row's whole config.
+    const pinReviewer = [{ id: 'subagent-worktree', config: { reviewerProvider: 'p', reviewerModel: 'm' } }]
+    const composed = composeEntries([...layers, patches, pinReviewer])
+
+    expect(composed.find(entry => entry.id === 'subagent-worktree')?.config).toEqual({
+      reviewerProvider: 'p', reviewerModel: 'm',
+    })
+    // The offer is registered by the worktree tools' row, not read from the service config, so it stands.
+    expect(composed.find(entry => entry.id === 'tool-subagent-worktree')).toEqual({
+      id: 'tool-subagent-worktree', name: '@deepseek-ai/dsh-tool-subagent-worktree',
+    })
+  })
+
   it('adds the three Schedule rows the shipped Web composition leaves out', () => {
     const { patches } = bundle('@deepseek-ai/dsh-experimental-schedule-bundle')
     const scheduleRows = (entries: ReturnType<typeof composeEntries>) =>

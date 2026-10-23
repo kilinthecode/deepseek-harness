@@ -373,6 +373,33 @@ describe('normalizeSessionLog', () => {
     expect(out).not.toContain('/private{{cwd}}')
   })
 
+  it('scrubs the symlinked spelling of a resolved macOS cwd without touching a longer sibling name', () => {
+    const resolved: NormalizeContext = { sessionIds: [], cwd: '/private/var/folders/2g/snapshot/T/dsh-log-snap-AbC123' }
+    const ev = JSON.stringify({
+      type: 'tool/result', seq: 2, time: 5,
+      data: {
+        content: [{
+          type: 'text',
+          text: 'read /var/folders/2g/snapshot/T/dsh-log-snap-AbC123/.dsh/worktrees/harness-1a2b3c4d5e6f/wt-1a2b3c4d/app.txt '
+            + 'in /private/var/folders/2g/snapshot/T/dsh-log-snap-AbC123. Sibling /var/folders/2g/snapshot/T/dsh-log-snap-AbC123-other/x.',
+        }],
+      },
+    })
+    const out = normalizeSessionLog(`${header({ cwd: resolved.cwd })}\n${ev}\n`, resolved)
+    expect(out).toContain('read {{cwd}}/.dsh/worktrees/harness-1a2b3c4d5e6f/wt-1a2b3c4d/app.txt in {{cwd}}. Sibling')
+    expect(out).toContain('/var/folders/2g/snapshot/T/dsh-log-snap-AbC123-other/x.')
+  })
+
+  it('does not invent a symlinked spelling for a /private path that is not a macOS symlink target', () => {
+    const resolved: NormalizeContext = { sessionIds: [], cwd: '/private/work/dsh-log-snap-AbC123' }
+    const ev = JSON.stringify({
+      type: 'tool/result', seq: 2, time: 5,
+      data: { content: [{ type: 'text', text: 'kept /work/dsh-log-snap-AbC123/app.txt and /private/work/dsh-log-snap-AbC123/app.txt' }] },
+    })
+    const out = normalizeSessionLog(`${header({ cwd: resolved.cwd })}\n${ev}\n`, resolved)
+    expect(out).toContain('kept /work/dsh-log-snap-AbC123/app.txt and {{cwd}}/app.txt')
+  })
+
   it('scrubs fixed snapshot spill paths', () => {
     const ev = JSON.stringify({
       type: 'tool/result', seq: 2, time: 5,
@@ -1038,6 +1065,43 @@ describe('tokenizeSessionFixtureCwd', () => {
     expect(() => tokenizeSessionFixtureCwd('')).toThrow(
       'acp-snapshot: cannot tokenize a cwd without a basename',
     )
+  })
+
+  describe('a child that works in a linked worktree', () => {
+    const workspace = '/var/folders/2g/snapshot/T/dsh-log-snap-AbC123'
+    const repoKey = 'dsh-log-snap-AbC123-1a2b3c4d5e6f'
+    const worktree = `${workspace}/.dsh/worktrees/${repoKey}/wt-1a2b3c4d`
+    const childLog = [
+      JSON.stringify({ type: 'session', id: 'child', createdAt: 1, cwd: worktree, parentSession: 'parent' }),
+      JSON.stringify({
+        type: 'user/message',
+        seq: 1,
+        time: 2,
+        data: {
+          content: [{
+            type: 'text',
+            text: `You work in your own git worktree at ${worktree} on branch dsh/worktree/wt-1a2b3c4d, created from commit `
+              + `0123456789abcdef0123456789abcdef01234567 of the repository at /private${workspace}. Edit ${worktree}/app.txt.`,
+          }],
+        },
+      }),
+      '',
+    ].join('\n')
+
+    it('keeps the worktree as a path below the workspace token when given the workspace root', () => {
+      const out = tokenizeSessionFixtureCwd(childLog, workspace)
+      const text = ((JSON.parse(out.split('\n')[1] as string) as {
+        data: { content: { text: string }[] }
+      }).data.content[0] as { text: string }).text
+
+      expect(out).toContain(`"cwd":"{{cwd}}/.dsh/worktrees/${repoKey}/wt-1a2b3c4d"`)
+      expect(text).toContain(`at {{cwd}}/.dsh/worktrees/${repoKey}/wt-1a2b3c4d on branch dsh/worktree/wt-1a2b3c4d,`)
+      expect(text).toContain('of the repository at {{cwd}}. Edit')
+      expect(text).toContain(`Edit {{cwd}}/.dsh/worktrees/${repoKey}/wt-1a2b3c4d/app.txt.`)
+      expect(out).not.toContain('/private')
+      expect(out).not.toContain('dsh{{cwd}}')
+      expect(tokenizeSessionFixtureCwd(out, workspace)).toBe(out)
+    })
   })
 })
 

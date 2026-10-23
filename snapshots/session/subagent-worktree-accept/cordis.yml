@@ -1,0 +1,14 @@
+# The optional agent-crew bundle's rows (packages/bundle/agent-crew/cordis.patch.yml)
+# over the shared headless composition. The worktree tools' row registers the
+# isolation offer, so the composition's own tool-subagent row needs no patch.
+# The fence holds the lead's post-spawn step until the worker's completion notice
+# enters its inbox, which keeps the transcript independent of scheduling.
+- insert:
+    - id: tool-subagent-worktree
+      name: '@deepseek-ai/dsh-tool-subagent-worktree'
+
+    - id: skill-agent-crew
+      name: '@deepseek-ai/dsh-skill-agent-crew'
+
+    - id: settlement-fence
+      name: '../../../apps/cli/tests/profiles/headless/tests/fixtures/subagent-settlement-fence.ts'

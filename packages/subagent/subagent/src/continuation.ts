@@ -14,6 +14,7 @@
  */
 
 import { randomUUID } from 'node:crypto'
+import { realpathSync } from 'node:fs'
 import type { Context } from '@deepseek-ai/cordis'
 import type { Agent } from '@deepseek-ai/dsh-agent'
 import { brandString } from '@deepseek-ai/dsh-brand'
@@ -42,6 +43,7 @@ import { foldSubagentDescriptor, snapshotSubagentDescriptor } from './descriptor
 import { establishCatalogChild } from './catalog.ts'
 import { SubagentError } from './error.ts'
 import { isAdjacentAgentSendMessageTool } from './internal.ts'
+import { assertUsableCwd, isEnterableDirectory } from './out-of-process.ts'
 import type { ActivationObserver } from './lifecycle.ts'
 import type {
   ContinuableCreateRequest,
@@ -67,10 +69,33 @@ type ChildDeliveryOptions =
 
 /** Package-private hooks supplied by the owning service. */
 interface ContinuationHost {
+  /**
+   * Reject a continuable `cwd` request against the provider's capability,
+   * before path validation (`assertUsableCwd`) or provider dispatch.
+   * @param requestsCwd - whether the continuable start request set `cwd`.
+   */
+  assertContinuableCwdCapability(name: string, requestsCwd: boolean): void
   /** Resolve one provider's detached continuable-creation contribution. */
   prepareContinuable(name: string, request: ContinuableCreateRequest): Promise<ContinuableCreateSpec>
   /** Build the lifecycle observer for one Activation residency epoch. */
   observeActivation(provider: string, childId: SessionId, parent: Agent): ActivationObserver
+}
+
+/**
+ * Resolve `cwd` to its canonical spelling for the "does this child share its
+ * parent's workspace" comparison, so a trailing slash or a symlink alias
+ * still counts as the same directory as its resolved target. Falls back to
+ * the raw value when it cannot be resolved: this feeds return-guidance
+ * wording, not a security or access check, so a stat failure should degrade
+ * to the exact-string comparison rather than reject the call.
+ */
+function normalizedCwdForComparison(cwd: string | undefined): string | undefined {
+  if (cwd === undefined) return undefined
+  try {
+    return realpathSync(cwd)
+  } catch {
+    return cwd
+  }
 }
 
 /**
@@ -110,6 +135,12 @@ export class SubagentContinuationManager {
     const childId = spec.childId ?? brandString<SessionId>(randomUUID())
     this.activations.assertChildIdAvailable(childId)
     const childDepth = resolveChildDepth(parent, request.maxDepth)
+    // Capability first, before path validation: a provider without the `cwd`
+    // capability rejects even a syntactically valid request.cwd.
+    this.host.assertContinuableCwdCapability(spec.provider, request.cwd !== undefined)
+    const childCwd = request.cwd === undefined
+      ? undefined
+      : assertUsableCwd('subagent', 'child cwd', request.cwd)
     // Snapshot before any await: invalid descriptor JSON rejects the call
     // before a child exists, and the detached value is what reaches the log.
     const agentOptions = resolveChildAgentOptions(parent, request.agentOptions, childDepth)
@@ -164,7 +195,7 @@ export class SubagentContinuationManager {
           parent,
           create: {
             seed,
-            meta: childSessionMeta(parent, childDepth, prepared.seed !== undefined),
+            meta: childSessionMeta(parent, childDepth, prepared.seed !== undefined, childCwd),
             inheritedEventCount,
             delegatedPolicies,
             descriptor,
@@ -174,10 +205,12 @@ export class SubagentContinuationManager {
           signal: spec.signal,
         })
         const childHeader = activation.handle.agent.session.header
+        const sharesWorkspace = normalizedCwdForComparison(childHeader.cwd)
+          === normalizedCwdForComparison(parent.session.header.cwd)
         return await this.submitMaterialized(
           activation,
           isAdjacentAgentSendMessageTool(this.ctx.get('tools')?.get('send_message', activation.handle.agent))
-            ? withContinuableReturnGuidance(parent.id, request.prompt)
+            ? withContinuableReturnGuidance(parent.id, request.prompt, sharesWorkspace)
             : request.prompt,
           { source: { kind: 'user' }, signal: spec.signal, delivery: 'queue' },
           parent,
@@ -428,6 +461,19 @@ export class SubagentContinuationManager {
     if (descriptor === undefined || descriptor.mode !== 'continuable') {
       throw new SubagentError(
         `subagent "${childId}" has no supported continuation state and cannot be resumed; choose a different target`,
+        'NOT_RESUMABLE',
+      )
+    }
+    const persistedCwd = source.header.cwd
+    // A worktree-isolated child's cwd can disappear between activations (its
+    // worktree merged or was discarded); resuming into a missing directory
+    // would hand the child a dead workspace instead of failing loud here.
+    // `isEnterableDirectory` also rejects a path that now names a file or an
+    // unsearchable directory, not only a removed one, hence "accessible"
+    // rather than "exists".
+    if (persistedCwd !== undefined && !isEnterableDirectory(persistedCwd)) {
+      throw new SubagentError(
+        `subagent "${childId}" cannot resume: its working directory "${persistedCwd}" is no longer an accessible directory`,
         'NOT_RESUMABLE',
       )
     }

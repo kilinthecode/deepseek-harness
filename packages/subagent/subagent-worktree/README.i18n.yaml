@@ -1,0 +1,64 @@
+# Bilingual-pair consistency record for README.md (docs/i18n/README.md): per heading
+# section, a hash of its English and Chinese blocks outside code blocks and generated regions.
+# After editing either side, bring the other along and re-record with:
+#   pnpm run verify-translation-pairing --write packages/subagent/subagent-worktree/README.md
+/:
+  en: cfd3bc59c097fdb1
+  zh: fbb410653e27bf79
+/deepseek-ai-dsh-subagent-worktree:
+  en: da817ea3efa6e11c
+  zh: 16d87eded03368c3
+/deepseek-ai-dsh-subagent-worktree/summary:
+  en: e33c2cd64d19e5e5
+  zh: 7fa166feec2a00d7
+/deepseek-ai-dsh-subagent-worktree/table-of-contents:
+  en: d152484eb41ac6b4
+  zh: 3f32246b8cdaaea1
+/deepseek-ai-dsh-subagent-worktree/use-this-package:
+  en: 76b014a66a385177
+  zh: ac75327ff6761b8d
+/deepseek-ai-dsh-subagent-worktree/use-this-package/minimal-configuration:
+  en: 78c822b04e17b7b9
+  zh: d2cfdc79a0b87f36
+/deepseek-ai-dsh-subagent-worktree/use-this-package/the-service-surface:
+  en: 2d5516c5d2815a4c
+  zh: ac6d2d1320aa3723
+/deepseek-ai-dsh-subagent-worktree/understand-the-implementation:
+  en: b2345b933a935e3b
+  zh: 569241afb6ed43fb
+/deepseek-ai-dsh-subagent-worktree/understand-the-implementation/design-concept:
+  en: e4604fdb1a8c0eef
+  zh: fe7bbc4790ad1a10
+/deepseek-ai-dsh-subagent-worktree/understand-the-implementation/run-flow-accept:
+  en: 1ca947d78d68f351
+  zh: e423b5a84293edff
+/deepseek-ai-dsh-subagent-worktree/understand-the-implementation/source-map:
+  en: 5be6e54142b856d9
+  zh: 4c447956412692f6
+/deepseek-ai-dsh-subagent-worktree/understand-the-implementation/host-realm-git:
+  en: 4d3533e46941038e
+  zh: a97fa2baa65480aa
+/deepseek-ai-dsh-subagent-worktree/further-exploration:
+  en: 4b71d2b86f1d78cb
+  zh: e403c8f01906064d
+/deepseek-ai-dsh-subagent-worktree/model-experience:
+  en: 215e7ba838619b7b
+  zh: a311da3843709f90
+/deepseek-ai-dsh-subagent-worktree/model-experience/worker-brief-and-reviewer-prompt-indirectly-through-consumers:
+  en: acc730769dda106f
+  zh: 3d939e243616b5dd
+/deepseek-ai-dsh-subagent-worktree/model-experience/worker-brief-and-reviewer-prompt-indirectly-through-consumers/what-the-model-sees:
+  en: 386811f137636615
+  zh: 986237fead64acb1
+/deepseek-ai-dsh-subagent-worktree/model-experience/worker-brief-and-reviewer-prompt-indirectly-through-consumers/token-effect:
+  en: 6ce4fc07c4c21e1a
+  zh: c60417e4a51c40e1
+/deepseek-ai-dsh-subagent-worktree/model-experience/worker-brief-and-reviewer-prompt-indirectly-through-consumers/kv-cache-effect:
+  en: a54ee1b58ac629d5
+  zh: 42e79ba1cde57d8d
+/deepseek-ai-dsh-subagent-worktree/known-limitations-and-deferred-work:
+  en: 42d2ce6835e15443
+  zh: db8651eba31026b3
+/deepseek-ai-dsh-subagent-worktree/known-limitations-and-deferred-work/dev-note:
+  en: e67f633dc6fe7773
+  zh: de49618653126af1
