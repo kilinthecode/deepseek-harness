@@ -1,5 +1,5 @@
 import { createUserMessage } from '@deepseek-ai/dsh-llm'
-import { mkdtemp, readFile, rm } from 'node:fs/promises'
+import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
@@ -23,6 +23,35 @@ const SYSTEM = 'You are a coding assistant. Use the write tool to create files, 
   + 'them, and the edit tool for literal replacements. Read a file before editing it. Keep replies terse.'
 
 describe.skipIf(!process.env.DEEPSEEK_API_KEY)('fs tools with-key smoke', () => {
+  it('continues beyond the default read window to find and save a late-file token', async () => {
+    workdir = await mkdtemp(join(tmpdir(), 'dsh-fs-window-e2e-'))
+    const source = Array.from({ length: 24 }, (_, index) => index === 20 ? 'final token: amber-seven' : `record ${index + 1}`).join('\n')
+    await writeFile(join(workdir, 'records.txt'), source)
+    ctx = await fsHarness(workdir, SYSTEM, { readDefaultLimit: 4, readLimit: 12 })
+    const agent = await ctx.agentLoop.create(SessionId('fs-window-e2e'), { provider: 'deepseek-official', model: 'deepseek-v4-flash' })
+
+    agent.followup(createUserMessage({
+      content: [{ type: 'text', text: 'First use read on records.txt without offset or limit. Then continue reading '
+        + 'with offset and limit as needed to find its final token. Create answer.txt containing only that token. '
+        + 'Do not change records.txt. Keep the reply terse.' }],
+      source: { kind: 'user' },
+    }))
+    await waitForIdle(ctx, agent)
+
+    expect((await readFile(join(workdir, 'answer.txt'), 'utf8')).trim()).toBe('amber-seven')
+    expect(await readFile(join(workdir, 'records.txt'), 'utf8')).toBe(source)
+    const events = agent.session.snapshotEvents()
+    const reads = events.filter(event => event.type === 'tool/call').filter(event => event.data.name === 'read')
+    expect(reads[0]).toBeDefined()
+    expect(JSON.parse(reads[0]?.data.arguments ?? 'null')).toEqual({ file_path: 'records.txt' })
+    expect(reads.length).toBeGreaterThan(1)
+    const firstRead = events.filter(event => event.type === 'tool/result').find(event => event.data.message.toolCallId === reads[0]?.data.callId)
+    expect(firstRead?.data.meta).toMatchObject({ offset: 1, totalLines: 24, lines: [
+      { number: 1, text: 'record 1' }, { number: 2, text: 'record 2' },
+      { number: 3, text: 'record 3' }, { number: 4, text: 'record 4' },
+    ] })
+  }, 180_000)
+
   it('creates, reads, then edits a file — verified on disk', async () => {
     workdir = await mkdtemp(join(tmpdir(), 'dsh-fs-e2e-'))
     ctx = await fsHarness(workdir, SYSTEM)

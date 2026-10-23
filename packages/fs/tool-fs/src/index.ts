@@ -23,8 +23,10 @@ export const inject = ['tools', 'fs', 'systemPrompt']
 
 /** Plugin config (all optional — `Config` supplies the defaults). */
 export interface Config {
-  /** Default and maximum number of lines returned by one `read` call. */
+  /** Maximum number of lines returned by one `read` call. */
   readLimit?: number
+  /** Lines returned when `read` omits `limit`; defaults to `readLimit` and must not exceed it. */
+  readDefaultLimit?: number
   /** Maximum characters returned for a single line before truncation. */
   readMaxLineLength?: number
   /** Maximum bytes returned for the selected lines of one `read` call. */
@@ -35,13 +37,14 @@ export interface Config {
 
 export const Config: z<Config> = z.object({
   readLimit: z.number().default(READ_LIMIT),
+  readDefaultLimit: z.number(),
   readMaxLineLength: z.number().default(READ_MAX_LINE_LENGTH),
   readMaxBytes: z.number().default(READ_MAX_BYTES),
   readStreamMinSize: z.number().default(STREAM_MIN_SIZE),
 })
 
-/** The shape after schemastery applied the defaults. */
-type ResolvedConfig = Required<Config>
+/** Fields defaulted by schemastery; the default read window resolves against its configured maximum. */
+type ResolvedConfig = Required<Omit<Config, 'readDefaultLimit'>> & Pick<Config, 'readDefaultLimit'>
 
 /** Every read cap counts lines/chars/bytes — a positive integer, or windowing arithmetic misbehaves silently. */
 function assertPositiveInteger(name: string, value: number): void {
@@ -54,12 +57,18 @@ function assertPositiveInteger(name: string, value: number): void {
 export function apply(ctx: Context, config: Config): void {
   // schemastery (Config) has already filled every defaulted field.
   const resolved = config as ResolvedConfig
+  const defaultLimit = resolved.readDefaultLimit ?? resolved.readLimit
   assertPositiveInteger('readLimit', resolved.readLimit)
+  assertPositiveInteger('readDefaultLimit', defaultLimit)
+  if (defaultLimit > resolved.readLimit) {
+    throw new Error('tool-fs: readDefaultLimit must be less than or equal to readLimit')
+  }
   assertPositiveInteger('readMaxLineLength', resolved.readMaxLineLength)
   assertPositiveInteger('readMaxBytes', resolved.readMaxBytes)
   assertPositiveInteger('readStreamMinSize', resolved.readStreamMinSize)
   applyReadTool(ctx, {
     limit: resolved.readLimit,
+    defaultLimit,
     maxLineLength: resolved.readMaxLineLength,
     maxBytes: resolved.readMaxBytes,
     streamMinSize: resolved.readStreamMinSize,

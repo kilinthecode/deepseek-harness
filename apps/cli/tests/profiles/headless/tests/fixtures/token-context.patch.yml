@@ -1,0 +1,13 @@
+- id: agent-default-model
+  config: { provider: token-context, model: fixture }
+- id: session-title-llm
+  disabled: true
+- id: tool-fs
+  config: { readDefaultLimit: 2, readLimit: 10 }
+- id: session-persistence-jsonl
+  config:
+    root: './.sessions'
+    compression: none
+- insert:
+    - id: token-context-llm
+      name: './token-context-llm.mjs'

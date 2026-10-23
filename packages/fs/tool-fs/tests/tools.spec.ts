@@ -717,7 +717,35 @@ describe('read caps are plugin config', () => {
     expect(overCap.isError).toBe(true)
     expect(text(overCap)).toContain('less than or equal to 2')
     const readSchema = ctx.tools.schemas().find(s => s.name === 'read')
-    expect(JSON.stringify(readSchema)).toContain('Defaults to 2.')
+    expect(readSchema).toMatchObject({
+      parameters: { properties: { limit: { description: 'Maximum number of lines to return. Defaults to 2.' } } },
+    })
+  })
+
+  it('a smaller default preserves explicit larger reads, continuation, and result metadata', async () => {
+    const config = { readLimit: 4, readDefaultLimit: 2 }
+    const { ctx, fs } = await setupWith(config)
+    fs.files.set('key:a.txt', 'one\ntwo\nthree\nfour\nfive')
+    const first = await call(ctx, 'read', { file_path: 'a.txt' })
+    expect(text(first)).toContain('(Showing lines 1-2 of 5. Use offset=3 to continue.)')
+    expect(first.meta).toMatchObject({
+      offset: 1,
+      lines: [{ number: 1, text: 'one' }, { number: 2, text: 'two' }],
+      totalLines: 5,
+    })
+    const next = await call(ctx, 'read', { file_path: 'a.txt', offset: 3 })
+    expect(text(next)).toContain('3: three\n4: four')
+    expect(text(next)).toContain('(Showing lines 3-4 of 5. Use offset=5 to continue.)')
+    const larger = await call(ctx, 'read', { file_path: 'a.txt', limit: 4 })
+    expect(text(larger)).toContain('4: four')
+    expect(text(larger)).not.toContain('5: five')
+    const overCap = await call(ctx, 'read', { file_path: 'a.txt', limit: 5 })
+    expect(overCap.isError).toBe(true)
+    expect(text(overCap)).toContain('less than or equal to 4')
+    const readSchema = ctx.tools.schemas().find(s => s.name === 'read')
+    expect(readSchema).toMatchObject({
+      parameters: { properties: { limit: { description: 'Maximum number of lines to return. Defaults to 2. Maximum: 4.' } } },
+    })
   })
 
   it('a configured readMaxLineLength truncates lines at the configured length', async () => {
@@ -752,6 +780,8 @@ describe('read caps are plugin config', () => {
   it.each([
     ['readLimit', { readLimit: 0 }],
     ['readLimit', { readLimit: 2.5 }],
+    ['readDefaultLimit', { readDefaultLimit: 0 }],
+    ['readDefaultLimit', { readDefaultLimit: 1.5 }],
     ['readMaxLineLength', { readMaxLineLength: -1 }],
     ['readMaxBytes', { readMaxBytes: Number.NaN }],
     ['readStreamMinSize', { readStreamMinSize: 0 }],
@@ -761,6 +791,16 @@ describe('read caps are plugin config', () => {
     await ctx.plugin(ToolRuntime)
     await ctx.plugin(FakeFs)
     await expect(ctx.plugin(ToolFs, config)).rejects.toThrow(new RegExp(`tool-fs: ${name} must be a positive integer`))
+  })
+
+  it('rejects a default window larger than the maximum at load', async () => {
+    const ctx = new Context()
+    await ctx.plugin(SystemPrompt)
+    await ctx.plugin(ToolRuntime)
+    await ctx.plugin(FakeFs)
+    await expect(ctx.plugin(ToolFs, { readLimit: 2, readDefaultLimit: 3 })).rejects.toThrow(
+      'tool-fs: readDefaultLimit must be less than or equal to readLimit',
+    )
   })
 
   it('has no default export (namespace plugin export shape)', () => {

@@ -1,0 +1,31 @@
+# Bilingual-pair consistency record for token-savings.md (docs/i18n/README.md): per heading
+# section, a hash of its English and Chinese blocks outside code blocks and generated regions.
+# After editing either side, bring the other along and re-record with:
+#   pnpm run verify-translation-pairing --write docs/user/token-savings.md
+/:
+  en: 8d19cba47a311017
+  zh: 9182e2088322bd9e
+/trial-token-saving-settings:
+  en: 231a045ee430f782
+  zh: 1c528972b88dcc9b
+/trial-token-saving-settings/summary:
+  en: 703adaeb8312a4fd
+  zh: 0a5e2d37e628095e
+/trial-token-saving-settings/table-of-contents:
+  en: a7d38b72321f930b
+  zh: c91cfd7d5353e713
+/trial-token-saving-settings/try-smaller-reads:
+  en: 1ffd3ef2867c4a2b
+  zh: 1588c8cb69c1b2a0
+/trial-token-saving-settings/keep-reusable-context-stable:
+  en: bdf97da64d2fb1ec
+  zh: cbd6badb72999bfa
+/trial-token-saving-settings/choose-a-tool-mode:
+  en: a180dd85d7935632
+  zh: 75d76d1729979143
+/trial-token-saving-settings/measure-the-complete-task:
+  en: d907c880db2cdde1
+  zh: 3e72d46c223b29e3
+/trial-token-saving-settings/dev-note:
+  en: b75c8458928b72b9
+  zh: 003ba4e17b4b5269

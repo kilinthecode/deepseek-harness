@@ -1,0 +1,5 @@
+- id: tool-fs
+  name: '@deepseek-ai/dsh-tool-fs'
+  config:
+    readDefaultLimit: 2
+    readLimit: 10

@@ -43,7 +43,7 @@ kind: "package-reference"
 
 | 工具 | 参数 | 行为 |
 |---|---|---|
-| `read` | `file_path`、`offset?`、`limit?` | 带行号的 UTF-8 内容与分页 footer；`offset` 从 1 开始，`limit` 默认为配置的 `readLimit`，上限也为该值 |
+| `read` | `file_path`、`offset?`、`limit?` | 带行号的 UTF-8 内容与分页 footer；`offset` 从 1 开始，省略 `limit` 时使用 `readDefaultLimit`，显式指定的上限可达到 `readLimit` |
 | `read_image` | `file_path` | 读取并持久保存 PNG/JPEG/WebP/GIF 源图；无扩展名路径（包括规范化附件对象路径）按文件签名识别格式；规范化可在下一次模型请求前缩小图片，因此模型无需先创建缩略图 |
 | `write` | `file_path`、`content` | 创建或完整替换文件；有策略插件时，覆盖要求先在未变版本上执行 `read`，创建不需要 |
 | `edit` | `file_path`、`old_string`、`new_string`、`replace_all?` | 字面量替换，除非 `replace_all` 为 true 否则要求唯一匹配；有策略插件时，要求先执行 `read` 且文件未变 |
@@ -56,7 +56,8 @@ kind: "package-reference"
 
 | 键 | 默认值 | 含义 |
 |---|---|---|
-| `readLimit` | `2000` | 一次 `read` 调用返回的默认和最大行数 |
+| `readLimit` | `2000` | 一次 `read` 调用返回的最大行数 |
+| `readDefaultLimit` | `readLimit` | 省略 `limit` 时返回的行数；必须为不大于 `readLimit` 的正整数 |
 | `readMaxLineLength` | `2000` | 每行截断前保留的字符数 |
 | `readMaxBytes` | `51200` | 一次 `read` 调用所选行的字节上限；溢出时以「已达上限」footer 结束窗口 |
 | `readStreamMinSize` | `10485760` | 大于等于该大小或大小未知的文件采用流式读取，而不是整体加载到内存 |
@@ -183,7 +184,7 @@ Read a file before editing it (the default fs-observation-policy requires it), u
 
 #### Token 影响
 
-读取输出受 `readLimit`、`readMaxLineLength` 与 `readMaxBytes` 限制；保留的调用与结果会反复发送，直到上下文压缩（compaction）。
+读取输出受 `readLimit`、`readMaxLineLength` 与 `readMaxBytes` 限制；保留的调用与结果会反复发送，直到上下文压缩（compaction）。较小的 `readDefaultLimit` 会缩小省略 `limit` 时的窗口，而不降低显式指定的行数上限，但需要整个文件的任务可能因此增加调用次数。
 
 #### KV Cache 影响
 

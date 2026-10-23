@@ -99,7 +99,9 @@ The plugin is built on one principle: workspace instructions are durable convers
 
 ### Main flow
 
-At the first eligible `agent/pre-step` of a session, the plugin composes the baseline and folds it into the entering batch right after the claimed messages. Successful first-party `read`, `write`, and `edit` calls contribute touches that bubble up through parent execution tokens; once the enclosing step is durable, a projection reconciles the visible session state against the inbox and queues additions, replacements, or removals. An unchanged path with an unchanged digest is never injected again. Discovery follows structured filesystem activity rather than shell navigation, because each local shell call starts a fresh process and parsing arbitrary shell syntax is not a reliable filesystem seam.
+At an eligible `agent/pre-step`, the plugin composes the baseline. Before any request or model-visible message has entered durable history, baseline instructions precede the initial task in the entering batch; otherwise new instruction context follows the claimed messages. Rejected or cancelled proposals do not commit this ordering, and an empty first entry leaves context pending.
+
+Successful first-party `read`, `write`, and `edit` calls contribute touches that bubble up through parent execution tokens; once the enclosing step is durable, a projection reconciles the visible session state against the inbox and queues additions, replacements, or removals. An unchanged path with an unchanged digest is never injected again. Discovery follows structured filesystem activity rather than shell navigation, because each local shell call starts a fresh process and parsing arbitrary shell syntax is not a reliable filesystem seam.
 
 ### Invariants
 
@@ -117,6 +119,7 @@ Read these pages when the package-level contract is not enough. They move from t
 - [Documentation standard](../../../docs/AGENTS.md) — what `AGENTS.md` instruction files contain and how they are maintained.
 - [Workspace-context decision record](../../../.agents/notes/archived/feature/2026-06-24-workspace-context.md) — per-agent/session isolation and lifecycle rationale.
 - [Context group map](../README.md) — sibling request-context packages.
+- [Fresh instruction prefix decision](../../../.agents/notes/implemented/feature/2026-10-01-fresh-instruction-prefix.md) — ordering rationale, history preservation, and cache limits.
 - [Generated configuration catalog](../../../docs/config-catalog.md#deepseek-aidsh-agent-instructions) — every accepted config field and its source declaration.
 
 -----
@@ -128,7 +131,7 @@ Read these pages when the package-level contract is not enough. They move from t
 
 #### What the model sees
 
-At the first request, derived history contains one durable user-role message with the bounded user-global and project instruction chain in broad-to-specific order. Resume reuses that message when its visible baseline is compatible.
+At a fresh conversation’s first request, one durable user-role instruction message precedes the initial task and contains the bounded user-global and project instruction chain in broad-to-specific order. Existing conversation history retains its order; resume reuses the instruction message when its visible baseline is compatible.
 
 ##### Baseline instruction template
 
@@ -152,7 +155,7 @@ The rendered baseline is appended once and remains in derived history until comp
 
 #### KV Cache effect
 
-Append-only after the existing reusable prefix. Resume preserves reuse when the visible baseline identity is compatible; an incompatible identity appends a complete replacement, so discovery, precedence, project-root, or budget changes affect reuse only from that history position.
+Fresh conversations place the instruction baseline before task text, preserving an identical instruction prefix when the workspace, configuration, and preceding request content match. Provider cache eligibility still applies. Existing history remains append-only: resume preserves a compatible visible baseline, and an incompatible identity appends a complete replacement.
 
 ### Newly discovered scope context
 

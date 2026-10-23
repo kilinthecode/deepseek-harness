@@ -147,6 +147,14 @@ const homeAndGuide = pairedPages([
     order: 4,
   },
   {
+    source: 'docs/user/token-savings.md',
+    route: 'guide/token-savings.md',
+    label: { root: '节省 Token', en: 'Token savings' },
+    sidebar: { root: 'zh-guide', en: 'en-guide' },
+    section: { root: '入门', en: 'Guide' },
+    order: 5,
+  },
+  {
     source: 'docs/user/guide/python-sdk.md',
     route: 'guide/python-sdk.md',
     label: { root: 'Python', en: 'Python' },

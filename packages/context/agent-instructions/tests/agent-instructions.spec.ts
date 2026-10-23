@@ -5,9 +5,9 @@ import { afterAll, describe, expect, it, vi } from 'vitest'
 import { Context } from '@deepseek-ai/cordis'
 import Loader from '@deepseek-ai/cordis-plugin-loader'
 import * as AgentInstructions from '@deepseek-ai/dsh-agent-instructions'
-import LlmRuntime, { createUserMessage, ToolCallId, type Message, type MessageSource, type StreamChunk } from '@deepseek-ai/dsh-llm'
+import LlmRuntime, { createAssistantMessage, createSystemMessage, createUserMessage, ToolCallId, type Message, type MessageSource, type StreamChunk } from '@deepseek-ai/dsh-llm'
 import type { ContextFormed } from '@deepseek-ai/dsh-llm'
-import SessionStore, { SessionId, SessionSeq, type SessionEvent, type SurfaceIntent, type UserMessage } from '@deepseek-ai/dsh-session'
+import SessionStore, { isSurfaceEvent, SessionId, SessionSeq, type SessionEvent, type SurfaceIntent, type UserMessage } from '@deepseek-ai/dsh-session'
 import SessionProjectionRegistry from '@deepseek-ai/dsh-session-projection'
 import AgentRegistry, { agentEvents, type Agent } from '@deepseek-ai/dsh-agent'
 import AgentLoop, { turnBoundaryProjectionDefinition } from '@deepseek-ai/dsh-agent-loop'
@@ -1623,20 +1623,24 @@ describe('workspace context request injection', () => {
     }
   })
 
-  it('enters the baseline right after the claimed prompt in the first pre-step without queuing another step', async () => {
+  it('enters the fresh baseline before the claimed prompt and runtime context without queuing another step', async () => {
     const root = await tempRepo()
     const home = await tempRepo()
+    const ctx = new Context()
     try {
       await mkdir(join(root, '.git'), { recursive: true })
       await write(join(root, 'AGENTS.md'), 'repo rule')
-      const ctx = new Context()
       await mountAgentInstructions(ctx, { dshHome: home, maxBytes: 65536 })
       const agent = await stubAgent(root)
       const prompt = createUserMessage({
         content: [{ type: 'text', text: 'current prompt' }],
         source: { kind: 'user' },
       })
-      const downstream = { kind: 'enter' as const, messages: [prompt] }
+      const runtime = createUserMessage({
+        content: [{ type: 'text', text: 'current runtime context' }],
+        source: { kind: 'downstream' },
+      })
+      const downstream = { kind: 'enter' as const, messages: [prompt, runtime] }
 
       const decision = await agentEvents(ctx, agent).waterfall(
         'agent/pre-step',
@@ -1646,12 +1650,219 @@ describe('workspace context request injection', () => {
 
       expect(decision).toMatchObject({ kind: 'enter' })
       if (decision.kind !== 'enter') throw new Error('workspace baseline was rejected')
-      expect(decision.messages).toHaveLength(2)
-      expect(decision.messages[0]).toBe(prompt)
-      expect(decision.messages[1]?.source).toMatchObject({ kind: 'agent-instructions', baseline: true })
-      expect(blocksText(decision.messages[1]?.content)).toContain('Instructions from: AGENTS.md')
+      expect(decision.messages).toHaveLength(3)
+      expect(decision.messages[0]?.source).toMatchObject({ kind: 'agent-instructions', baseline: true })
+      expect(blocksText(decision.messages[0]?.content)).toContain('Instructions from: AGENTS.md')
+      expect(decision.messages[1]).toBe(prompt)
+      expect(decision.messages[2]).toBe(runtime)
       expect(agent.inbox.nextStep).toHaveLength(0)
     } finally {
+      await ctx.fiber.dispose()
+      await rm(root, { recursive: true, force: true })
+      await rm(home, { recursive: true, force: true })
+    }
+  })
+
+  it('moves an already claimed fresh baseline before the task without duplicating it', async () => {
+    const root = await tempRepo()
+    const home = await tempRepo()
+    const ctx = new Context()
+    try {
+      await mkdir(join(root, '.git'), { recursive: true })
+      await write(join(root, 'AGENTS.md'), 'repo rule')
+      await mountAgentInstructions(ctx, { dshHome: home, maxBytes: 65536 })
+      const agent = await stubAgent(root)
+      const baseline = await syncedAgentInstructions(ctx, agent)
+      expect(agent.session.deriveMessages()).toEqual([])
+      const claimed = claimInbox(agent, 'next-step')
+      const prompt = createUserMessage({
+        content: [{ type: 'text', text: 'first task after a no-step turn' }],
+        source: { kind: 'user' },
+      })
+      const messages = [prompt, ...claimed]
+
+      const decision = await agentEvents(ctx, agent).waterfall(
+        'agent/pre-step',
+        { messages, turn: 2, step: 1, signal: testToolSignal },
+        () => Promise.resolve({ kind: 'enter' as const, messages }),
+      )
+
+      expect(decision.kind).toBe('enter')
+      if (decision.kind !== 'enter') throw new Error('fresh task was rejected')
+      expect(decision.messages).toEqual([baseline, prompt])
+      expect(agent.inbox.nextStep).toEqual([])
+    } finally {
+      await ctx.fiber.dispose()
+      await rm(root, { recursive: true, force: true })
+      await rm(home, { recursive: true, force: true })
+    }
+  })
+
+  it.each(['inherited-message', 'request-header', 'empty-assistant', 'emptied-system'] as const)(
+    'appends a newly discovered baseline after the task when %s records prior admission',
+    async (history) => {
+      const root = await tempRepo()
+      const home = await tempRepo()
+      const ctx = new Context()
+      try {
+        await mkdir(join(root, '.git'), { recursive: true })
+        await write(join(root, 'AGENTS.md'), 'newly available repo rule')
+        await mountAgentInstructions(ctx, { dshHome: home, maxBytes: 65536 })
+        const source = await stubAgent(root)
+        if (history === 'inherited-message') {
+          source.session.append('user/message', createUserMessage({
+            content: [{ type: 'text', text: 'inherited task before instructions were enabled' }],
+            source: { kind: 'user' },
+          }), { surfaceOp: 'append' })
+        } else if (history === 'request-header') {
+          source.session.append('request/header', {
+            header: { config: { provider: 'mock', model: 'mock' } },
+            reason: 'initial',
+          })
+        } else if (history === 'empty-assistant') {
+          source.session.append('assistant/message', {
+            turn: 1,
+            step: 1,
+            stream: [],
+            message: createAssistantMessage({ content: [], source: { provider: 'mock', model: 'mock' } }),
+          }, { surfaceOp: 'append' })
+        } else {
+          const previous = source.session.append('system/message', {
+            turn: 1,
+            step: 1,
+            message: createSystemMessage('retired system instructions'),
+          }, { surfaceOp: 'append' })
+          source.session.append('system/message', {
+            turn: 1,
+            step: 1,
+            message: createSystemMessage(''),
+          }, {
+            surfaceOp: { op: 'replace', startSeq: previous.seq, endSeq: previous.seq },
+            sourceEventSeqs: [previous.seq],
+          })
+        }
+        const agent = await stubAgent(root, source.session.snapshotEvents())
+        if (history === 'empty-assistant' || history === 'emptied-system') {
+          expect(agent.session.deriveMessages()).toEqual([])
+          expect(agent.session.surface.nodes).toHaveLength(1)
+        }
+        if (history === 'emptied-system') expect(agent.session.surface.contentGeneration).toBe(1)
+        const before = agent.session.snapshotEvents()
+        const prompt = createUserMessage({
+          content: [{ type: 'text', text: 'continue the conversation' }],
+          source: { kind: 'user' },
+        })
+
+        const decision = await agentEvents(ctx, agent).waterfall(
+          'agent/pre-step',
+          { messages: [prompt], turn: 1, step: 1, signal: testToolSignal },
+          () => Promise.resolve({ kind: 'enter' as const, messages: [prompt] }),
+        )
+
+        if (decision.kind !== 'enter') throw new Error('continued task was rejected')
+        expect(decision.messages).toHaveLength(2)
+        expect(decision.messages[0]).toBe(prompt)
+        expect(decision.messages[1]?.source).toMatchObject({ kind: 'agent-instructions', baseline: true })
+        expect(agent.session.snapshotEvents()).toEqual(before)
+      } finally {
+        await ctx.fiber.dispose()
+        await rm(root, { recursive: true, force: true })
+        await rm(home, { recursive: true, force: true })
+      }
+    },
+  )
+
+  it('keeps the baseline before the first admitted task after rejected and cancelled proposals', async () => {
+    const root = await tempRepo()
+    const home = await tempRepo()
+    const ctx = new Context()
+    try {
+      await mkdir(join(root, '.git'), { recursive: true })
+      await write(join(root, 'AGENTS.md'), 'repo rule')
+      await mountAgentInstructions(ctx, { dshHome: home, maxBytes: 65536 })
+      const agent = await stubAgent(root)
+      const prompt = createUserMessage({
+        content: [{ type: 'text', text: 'first admitted task' }],
+        source: { kind: 'user' },
+      })
+      await agentEvents(ctx, agent).waterfall(
+        'agent/pre-step',
+        { messages: [prompt], turn: 1, step: 1, signal: testToolSignal },
+        () => Promise.resolve({ kind: 'reject' as const }),
+      )
+      agent.session.append('turn/start', { turn: 1 })
+      agent.session.append('turn/end', { turn: 1, reason: { kind: 'blocked' } })
+      const aborted = new AbortController()
+      aborted.abort(new Error('cancelled before admission'))
+      await expect(agentEvents(ctx, agent).waterfall(
+        'agent/pre-step',
+        { messages: [prompt], turn: 2, step: 1, signal: aborted.signal },
+        () => Promise.resolve({ kind: 'enter' as const, messages: [prompt] }),
+      )).rejects.toThrow('cancelled before admission')
+      const claimed = claimInbox(agent, 'next-step')
+      const messages = [prompt, ...claimed]
+
+      const decision = await agentEvents(ctx, agent).waterfall(
+        'agent/pre-step',
+        { messages, turn: 3, step: 1, signal: testToolSignal },
+        () => Promise.resolve({ kind: 'enter' as const, messages }),
+      )
+
+      if (decision.kind !== 'enter') throw new Error('fresh task was rejected')
+      expect(decision.messages).toHaveLength(2)
+      expect(decision.messages[0]?.source).toMatchObject({ kind: 'agent-instructions', baseline: true })
+      expect(decision.messages[1]).toBe(prompt)
+      expect(agent.session.deriveMessages()).toEqual([])
+    } finally {
+      await ctx.fiber.dispose()
+      await rm(root, { recursive: true, force: true })
+      await rm(home, { recursive: true, force: true })
+    }
+  })
+
+  it('recovers an unadmitted baseline before the next task and reuses that ordered request on provider retry', async () => {
+    const root = await tempRepo()
+    const home = await tempRepo()
+    const ctx = new Context()
+    try {
+      await mkdir(join(root, '.git'), { recursive: true })
+      await write(join(root, 'AGENTS.md'), 'repo rule')
+      const adapter = new MockAdapter([
+        [{ type: 'finish', reason: { kind: 'error', failure: { message: 'busy', code: 'RATE_LIMIT' } } }],
+        textResponse('done'),
+      ])
+      await mountAgentLoopTestDependencies(ctx)
+      await mountAgentInstructions(ctx, { dshHome: home, maxBytes: 65536 })
+      const loop = await mountAgentLoopTestHarness(ctx)
+      ctx.llm.registerAdapter(['mock'], adapter)
+      const agent = await loop.create(SessionId('instruction-prefix-recovery'), { provider: 'mock', model: 'mock' }, { cwd: root })
+      vi.spyOn(adapter, 'resolveModel').mockRejectedValueOnce(new Error('unavailable before admission'))
+
+      agent.followup(createUserMessage({
+        content: [{ type: 'text', text: 'unadmitted task' }],
+        source: { kind: 'user' },
+      }))
+      await agent.whenIdle()
+      expect(agent.session.snapshotEvents().some(isSurfaceEvent)).toBe(false)
+      expect(adapter.requests).toHaveLength(0)
+
+      ctx.on('agent/request-error', async () => ({ kind: 'retry' as const }))
+      agent.followup(createUserMessage({
+        content: [{ type: 'text', text: 'admitted task' }],
+        source: { kind: 'user' },
+      }))
+      await agent.whenIdle()
+
+      expect(adapter.requests).toHaveLength(2)
+      const request = adapter.requests[0]
+      const admitted = request?.messages.filter(message => message.source?.kind === 'agent-instructions'
+        || message.source?.kind === 'user')
+      expect(admitted?.map(message => message.source?.kind)).toEqual(['agent-instructions', 'user'])
+      expect(blocksText(admitted?.[1]?.content)).toBe('admitted task')
+      expect(adapter.requests[1]?.messages).toEqual(request?.messages)
+      expect(baselineEvents(agent)).toHaveLength(1)
+    } finally {
+      await ctx.fiber.dispose()
       await rm(root, { recursive: true, force: true })
       await rm(home, { recursive: true, force: true })
     }

@@ -3614,8 +3614,10 @@ export interface Config {
 ```ts config-catalog
 /** Plugin config (all optional — `Config` supplies the defaults). */
 export interface Config {
-  /** Default and maximum number of lines returned by one `read` call. */
+  /** Maximum number of lines returned by one `read` call. */
   readLimit?: number
+  /** Lines returned when `read` omits `limit`; defaults to `readLimit` and must not exceed it. */
+  readDefaultLimit?: number
   /** Maximum characters returned for a single line before truncation. */
   readMaxLineLength?: number
   /** Maximum bytes returned for the selected lines of one `read` call. */
