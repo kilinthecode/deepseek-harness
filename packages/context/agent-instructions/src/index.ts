@@ -71,11 +71,10 @@ function isBaselineInstructionMessage(message: UserMessage): boolean {
 }
 
 function isFreshConversation(session: Session): boolean {
-  // Inherited messages remain nodes, and compaction records a content generation.
+  // Inherited messages and compaction replacements remain surface nodes; the node list never shrinks to empty.
   // Inbox and turn lifecycle events do not establish model-visible admission.
   return session.requestHeader() === undefined
     && session.surface.nodes.length === 0
-    && session.surface.contentGeneration === 0
 }
 
 function sameContextPayload(left: UserMessage, right: UserMessage): boolean {
